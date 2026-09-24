@@ -1151,25 +1151,12 @@
         : null);
   }
 
-  /* One artist, all their runs rolled up. */
+  /* One artist: just the name. The numbers wait behind the doors. */
   function artistCard(name, entries) {
-    var net = 0, active = false;
-    var count = entries.length;
-    entries.forEach(function (e) {
-      var c = G.calc(e[1]);
-      net += c.net;
-      if (c.out > 0 || c.income > 0) active = true;
-    });
-    var st = !active ? 'idle' : (G.round(net) < 0 ? 'red' : 'green');
-    return h('button', { class: 'tour-card ' + st, type: 'button',
+    return h('button', { class: 'tour-card idle name-card', type: 'button',
       onclick: function () { go({ name: 'artist', artist: name }); } },
       h('div', { class: 'tc-top' },
-        h('div', { class: 'tc-name' }, name), icon('chevron', 20)),
-      h('div', { class: 'tc-meta' }, plural(count, 'tour')),
-      h('div', { class: 'tc-num' },
-        h('span', { class: 'tc-big num' }, money(net, true)),
-        h('span', { class: 'tc-cap' }, !active ? 'Nothing logged yet'
-          : (G.round(net) < 0 ? 'to break even, all tours' : 'in the green, all tours'))));
+        h('div', { class: 'tc-name' }, name), icon('chevron', 20)));
   }
 
   /* One artist's tours. */
@@ -1292,25 +1279,9 @@
   }
 
   function tourCard(id, t) {
-    var c = G.calc(t);
-    var st = G.stateOf(c);
-    var shows = c.allShows;
-    var logged = shows.filter(function (s) { return s.loggedAt; }).length;
-    var meta = shows.length
-      ? dayMD(shows[0].date) + ' to ' + dayMD(shows[shows.length - 1].date) + ', ' + plural(shows.length, 'show')
-      : 'No dates yet';
-    var foot = null;
-    if (!t.setupDone) foot = 'Setup not finished';
-    else if (shows.length) foot = logged + ' of ' + plural(shows.length, 'show') + ' logged';
-
-    return h('button', { class: 'tour-card ' + st, type: 'button', onclick: function () { openTour(id); } },
+    return h('button', { class: 'tour-card idle name-card', type: 'button', onclick: function () { openTour(id); } },
       h('div', { class: 'tc-top' },
-        h('div', { class: 'tc-name' }, t.name || 'Untitled tour'), icon('chevron', 20)),
-      h('div', { class: 'tc-meta' }, meta),
-      h('div', { class: 'tc-num' },
-        h('span', { class: 'tc-big num' }, money(c.net, true)),
-        h('span', { class: 'tc-cap' }, G.caption(c))),
-      foot ? h('div', { class: 'tc-foot' }, foot) : null);
+        h('div', { class: 'tc-name' }, t.name || 'Untitled tour'), icon('chevron', 20)));
   }
 
   /* ============================== Views: setup wizard ============================== */
@@ -2224,6 +2195,13 @@
         : null,
       h('div', { class: 'opt-cards' },
         h('button', { class: 'opt-card', type: 'button',
+          onclick: function () { go({ name: 'tour', id: id, view: 'addshows' }); } },
+          h('div', { class: 'opt-title' }, 'Add shows'),
+          h('div', { class: 'opt-sub' }, c.allShows.length
+            ? plural(c.allShows.length, 'show') + ' on the run \u00b7 flyer, Master Tour, atVenu'
+            : 'Type them, shoot the flyer, or pull from Master Tour'),
+          icon('chevron', 20)),
+        h('button', { class: 'opt-card', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'details' }); } },
           h('div', { class: 'opt-title' }, 'Tour details'),
           h('div', { class: 'opt-sub' }, next
@@ -2238,6 +2216,48 @@
           icon('chevron', 20))));
   }
 
+  /* The shows door: every way dates get onto the tour, one place, once.
+     Both other doors read from what lands here. */
+  function viewAddShows(id, t) {
+    var shows = G.rows(t.shows).sort(G.byDate);
+    var today = G.tourToday();
+    return h('div', { class: 'page tour' },
+      tourTopbar(t, id, 'addshows'),
+      dbBanner(),
+      h('h1', { class: 'tour-title' }, 'Add shows'),
+      canWrite() ? h('div', { class: 'btnrow' },
+        S.sample ? fileControl({
+          label: 'Upload the flyer', icon: 'flyer', cls: 'btn primary',
+          accept: imageAccept(),
+          onFiles: function (files) { readFlyer(id, files[0]); }
+        }) : unavailableBtn('Upload the flyer', 'btn primary'),
+        h('button', { class: 'btn ghost', type: 'button', onclick: function () { openShowSheet(id); } },
+          icon('plus', 18), 'Add by hand')) : null,
+      shows.length
+        ? [h('p', { class: 'count-line' }, plural(shows.length, 'show') + ' on the run'),
+           h('ul', { class: 'shows' }, shows.map(function (x) {
+             return h('li', null, h('button', {
+               class: 'show-row' + (x.date === today ? ' is-today' : ''), type: 'button',
+               onclick: function () { if (canWrite()) openShowSheet(id, x.id); }
+             }, dateBlock(x.date), whereBlock(x), canWrite() ? icon('chevron', 18) : h('span')));
+           }))]
+        : emptyState('No shows yet', canWrite()
+            ? 'Shoot the flyer and the dates fill themselves in, or add them one at a time.'
+            : 'No dates have been added.'),
+      canWrite() ? [
+        h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'Master Tour'),
+        h('p', { class: 'note', style: 'margin:2px 2px 10px' },
+          'Print your day sheets or itinerary to PDF in Master Tour (or export CSV) and upload it \u2014 ' +
+          'schedules fill in across every matching date.'),
+        h('div', { class: 'btnrow' }, tourImportControl(id)),
+        h('h3', { class: 'sh-h3' }, 'atVenu'),
+        h('p', { class: 'note', style: 'margin:2px 2px 10px' },
+          'After each show, upload the atVenu merch settlement on that show\u2019s income sheet \u2014 ' +
+          'net merch lands in income, the venue cut and per head come through as notes.'),
+        h('div', { class: 'btnrow' }, settlementSourceControl(id))
+      ] : null);
+  }
+
   function viewTour() {
     var id = S.route.id;
     var view = S.route.view || 'money';
@@ -2249,6 +2269,7 @@
         emptyState('This tour isn’t here anymore', 'It may have been deleted.'));
     }
     if (view === 'menu') return viewTourMenu(id, t);
+    if (view === 'addshows') return viewAddShows(id, t);
     if (view === 'details') return viewTourDetails(id, t);
     var c = G.calc(t);
     if (tab === 'debt' || tab === 'sheet') tab = 'expenses';
@@ -2392,11 +2413,11 @@
     var got = daySheetShowFor(t);
     if (!got) {
       return [h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
-        emptyState('No dates yet', 'Add shows and each one gets its own day sheet.'),
+        emptyState('No dates yet', 'Once shows are on the run, each one gets its own day sheet here.'),
         canWrite() ? h('div', { class: 'btnrow' },
-          h('button', { class: 'btn primary', type: 'button',
-            onclick: function () { go({ name: 'tour', id: id, view: 'money', tab: 'shows' }); } },
-            icon('plus', 18), 'Add shows')) : null];
+          h('button', { class: 'btn quiet', type: 'button',
+            onclick: function () { go({ name: 'tour', id: id, view: 'addshows' }); } },
+            icon('back', 18), 'Back to Add shows')) : null];
     }
     if (S.dsIndex == null || S.dsTour !== id || S.dsIndex >= got.shows.length) {
       S.dsIndex = got.index;
