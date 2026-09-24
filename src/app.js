@@ -7,7 +7,7 @@
   var LS_LAST = 'greenroom:last';
   var LS_LABELS = 'greenroom:labels';
   var LS_THEME = 'greenroom:theme';
-  var TABS = [['shows', 'Shows'], ['expenses', 'Expenses'], ['days', 'Day by day'], ['debt', 'Debt']];
+  var TABS = [['shows', 'Shows'], ['expenses', 'Expenses'], ['days', 'Day by day']];
   var VIEW_ONLY = 'You have view-only access, so changes can’t be saved.';
 
   var S = {
@@ -1431,6 +1431,10 @@
       })) : null,
       h('div', { class: 'ledger' }, rows),
       canWrite() ? h('p', { class: 'note' }, 'Tap a category to set what you expect it to cost and what you’ve already paid.') : null,
+      h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'What you owe going in'),
+      h('p', { class: 'note', style: 'margin:2px 2px 12px' },
+        'Card balances feed the categories above as money already spent. Loans and gear payments sit on top.'),
+      debtSection(id, t, 'tab'),
       charges.length ? h('button', {
         class: 'btn quiet block', type: 'button', style: 'margin-top:14px',
         onclick: function () { openChargesSheet(id); }
@@ -1967,10 +1971,10 @@
         emptyState('This tour isn’t here anymore', 'It may have been deleted.'));
     }
     var c = G.calc(t);
+    if (tab === 'debt') tab = 'expenses';
     var body;
     if (tab === 'days') body = tabDays(id, t, c);
     else if (tab === 'expenses') body = tabExpenses(id, t, c);
-    else if (tab === 'debt') body = debtSection(id, t, 'tab');
     else body = tabShows(id, t, c);
 
     return h('div', { class: 'page tour' },
