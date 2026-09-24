@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Greenroom tests</title>
+<style>
+  body { font: 15px/1.5 ui-monospace, Menlo, monospace; margin: 24px; background: #F4F6F2; color: #0E2019; }
+  h1 { font-size: 18px; }
+  #summary { font-weight: 700; margin: 12px 0 18px; }
+  .pass { color: #0FA35B; }
+  .fail { color: #E0413C; }
+  li { margin: 2px 0; }
+  .msg { color: #E0413C; padding-left: 20px; }
+</style>
+</head>
+<body>
+<h1>Greenroom tests</h1>
+<div id="summary">Running…</div>
+<ul id="list"></ul>
+<script src="../src/core.js"></script>
+<script src="tests.js"></script>
+<script src="../src/statements.js" onerror="void 0"></script>
+<script>
+(function () {
+  var extra = document.createElement('script');
+  extra.src = 'statement-tests.js';
+  extra.onload = render;
+  extra.onerror = render;
+  document.body.appendChild(extra);
+
+  function render() {
+    var r = globalThis.GR_TESTS ? globalThis.GR_TESTS.results : [];
+    if (globalThis.GR_STATEMENT_TESTS) r = r.concat(globalThis.GR_STATEMENT_TESTS.results);
+    var pass = r.filter(function (x) { return x.ok; }).length;
+    var fail = r.length - pass;
+    document.getElementById('summary').textContent =
+      pass + ' passed, ' + fail + ' failed, ' + r.length + ' total';
+    document.getElementById('summary').className = fail ? 'fail' : 'pass';
+    var list = document.getElementById('list');
+    r.forEach(function (x) {
+      var li = document.createElement('li');
+      li.className = x.ok ? 'pass' : 'fail';
+      li.textContent = (x.ok ? 'PASS  ' : 'FAIL  ') + x.name;
+      list.appendChild(li);
+      if (!x.ok) {
+        var m = document.createElement('div');
+        m.className = 'msg';
+        m.textContent = x.msg;
+        list.appendChild(m);
+      }
+    });
+    globalThis.GR_RESULT = { pass: pass, fail: fail, total: r.length,
+      failures: r.filter(function (x) { return !x.ok; }) };
+  }
+})();
+</script>
+</body>
+</html>

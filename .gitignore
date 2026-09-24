@@ -1,0 +1,6 @@
+.DS_Store
+dist/
+tools/bin/
+src/_stub.html
+*.datauri.txt
+.secrets/
