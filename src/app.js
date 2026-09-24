@@ -306,6 +306,7 @@
     S.loaded = true;
     if (first) restoreLastTour();
     render(first);
+    if (first && canWrite()) setTimeout(function () { purgeTrash(); }, 4000);
   }
   function loadLocal() {
     var data = null;
@@ -400,7 +401,7 @@
     if (S.route.name !== 'home') return;
     var last = lsGet(LS_LAST);
     var t = last ? S.tours.get(last) : null;
-    if (t && t.setupDone) S.route = { name: 'tour', id: last, view: 'menu' };
+    if (t && t.setupDone && !t.deletedAt) S.route = { name: 'tour', id: last, view: 'menu' };
   }
 
   function render(force) {
@@ -976,13 +977,42 @@
     }, icon(t === 'light' ? 'moon' : 'sun', 19));
   }
 
-  function allTourEntries() {
+  function allTourEntries(includeDeleted) {
     var entries = Array.from(S.tours.entries());
     Object.keys(S.pending).forEach(function (id) {
       if (!S.tours.has(id)) entries.push([id, S.pending[id]]);
     });
+    if (!includeDeleted) {
+      entries = entries.filter(function (e) { return !e[1].deletedAt; });
+    }
     entries.sort(function (a, b) { return (b[1].createdAt || 0) - (a[1].createdAt || 0); });
     return entries;
+  }
+
+  var TRASH_DAYS = 30;
+
+  function trashedEntries() {
+    return allTourEntries(true).filter(function (e) { return e[1].deletedAt; });
+  }
+  async function softDeleteTour(id) {
+    if (await api.update(id, { deletedAt: Date.now() })) {
+      toast('Deleted — it sits in Recently deleted for ' + TRASH_DAYS + ' days');
+      return true;
+    }
+    return false;
+  }
+  async function restoreTour(id) {
+    return api.update(id, { deletedAt: null });
+  }
+  // Old enough trash takes itself out, once per session.
+  async function purgeTrash() {
+    if (S.purged) return;
+    S.purged = true;
+    var cutoff = Date.now() - TRASH_DAYS * 86400e3;
+    var old = trashedEntries().filter(function (e) { return e[1].deletedAt < cutoff; });
+    for (var i = 0; i < old.length; i++) {
+      try { await api.remove(old[i][0]); } catch (e) { /* not ours to purge */ }
+    }
   }
 
   function artistOf(t) { return String(t && t.artist || '').trim(); }
@@ -992,6 +1022,62 @@
     if (S.role === 'editor') return 'Editor';
     if (S.mode === 'local') return store.lsOk ? 'Saved on this device' : 'Changes won’t be kept';
     return null;
+  }
+
+  /* Swipe a card left and a delete button rides in under it. Vertical
+     scrolling stays untouched; the gesture only engages sideways. */
+  function swipeable(card, onDelete, label) {
+    var OPEN = -92;
+    var wrap = h('div', { class: 'swipe-wrap' },
+      h('button', { class: 'swipe-del', type: 'button', 'aria-label': 'Delete ' + label,
+        onclick: function () { onDelete(); } }, 'Delete'),
+      card);
+    card.classList.add('swipe-card');
+    var startX = 0, startY = 0, base = 0, dragging = false, horizontal = null;
+    card.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      startX = e.clientX; startY = e.clientY;
+      base = card.classList.contains('open') ? OPEN : 0;
+      dragging = true; horizontal = null;
+      card.style.transition = 'none';
+    });
+    card.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var dx = e.clientX - startX, dy = e.clientY - startY;
+      if (horizontal == null) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        horizontal = Math.abs(dx) > Math.abs(dy);
+        if (horizontal) { try { card.setPointerCapture(e.pointerId); } catch (e2) {} }
+      }
+      if (!horizontal) { dragging = false; card.style.transition = ''; return; }
+      var x = Math.max(OPEN - 24, Math.min(0, base + dx));
+      card.style.transform = 'translateX(' + x + 'px)';
+    });
+    function settle(e) {
+      if (!dragging) return;
+      dragging = false;
+      card.style.transition = '';
+      if (horizontal) {
+        var dx = e.clientX - startX;
+        var open = (base + dx) < OPEN / 2;
+        card.classList.toggle('open', open);
+        card.style.transform = open ? 'translateX(' + OPEN + 'px)' : '';
+        if (horizontal && Math.abs(dx) > 8) card.__swiped = Date.now();
+      }
+    }
+    card.addEventListener('pointerup', settle);
+    card.addEventListener('pointercancel', function () {
+      dragging = false; card.style.transition = ''; 
+    });
+    // a tap right after a swipe is the swipe finishing, not a click
+    card.addEventListener('click', function (e) {
+      if (card.classList.contains('open') || (card.__swiped && Date.now() - card.__swiped < 350)) {
+        e.stopPropagation(); e.preventDefault();
+        card.classList.remove('open');
+        card.style.transform = '';
+      }
+    }, true);
+    return wrap;
   }
 
   /* The first screen: artists as folders, plus any tours that don't belong to
@@ -1019,13 +1105,33 @@
         : null,
       byArtist.size
         ? h('ul', { class: 'tour-list' }, Array.from(byArtist, function (pair) {
-            return h('li', null, artistCard(pair[0], pair[1]));
+            var cardEl = artistCard(pair[0], pair[1]);
+            if (!canWrite()) return h('li', null, cardEl);
+            return h('li', null, swipeable(cardEl, function () {
+              confirmSheet({
+                title: 'Delete everything for ' + pair[0] + '?',
+                body: plural(pair[1].length, 'tour') + ' move to Recently deleted for ' + TRASH_DAYS + ' days.',
+                action: 'Delete ' + plural(pair[1].length, 'tour'), danger: true,
+                onConfirm: async function () {
+                  for (var i = 0; i < pair[1].length; i++) {
+                    await api.update(pair[1][i][0], { deletedAt: Date.now() });
+                  }
+                  toast(pair[0] + ' moved to Recently deleted');
+                  return true;
+                }
+              });
+            }, pair[0]));
           }))
         : null,
       loose.length
         ? [h('p', { class: 'count-line', style: 'margin-top:22px' }, 'Not filed under an artist yet'),
            h('ul', { class: 'tour-list' },
-             loose.map(function (e) { return h('li', null, tourCard(e[0], e[1])); })),
+             loose.map(function (e) {
+               var cardEl = tourCard(e[0], e[1]);
+               if (!canWrite()) return h('li', null, cardEl);
+               return h('li', null, swipeable(cardEl, function () { softDeleteTour(e[0]).then(function () { render(true); }); },
+                 e[1].name || 'tour'));
+             })),
            canWrite() ? h('p', { class: 'note' },
              'Open one \u2192 \u22ef \u2192 Name and artist to file it.') : null]
         : null,
@@ -1036,6 +1142,8 @@
         : null,
       canWrite()
         ? h('div', { class: 'home-foot' },
+            trashedEntries().length ? h('button', { class: 'linkbtn', type: 'button', onclick: openTrash },
+              'Recently deleted (' + trashedEntries().length + ')') : null,
             h('button', { class: 'linkbtn', type: 'button', onclick: loadSample }, 'Load a sample tour'),
             h('span', { class: 'hint' }, 'A finished run you can poke at. Delete it whenever.'))
         : null);
@@ -1083,7 +1191,11 @@
         : null,
       entries.length
         ? h('ul', { class: 'tour-list' }, entries.map(function (e) {
-            return h('li', null, tourCard(e[0], e[1]));
+            var cardEl = tourCard(e[0], e[1]);
+            if (!canWrite()) return h('li', null, cardEl);
+            return h('li', null, swipeable(cardEl, function () {
+              softDeleteTour(e[0]).then(function () { render(true); });
+            }, e[1].name || 'tour'));
           }))
         : emptyState('No tours here yet', 'Add ' + name + '’s first run.'));
   }
@@ -3200,6 +3312,46 @@
     return String(t.updateSentOn || '') !== G.ymd(now);
   }
 
+  function openTrash() {
+    function build() {
+      var list = trashedEntries();
+      openSheet(function () {
+        return [
+          h('h2', { class: 'sh-title' }, 'Recently deleted'),
+          h('p', { class: 'sh-sub' }, 'Deleted tours wait here for ' + TRASH_DAYS +
+            ' days, then clear out on their own.'),
+          list.length ? h('div', { class: 'ledger' }, list.map(function (e) {
+            var id = e[0], t = e[1];
+            var days = Math.max(0, TRASH_DAYS - Math.floor((Date.now() - t.deletedAt) / 86400e3));
+            return h('div', { class: 'row' },
+              h('div', { class: 'row-label' },
+                (t.artist ? t.artist + ' — ' : '') + (t.name || 'Untitled tour'),
+                h('span', { class: 'hint' }, days ? 'Clears in ' + plural(days, 'day') : 'Clearing soon')),
+              h('button', { class: 'btn sm quiet', type: 'button',
+                onclick: async function () {
+                  if (await restoreTour(id)) { toast('Restored'); build(); render(); }
+                } }, 'Restore'),
+              h('button', { class: 'iconbtn sm', type: 'button',
+                'aria-label': 'Delete forever',
+                onclick: function () {
+                  confirmSheet({
+                    title: 'Delete ' + (t.name || 'this tour') + ' forever?',
+                    body: 'No coming back from this one.',
+                    action: 'Delete forever', danger: true,
+                    onConfirm: async function () {
+                      var ok = await api.remove(id);
+                      if (ok) { toast('Gone for good'); setTimeout(build, 200); }
+                      return ok;
+                    }
+                  });
+                } }, icon('trash', 18)));
+          })) : emptyState('Nothing here', 'Deleted tours land here before they’re gone for good.')
+        ];
+      }, { label: 'Recently deleted' });
+    }
+    build();
+  }
+
   function openRename(id) {
     var t = getTour(id);
     if (!t) return;
@@ -3255,12 +3407,12 @@
             onclick: function () {
               confirmSheet({
                 title: 'Delete ' + name + '?',
-                body: 'This removes its costs, debt, shows and income' +
-                  (S.mode === 'db' ? ' for everyone it’s shared with.' : '.'),
+                body: 'It moves to Recently deleted for ' + TRASH_DAYS + ' days, then it’s gone for good' +
+                  (S.mode === 'db' ? ' — for everyone it’s shared with.' : '.'),
                 action: 'Delete tour', danger: true,
                 onConfirm: async function () {
-                  var ok = await api.remove(id);
-                  if (ok) { delete S.lastNet[id]; delete S.lastState[id]; go({ name: 'home' }); toast('Tour deleted'); }
+                  var ok = await api.update(id, { deletedAt: Date.now() });
+                  if (ok) { delete S.lastNet[id]; delete S.lastState[id]; go({ name: 'home' }); toast('Moved to Recently deleted'); }
                   return ok;
                 }
               });
