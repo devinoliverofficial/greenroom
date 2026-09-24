@@ -2306,12 +2306,164 @@
       }, icon('copy', 18), 'Copy day sheet');
     }
 
+    var gl = guestsFor(t, id, s.id);
+    var gsum = G.guestSummary(gl);
+    var guestBtn = h('div', { class: 'ledger', style: 'margin-top:14px' },
+      h('button', { class: 'row rowbtn', type: 'button',
+        onclick: function () { openGuestList(id, s.id); } },
+        h('div', { class: 'row-label' }, 'Guest list',
+          h('span', { class: 'hint' }, gsum.names
+            ? plural(gsum.names, 'name') + ' \u00b7 ' + plural(gsum.tickets, 'ticket')
+            : 'Anyone on the tour can add names')),
+        icon('chevron', 18)));
+
     return [nav,
       canWrite() ? h('div', { class: 'btnrow', style: 'margin-top:14px' },
         h('button', { class: 'btn quiet', type: 'button',
           onclick: function () { openDaySheetEditor(id, s.id); } },
           icon('edit', 18), lines.length ? 'Edit day sheet' : 'Fill in the day sheet')) : null,
-      body, copyBtn];
+      body, guestBtn, copyBtn];
+  }
+
+  /* Guests live in their own table on the real backend (so GA can add names
+     without being able to touch the money); on-device they ride the tour doc. */
+  function guestsFor(t, tourId, showId) {
+    if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.guestsFor) {
+      return window.GR_BACKEND.guestsFor(tourId, showId);
+    }
+    var bag = t && G.isObj(t.guests) && G.isObj(t.guests[showId]) ? t.guests[showId] : {};
+    return G.rows(bag);
+  }
+  async function saveGuest(tourId, showId, guest) {
+    if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.saveGuest) {
+      await window.GR_BACKEND.saveGuest(tourId, showId, guest);
+      return true;
+    }
+    var patch = { guests: {} };
+    patch.guests[showId] = {};
+    patch.guests[showId][guest.id] = {
+      firstName: guest.firstName, lastName: guest.lastName, affiliation: guest.affiliation,
+      email: guest.email, phone: guest.phone, qty: guest.qty, passType: guest.passType,
+      createdAt: Date.now()
+    };
+    return api.update(tourId, patch);
+  }
+  async function removeGuest(tourId, showId, guestId) {
+    if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.removeGuest) {
+      await window.GR_BACKEND.removeGuest(guestId);
+      return true;
+    }
+    var patch = { guests: {} };
+    patch.guests[showId] = {};
+    patch.guests[showId][guestId] = null;
+    return api.update(tourId, patch);
+  }
+
+  function openGuestList(tourId, showId) {
+    var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.guestsFor);
+    var myUid = backend ? window.GR_BACKEND.uid() : null;
+
+    function build() {
+      var t = getTour(tourId);
+      var show = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : {};
+      var list = guestsFor(t, tourId, showId);
+      var sum = G.guestSummary(list);
+      var f = { firstName: '', lastName: '', affiliation: '', email: '', phone: '',
+        qty: 1, passType: 'GA' };
+
+      function textIn(key, ph, extra) {
+        return h('input', Object.assign({
+          class: 'input', type: 'text', value: f[key], maxlength: 80,
+          autocomplete: 'off', placeholder: ph,
+          oninput: function (e) { f[key] = e.target.value; }
+        }, extra || {}));
+      }
+      var qtySel = h('select', { class: 'input', 'aria-label': 'How many tickets',
+        onchange: function (e) { f.qty = G.num(e.target.value) || 1; } });
+      for (var i = 1; i <= 20; i++) qtySel.append(h('option', { value: String(i) }, String(i)));
+      var passSel = h('select', { class: 'input', 'aria-label': 'Pass type',
+        onchange: function (e) { f.passType = e.target.value; } });
+      G.GUEST_PASSES.forEach(function (ptype) { passSel.append(h('option', { value: ptype }, ptype)); });
+
+      var form = h('form', { class: 'card addform', novalidate: true,
+        onsubmit: async function (e) {
+          e.preventDefault();
+          if (!f.firstName.trim() && !f.lastName.trim()) {
+            toast('Give the guest at least a name'); return;
+          }
+          blurActive();
+          try {
+            await saveGuest(tourId, showId, {
+              id: newId(),
+              firstName: f.firstName.trim(), lastName: f.lastName.trim(),
+              affiliation: f.affiliation.trim(), email: f.email.trim(), phone: f.phone.trim(),
+              qty: Math.max(1, Math.min(20, f.qty)), passType: f.passType
+            });
+            toast('On the list: ' + (f.firstName + ' ' + f.lastName).trim());
+            setTimeout(build, backend ? 500 : 150); // let the refetch land
+          } catch (e2) { toast('Couldn\u2019t add them. Try again.'); }
+        } },
+        h('div', { class: 'field-row' },
+          field('First name', textIn('firstName', 'Devin')),
+          field('Last name', textIn('lastName', 'Oliver'))),
+        field('Affiliation', textIn('affiliation', 'Label, press, family\u2026')),
+        h('div', { class: 'field-row' },
+          field('Contact email', textIn('email', 'Optional', { type: 'email', inputmode: 'email' })),
+          field('Contact phone', textIn('phone', 'Optional', { type: 'tel', inputmode: 'tel' }))),
+        h('div', { class: 'field-row' },
+          field('Tickets', qtySel),
+          field('Pass type', passSel)),
+        h('button', { class: 'btn primary block', type: 'submit' }, 'Add to the list'));
+
+      var rowsOut = list.slice().sort(function (a, b) {
+        return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
+          String(a.firstName || '').localeCompare(String(b.firstName || ''));
+      }).map(function (g) {
+        var name = [g.firstName, g.lastName].map(function (x) { return String(x || '').trim(); })
+          .filter(Boolean).join(' ') || 'Guest';
+        var mine = !backend || (g.addedBy && g.addedBy === myUid);
+        var canManage = canWrite() || mine;
+        var sub = [String(g.affiliation || '').trim(),
+          [String(g.email || '').trim(), String(g.phone || '').trim()].filter(Boolean).join(' \u00b7 ')]
+          .filter(Boolean).join(' \u00b7 ');
+        return h('div', { class: 'row' },
+          h('div', { class: 'row-label' }, name,
+            sub ? h('span', { class: 'hint' }, sub) : null),
+          h('span', { class: 'guest-pass' + (g.passType === 'All Access' ? ' aa' : '') },
+            'x' + Math.max(1, Math.min(20, G.num(g.qty) || 1)) + ' \u00b7 ' + (g.passType || 'GA')),
+          canManage ? h('button', { class: 'iconbtn sm', type: 'button',
+            'aria-label': 'Remove ' + name,
+            onclick: async function () {
+              try { await removeGuest(tourId, showId, g.id); toast('Off the list'); setTimeout(build, backend ? 500 : 150); }
+              catch (e2) { toast('Only the tour manager can remove someone else\u2019s guest.'); }
+            } }, icon('trash', 16)) : null);
+      });
+
+      var copyBtn = list.length ? h('button', {
+        class: 'btn ghost block', type: 'button', style: 'margin-top:12px',
+        onclick: async function () {
+          var text = G.guestListText(show, list);
+          var ta = h('textarea', { class: 'sr', readonly: true, value: text });
+          document.body.appendChild(ta);
+          var ok = await copyText(text, ta);
+          ta.remove();
+          toast(ok ? 'Guest list copied for the box office' : 'Press and hold to copy');
+        }
+      }, icon('copy', 18), 'Copy for the box office') : null;
+
+      openSheet(function () {
+        return [
+          h('h2', { class: 'sh-title' }, 'Guest list \u2014 ' + (show.city || 'Show')),
+          h('p', { class: 'sh-sub' }, sum.names
+            ? plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket')
+            : 'Anyone on the tour can add names here \u2014 band, crew, GA, everyone.'),
+          form,
+          rowsOut.length ? h('div', { class: 'ledger' }, rowsOut) : null,
+          copyBtn
+        ];
+      }, { label: 'Guest list' });
+    }
+    build();
   }
 
   function openDaySheetEditor(tourId, showId) {

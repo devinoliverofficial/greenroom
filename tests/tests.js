@@ -501,6 +501,34 @@
     eq(text.split('\n')[1], 'Doors: 7:00 PM', 'body');
   });
 
+  /* ============ Guest list ============ */
+
+  test('the guest summary counts names and tickets, clamped sane', function () {
+    var s = G.guestSummary([
+      { firstName: 'A', qty: 2 }, { firstName: 'B', qty: 0 }, { firstName: 'C', qty: 99 }
+    ]);
+    eq(s.names, 3, 'names');
+    eq(s.tickets, 23, 'tickets: 2 + 1 (floor) + 20 (cap)');
+  });
+
+  test('the box-office text sorts by last name and totals the door', function () {
+    var text = G.guestListText(
+      { date: '2026-05-01', city: 'Detroit, MI', venue: 'The Fillmore' },
+      [
+        { firstName: 'Devin', lastName: 'Oliver', qty: 2, passType: 'All Access' },
+        { firstName: 'Sam', lastName: 'Adams', qty: 1, passType: 'GA', affiliation: 'Label' }
+      ]);
+    var lines = text.split('\n');
+    eq(lines[0], 'Guest list — Detroit, MI, The Fillmore · Fri, May 1', 'header');
+    eq(lines[1], 'Adams, Sam x1 — GA (Label)', 'sorted by last name');
+    eq(lines[2], 'Oliver, Devin x2 — All Access', 'row');
+    eq(lines[3], '2 names · 3 tickets', 'door total');  // plural forms
+  });
+
+  test('pass types are the four laminate levels', function () {
+    eq(G.GUEST_PASSES.join('|'), 'GA|VIP|All Access|Photo Pass', 'passes');
+  });
+
   /* ============ Settlement sheets ============ */
 
   test('a settlement fills only the numbers it actually found', function () {

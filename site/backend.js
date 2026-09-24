@@ -26,7 +26,7 @@
 
   var sb = null;           // supabase client
   var session = null;
-  var cache = { tours: new Map(), labels: new Map() };
+  var cache = { tours: new Map(), labels: new Map(), guests: [] };
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
 
@@ -69,6 +69,8 @@
     var labels = await sb.from('labels').select('id, doc');
     if (labels.error) throw labels.error;
     cache.labels = new Map(labels.data.map(function (r) { return [r.id, r.doc]; }));
+    var guests = await sb.from('guests').select('*');
+    cache.guests = guests.error ? cache.guests : guests.data;
     emit('tours'); emit('labels');
   }
   function scheduleRefetch() {
@@ -245,6 +247,33 @@
         .eq('tour_id', tourId).eq('invited_email', email);
       if (q.error) throw mapError(q.error);
     },
+    uid: function () { return session && session.user ? session.user.id : null; },
+    guestsFor: function (tourId, showId) {
+      return cache.guests.filter(function (g) {
+        return g.tour_id === tourId && g.show_id === showId;
+      }).map(function (g) {
+        return { id: g.id, firstName: g.first_name, lastName: g.last_name,
+          affiliation: g.affiliation, email: g.email, phone: g.phone,
+          qty: g.qty, passType: g.pass_type, addedBy: g.added_by };
+      });
+    },
+    saveGuest: async function (tourId, showId, guest) {
+      var row = {
+        id: guest.id, tour_id: tourId, show_id: showId,
+        first_name: guest.firstName, last_name: guest.lastName,
+        affiliation: guest.affiliation, email: guest.email, phone: guest.phone,
+        qty: guest.qty, pass_type: guest.passType
+      };
+      var q = await sb.from('guests').upsert(row);
+      if (q.error) throw mapError(q.error);
+      scheduleRefetch();
+    },
+    removeGuest: async function (guestId) {
+      var q = await sb.from('guests').delete().eq('id', guestId).select('id');
+      if (q.error) throw mapError(q.error);
+      if (!q.data || !q.data.length) throw err('permission');
+      scheduleRefetch();
+    },
     signOut: async function () {
       try { await sb.auth.signOut(); } catch (e) { /* going anyway */ }
       location.reload();
@@ -380,6 +409,7 @@
     sb.channel('greenroom')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tours' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, scheduleRefetch)
       .subscribe();
     resolvers.db(db);
     resolvers.user(user);

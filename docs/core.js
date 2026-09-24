@@ -484,6 +484,50 @@
     return head.concat(daySheetLines(show)).join('\n');
   }
 
+  /* ---------------- Guest list ---------------- */
+
+  var GUEST_PASSES = ['GA', 'VIP', 'All Access', 'Photo Pass'];
+
+  function guestSummary(list) {
+    var names = 0, tickets = 0;
+    (list || []).forEach(function (g) {
+      if (!isObj(g)) return;
+      names += 1;
+      tickets += Math.max(1, Math.min(20, num(g.qty) || 1));
+    });
+    return { names: names, tickets: tickets };
+  }
+
+  // The list the way the box office wants it: "Last, First x2 — VIP".
+  function guestListText(show, list) {
+    var head = [];
+    if (show) {
+      var city = String(show.city || '').trim();
+      var venue = String(show.venue || '').trim();
+      var top = 'Guest list — ' + ([city, venue].filter(Boolean).join(', ') || 'show');
+      if (parseDay(show.date)) {
+        top += ' · ' + new Intl.DateTimeFormat('en-US',
+          { weekday: 'short', month: 'short', day: 'numeric' }).format(parseDay(show.date));
+      }
+      head.push(top);
+    }
+    var rows = (list || []).filter(isObj).slice().sort(function (a, b) {
+      return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
+        String(a.firstName || '').localeCompare(String(b.firstName || ''));
+    }).map(function (g) {
+      var name = [String(g.lastName || '').trim(), String(g.firstName || '').trim()]
+        .filter(Boolean).join(', ') || 'Guest';
+      var qty = Math.max(1, Math.min(20, num(g.qty) || 1));
+      var line = name + ' x' + qty;
+      if (g.passType) line += ' — ' + g.passType;
+      if (String(g.affiliation || '').trim()) line += ' (' + String(g.affiliation).trim() + ')';
+      return line;
+    });
+    var sum = guestSummary(list);
+    if (rows.length) rows.push(sum.names + (sum.names === 1 ? ' name' : ' names') + ' · ' + sum.tickets + (sum.tickets === 1 ? ' ticket' : ' tickets'));
+    return head.concat(rows).join('\n');
+  }
+
   /* ---------------- Settlement sheets ---------------- */
 
   // What the reader hands back from a promoter settlement, made safe: only
@@ -581,6 +625,7 @@
     balanceSeries: balanceSeries, latestChange: latestChange,
     normalizeSettlement: normalizeSettlement,
     DS_AMENITIES: DS_AMENITIES, daySheetLines: daySheetLines, daySheetText: daySheetText,
+    GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,
     dailyUpdate: dailyUpdate
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
