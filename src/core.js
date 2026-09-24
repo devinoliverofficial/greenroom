@@ -528,6 +528,58 @@
     return head.concat(rows).join('\n');
   }
 
+  /* ---------------- Tour software imports (Master Tour etc.) ---------------- */
+
+  function cleanStr(v, cap) { return String(v == null ? '' : v).trim().slice(0, cap || 90); }
+  function cleanPairList(v) {
+    if (!Array.isArray(v)) return [];
+    return v.slice(0, 12).map(function (r) {
+      return isObj(r) ? { band: cleanStr(r.band, 60), time: cleanStr(r.time, 20) } : null;
+    }).filter(function (r) { return r && (r.band || r.time); });
+  }
+  function cleanYesNo(v) {
+    var t = String(v == null ? '' : v).toLowerCase();
+    return t === 'yes' ? 'yes' : t === 'no' ? 'no' : '';
+  }
+
+  // What the reader pulls out of a Master Tour day sheet or itinerary export:
+  // one entry per date, only real fields, nothing invented.
+  function normalizeTourImport(out) {
+    var src = isObj(out) ? out : {};
+    var raw = Array.isArray(src.days) ? src.days : (Array.isArray(out) ? out : []);
+    var days = [];
+    raw.slice(0, 90).forEach(function (r) {
+      if (!isObj(r)) return;
+      var date = cleanStr(r.date, 10);
+      if (!parseDay(date)) return;
+      var sheet = {
+        loadIn: cleanStr(r.loadIn, 40), vip: cleanStr(r.vip, 90), doors: cleanStr(r.doors, 40),
+        lobbyCall: cleanStr(r.lobbyCall, 40), busCall: cleanStr(r.busCall, 40),
+        wifi: cleanStr(r.wifi, 90), parking: cleanStr(r.parking, 160),
+        driveNext: cleanStr(r.driveNext, 60), notes: cleanStr(r.notes, 200),
+        soundchecks: cleanPairList(r.soundchecks), setTimes: cleanPairList(r.setTimes)
+      };
+      DS_AMENITIES.forEach(function (a) { sheet[a[0]] = cleanYesNo(r[a[0]]); });
+      var any = daySheetLines({ daySheet: sheet }).length > 0;
+      if (!any) return;
+      days.push({ date: date, city: cleanStr(r.city, 80), venue: cleanStr(r.venue, 80), sheet: sheet });
+    });
+    return { days: days, found: days.length };
+  }
+
+  // Lay an imported sheet over what's already there: a field the import knows
+  // wins; a field it doesn't stays as the tour manager wrote it.
+  function mergeDaySheet(existing, incoming) {
+    var out = {};
+    var ex = isObj(existing) ? existing : {};
+    ['loadIn', 'vip', 'doors', 'lobbyCall', 'busCall', 'wifi', 'parking', 'driveNext', 'notes']
+      .forEach(function (k) { out[k] = incoming[k] || cleanStr(ex[k], 200); });
+    out.soundchecks = incoming.soundchecks.length ? incoming.soundchecks : cleanPairList(ex.soundchecks);
+    out.setTimes = incoming.setTimes.length ? incoming.setTimes : cleanPairList(ex.setTimes);
+    DS_AMENITIES.forEach(function (a) { out[a[0]] = incoming[a[0]] || cleanYesNo(ex[a[0]]); });
+    return out;
+  }
+
   /* ---------------- Settlement sheets ---------------- */
 
   // What the reader hands back from a promoter settlement, made safe: only
@@ -626,6 +678,7 @@
     normalizeSettlement: normalizeSettlement,
     DS_AMENITIES: DS_AMENITIES, daySheetLines: daySheetLines, daySheetText: daySheetText,
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,
+    normalizeTourImport: normalizeTourImport, mergeDaySheet: mergeDaySheet,
     dailyUpdate: dailyUpdate
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

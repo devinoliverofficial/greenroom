@@ -2394,7 +2394,8 @@
       canWrite() ? h('div', { class: 'btnrow', style: 'margin-top:14px' },
         h('button', { class: 'btn quiet', type: 'button',
           onclick: function () { openDaySheetEditor(id, s.id); } },
-          icon('edit', 18), lines.length ? 'Edit day sheet' : 'Fill in the day sheet')) : null,
+          icon('edit', 18), lines.length ? 'Edit day sheet' : 'Fill in the day sheet'),
+        tourImportControl(id)) : null,
       body, guestBtn, copyBtn];
   }
 
@@ -3485,13 +3486,158 @@
     }, { label: 'Review shows from the flyer' });
   }
 
+  /* ---------------- Master Tour import ---------------- */
+
+  function tourImportPrompt(body, isImage) {
+    return [
+      isImage
+        ? 'The attached image(s) are exported day sheets or an itinerary from tour management software (Master Tour or similar).'
+        : 'The text below was pulled out of exported day sheets or an itinerary from tour management software (Master Tour or similar).',
+      'Pull out the schedule for every date shown.',
+      '',
+      'Reply with only a JSON object in this exact shape:',
+      '{"days":[{"date":"2026-05-01","city":"Detroit, MI","venue":"The Fillmore",',
+      '  "loadIn":"2:00 PM","soundchecks":[{"band":"In This Moment","time":"4:00 PM"}],',
+      '  "vip":"","doors":"7:00 PM","setTimes":[{"band":"Support","time":"8:00 PM"}],',
+      '  "lobbyCall":"","busCall":"","wifi":"","parking":"",',
+      '  "greenrooms":null,"showers":null,"productionOffice":null,"laundry":null,',
+      '  "driveNext":"","notes":""}]}',
+      '',
+      'Rules:',
+      '- One entry per calendar date. date is YYYY-MM-DD using the year printed.',
+      '- Fill a field ONLY if the export actually shows it; otherwise leave it empty or null. Never invent.',
+      '- Times exactly as printed. Per-band soundchecks and set times as separate list entries.',
+      '- greenrooms/showers/productionOffice/laundry: "yes" or "no" only if the export states it.',
+      '- driveNext: the drive or mileage to the next city if shown.',
+      '- Skip days off unless they carry hotel or travel info worth keeping (put it in notes).',
+      'If nothing readable, reply {"days":[]}.',
+      isImage ? '' : '\nExport text:\n' + body
+    ].join('\n');
+  }
+
+  function tourImportControl(tourId) {
+    if (!S.sample) return null;
+    var busy = false;
+    var control = fileControl({
+      label: 'Import from Master Tour', icon: 'card', cls: 'btn ghost',
+      accept: 'application/pdf,.pdf,.csv,.tsv,text/csv,' + imageAccept(), multiple: true,
+      onFiles: async function (files) {
+        if (busy) return;
+        busy = true;
+        var btn = control[0];
+        var was = btn.textContent;
+        btn.textContent = 'Reading the export\u2026';
+        btn.disabled = true;
+        try {
+          var pdfFile = files.filter(function (f) { return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); })[0];
+          var textFile = files.filter(function (f) { return /\.csv$|\.tsv$|text\//i.test(f.name + ' ' + f.type); })[0];
+          var images = files.filter(function (f) { return /^image\//i.test(f.type); });
+          var out;
+          if (pdfFile) {
+            var got = await pdfToText(pdfFile);
+            if (got.text.replace(/\s/g, '').length > 60) {
+              out = await S.sample.json(tourImportPrompt(got.text.slice(0, 60000), false), { cache: false });
+            } else {
+              var pages = await pdfToImages(got.doc, got.pages);
+              out = await S.sample.json(tourImportPrompt('', true), { images: pages, cache: false });
+            }
+          } else if (textFile) {
+            out = await S.sample.json(tourImportPrompt((await textFile.text()).slice(0, 60000), false), { cache: false });
+          } else if (images.length) {
+            out = await S.sample.json(tourImportPrompt('', true), { images: images, cache: false });
+          } else {
+            toast('Use a PDF, a CSV, or screenshots of the export.');
+            return;
+          }
+          var r = G.normalizeTourImport(out);
+          if (!r.found) { toast('Nothing readable in that export. Try the day sheet PDF.'); return; }
+          openTourImportReview(tourId, r.days);
+        } catch (e) {
+          var code = e && e.code;
+          if (code === 'cancelled') return;
+          if (SAMPLE_GONE.indexOf(code) >= 0) { S.sample = null; toast('Reading isn\u2019t available right now.'); return; }
+          toast(sampleErrorMessage(code, 'statement'));
+        } finally {
+          busy = false;
+          btn.textContent = was;
+          btn.disabled = false;
+        }
+      }
+    });
+    return control;
+  }
+
+  function openTourImportReview(tourId, days) {
+    var t = getTour(tourId);
+    var byDate = {};
+    G.rows(t && t.shows).forEach(function (x) { if (x.date) byDate[x.date] = x; });
+    days.forEach(function (d) {
+      d.show = byDate[d.date] || null;
+      d.keep = !!d.show;
+    });
+    var matched = days.filter(function (d) { return d.show; });
+    var loose = days.filter(function (d) { return !d.show; });
+
+    openSheet(function () {
+      var applyBtn = h('button', { class: 'btn primary block', type: 'button' }, '');
+      function refresh() {
+        var n = days.filter(function (d) { return d.keep && d.show; }).length;
+        applyBtn.textContent = n ? 'Fill ' + plural(n, 'day sheet') : 'Pick the days to fill';
+        applyBtn.disabled = !n;
+      }
+      applyBtn.addEventListener('click', async function () {
+        var patch = {};
+        var n = 0;
+        days.forEach(function (d) {
+          if (!d.keep || !d.show) return;
+          patch[d.show.id] = { daySheet: G.mergeDaySheet(d.show.daySheet, d.sheet) };
+          n += 1;
+        });
+        if (!n) return;
+        if (await api.update(tourId, { shows: patch })) {
+          closeSheet();
+          toast(plural(n, 'day sheet') + ' filled from the export');
+          render(true);
+        }
+      });
+
+      var rows = matched.map(function (d) {
+        var wrap = h('div', { class: 'rv-row' });
+        var cb = h('input', { type: 'checkbox', class: 'rv-check',
+          'aria-label': 'Fill ' + d.date,
+          onchange: function (e) { d.keep = e.target.checked; wrap.classList.toggle('off', !d.keep); refresh(); } });
+        cb.checked = d.keep;
+        var preview = G.daySheetLines({ daySheet: d.sheet }).slice(0, 3).join(' \u00b7 ');
+        wrap.append(cb, h('div', { class: 'rv-fields' },
+          h('div', { class: 'rv-head' },
+            h('span', { class: 'rv-name' }, (d.show.city || d.city || 'Show') + ' \u00b7 ' + dayMD(d.date))),
+          h('div', { class: 'rv-sub' }, preview || 'Schedule details')));
+        return wrap;
+      });
+      refresh();
+      return [
+        h('h2', { class: 'sh-title' }, 'Found ' + plural(days.length, 'day')),
+        h('p', { class: 'sh-sub' }, 'Anything the export knows fills in; anything you already wrote by hand stays.'),
+        rows.length ? h('div', { class: 'review' }, rows)
+          : emptyState('No matching dates', 'None of these days line up with shows on this tour.'),
+        loose.length ? h('p', { class: 'note' },
+          plural(loose.length, 'day') + ' in the export (' +
+          loose.map(function (d) { return dayMD(d.date); }).join(', ') +
+          ') ' + (loose.length === 1 ? 'has' : 'have') + ' no show on this tour, so ' +
+          (loose.length === 1 ? 'it was' : 'they were') + ' left out.') : null,
+        h('div', { class: 'stack' }, applyBtn,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+      ];
+    }, { label: 'Import from Master Tour' });
+  }
+
   /* ---------------- Settlement sheets ---------------- */
 
   function settlementPrompt(body, isImage, show) {
     return [
       isImage
-        ? 'The attached image(s) are a concert settlement sheet from a promoter or venue.'
-        : 'The text below was pulled out of a concert settlement sheet from a promoter or venue.',
+        ? 'The attached image(s) are a concert settlement sheet from a promoter or venue, or a merch settlement report (for example from atVenu).'
+        : 'The text below was pulled out of a concert settlement sheet from a promoter or venue, or a merch settlement report (for example from atVenu).',
       show && show.city ? 'The show: ' + show.city + (show.venue ? ', ' + show.venue : '') +
         (show.date ? ', ' + show.date + '.' : '.') : '',
       'Pull out what the ARTIST earned, and the story of the night.',
@@ -3505,13 +3651,14 @@
       '- guarantee: the contracted guarantee, before any tax or deductions.',
       '- backend: overage / points / percentage-of-door the artist hit, past the guarantee.',
       '- misc: anything else paid to the artist, with miscLabel naming it.',
-      '- merch: the artist’s merch money only if the sheet settles merch.',
+      '- merch: the artist’s NET merch money after any venue cut, if the sheet settles merch. A merch-only report fills merch and leaves the rest null.',
       '- vip, buyouts, catering: only if the sheet shows them as money paid to the artist.',
       '',
       'Notes: short label/value pairs, only for things the sheet actually shows. Use these labels when present:',
       '- "Attendance" (e.g. "734 of 900"), "Pre-sale tickets", "Door sales", "Comps",',
       '- "Tax withheld" (amount, and what the artist walked with if shown),',
       '- "Back end" (whether the artist hit it, and the math if shown),',
+      '- "Gross merch", "Venue merch cut" (the % or amount the venue took), "Merch per head" (dollars per attendee if shown or computable from attendance),',
       '- "Ticket price", "Gross box office", and anything else a touring artist would want flagged.',
       'Keep every value under a dozen words. If the sheet is unreadable, reply {"income":{},"notes":[]}.',
       isImage ? '' : '\nSettlement text:\n' + body

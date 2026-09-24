@@ -501,6 +501,38 @@
     eq(text.split('\n')[1], 'Doors: 7:00 PM', 'body');
   });
 
+  /* ============ Master Tour import ============ */
+
+  test('a tour-software export becomes one clean entry per real date', function () {
+    var r = G.normalizeTourImport({ days: [
+      { date: '2026-05-01', city: 'Detroit, MI', venue: 'The Fillmore',
+        loadIn: '2:00 PM', doors: '7:00 PM',
+        setTimes: [{ band: 'In This Moment', time: '9:15 PM' }],
+        greenrooms: 'YES', showers: 'nope', driveNext: '4h 20m' },
+      { date: 'not a date', doors: '8:00 PM' },
+      { date: '2026-05-02' }  // nothing on it
+    ] });
+    eq(r.found, 1, 'only the real, non-empty day survives');
+    eq(r.days[0].date, '2026-05-01', 'date');
+    eq(r.days[0].sheet.loadIn, '2:00 PM', 'load in');
+    eq(r.days[0].sheet.greenrooms, 'yes', 'yes normalized');
+    eq(r.days[0].sheet.showers, '', 'nonsense answer dropped');
+    eq(r.days[0].sheet.setTimes[0].band, 'In This Moment', 'set time kept');
+  });
+
+  test('an import fills gaps but never erases what the manager wrote', function () {
+    var merged = G.mergeDaySheet(
+      { loadIn: '1:00 PM', wifi: 'OldNet / pass', busCall: '11:00 PM',
+        setTimes: [{ band: 'Us', time: '9:00 PM' }] },
+      G.normalizeTourImport({ days: [{ date: '2026-05-01', loadIn: '2:00 PM', doors: '7:00 PM',
+        soundchecks: [], setTimes: [] }] }).days[0].sheet);
+    eq(merged.loadIn, '2:00 PM', 'the import wins where it knows');
+    eq(merged.doors, '7:00 PM', 'new field lands');
+    eq(merged.wifi, 'OldNet / pass', 'unknown field keeps the old value');
+    eq(merged.busCall, '11:00 PM', 'same');
+    eq(merged.setTimes[0].band, 'Us', 'an empty import list never wipes a real one');
+  });
+
   /* ============ Guest list ============ */
 
   test('the guest summary counts names and tickets, clamped sane', function () {
