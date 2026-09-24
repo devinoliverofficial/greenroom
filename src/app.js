@@ -1145,7 +1145,9 @@
             trashedEntries().length ? h('button', { class: 'linkbtn', type: 'button', onclick: openTrash },
               'Recently deleted (' + trashedEntries().length + ')') : null,
             h('button', { class: 'linkbtn', type: 'button', onclick: loadSample }, 'Load a sample tour'),
-            h('span', { class: 'hint' }, 'A finished run you can poke at. Delete it whenever.'))
+            h('span', { class: 'hint' }, 'A finished run you can poke at. Delete it whenever.'),
+            h('span', { class: 'hint', style: 'margin-top:8px;opacity:.6' },
+              'Version ' + (window.GREENROOM_BUILD || 'dev')))
         : null);
   }
 
@@ -3403,14 +3405,14 @@
           'In Master Tour: print your day sheets or itinerary to PDF (or export CSV), then upload it here. ' +
           'Load-ins, soundchecks, doors, set times, bus calls and drives fill in across the whole run. ' +
           'Anything you already typed by hand is kept.'),
-        mt || h('p', { class: 'note' }, 'Sign in to read files.'),
+        mt,
 
         h('h3', { class: 'sh-h3' }, 'atVenu'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
           'After the show, export the merch settlement from atVenu (or screenshot the register report) ' +
           'and upload it on the show you’re logging. Net merch lands in income; gross, the venue’s cut ' +
           'and the per head come through as notes.'),
-        av || h('p', { class: 'note' }, 'Sign in to read files.'),
+        av,
 
         h('h3', { class: 'sh-h3' }, 'About live sync'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
@@ -3718,8 +3720,19 @@
     ].join('\n');
   }
 
+  function unavailableBtn(label, cls) {
+    return h('button', { class: cls || 'btn ghost', type: 'button',
+      onclick: function () {
+        readFail('Reading needs an account',
+          S.mode === 'db'
+            ? 'Reading files runs on Greenroom\u2019s servers, so it needs you signed in. Try again in a moment, or reopen the app.'
+            : 'You\u2019re using Greenroom on this phone only. Sign out and create an account to read flyers, statements and exports.',
+          null, null);
+      } }, icon('card', 18), label);
+  }
+
   function tourImportControl(tourId) {
-    if (!S.sample) return null;
+    if (!S.sample) return unavailableBtn('Import from Master Tour', 'btn ghost');
     var busy = false;
     var control = fileControl({
       label: 'Import from Master Tour', icon: 'card', cls: 'btn ghost',
@@ -3871,7 +3884,7 @@
   /* Reads the promoter's settlement into the income sheet: numbers into the
      fields (still yours to check before saving), the night's story into notes. */
   function settlementReader(o) {
-    if (!S.sample) return null;
+    if (!S.sample) return [unavailableBtn('Read a settlement or merch report', 'btn ghost block')];
     var reading = false;
     var control = fileControl({
       label: 'Read a settlement or merch report', icon: 'card', cls: 'btn ghost block',

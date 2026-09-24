@@ -59,7 +59,8 @@ def build_web():
     html = (SRC / 'index.html').read_text(encoding='utf-8')
 
     inject = ('<link rel="manifest" href="manifest.webmanifest">\n'
-              '<meta name="theme-color" content="#000000">')
+              '<meta name="theme-color" content="#000000">\n'
+              '<script>window.GREENROOM_BUILD = "' + stamp + '";</script>')
     html = html.replace('<title>Greenroom</title>',
                         '<title>Greenroom</title>\n' + inject)
 
