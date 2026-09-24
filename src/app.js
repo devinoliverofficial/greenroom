@@ -2358,27 +2358,67 @@
               onclick: function () { go({ name: 'wizard', id: id, step: clampStep(t.setupStep) }); }
             }, 'Continue'))
         : null,
+      h('button', { class: 'add-mini', type: 'button',
+        onclick: function () { go({ name: 'tour', id: id, view: 'addshows' }); } },
+        h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add shows'),
       h('div', { class: 'opt-cards' },
         h('button', { class: 'opt-card', type: 'button',
-          onclick: function () { go({ name: 'tour', id: id, view: 'addshows' }); } },
-          h('div', { class: 'opt-title' }, 'Add shows'),
-          h('div', { class: 'opt-sub' }, c.allShows.length
-            ? plural(c.allShows.length, 'show') + ' on the run \u00b7 flyer, Master Tour, atVenu'
-            : 'Type them, shoot the flyer, or pull from Master Tour'),
-          icon('chevron', 20)),
-        h('button', { class: 'opt-card', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'details' }); } },
-          h('div', { class: 'opt-title' }, 'The Day'),
+          h('div', { class: 'opt-title' }, 'OVERVIEW'),
           h('div', { class: 'opt-sub' }, next
             ? [h('b', null, next.city || 'Show'), ' · ' + dayMD(next.date)]
             : 'Day sheets, times, guest lists'),
           icon('chevron', 20)),
         h('button', { class: 'opt-card ' + st, type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'money', tab: 'shows' }); } },
-          h('div', { class: 'opt-title' }, 'The Money'),
+          h('div', { class: 'opt-title' }, 'BUDGET'),
           h('div', { class: 'opt-sub' },
             h('b', { class: 'num opt-net' }, money(c.net, true)), ' · ' + G.caption(c)),
           icon('chevron', 20))));
+  }
+
+  function tourBands(t) {
+    return Array.isArray(t && t.bands)
+      ? t.bands.filter(function (b) { return String(b || '').trim(); }) : [];
+  }
+
+  function lineupEditor(tourId, t) {
+    var bands = tourBands(t);
+    var input = h('input', { class: 'input', type: 'text', maxlength: 60,
+      placeholder: bands.length ? 'Another band' : 'In This Moment', autocomplete: 'off',
+      onkeydown: function (e) { if (e.key === 'Enter') { e.preventDefault(); add(); } } });
+    async function add() {
+      var name = String(input.value || '').trim();
+      if (!name) return;
+      if (bands.some(function (b) { return b.toLowerCase() === name.toLowerCase(); })) {
+        toast(name + ' is already on the lineup'); return;
+      }
+      if (await api.update(tourId, { bands: bands.concat([name]) })) {
+        input.value = '';
+        toast(name + ' on the bill');
+        render(true);
+      }
+    }
+    return h('div', null,
+      bands.length ? h('div', { class: 'chips', style: 'margin:0 0 10px' }, bands.map(function (b, i) {
+        return h('button', { class: 'chip', type: 'button',
+          'aria-label': 'Remove ' + b + ' from the lineup',
+          onclick: function () {
+            confirmSheet({
+              title: 'Take ' + b + ' off the lineup?',
+              body: 'Day sheets already written keep their rows; new ones stop pre-filling ' + b + '.',
+              action: 'Take them off', danger: true,
+              onConfirm: async function () {
+                var next = bands.slice(); next.splice(i, 1);
+                var ok = await api.update(tourId, { bands: next });
+                if (ok) toast(b + ' off the lineup');
+                return ok;
+              }
+            });
+          } }, b + ' \u00d7');
+      })) : null,
+      h('div', { class: 'af-row' }, input,
+        h('button', { class: 'btn quiet', type: 'button', style: 'flex:0 0 auto', onclick: add }, 'Add')));
   }
 
   /* The shows door: every way dates get onto the tour, one place, once.
@@ -2410,12 +2450,16 @@
             ? 'Shoot the flyer and the dates fill themselves in, or add them one at a time.'
             : 'No dates have been added.'),
       canWrite() ? [
-        h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'Master Tour'),
+        h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'The lineup'),
+        h('p', { class: 'note', style: 'margin:2px 2px 10px' },
+          'Every band on this run, in set order. Day sheets pre-fill a soundcheck and set-time row for each \u2014 delete a row on any night someone drops.'),
+        lineupEditor(id, t),
+        h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, h('img', { class: 'brand-logo', src: 'logo-mastertour.png', alt: '' }), 'Master Tour'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
           'Print your day sheets or itinerary to PDF in Master Tour (or export CSV) and upload it \u2014 ' +
           'schedules fill in across every matching date.'),
         h('div', { class: 'btnrow' }, tourImportControl(id)),
-        h('h3', { class: 'sh-h3' }, 'atVenu'),
+        h('h3', { class: 'sh-h3' }, h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }), 'atVenu'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
           'After each show, upload the atVenu merch settlement on that show\u2019s income sheet \u2014 ' +
           'net merch lands in income, the venue cut and per head come through as notes.'),
@@ -2601,7 +2645,8 @@
         onclick: function () { S.dsIndex -= 1; render(true); } }, icon('back', 22)),
       h('div', { class: 'vh-mid' },
         h('div', { class: 'vh-date' }, dayLong(s.date),
-          s.date === today ? h('span', { class: 'vh-tonight' }, 'Tonight') : null,
+          s.date === today ? h('span', { class: 'vh-tonight' }, 'Tonight')
+            : h('span', { class: 'vh-when' }, s.date > today ? 'Next show' : 'Last show'),
           s.soldOut ? h('span', { class: 'vh-soldout' }, 'SOLD OUT') : null),
         h('div', { class: 'vh-city' }, s.city || 'Show'),
         s.venue ? h('div', { class: 'vh-venue' }, s.venue) : null),
@@ -2858,6 +2903,17 @@
       setTimes: (Array.isArray(d0.setTimes) ? d0.setTimes : []).map(function (r) {
         return { band: r.band || '', time: r.time || '' }; })
     };
+    // A blank day starts with the tour's lineup already in the rows —
+    // one soundcheck and one set time per band, times waiting to be typed.
+    var lineup = tourBands(t);
+    if (lineup.length) {
+      if (!f.soundchecks.length) {
+        f.soundchecks = lineup.map(function (b) { return { band: b, time: '' }; });
+      }
+      if (!f.setTimes.length) {
+        f.setTimes = lineup.map(function (b) { return { band: b, time: '' }; });
+      }
+    }
     G.DS_AMENITIES.forEach(function (a) { f[a[0]] = d0[a[0]] || ''; });
 
     openSheet(function () {
@@ -3600,14 +3656,14 @@
         h('h2', { class: 'sh-title' }, 'Bring in your info'),
         h('p', { class: 'sh-sub' }, 'Already keeping this somewhere else? Export it from there and Greenroom reads it.'),
 
-        h('h3', { class: 'sh-h3' }, 'Master Tour'),
+        h('h3', { class: 'sh-h3' }, h('img', { class: 'brand-logo', src: 'logo-mastertour.png', alt: '' }), 'Master Tour'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
           'In Master Tour: print your day sheets or itinerary to PDF (or export CSV), then upload it here. ' +
           'Load-ins, soundchecks, doors, set times, bus calls and drives fill in across the whole run. ' +
           'Anything you already typed by hand is kept.'),
         mt,
 
-        h('h3', { class: 'sh-h3' }, 'atVenu'),
+        h('h3', { class: 'sh-h3' }, h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }), 'atVenu'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
           'After the show, export the merch settlement from atVenu (or screenshot the register report) ' +
           'and upload it on the show you’re logging. Net merch lands in income; gross, the venue’s cut ' +
@@ -3634,7 +3690,7 @@
         var pick = shows.filter(function (x) { return x.date === today; })[0] ||
           shows.filter(function (x) { return x.loggedAt; }).pop() || shows[0];
         openIncome(tourId, pick.id);
-      } }, icon('card', 18), 'Open a show to add merch');
+      } }, h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }), 'Open a show to add merch');
   }
 
   function sendNotify(tourId, type, data) {
@@ -3769,7 +3825,8 @@
     });
     var btn = h('button', {
       class: o.cls || 'btn ghost', type: 'button', onclick: function () { input.click(); }
-    }, o.icon ? icon(o.icon, 18) : null, o.label);
+    }, o.logo ? h('img', { class: 'brand-logo', src: o.logo, alt: '' })
+      : (o.icon ? icon(o.icon, 18) : null), o.label);
     return [btn, input];
   }
 
@@ -4013,7 +4070,7 @@
     if (!S.sample) return unavailableBtn('Import from Master Tour', 'btn ghost');
     var busy = false;
     var control = fileControl({
-      label: 'Import from Master Tour', icon: 'card', cls: 'btn ghost',
+      label: 'Import from Master Tour', logo: 'logo-mastertour.png', cls: 'btn ghost',
       accept: 'application/pdf,.pdf,.csv,.tsv,text/csv,' + imageAccept(), multiple: true,
       onFiles: async function (files) {
         if (busy) return;

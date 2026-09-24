@@ -46,6 +46,8 @@ def build_artifact():
         (dist / 'vendor' / path.name).write_text(
             escape_controls(path.read_text(encoding='utf-8')), encoding='utf-8')
     shutil.copy(SRC / 'logo-full.png', dist / 'logo-full.png')
+    shutil.copy(SRC / 'logo-mastertour.png', dist / 'logo-mastertour.png')
+    shutil.copy(SRC / 'logo-atvenu.png', dist / 'logo-atvenu.png')
     print('dist/  (artifact) %d bytes of page' % len(page))
 
 
@@ -83,6 +85,8 @@ def build_web():
     for path in sorted((SRC / 'vendor').glob('*.mjs')):
         shutil.copy(path, web / 'vendor' / path.name)
     shutil.copy(SRC / 'logo-full.png', web / 'logo-full.png')
+    shutil.copy(SRC / 'logo-mastertour.png', web / 'logo-mastertour.png')
+    shutil.copy(SRC / 'logo-atvenu.png', web / 'logo-atvenu.png')
     shutil.copy(SRC / 'icon-180.png', web / 'icon-180.png')
     shutil.copy(SRC / 'icon-512.png', web / 'icon-512.png')
     shutil.copy(SITE / 'manifest.webmanifest', web / 'manifest.webmanifest')
