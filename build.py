@@ -64,7 +64,7 @@ def build_web():
 
     sw = ('<script>\n'
           "if ('serviceWorker' in navigator && location.protocol === 'https:') {\n"
-          "  addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });\n"
+          "  addEventListener('load', function () { navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }); });\n"
           '}\n</script>\n</body>')
     html = html.replace('<script src="core.js"></script>',
                         '<script src="config.js"></script>\n'

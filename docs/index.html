@@ -606,7 +606,7 @@ textarea.update {
 <script src="app.js"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });
+  addEventListener('load', function () { navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }); });
 }
 </script>
 </body>
