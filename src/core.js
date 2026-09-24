@@ -614,6 +614,36 @@
     return out;
   }
 
+  function offDayLines(off) {
+    var d = isObj(off) ? off : {};
+    var lines = [];
+    var put = function (label, v) {
+      v = String(v == null ? '' : v).trim();
+      if (v) lines.push(label + ': ' + v);
+    };
+    put('Hotel', d.hotel);
+    put('Wifi', d.wifi);
+    put('Rooms', d.rooms);
+    (Array.isArray(d.plans) ? d.plans : []).forEach(function (r) {
+      if (!isObj(r)) return;
+      var label = String(r.label || '').trim(), time = String(r.time || '').trim();
+      if (label || time) lines.push((time || 'TBA') + ': ' + (label || 'TBA'));
+    });
+    put('Notes', d.notes);
+    return lines;
+  }
+
+  function offDayText(date, off) {
+    var head = 'OFF DAY';
+    var city = String(off && off.city || '').trim();
+    if (city) head += ' \u2014 ' + city;
+    if (parseDay(date)) {
+      head += ' \u00b7 ' + new Intl.DateTimeFormat('en-US',
+        { weekday: 'short', month: 'short', day: 'numeric' }).format(parseDay(date));
+    }
+    return [head].concat(offDayLines(off)).join('\n');
+  }
+
   /* ---------------- Settlement sheets ---------------- */
 
   // What the reader hands back from a promoter settlement, made safe: only
@@ -711,6 +741,7 @@
     balanceSeries: balanceSeries, latestChange: latestChange,
     normalizeSettlement: normalizeSettlement,
     DS_AMENITIES: DS_AMENITIES, daySheetLines: daySheetLines, daySheetText: daySheetText,
+    offDayLines: offDayLines, offDayText: offDayText,
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,
     normalizeTourImport: normalizeTourImport, mergeDaySheet: mergeDaySheet,
     budgetFrom: budgetFrom, hasBudget: hasBudget, crewKey: crewKey,

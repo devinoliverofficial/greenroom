@@ -2436,8 +2436,7 @@
           accept: imageAccept(),
           onFiles: function (files) { readFlyer(id, files[0]); }
         }) : unavailableBtn('Upload the flyer', 'btn primary'),
-        h('button', { class: 'btn ghost', type: 'button', onclick: function () { openShowSheet(id); } },
-          icon('plus', 18), 'Add by hand')) : null,
+        settlementSourceControl(id)) : null,
       shows.length
         ? [h('p', { class: 'count-line' }, plural(shows.length, 'show') + ' on the run'),
            h('ul', { class: 'shows' }, shows.map(function (x) {
@@ -2447,8 +2446,13 @@
              }, dateBlock(x.date), whereBlock(x), canWrite() ? icon('chevron', 18) : h('span')));
            }))]
         : emptyState('No shows yet', canWrite()
-            ? 'Shoot the flyer and the dates fill themselves in, or add them one at a time.'
+            ? 'Shoot the flyer and the dates fill themselves in.'
             : 'No dates have been added.'),
+      canWrite() ? h('div', { class: 'home-foot', style: 'margin-top:10px' },
+        h('button', { class: 'linkbtn', type: 'button', onclick: function () { openShowSheet(id); } },
+          'Type a show in by hand'),
+        h('button', { class: 'linkbtn', type: 'button', onclick: function () { openTravelDaysSheet(id); } },
+          'Travel days before or after the run')) : null,
       canWrite() ? [
         h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'The lineup'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
@@ -2458,12 +2462,7 @@
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
           'Print your day sheets or itinerary to PDF in Master Tour (or export CSV) and upload it \u2014 ' +
           'schedules fill in across every matching date.'),
-        h('div', { class: 'btnrow' }, tourImportControl(id)),
-        h('h3', { class: 'sh-h3' }, h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }), 'atVenu'),
-        h('p', { class: 'note', style: 'margin:2px 2px 10px' },
-          'After each show, upload the atVenu merch settlement on that show\u2019s income sheet \u2014 ' +
-          'net merch lands in income, the venue cut and per head come through as notes.'),
-        h('div', { class: 'btnrow' }, settlementSourceControl(id))
+        h('div', { class: 'btnrow' }, tourImportControl(id))
       ] : null);
   }
 
@@ -2618,8 +2617,40 @@
       detailsBody(id, t));
   }
 
+  /* Every calendar day of the run, shows and off days alike. Travel days
+     stretch the span past the first and last show. */
+  function overviewDays(t) {
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    if (!shows.length) return null;
+    var byDate = {};
+    shows.forEach(function (x) { byDate[x.date] = x; });
+    var start = shows[0].date, end = shows[shows.length - 1].date;
+    if (G.parseDay(t.spanStart) && t.spanStart < start) start = t.spanStart;
+    if (G.parseDay(t.spanEnd) && t.spanEnd > end) end = t.spanEnd;
+    var days = [];
+    var d = start, guard = 0;
+    while (d <= end && guard < 120) {
+      days.push({ date: d, show: byDate[d] || null });
+      d = G.addDays(d, 1);
+      guard += 1;
+    }
+    var today = G.tourToday();
+    var idx = -1;
+    days.forEach(function (x, i) { if (x.date === today) idx = i; });
+    if (idx < 0) {
+      days.some(function (x, i) { if (x.date > today && x.show) { idx = i; return true; } return false; });
+    }
+    if (idx < 0) idx = days.length - 1;
+    return { days: days, index: idx };
+  }
+
+  function offDayFor(t, date) {
+    var bag = t && G.isObj(t.offDays) ? t.offDays : {};
+    return G.isObj(bag[date]) ? bag[date] : {};
+  }
+
   function detailsBody(id, t) {
-    var got = daySheetShowFor(t);
+    var got = overviewDays(t);
     if (!got) {
       return [h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
         emptyState('No dates yet', 'Once shows are on the run, each one gets its own day sheet here.'),
@@ -2628,38 +2659,48 @@
             onclick: function () { go({ name: 'tour', id: id, view: 'addshows' }); } },
             icon('back', 18), 'Back to Add shows')) : null];
     }
-    if (S.dsIndex == null || S.dsTour !== id || S.dsIndex >= got.shows.length) {
+    if (S.dsIndex == null || S.dsTour !== id || S.dsIndex >= got.days.length) {
       S.dsIndex = got.index;
       S.dsTour = id;
     }
-    var shows = got.shows;
-    var s = shows[S.dsIndex];
+    var days = got.days;
+    var entry = days[S.dsIndex];
+    var s = entry.show;
     var today = G.tourToday();
-    var lines = G.daySheetLines(s);
-    var d = G.isObj(s.daySheet) ? s.daySheet : {};
+    var off = s ? null : offDayFor(t, entry.date);
+    var lines = s ? G.daySheetLines(s) : G.offDayLines(off);
+    var d = s && G.isObj(s.daySheet) ? s.daySheet : {};
 
     // The centerpiece: where you are, when.
+    var whenChip;
+    if (s) {
+      whenChip = entry.date === today ? h('span', { class: 'vh-tonight' }, 'Tonight')
+        : h('span', { class: 'vh-when' }, entry.date > today ? 'Next show' : 'Last show');
+    } else {
+      whenChip = h('span', { class: entry.date === today ? 'vh-tonight' : 'vh-when' }, 'OFF DAY');
+    }
     var hero = h('section', { class: 'venue-hero' },
-      h('button', { class: 'iconbtn vh-arrow', type: 'button', 'aria-label': 'Previous show',
+      h('button', { class: 'iconbtn vh-arrow', type: 'button', 'aria-label': 'Previous day',
         disabled: S.dsIndex === 0,
         onclick: function () { S.dsIndex -= 1; render(true); } }, icon('back', 22)),
       h('div', { class: 'vh-mid' },
-        h('div', { class: 'vh-date' }, dayLong(s.date),
-          s.date === today ? h('span', { class: 'vh-tonight' }, 'Tonight')
-            : h('span', { class: 'vh-when' }, s.date > today ? 'Next show' : 'Last show'),
-          s.soldOut ? h('span', { class: 'vh-soldout' }, 'SOLD OUT') : null),
-        h('div', { class: 'vh-city' }, s.city || 'Show'),
-        s.venue ? h('div', { class: 'vh-venue' }, s.venue) : null),
-      h('button', { class: 'iconbtn vh-arrow', type: 'button', 'aria-label': 'Next show',
-        disabled: S.dsIndex >= shows.length - 1,
+        h('div', { class: 'vh-date' }, dayLong(entry.date), whenChip,
+          s && s.soldOut ? h('span', { class: 'vh-soldout' }, 'SOLD OUT') : null),
+        h('div', { class: 'vh-city' }, s ? (s.city || 'Show') : (off.city || 'Day off')),
+        s && s.venue ? h('div', { class: 'vh-venue' }, s.venue) : null,
+        !s && off.hotel ? h('div', { class: 'vh-venue' }, off.hotel) : null),
+      h('button', { class: 'iconbtn vh-arrow', type: 'button', 'aria-label': 'Next day',
+        disabled: S.dsIndex >= days.length - 1,
         onclick: function () { S.dsIndex += 1; render(true); } }, icon('chevron', 22)));
 
     var body;
     if (!lines.length) {
-      body = emptyState('Nothing posted for this day yet', canWrite()
-        ? 'Fill in the times and the venue details, and the whole tour sees them here.'
-        : 'The tour manager hasn\u2019t posted this day yet.');
-    } else {
+      body = emptyState(s ? 'Nothing posted for this day yet' : 'Nothing planned for this off day',
+        canWrite()
+          ? (s ? 'Fill in the times and the venue details, and the whole tour sees them here.'
+               : 'Add the city, the hotel and any plans, and the whole tour sees them here.')
+          : 'The tour manager hasn\u2019t posted this day yet.');
+    } else if (s) {
       var rowsOut = [];
       var timeRow = function (label, v) {
         if (!String(v || '').trim()) return;
@@ -2697,52 +2738,214 @@
           h('strong', { class: 'num' }, d.driveNext)) : null,
         String(d.notes || '').trim() ? h('p', { class: 'note' }, d.notes) : null
       ];
+    } else {
+      // An off day: the hotel and the plans.
+      var offRows = [];
+      var offRow = function (label, v) {
+        if (!String(v || '').trim()) return;
+        offRows.push(h('div', { class: 'row ds-row' },
+          h('span', { class: 'row-label' }, label),
+          h('span', { class: 'ds-val' }, String(v).trim())));
+      };
+      offRow('Hotel', off.hotel);
+      offRow('Wifi', off.wifi);
+      offRow('Rooms', off.rooms);
+      var planRows = (Array.isArray(off.plans) ? off.plans : []).filter(function (r) {
+        return r && (String(r.label || '').trim() || String(r.time || '').trim());
+      }).map(function (r) {
+        return h('div', { class: 'row ds-row' },
+          h('span', { class: 'row-label' }, r.label || 'Plan'),
+          h('span', { class: 'ds-time num' }, r.time || 'TBA'));
+      });
+      body = [
+        offRows.length ? h('div', { class: 'ledger' }, offRows) : null,
+        planRows.length ? [h('h3', { class: 'sh-h3' }, 'Reservations & plans'),
+          h('div', { class: 'ledger' }, planRows)] : null,
+        String(off.notes || '').trim() ? h('p', { class: 'note' }, off.notes) : null
+      ];
     }
 
     var copyBtn = null;
     if (lines.length) {
+      var copyText2 = s ? G.daySheetText(s) : G.offDayText(entry.date, off);
       copyBtn = h('button', {
         class: 'btn ghost block', type: 'button', style: 'margin-top:14px',
         onclick: async function () {
-          var ta = h('textarea', { class: 'sr', readonly: true, value: G.daySheetText(s) });
+          var ta = h('textarea', { class: 'sr', readonly: true, value: copyText2 });
           document.body.appendChild(ta);
-          var ok = await copyText(G.daySheetText(s), ta);
+          var ok = await copyText(copyText2, ta);
           ta.remove();
-          toast(ok ? 'Day sheet copied \u2014 paste it in the group chat' : 'Press and hold to copy');
+          toast(ok ? 'Copied \u2014 paste it in the group chat' : 'Press and hold to copy');
         }
       }, icon('copy', 18), 'Copy day sheet');
     }
 
-    var gl = guestsFor(t, id, s.id);
-    var gsum = G.guestSummary(gl);
-    var guestBtn = h('div', { class: 'ledger', style: 'margin-top:14px' },
-      h('button', { class: 'row rowbtn', type: 'button',
-        onclick: function () { openGuestList(id, s.id); } },
-        h('div', { class: 'row-label' }, 'Guest list',
-          h('span', { class: 'hint' }, gsum.names
-            ? plural(gsum.names, 'name') + ' \u00b7 ' + plural(gsum.tickets, 'ticket')
-            : 'Anyone on the tour can add names')),
-        icon('chevron', 18)));
+    var guestBtn = null;
+    if (s) {
+      var gl = guestsFor(t, id, s.id);
+      var gsum = G.guestSummary(gl);
+      guestBtn = h('div', { class: 'ledger', style: 'margin-top:14px' },
+        h('button', { class: 'row rowbtn', type: 'button',
+          onclick: function () { openGuestList(id, s.id); } },
+          h('div', { class: 'row-label' }, 'Guest list',
+            h('span', { class: 'hint' }, gsum.names
+              ? plural(gsum.names, 'name') + ' \u00b7 ' + plural(gsum.tickets, 'ticket')
+              : 'Anyone on the tour can add names')),
+          icon('chevron', 18)));
+    }
 
-    // Every date, one tap away; the hero follows.
-    var rail = h('div', { class: 'ds-rail' }, shows.map(function (x, i) {
+    // Every day of the run, one tap away; the hero follows.
+    var rail = h('div', { class: 'ds-rail' }, days.map(function (x, i) {
       var dd = G.parseDay(x.date);
+      var hasOff = !x.show && G.offDayLines(offDayFor(t, x.date)).length > 0;
       return h('button', {
-        class: 'ds-chip' + (i === S.dsIndex ? ' on' : '') + (x.date === today ? ' tonight' : ''),
+        class: 'ds-chip' + (i === S.dsIndex ? ' on' : '') + (x.date === today ? ' tonight' : '') +
+          (!x.show ? ' offd' + (hasOff ? ' filled' : '') : ''),
         type: 'button',
         onclick: function () { S.dsIndex = i; render(true); }
       },
         h('span', { class: 'ds-chip-d num' }, dd ? String(dd.getDate()) : '?'),
-        h('span', { class: 'ds-chip-c' }, String(x.city || '').split(',')[0]));
+        h('span', { class: 'ds-chip-c' }, x.show
+          ? String(x.show.city || '').split(',')[0]
+          : (String(offDayFor(t, x.date).city || '').split(',')[0] || 'off')));
     }));
+    requestAnimationFrame(function () {
+      var sel = rail.querySelector('.ds-chip.on');
+      if (sel && sel.scrollIntoView) sel.scrollIntoView({ inline: 'center', block: 'nearest' });
+    });
 
     return [hero, rail,
       canWrite() ? h('div', { class: 'btnrow', style: 'margin-top:14px' },
-        h('button', { class: 'btn quiet', type: 'button',
-          onclick: function () { openDaySheetEditor(id, s.id); } },
-          icon('edit', 18), lines.length ? 'Edit day sheet' : 'Fill in the day sheet'),
+        s
+          ? h('button', { class: 'btn quiet', type: 'button',
+              onclick: function () { openDaySheetEditor(id, s.id); } },
+              icon('edit', 18), lines.length ? 'Edit day sheet' : 'Fill in the day sheet')
+          : h('button', { class: 'btn quiet', type: 'button',
+              onclick: function () { openOffDaySheet(id, entry.date); } },
+              icon('edit', 18), lines.length ? 'Edit the off day' : 'Fill in the off day'),
         tourImportControl(id)) : null,
       body, guestBtn, copyBtn];
+  }
+
+  /* The off-day editor: where you land, where you sleep, what's planned. */
+  function openOffDaySheet(tourId, date) {
+    var t = getTour(tourId);
+    var d0 = offDayFor(t, date);
+    var f = {
+      city: d0.city || '', hotel: d0.hotel || '', wifi: d0.wifi || '',
+      rooms: d0.rooms || '', notes: d0.notes || '',
+      plans: (Array.isArray(d0.plans) ? d0.plans : []).map(function (r) {
+        return { label: r.label || '', time: r.time || '' }; })
+    };
+    openSheet(function () {
+      function textIn(key, ph) {
+        return h('input', { class: 'input', type: 'text', value: f[key], maxlength: 120,
+          autocomplete: 'off', placeholder: ph || '',
+          oninput: function (e) { f[key] = e.target.value; } });
+      }
+      var plansHost = h('div', null);
+      function buildPlans() {
+        var kids = f.plans.map(function (r, i) {
+          return h('div', { class: 'af-row', style: 'margin-bottom:8px' },
+            h('input', { class: 'input', type: 'text', value: r.label, maxlength: 80,
+              placeholder: 'Dinner at\u2026', autocomplete: 'off',
+              oninput: function (e) { r.label = e.target.value; } }),
+            h('input', { class: 'input', type: 'text', value: r.time, maxlength: 20,
+              placeholder: 'Time', autocomplete: 'off', style: 'flex:0 0 110px',
+              oninput: function (e) { r.time = e.target.value; } }),
+            h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove',
+              onclick: function () { f.plans.splice(i, 1); buildPlans(); } }, icon('trash', 16)));
+        });
+        kids.push(h('button', { class: 'btn quiet block', type: 'button', style: 'min-height:42px',
+          onclick: function () { f.plans.push({ label: '', time: '' }); buildPlans(); } },
+          '+ Add a reservation or plan'));
+        plansHost.replaceChildren.apply(plansHost, kids);
+      }
+      var submit = async function (e) {
+        e.preventDefault();
+        blurActive();
+        var sheet = {
+          city: f.city.trim(), hotel: f.hotel.trim(), wifi: f.wifi.trim(),
+          rooms: f.rooms.trim(), notes: f.notes.trim(),
+          plans: f.plans.filter(function (r) { return r.label.trim() || r.time.trim(); })
+            .map(function (r) { return { label: r.label.trim(), time: r.time.trim() }; })
+        };
+        var patch = { offDays: {} };
+        patch.offDays[date] = sheet;
+        if (await api.update(tourId, patch)) {
+          closeSheet(); toast('Off day posted'); render(true);
+        }
+      };
+      buildPlans();
+      return [
+        h('h2', { class: 'sh-title' }, 'Off day \u2014 ' + dayLong(date)),
+        h('p', { class: 'sh-sub' }, 'Where the day lands, where everyone sleeps, and what\u2019s planned. Blank fields just don\u2019t show.'),
+        h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
+          field('City', textIn('city', 'Salt Lake City, UT')),
+          field('Hotel', textIn('hotel', 'Hotel name and address')),
+          h('div', { class: 'field-row' },
+            field('Wifi', textIn('wifi', 'Network / password')),
+            field('Rooms', textIn('rooms', 'Under D. Oliver'))),
+          field('Reservations & plans', plansHost),
+          field('Anything else', textIn('notes', 'Optional')),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Post the off day'),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { closeSheet(); } }, 'Cancel')))
+      ];
+    }, { label: 'Off day' });
+  }
+
+  /* Travel days stretch the run past the first and last show. */
+  function openTravelDaysSheet(tourId) {
+    var t = getTour(tourId);
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    if (!shows.length) return;
+    var first = shows[0].date, last = shows[shows.length - 1].date;
+    var before = G.parseDay(t.spanStart) && t.spanStart < first ? G.daysBetween(t.spanStart, first) : 0;
+    var after = G.parseDay(t.spanEnd) && t.spanEnd > last ? G.daysBetween(last, t.spanEnd) : 0;
+    openSheet(function () {
+      var beforeEl = h('strong', { class: 'num' }, '');
+      var afterEl = h('strong', { class: 'num' }, '');
+      function refresh() {
+        beforeEl.textContent = before ? plural(before, 'day') + ' \u00b7 from ' + dayMD(G.addDays(first, -before)) : 'None';
+        afterEl.textContent = after ? plural(after, 'day') + ' \u00b7 to ' + dayMD(G.addDays(last, after)) : 'None';
+      }
+      function stepper(get, set) {
+        return h('div', { class: 'seg' },
+          h('button', { class: 'seg-b', type: 'button', 'aria-label': 'Fewer',
+            onclick: function () { set(Math.max(0, get() - 1)); refresh(); } }, '\u2212'),
+          h('button', { class: 'seg-b', type: 'button', 'aria-label': 'More',
+            onclick: function () { set(Math.min(14, get() + 1)); refresh(); } }, '+'));
+      }
+      refresh();
+      return [
+        h('h2', { class: 'sh-title' }, 'Travel days'),
+        h('p', { class: 'sh-sub' }, 'Days on the road before the first show and after the last one. They join the run as off days you can fill in.'),
+        h('div', { class: 'ledger' },
+          h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, 'Before the tour', h('span', { class: 'hint' }, beforeEl)),
+            stepper(function () { return before; }, function (v) { before = v; })),
+          h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, 'After the tour', h('span', { class: 'hint' }, afterEl)),
+            stepper(function () { return after; }, function (v) { after = v; }))),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button',
+            onclick: async function () {
+              var patch = {
+                spanStart: before ? G.addDays(first, -before) : null,
+                spanEnd: after ? G.addDays(last, after) : null
+              };
+              if (await api.update(tourId, patch)) {
+                closeSheet();
+                toast(before || after ? 'Travel days on the run' : 'No travel days');
+                render(true);
+              }
+            } }, 'Save'),
+          h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { closeSheet(); } }, 'Not now'))
+      ];
+    }, { label: 'Travel days' });
   }
 
   /* Guests live in their own table on the real backend (so GA can add names
@@ -3986,6 +4189,7 @@
       if (!n) { toast('Each show needs a date and a city'); return; }
       if (await api.update(tourId, { shows: patch })) {
         closeSheet(); toast(plural(n, 'show') + ' added'); render(true);
+        setTimeout(function () { openTravelDaysSheet(tourId); }, 400);
       }
     }
 
