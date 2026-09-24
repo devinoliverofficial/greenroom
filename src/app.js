@@ -2883,7 +2883,8 @@
       var form = h('form', { class: 'sh-form', onsubmit: save, novalidate: true },
         reader ? h('div', { style: 'margin-bottom:14px' }, reader,
           h('p', { class: 'note', style: 'margin-top:6px' },
-            'A photo or PDF of the promoter’s settlement — the numbers fill in for you to check.')) : null,
+            'The promoter’s settlement sheet, or a merch report from atVenu — photo or PDF. ' +
+            'The numbers fill in for you to check.')) : null,
         h('div', { class: 'ledger' }, rows),
         notesHost,
         h('div', { class: 'preview' },
@@ -3386,6 +3387,54 @@
     }, { label: 'Name and artist' });
   }
 
+  /* One home for "bring in what I already have". Both readers live here with
+     their names on them, plus the honest word on what sync does and doesn't
+     mean today. */
+  function openImportHub(tourId) {
+    openSheet(function () {
+      var mt = tourImportControl(tourId);
+      var av = settlementSourceControl(tourId);
+      return [
+        h('h2', { class: 'sh-title' }, 'Bring in your info'),
+        h('p', { class: 'sh-sub' }, 'Already keeping this somewhere else? Export it from there and Greenroom reads it.'),
+
+        h('h3', { class: 'sh-h3' }, 'Master Tour'),
+        h('p', { class: 'note', style: 'margin:2px 2px 10px' },
+          'In Master Tour: print your day sheets or itinerary to PDF (or export CSV), then upload it here. ' +
+          'Load-ins, soundchecks, doors, set times, bus calls and drives fill in across the whole run. ' +
+          'Anything you already typed by hand is kept.'),
+        mt || h('p', { class: 'note' }, 'Sign in to read files.'),
+
+        h('h3', { class: 'sh-h3' }, 'atVenu'),
+        h('p', { class: 'note', style: 'margin:2px 2px 10px' },
+          'After the show, export the merch settlement from atVenu (or screenshot the register report) ' +
+          'and upload it on the show you’re logging. Net merch lands in income; gross, the venue’s cut ' +
+          'and the per head come through as notes.'),
+        av || h('p', { class: 'note' }, 'Sign in to read files.'),
+
+        h('h3', { class: 'sh-h3' }, 'About live sync'),
+        h('p', { class: 'note', style: 'margin:2px 2px 10px' },
+          'Neither company offers an open connection yet — theirs are partner-only. ' +
+          'So this is upload-and-read rather than a live link. It takes one file and a few seconds, ' +
+          'and nothing has to be typed twice.')
+      ];
+    }, { label: 'Bring in your info' });
+  }
+
+  /* The settlement reader, reachable from the hub: pick a show, then read. */
+  function settlementSourceControl(tourId) {
+    var t = getTour(tourId);
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    if (!shows.length) return h('p', { class: 'note' }, 'Add a show first, then its merch can come in here.');
+    return h('button', { class: 'btn ghost block', type: 'button',
+      onclick: function () {
+        var today = G.tourToday();
+        var pick = shows.filter(function (x) { return x.date === today; })[0] ||
+          shows.filter(function (x) { return x.loggedAt; }).pop() || shows[0];
+        openIncome(tourId, pick.id);
+      } }, icon('card', 18), 'Open a show to add merch');
+  }
+
   function openTourMenu(id) {
     var t = getTour(id);
     if (!t) return;
@@ -3398,8 +3447,10 @@
             icon('edit', 18), 'Name and artist'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } },
             icon('people', 18), 'Crew'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportHub(id); } },
+            icon('card', 18), 'Bring in your info'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportsSheet(id); } },
-            icon('history', 18), 'Imports'),
+            icon('history', 18), 'Card statement history'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLabelsSheet(); } },
             icon('tag', 18), 'Learned labels'),
           isOwner() || S.mode === 'local' ? h('button', {
@@ -3823,7 +3874,7 @@
     if (!S.sample) return null;
     var reading = false;
     var control = fileControl({
-      label: 'Read the settlement sheet', icon: 'card', cls: 'btn ghost block',
+      label: 'Read a settlement or merch report', icon: 'card', cls: 'btn ghost block',
       accept: 'application/pdf,.pdf,' + imageAccept(), multiple: true,
       onFiles: async function (files) {
         if (reading) return;
