@@ -80,6 +80,7 @@ def build_web():
     html = None  # guard against accidental reuse below
     for path in sorted((SRC / 'vendor').glob('*.mjs')):
         shutil.copy(path, web / 'vendor' / path.name)
+    shutil.copy(SRC / 'logo-full.png', web / 'logo-full.png')
     shutil.copy(SRC / 'icon-180.png', web / 'icon-180.png')
     shutil.copy(SRC / 'icon-512.png', web / 'icon-512.png')
     shutil.copy(SITE / 'manifest.webmanifest', web / 'manifest.webmanifest')

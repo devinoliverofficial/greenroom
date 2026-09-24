@@ -5,7 +5,7 @@
    version clears the old cache. */
 var CACHE = 'greenroom-__BUILD__';
 var SHELL = ['./', 'index.html', 'core.js', 'statements.js', 'app.js',
-  'manifest.webmanifest', 'icon-180.png', 'icon-512.png'];
+  'manifest.webmanifest', 'icon-180.png', 'icon-512.png', 'logo-full.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(

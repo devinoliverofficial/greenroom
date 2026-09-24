@@ -2345,7 +2345,8 @@
       rows.forEach(function (m) {
         kids.push(h('div', { class: 'row people-row' },
           h('span', { class: 'who' }, m.invited_email),
-          h('span', { class: 'role-tag' }, m.role === 'editor' ? 'Can edit' : 'Can view'),
+          h('span', { class: 'role-tag' + (m.role === 'editor' ? ' aa' : '') },
+            m.role === 'editor' ? 'ALL ACCESS' : 'GA'),
           owns ? h('button', {
             class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + m.invited_email,
             onclick: async function () {
@@ -2387,14 +2388,14 @@
       },
         emailI,
         h('div', { style: 'display:flex;gap:10px;align-items:center;margin-top:10px' },
-          segmented(['Can view', 'Can edit'], 0, function (i) { role = i ? 'editor' : 'viewer'; },
+          segmented(['GA', 'ALL ACCESS'], 0, function (i) { role = i ? 'editor' : 'viewer'; },
             'Invite role'),
           h('button', { class: 'btn primary', type: 'submit', style: 'flex:1' }, 'Invite')));
     }
 
     return h('div', null,
       h('p', { class: 'sh-p' }, owns
-        ? 'Invite your band, crew or managers by email. Viewers watch the numbers move live; editors can log shows, costs and statements with you.'
+        ? 'Invite your band, crew or managers by email. GA watches the numbers move live. ALL ACCESS can log shows, costs and statements with you.'
         : 'You’re on this tour’s guest list. The numbers update live as they’re logged.'),
       list, form,
       h('button', {

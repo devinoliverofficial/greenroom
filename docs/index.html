@@ -519,6 +519,17 @@ textarea.update {
   color: var(--ink); font-size: 15px; font-weight: 500; line-height: 1.55; resize: none;
 }
 
+/* ============================== Splash ==============================
+   The full logo flashes on open, on the artwork's own near-black so the
+   image has no visible edges, then hands over to the app. */
+#gr-splash {
+  position: fixed; inset: 0; z-index: 120; background: #000A05;
+  display: grid; place-items: center;
+  opacity: 1; transition: opacity .4s ease;
+}
+#gr-splash.off { opacity: 0; pointer-events: none; }
+#gr-splash img { width: min(78vw, 560px); height: auto; }
+
 /* ============================== Sign-in gate + people ============================== */
 #gr-gate {
   position: fixed; inset: 0; z-index: 100; background: var(--bg);
@@ -532,7 +543,8 @@ textarea.update {
 .gate-card .linkbtn { margin-top: 6px; }
 .people-row { display: flex; align-items: center; gap: 10px; min-height: 52px; }
 .people-row .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.people-row .role-tag { flex: none; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.people-row .role-tag { flex: none; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; font-weight: 700; letter-spacing: .05em; }
+.people-row .role-tag.aa { background: var(--pos-soft); color: var(--pos); }
 
 /* ============================== Toast ============================== */
 #toast { position: fixed; left: 0; right: 0; top: 0; z-index: 80; display: flex; justify-content: center; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 0; pointer-events: none; }
@@ -571,6 +583,15 @@ textarea.update {
 </style>
 </head>
 <body>
+<div id="gr-splash" aria-hidden="true"><img src="logo-full.png" alt=""></div>
+<script>
+(function () {
+  var s = document.getElementById('gr-splash');
+  var fast = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  setTimeout(function () { s.classList.add('off'); }, fast ? 250 : 850);
+  setTimeout(function () { s.remove(); }, fast ? 300 : 1250);
+})();
+</script>
 <div id="minibar" data-state="idle" aria-hidden="true"><button type="button" tabindex="-1"><span class="name"></span><span class="num num"></span></button></div>
 <main id="view"></main>
 <div id="sheet-root" hidden></div>
