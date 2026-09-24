@@ -484,6 +484,40 @@
     return head.concat(daySheetLines(show)).join('\n');
   }
 
+  /* ---------------- Reuse across tours ---------------- */
+
+  // A tour's budget, stripped to what carries forward: projections and the
+  // commission deal. Never money already paid, never charges, never debts.
+  function budgetFrom(tour) {
+    var exp = normExpenses(tour && tour.expenses);
+    var out = {};
+    var total = 0;
+    TYPED_CATEGORIES.forEach(function (c) {
+      var projected = c.key === 'crew' ? null : exp[c.key].projected;
+      out[c.key] = { projected: projected, paid: 0 };
+      if (projected != null) total += projected;
+    });
+    var comm = normCommission(tour && tour.commission);
+    var commBits = [];
+    COMMISSION_LINES.forEach(function (line) {
+      var r = comm[line.key];
+      if (r.mode === 'pct' && r.value > 0) commBits.push(line.label + ' ' + r.value + '%');
+      else if (r.mode === 'flat' && r.value > 0) commBits.push(line.label + ' ' + money(r.value));
+    });
+    return { expenses: out, commission: comm, total: total, commissionSummary: commBits.join(' · ') };
+  }
+
+  function hasBudget(tour) {
+    var b = budgetFrom(tour);
+    return b.total > 0 || !!b.commissionSummary;
+  }
+
+  // The key a saved crew member files under, shared across every tour.
+  function crewKey(name) {
+    return 'crew:' + String(name == null ? '' : name).toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
   /* ---------------- Guest list ---------------- */
 
   var GUEST_PASSES = ['GA', 'VIP', 'All Access', 'Photo Pass'];
@@ -679,6 +713,7 @@
     DS_AMENITIES: DS_AMENITIES, daySheetLines: daySheetLines, daySheetText: daySheetText,
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,
     normalizeTourImport: normalizeTourImport, mergeDaySheet: mergeDaySheet,
+    budgetFrom: budgetFrom, hasBudget: hasBudget, crewKey: crewKey,
     dailyUpdate: dailyUpdate
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

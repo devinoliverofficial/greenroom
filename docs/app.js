@@ -244,7 +244,7 @@
       snap.docs.forEach(function (d) {
         if (!d.exists) return;
         var v = d.data();
-        if (G.isObj(v) && G.isObj(v.cats)) m[d.id] = v;
+        if (G.isObj(v) && (G.isObj(v.cats) || v.kind === 'crew')) m[d.id] = v;
       });
       S.labels = m;
       if (S.loaded) render();
@@ -264,6 +264,32 @@
       try { await store.db.doc('labels/' + key).set(next[key]); } catch (e) { /* not fatal */ }
     } else saveLocalLabels();
   }
+  /* Saved crew: the roster that follows you from tour to tour. It rides the
+     same shared labels store, filed under crew: keys. */
+  function rosterList() {
+    return Object.keys(S.labels)
+      .filter(function (k) { return k.indexOf('crew:') === 0 && S.labels[k] && S.labels[k].kind === 'crew'; })
+      .map(function (k) { return S.labels[k]; })
+      .sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || '')); });
+  }
+  function rosterHas(name) { return !!S.labels[G.crewKey(name)]; }
+  async function rosterSave(person) {
+    var key = G.crewKey(person.name);
+    if (key === 'crew:') return;
+    var rec = { kind: 'crew', name: person.name, title: person.title || '', pay: G.num(person.pay) };
+    S.labels[key] = rec;
+    if (S.mode === 'db' && store.db) {
+      try { await store.db.doc('labels/' + key).set(rec); } catch (e) { /* roster is a convenience */ }
+    } else saveLocalLabels();
+  }
+  async function rosterRemove(name) {
+    var key = G.crewKey(name);
+    delete S.labels[key];
+    if (S.mode === 'db' && store.db) {
+      try { await store.db.doc('labels/' + key).delete(); } catch (e) { /* fine */ }
+    } else saveLocalLabels();
+  }
+
   async function removeLabel(merchant) {
     var key = GRS.normMerchant(merchant);
     delete S.labels[key];
@@ -1390,10 +1416,16 @@
       if (!(await saveExpenses(id, { setupStep: 3 }))) return;
       go({ name: 'wizard', id: id, step: 3 });
     };
+    var t2 = getTour(id);
+    var offer = (budgetIsBlank(t2) && baselineCandidates(id).length)
+      ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
+          onclick: function () { openBaselinePicker(id, function () { render(true); }); } },
+          icon('copy', 18), 'Start from a previous tour’s budget')
+      : null;
     return h('form', { class: 'wz-body', onsubmit: submit, novalidate: true },
       h('h1', { class: 'wz-title' }, 'What does the tour cost?'),
       h('p', { class: 'wz-sub' }, 'Your best guess for the whole run. Leave anything you can’t predict blank — you can fill it in later.'),
-      running, body,
+      offer, running, body,
       wzFoot(function () { go({ name: 'wizard', id: id, step: 1 }); }, 'Next'));
   }
 
@@ -1442,6 +1474,55 @@
   }
 
   /* ============================== Expenses ============================== */
+
+  /* Other tours whose budget is worth borrowing: same artist first, newest first. */
+  function baselineCandidates(id) {
+    var me = getTour(id);
+    var myArtist = me ? String(me.artist || '') : '';
+    return allTourEntries().filter(function (e) {
+      return e[0] !== id && G.hasBudget(e[1]);
+    }).sort(function (a, b) {
+      var sa = String(a[1].artist || '') === myArtist ? 0 : 1;
+      var sb = String(b[1].artist || '') === myArtist ? 0 : 1;
+      return sa - sb || (b[1].createdAt || 0) - (a[1].createdAt || 0);
+    });
+  }
+
+  function budgetIsBlank(t) {
+    var b = G.budgetFrom(t);
+    if (b.total > 0 || b.commissionSummary) return false;
+    var exp = G.normExpenses(t && t.expenses);
+    return Object.keys(exp).every(function (k) { return !exp[k].paid; });
+  }
+
+  function openBaselinePicker(id, afterApply) {
+    var cands = baselineCandidates(id);
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Start from a previous tour'),
+        h('p', { class: 'sh-sub' }, 'Copies that tour\u2019s projections and commission deal as your starting budget \u2014 never what was actually spent. Tweak anything after.'),
+        h('div', { class: 'ledger' }, cands.map(function (e) {
+          var b = G.budgetFrom(e[1]);
+          return h('button', { class: 'row rowbtn', type: 'button',
+            onclick: async function () {
+              delete S.drafts['exp:' + id];
+              if (await api.update(id, { expenses: b.expenses, commission: b.commission })) {
+                closeSheet();
+                toast('Budget started from ' + (e[1].name || 'that tour') + ' \u2014 tweak anything');
+                if (afterApply) afterApply(); else render(true);
+              }
+            } },
+            h('div', { class: 'row-label' },
+              (e[1].artist ? e[1].artist + ' \u2014 ' : '') + (e[1].name || 'Untitled tour'),
+              h('span', { class: 'hint' }, [b.total ? money(b.total) + ' projected' : '',
+                b.commissionSummary].filter(Boolean).join(' \u00b7 '))),
+            icon('chevron', 18));
+        })),
+        h('button', { class: 'btn ghost block', type: 'button', style: 'margin-top:14px',
+          onclick: function () { closeSheet(); } }, 'Start from scratch instead')
+      ];
+    }, { label: 'Start from a previous tour' });
+  }
 
   function expenseDraft(id, mode) {
     var t = getTour(id);
@@ -1619,7 +1700,13 @@
       h('span', null, 'What the tour costs'),
       h('strong', { class: 'amt num' }, money(c.fixed + c.commission))));
     var charges = G.rows(t && t.charges);
+    var baselineOffer = (canWrite() && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
+      ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
+          onclick: function () { openBaselinePicker(id); } },
+          icon('copy', 18), 'Start from a previous tour’s budget')
+      : null;
     return [
+      baselineOffer,
       canWrite() ? h('div', { class: 'btnrow' }, fileControl({
         label: 'Import card statement', icon: 'card', cls: 'btn ghost',
         accept: '.csv,.tsv,text/csv,application/pdf,' + imageAccept(), multiple: true,
@@ -1776,9 +1863,32 @@
             ? 'Add everyone out with you and what they’re paid for the whole tour. The total becomes your crew projection.'
             : 'No crew has been added.');
 
+      var onTour = {};
+      crew.forEach(function (pp) { onTour[G.crewKey(pp.name)] = true; });
+      var bench = rosterList().filter(function (r) { return !onTour[G.crewKey(r.name)]; });
+      var benchRow = null;
+      if (canWrite() && bench.length) {
+        benchRow = h('div', { style: 'margin-bottom:16px' },
+          h('p', { class: 'note', style: 'margin:0 2px 8px' }, 'From past tours — tap to add:'),
+          h('div', { class: 'chips', style: 'margin:0' }, bench.map(function (r) {
+            return h('button', { class: 'chip', type: 'button',
+              onclick: async function () {
+                var patch = {};
+                patch[newId()] = { name: r.name, title: r.title || '', pay: G.num(r.pay), createdAt: Date.now() };
+                if (await api.update(id, { crew: patch })) {
+                  delete S.drafts['exp:' + id];
+                  toast(r.name + ' added' + (r.pay ? ' at ' + money(G.num(r.pay)) : ''));
+                  openCrewSheet(id); render(true);
+                }
+              } }, r.name + (r.title ? ' · ' + r.title : ''));
+          })),
+          h('button', { class: 'linkbtn', type: 'button', style: 'min-height:32px',
+            onclick: function () { openRosterManager(id); } }, 'Manage saved crew'));
+      }
       return [
         h('h2', { class: 'sh-title' }, 'Crew'),
         h('p', { class: 'sh-sub' }, 'Each person’s pay is their total for the tour.'),
+        benchRow,
         canWrite() ? h('button', {
           class: 'btn primary block', type: 'button', style: 'margin-bottom:16px',
           onclick: function () { openCrewPerson(id, null); }
@@ -1806,6 +1916,34 @@
       ];
     }
     openSheet(build, { label: 'Crew' });
+  }
+
+  function openRosterManager(tourId) {
+    function build() {
+      var people = rosterList();
+      openSheet(function () {
+        return [
+          h('h2', { class: 'sh-title' }, 'Saved crew'),
+          h('p', { class: 'sh-sub' }, 'The people Greenroom remembers for every tour.'),
+          people.length ? h('div', { class: 'ledger' }, people.map(function (r) {
+            return h('div', { class: 'row' },
+              h('div', { class: 'row-label' }, r.name,
+                h('span', { class: 'hint' },
+                  [r.title, r.pay ? money(G.num(r.pay)) + ' a tour' : ''].filter(Boolean).join(' \u00b7 ') || 'No details')),
+              h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Forget ' + r.name,
+                onclick: async function () {
+                  await rosterRemove(r.name);
+                  toast('Forgot ' + r.name);
+                  build();
+                } }, icon('trash', 18)));
+          })) : emptyState('Nobody saved yet',
+            'When you add crew to a tour, Greenroom offers to remember them here.'),
+          h('button', { class: 'btn ghost block', type: 'button', style: 'margin-top:14px',
+            onclick: function () { openCrewSheet(tourId); } }, 'Back to crew')
+        ];
+      }, { label: 'Saved crew' });
+    }
+    build();
   }
 
   function openCrewPerson(id, person) {
@@ -1839,9 +1977,29 @@
         else { row.createdAt = Date.now(); patch[newId()] = row; }
         if (await api.update(id, { crew: patch })) {
           delete S.drafts['exp:' + id];
-          toast(person ? 'Crew saved' : 'Added ' + name);
-          openCrewSheet(id);
           render(true);
+          if (!person && !rosterHas(name)) {
+            confirmSheet({
+              title: 'Save ' + name + ' for future tours?',
+              body: 'They’ll be one tap to add on the next run — title and pay come along, and you can still change either.',
+              action: 'Save for future tours',
+              onConfirm: async function () {
+                await rosterSave(row);
+                toast(name + ' saved to your crew');
+                setTimeout(function () { openCrewSheet(id); }, 250);
+                return true;
+              }
+            });
+            // Cancel path lands back on the crew sheet too
+            var prevClose = sheet && sheet.onClose;
+            if (sheet) sheet.onClose = function () {
+              if (prevClose) prevClose();
+              setTimeout(function () { if (!sheet) openCrewSheet(id); }, 250);
+            };
+          } else {
+            toast(person ? 'Crew saved' : 'Added ' + name);
+            openCrewSheet(id);
+          }
         }
       };
       return [
@@ -4433,7 +4591,9 @@
 
   function openLabelsSheet() {
     function build() {
-      var keys = Object.keys(S.labels).sort(function (a, b) {
+      var keys = Object.keys(S.labels).filter(function (k) {
+        return k.indexOf('crew:') !== 0;
+      }).sort(function (a, b) {
         var an = (S.labels[a].merchant || a).toLowerCase();
         var bn = (S.labels[b].merchant || b).toLowerCase();
         return an.localeCompare(bn);

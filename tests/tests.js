@@ -533,6 +533,38 @@
     eq(merged.setTimes[0].band, 'Us', 'an empty import list never wipes a real one');
   });
 
+  /* ============ Budget from a previous tour ============ */
+
+  test('a baseline copies projections and the commission deal — never money', function () {
+    var src = {
+      expenses: {
+        bus: { projected: 18000, paid: 6000 },
+        gas: { projected: 4000, paid: 610 },
+        hotels: { projected: null, paid: 900 }
+      },
+      commission: { management: { mode: 'pct', value: 15 }, agent: { mode: 'pct', value: 10 },
+        lawyer: { mode: 'flat', value: 1500 } },
+      crew: keyed([{ name: 'Sam', pay: 7000 }]),
+      charges: keyed([{ date: '2026-01-01', merchant: 'Pilot', amount: 500, category: 'gas' }]),
+      debts: keyed([{ label: 'Amex', amount: 9000, kind: 'card' }])
+    };
+    var b = G.budgetFrom(src);
+    eq(b.expenses.bus.projected, 18000, 'projection carries');
+    eq(b.expenses.bus.paid, 0, 'paid never carries');
+    eq(b.expenses.hotels.projected, null, 'blank stays blank');
+    eq(b.expenses.crew.projected, null, 'crew comes from the roster, not the budget');
+    eq(b.total, 22000, 'total of the projections');
+    eq(b.commission.management.value, 15, 'commission deal carries');
+    eq(b.commissionSummary, 'Management 15% · Booking agent 10% · Lawyer $1,500', 'summary reads');
+    eq(G.hasBudget(src), true, 'counts as a usable baseline');
+    eq(G.hasBudget({}), false, 'an empty tour does not');
+  });
+
+  test('crew members file under one stable key per name', function () {
+    eq(G.crewKey('Sam Reyes'), 'crew:sam-reyes', 'slug');
+    eq(G.crewKey('  SAM  REYES!  '), 'crew:sam-reyes', 'case and junk ignored');
+  });
+
   /* ============ Guest list ============ */
 
   test('the guest summary counts names and tickets, clamped sane', function () {
