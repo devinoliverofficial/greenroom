@@ -237,13 +237,8 @@
         role: role === 'editor' ? 'editor' : 'viewer'
       });
       if (q.error) throw mapError(q.error);
-      // A magic link lands in their inbox; opening it signs them straight in.
-      try {
-        await sb.auth.signInWithOtp({
-          email: String(email).trim().toLowerCase(),
-          options: { emailRedirectTo: location.origin + location.pathname }
-        });
-      } catch (e) { /* the invite row alone still works next time they sign in */ }
+      // No email goes out: the moment they create an account with this
+      // address, the guest list recognizes them.
     },
     uninvite: async function (tourId, email) {
       var q = await sb.from('members').delete()
@@ -258,47 +253,85 @@
 
   /* ---------------- Auth gate ---------------- */
 
+  /* Ordinary accounts: email + password, made right here in the app. No
+     sign-in emails — on an iPhone, a home-screen app and Safari are separate
+     worlds, so email links sign in the wrong one. Passwords don't care. */
   function gate() {
+    var mode = 'signin';
     var wrap = document.createElement('div');
     wrap.id = 'gr-gate';
-    wrap.innerHTML =
-      '<div class="gate-card">' +
-      '<span class="logo-mark" style="width:76px;height:60px"></span>' +
-      '<h2>Sign in to Greenroom</h2>' +
-      '<p>Type your email and we’ll send you a sign-in link. No password to remember.</p>' +
-      '<form id="gr-gate-form" novalidate>' +
-      '<input class="input" type="email" id="gr-gate-email" placeholder="you@band.com" autocomplete="email" inputmode="email">' +
-      '<button class="btn primary block" type="submit">Email me a sign-in link</button>' +
-      '</form>' +
-      '<button class="linkbtn" id="gr-gate-skip" type="button">Use it on this phone only</button>' +
-      '</div>';
     document.body.appendChild(wrap);
-    var form = wrap.querySelector('#gr-gate-form');
-    var input = wrap.querySelector('#gr-gate-email');
-    form.addEventListener('submit', async function (e) {
-      e.preventDefault();
-      var email = String(input.value || '').trim();
-      if (!email || email.indexOf('@') < 0) { input.focus(); return; }
-      form.querySelector('button').disabled = true;
-      try {
-        await sb.auth.signInWithOtp({
-          email: email,
-          options: { emailRedirectTo: location.origin + location.pathname }
-        });
-        wrap.querySelector('.gate-card').innerHTML =
-          '<span class="logo-mark" style="width:76px;height:60px"></span>' +
-          '<h2>Check your email</h2>' +
-          '<p>We sent a sign-in link to <b>' + email.replace(/</g, '&lt;') +
-          '</b>. Open it on this phone and you’ll land right back here, signed in.</p>';
-      } catch (e2) {
-        form.querySelector('button').disabled = false;
-        alert('Couldn’t send the link. Check the address and try again.');
-      }
-    });
-    wrap.querySelector('#gr-gate-skip').addEventListener('click', function () {
-      wrap.remove();
-      resolvers.db(null); resolvers.user(null); resolvers.sample(null);
-    });
+
+    function render() {
+      var signin = mode === 'signin';
+      wrap.innerHTML =
+        '<div class="gate-card">' +
+        '<span class="logo-mark" style="width:76px;height:60px"></span>' +
+        '<h2>' + (signin ? 'Sign in to Greenroom' : 'Create your account') + '</h2>' +
+        '<p>' + (signin
+          ? 'Your tours and your band’s numbers, live on every phone.'
+          : 'One account and you’re on the guest list everywhere you’ve been invited.') + '</p>' +
+        '<form id="gr-gate-form" novalidate>' +
+        '<input class="input" type="email" id="gr-gate-email" placeholder="you@band.com" autocomplete="email" inputmode="email" aria-label="Email">' +
+        '<input class="input" type="password" id="gr-gate-pass" placeholder="Password" ' +
+          'autocomplete="' + (signin ? 'current-password' : 'new-password') + '" aria-label="Password">' +
+        '<div class="gate-err" id="gr-gate-err" role="alert"></div>' +
+        '<button class="btn primary block" type="submit">' +
+          (signin ? 'Sign in' : 'Create account') + '</button>' +
+        '</form>' +
+        '<button class="linkbtn" id="gr-gate-flip" type="button">' +
+          (signin ? 'New here? Create an account' : 'Already have an account? Sign in') + '</button>' +
+        '<button class="linkbtn quiet" id="gr-gate-skip" type="button">Use it on this phone only</button>' +
+        '</div>';
+
+      var form = wrap.querySelector('#gr-gate-form');
+      var emailI = wrap.querySelector('#gr-gate-email');
+      var passI = wrap.querySelector('#gr-gate-pass');
+      var errEl = wrap.querySelector('#gr-gate-err');
+      var btn = form.querySelector('button');
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        errEl.textContent = '';
+        var email = String(emailI.value || '').trim();
+        var pass = String(passI.value || '');
+        if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email address.'; emailI.focus(); return; }
+        if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
+        btn.disabled = true;
+        try {
+          var res = signin
+            ? await sb.auth.signInWithPassword({ email: email, password: pass })
+            : await sb.auth.signUp({ email: email, password: pass });
+          if (res.error) throw res.error;
+          if (!res.data || !res.data.session) throw new Error('no session');
+          // onAuthStateChange finishes the job
+        } catch (e2) {
+          btn.disabled = false;
+          var msg = String(e2 && e2.message || '');
+          if (/already registered/i.test(msg)) {
+            errEl.textContent = 'That email already has an account — sign in instead.';
+          } else if (/invalid login credentials/i.test(msg)) {
+            errEl.textContent = signin
+              ? 'Wrong email or password. New here? Tap “Create an account”.'
+              : 'Couldn’t create the account. Try again.';
+          } else if (/at least|password/i.test(msg)) {
+            errEl.textContent = 'Pick a longer password (6 characters or more).';
+          } else {
+            errEl.textContent = 'Couldn’t reach the server. Check your connection and try again.';
+          }
+        }
+      });
+      wrap.querySelector('#gr-gate-flip').addEventListener('click', function () {
+        mode = signin ? 'signup' : 'signin';
+        render();
+        wrap.querySelector('#gr-gate-email').focus();
+      });
+      wrap.querySelector('#gr-gate-skip').addEventListener('click', function () {
+        wrap.remove();
+        resolvers.db(null); resolvers.user(null); resolvers.sample(null);
+      });
+    }
+    render();
     return wrap;
   }
 

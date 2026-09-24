@@ -2381,7 +2381,7 @@
           try {
             await B.invite(tourId, email, role);
             emailI.value = '';
-            toast('Invited ' + email + ' — a sign-in link is on its way');
+            toast(email + ' is on the list — tell them to make an account with that email');
             refresh();
           } catch (e2) { toast('Couldn’t send that invite. Try again.'); }
         }
