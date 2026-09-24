@@ -1073,7 +1073,10 @@
       if (horizontal == null) {
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
         horizontal = Math.abs(dx) > Math.abs(dy);
-        if (horizontal) { try { card.setPointerCapture(e.pointerId); } catch (e2) {} }
+        if (horizontal) {
+          wrap.classList.add('revealed');
+          try { card.setPointerCapture(e.pointerId); } catch (e2) {}
+        }
       }
       if (!horizontal) { dragging = false; card.style.transition = ''; return; }
       var x = Math.max(OPEN - 24, Math.min(0, base + dx));
@@ -1088,6 +1091,7 @@
         var open = (base + dx) < OPEN / 2;
         card.classList.toggle('open', open);
         card.style.transform = open ? 'translateX(' + OPEN + 'px)' : '';
+        if (!open) setTimeout(function () { wrap.classList.remove('revealed'); }, 240);
         if (horizontal && Math.abs(dx) > 8) card.__swiped = Date.now();
       }
     }
@@ -1101,6 +1105,7 @@
         e.stopPropagation(); e.preventDefault();
         card.classList.remove('open');
         card.style.transform = '';
+        setTimeout(function () { wrap.classList.remove('revealed'); }, 240);
       }
     }, true);
     return wrap;
@@ -1126,8 +1131,8 @@
           pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
       dbBanner(),
       canWrite()
-        ? h('button', { class: 'add-tour', type: 'button', onclick: function () { startTour(''); } },
-            icon('plus', 24), h('span', null, 'ADD ARTIST'))
+        ? h('button', { class: 'add-mini', type: 'button', onclick: function () { startTour(''); } },
+            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
         : null,
       byArtist.size
         ? h('ul', { class: 'tour-list' }, Array.from(byArtist, function (pair) {
@@ -1200,9 +1205,9 @@
       dbBanner(),
       h('h1', { class: 'tour-title' }, name),
       canWrite()
-        ? h('button', { class: 'add-tour', type: 'button',
+        ? h('button', { class: 'add-mini', type: 'button',
             onclick: function () { startTour(name); } },
-            icon('plus', 24), h('span', null, 'ADD TOUR'))
+            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
         : null,
       entries.length
         ? h('ul', { class: 'tour-list' }, entries.map(function (e) {
