@@ -7,7 +7,7 @@
   var LS_LAST = 'greenroom:last';
   var LS_LABELS = 'greenroom:labels';
   var LS_THEME = 'greenroom:theme';
-  var TABS = [['shows', 'Shows'], ['expenses', 'Expenses'], ['days', 'Day by day']];
+  var TABS = [['shows', 'Shows'], ['sheet', 'Day sheet'], ['expenses', 'Expenses'], ['days', 'Day by day']];
   var VIEW_ONLY = 'You have view-only access, so changes can’t be saved.';
 
   var S = {
@@ -2085,6 +2085,7 @@
     var body;
     if (tab === 'days') body = tabDays(id, t, c);
     else if (tab === 'expenses') body = tabExpenses(id, t, c);
+    else if (tab === 'sheet') body = tabDaySheet(id, t);
     else body = tabShows(id, t, c);
 
     return h('div', { class: 'page tour' },
@@ -2203,6 +2204,213 @@
         h('div', { class: 'tn-city' }, s.city || 'Show'),
         s.venue ? h('div', { class: 'venue' }, s.venue) : null),
       action);
+  }
+
+  /* ============================== Day sheet ==============================
+     The one screen the whole bus checks: today's times, the venue's facts,
+     and the drive. The tour manager fills it; everyone reads it. */
+
+  function daySheetShowFor(t) {
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    if (!shows.length) return null;
+    var today = G.tourToday();
+    var pick = shows.filter(function (x) { return x.date === today; })[0]
+      || shows.filter(function (x) { return x.date > today; })[0]
+      || shows[shows.length - 1];
+    return { shows: shows, index: shows.indexOf(pick) };
+  }
+
+  function tabDaySheet(id, t) {
+    var got = daySheetShowFor(t);
+    if (!got) {
+      return emptyState('No dates yet', 'Add shows and each one gets its own day sheet.');
+    }
+    if (S.dsIndex == null || S.dsTour !== id || S.dsIndex >= got.shows.length) {
+      S.dsIndex = got.index;
+      S.dsTour = id;
+    }
+    var shows = got.shows;
+    var s = shows[S.dsIndex];
+    var today = G.tourToday();
+    var lines = G.daySheetLines(s);
+    var d = G.isObj(s.daySheet) ? s.daySheet : {};
+
+    var nav = h('div', { class: 'ds-nav' },
+      h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Previous show',
+        disabled: S.dsIndex === 0,
+        onclick: function () { S.dsIndex -= 1; render(true); } }, icon('back', 20)),
+      h('div', { class: 'ds-where' },
+        h('div', { class: 'ds-city' }, s.city || 'Show',
+          s.date === today ? h('span', { class: 'ds-tonight' }) : null),
+        h('div', { class: 'hint' }, [dayLong(s.date), s.venue].filter(Boolean).join(' \u00b7 '))),
+      h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Next show',
+        disabled: S.dsIndex >= shows.length - 1,
+        onclick: function () { S.dsIndex += 1; render(true); } }, icon('chevron', 20)));
+
+    var body;
+    if (!lines.length) {
+      body = emptyState('Nothing posted for this day yet', canWrite()
+        ? 'Fill in the times and the venue details, and the whole tour sees them here.'
+        : 'The tour manager hasn\u2019t posted this day yet.');
+    } else {
+      var rowsOut = [];
+      var timeRow = function (label, v) {
+        if (!String(v || '').trim()) return;
+        rowsOut.push(h('div', { class: 'row ds-row' },
+          h('span', { class: 'row-label' }, label),
+          h('span', { class: 'ds-time num' }, String(v).trim())));
+      };
+      timeRow('Load in', d.loadIn);
+      (Array.isArray(d.soundchecks) ? d.soundchecks : []).forEach(function (r) {
+        if (r && (r.band || r.time)) timeRow('Soundcheck \u2014 ' + (r.band || 'TBA'), r.time || 'TBA');
+      });
+      timeRow('VIP', d.vip);
+      timeRow('Doors', d.doors);
+      (Array.isArray(d.setTimes) ? d.setTimes : []).forEach(function (r) {
+        if (r && (r.band || r.time)) timeRow(r.band || 'TBA', r.time || 'TBA');
+      });
+      timeRow('Lobby call', d.lobbyCall);
+      timeRow('Bus call', d.busCall);
+      var venueRows = [];
+      if (String(d.wifi || '').trim()) venueRows.push(h('div', { class: 'row ds-row' },
+        h('span', { class: 'row-label' }, 'Wifi'), h('span', { class: 'ds-val' }, d.wifi)));
+      if (String(d.parking || '').trim()) venueRows.push(h('div', { class: 'row ds-row' },
+        h('span', { class: 'row-label' }, 'Parking'), h('span', { class: 'ds-val' }, d.parking)));
+      var amen = [];
+      G.DS_AMENITIES.forEach(function (a) {
+        if (d[a[0]] === 'yes') amen.push(h('span', { class: 'ds-amen yes' }, a[1]));
+        else if (d[a[0]] === 'no') amen.push(h('span', { class: 'ds-amen no' }, 'No ' + a[1].toLowerCase()));
+      });
+      body = [
+        rowsOut.length ? h('div', { class: 'ledger' }, rowsOut) : null,
+        venueRows.length ? h('div', { class: 'ledger', style: 'margin-top:12px' }, venueRows) : null,
+        amen.length ? h('div', { class: 'ds-amens' }, amen) : null,
+        String(d.driveNext || '').trim() ? h('div', { class: 'ds-drive' },
+          h('span', { class: 'hint' }, 'Drive to next venue'),
+          h('strong', { class: 'num' }, d.driveNext)) : null,
+        String(d.notes || '').trim() ? h('p', { class: 'note' }, d.notes) : null
+      ];
+    }
+
+    var copyBtn = null;
+    if (lines.length) {
+      copyBtn = h('button', {
+        class: 'btn ghost block', type: 'button', style: 'margin-top:14px',
+        onclick: async function () {
+          var ta = h('textarea', { class: 'sr', readonly: true, value: G.daySheetText(s) });
+          document.body.appendChild(ta);
+          var ok = await copyText(G.daySheetText(s), ta);
+          ta.remove();
+          toast(ok ? 'Day sheet copied \u2014 paste it in the group chat' : 'Press and hold to copy');
+        }
+      }, icon('copy', 18), 'Copy day sheet');
+    }
+
+    return [nav,
+      canWrite() ? h('div', { class: 'btnrow', style: 'margin-top:14px' },
+        h('button', { class: 'btn quiet', type: 'button',
+          onclick: function () { openDaySheetEditor(id, s.id); } },
+          icon('edit', 18), lines.length ? 'Edit day sheet' : 'Fill in the day sheet')) : null,
+      body, copyBtn];
+  }
+
+  function openDaySheetEditor(tourId, showId) {
+    var t = getTour(tourId);
+    var s = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : null;
+    if (!s) return;
+    var d0 = G.isObj(s.daySheet) ? s.daySheet : {};
+    var f = {
+      loadIn: d0.loadIn || '', vip: d0.vip || '', doors: d0.doors || '',
+      lobbyCall: d0.lobbyCall || '', busCall: d0.busCall || '',
+      wifi: d0.wifi || '', parking: d0.parking || '',
+      driveNext: d0.driveNext || '', notes: d0.notes || '',
+      soundchecks: (Array.isArray(d0.soundchecks) ? d0.soundchecks : []).map(function (r) {
+        return { band: r.band || '', time: r.time || '' }; }),
+      setTimes: (Array.isArray(d0.setTimes) ? d0.setTimes : []).map(function (r) {
+        return { band: r.band || '', time: r.time || '' }; })
+    };
+    G.DS_AMENITIES.forEach(function (a) { f[a[0]] = d0[a[0]] || ''; });
+
+    openSheet(function () {
+      function textIn(key, ph) {
+        return h('input', { class: 'input', type: 'text', value: f[key], maxlength: 80,
+          autocomplete: 'off', placeholder: ph || '',
+          oninput: function (e) { f[key] = e.target.value; } });
+      }
+      function bandList(key, addLabel) {
+        var host = h('div', { class: 'ds-bands' });
+        function build() {
+          var kids = f[key].map(function (r, i) {
+            return h('div', { class: 'af-row', style: 'margin-bottom:8px' },
+              h('input', { class: 'input', type: 'text', value: r.band, maxlength: 60,
+                placeholder: 'Band', autocomplete: 'off',
+                oninput: function (e) { r.band = e.target.value; } }),
+              h('input', { class: 'input', type: 'text', value: r.time, maxlength: 20,
+                placeholder: 'Time', autocomplete: 'off', style: 'flex:0 0 110px',
+                oninput: function (e) { r.time = e.target.value; } }),
+              h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove',
+                onclick: function () { f[key].splice(i, 1); build(); } }, icon('trash', 16)));
+          });
+          kids.push(h('button', { class: 'btn quiet block', type: 'button', style: 'min-height:42px',
+            onclick: function () { f[key].push({ band: '', time: '' }); build(); } }, addLabel));
+          host.replaceChildren.apply(host, kids);
+        }
+        build();
+        return host;
+      }
+      function yesNo(key, label) {
+        var idx = f[key] === 'yes' ? 1 : f[key] === 'no' ? 2 : 0;
+        return h('div', { class: 'ds-yn' },
+          h('span', { class: 'field-label', style: 'margin:0' }, label),
+          segmented(['\u2014', 'Yes', 'No'], idx, function (i) {
+            f[key] = i === 1 ? 'yes' : i === 2 ? 'no' : '';
+          }, label));
+      }
+      var submit = async function (e) {
+        e.preventDefault();
+        blurActive();
+        var clean = function (list) {
+          return list.filter(function (r) { return r.band.trim() || r.time.trim(); })
+            .map(function (r) { return { band: r.band.trim(), time: r.time.trim() }; });
+        };
+        var sheet = {
+          loadIn: f.loadIn.trim(), vip: f.vip.trim(), doors: f.doors.trim(),
+          lobbyCall: f.lobbyCall.trim(), busCall: f.busCall.trim(),
+          wifi: f.wifi.trim(), parking: f.parking.trim(),
+          driveNext: f.driveNext.trim(), notes: f.notes.trim(),
+          soundchecks: clean(f.soundchecks), setTimes: clean(f.setTimes)
+        };
+        G.DS_AMENITIES.forEach(function (a) { sheet[a[0]] = f[a[0]] || ''; });
+        var patch = {};
+        patch[showId] = { daySheet: sheet };
+        if (await api.update(tourId, { shows: patch })) {
+          closeSheet(); toast('Day sheet posted'); render(true);
+        }
+      };
+      return [
+        h('h2', { class: 'sh-title' }, 'Day sheet \u2014 ' + (s.city || 'Show')),
+        h('p', { class: 'sh-sub' }, 'Everything the bus needs for the day. Leave anything blank and it just doesn\u2019t show.'),
+        h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
+          h('div', { class: 'field-row' },
+            field('Load in', textIn('loadIn', '2:00 PM')),
+            field('Doors', textIn('doors', '7:00 PM'))),
+          field('Soundchecks', bandList('soundchecks', '+ Add a band\u2019s soundcheck')),
+          field('VIP', textIn('vip', '6:00 PM meet & greet')),
+          field('Set times', bandList('setTimes', '+ Add a band\u2019s set time')),
+          h('div', { class: 'field-row' },
+            field('Lobby call', textIn('lobbyCall', '11:00 AM')),
+            field('Bus call', textIn('busCall', '11:45 PM'))),
+          field('Wifi', textIn('wifi', 'Network / password')),
+          field('Parking', textIn('parking', 'Load in off 4th St alley, bus on the north lot')),
+          h('div', { class: 'ds-yns' }, G.DS_AMENITIES.map(function (a) { return yesNo(a[0], a[1]); })),
+          field('Drive time to next venue', textIn('driveNext', '4h 20m \u2014 285 mi')),
+          field('Anything else', textIn('notes', 'Optional')),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Post day sheet'),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { closeSheet(); } }, 'Cancel')))
+      ];
+    }, { label: 'Day sheet' });
   }
 
   /* ============================== Income ============================== */
@@ -3064,13 +3272,14 @@
       'Pull out what the ARTIST earned, and the story of the night.',
       '',
       'Reply with only a JSON object in this exact shape:',
-      '{"income":{"guarantee":null,"merch":null,"vip":null,"buyouts":null,"catering":null,"misc":null,"miscLabel":""},',
+      '{"income":{"guarantee":null,"backend":null,"merch":null,"vip":null,"buyouts":null,"catering":null,"misc":null,"miscLabel":""},',
       ' "notes":[{"label":"Attendance","value":"734 of 900"}]}',
       '',
       'Income rules:',
       '- Fill a number ONLY if it is actually on the sheet; otherwise leave it null. Never estimate.',
       '- guarantee: the contracted guarantee, before any tax or deductions.',
-      '- misc: overage / back end / bonus / percentage-of-door the artist hit, with miscLabel naming it (e.g. "Back end").',
+      '- backend: overage / points / percentage-of-door the artist hit, past the guarantee.',
+      '- misc: anything else paid to the artist, with miscLabel naming it.',
       '- merch: the artist’s merch money only if the sheet settles merch.',
       '- vip, buyouts, catering: only if the sheet shows them as money paid to the artist.',
       '',

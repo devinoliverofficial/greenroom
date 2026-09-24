@@ -443,6 +443,64 @@
     eq(ch.label, 'Detroit, MI', 'label');
   });
 
+  /* ============ Back end income ============ */
+
+  test('back end counts as income, but the booking agent stays on guarantees', function () {
+    var t = {
+      expenses: {}, crew: {}, debts: {}, extras: {},
+      commission: { management: { mode: 'pct', value: 10 }, agent: { mode: 'pct', value: 10 },
+        lawyer: { mode: 'flat', value: 0 } },
+      shows: keyed([{ date: '2026-05-01', city: 'A', loggedAt: 1,
+        income: { guarantee: 10000, backend: 2500 } }])
+    };
+    var c = G.calc(t);
+    eq(c.income, 12500, 'back end is income');
+    eq(c.guarantees, 10000, 'but not a guarantee');
+    // management 10% of 12,500 = 1,250; agent 10% of 10,000 = 1,000
+    near(c.commission, 2250, 'agent untouched by back end');
+  });
+
+  /* ============ Day sheets ============ */
+
+  test('the day sheet prints only what was filled in, in run order', function () {
+    var lines = G.daySheetLines({
+      daySheet: {
+        loadIn: '2:00 PM',
+        soundchecks: [{ band: 'In This Moment', time: '4:00 PM' }, { band: 'Support', time: '5:00 PM' }],
+        doors: '7:00 PM',
+        setTimes: [{ band: 'Support', time: '8:00 PM' }, { band: 'In This Moment', time: '9:15 PM' }],
+        busCall: '11:45 PM',
+        wifi: 'Venue5G / password stagepass',
+        greenrooms: 'yes', showers: 'no',
+        driveNext: '4h 20m — 285 mi'
+      }
+    });
+    eq(lines[0], 'Load in: 2:00 PM', 'load in first');
+    eq(lines[1], 'Soundcheck — In This Moment: 4:00 PM', 'soundcheck per band');
+    eq(lines[3], 'Doors: 7:00 PM', 'doors');
+    eq(lines[4], 'Support: 8:00 PM', 'set times in order');
+    eq(lines.indexOf('Bus call: 11:45 PM') >= 0, true, 'bus call');
+    eq(lines.indexOf('Greenrooms yes · no showers') >= 0, true, 'amenities in one line');
+    eq(lines[lines.length - 1], 'Drive to next venue: 4h 20m — 285 mi', 'drive last');
+    // nothing that wasn't filled in
+    eq(lines.join('\n').indexOf('VIP'), -1, 'no empty VIP line');
+    eq(lines.join('\n').indexOf('Lobby'), -1, 'no empty lobby line');
+  });
+
+  test('an empty day sheet prints nothing at all', function () {
+    eq(G.daySheetLines({ daySheet: {} }).length, 0, 'no lines');
+    eq(G.daySheetLines({}).length, 0, 'no sheet');
+  });
+
+  test('the copy text leads with the city, venue and date', function () {
+    var text = G.daySheetText({
+      date: '2026-05-01', city: 'Detroit, MI', venue: 'The Fillmore',
+      daySheet: { doors: '7:00 PM' }
+    });
+    eq(text.split('\n')[0], 'Detroit, MI — The Fillmore · Fri, May 1', 'header');
+    eq(text.split('\n')[1], 'Doors: 7:00 PM', 'body');
+  });
+
   /* ============ Settlement sheets ============ */
 
   test('a settlement fills only the numbers it actually found', function () {

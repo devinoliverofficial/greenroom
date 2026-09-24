@@ -31,6 +31,8 @@
 
   var INCOME_FIELDS = [
     { key: 'guarantee', label: 'Guarantee' },
+    // Overage, points, a door split — whatever the deal pays past the guarantee.
+    { key: 'backend', label: 'Back end' },
     { key: 'merch', label: 'Merch' },
     { key: 'vip', label: 'VIPs' },
     { key: 'buyouts', label: 'Buyouts' },
@@ -422,6 +424,66 @@
     return t;
   }
 
+  /* ---------------- Day sheets ---------------- */
+
+  var DS_AMENITIES = [
+    ['greenrooms', 'Greenrooms'], ['showers', 'Showers'],
+    ['productionOffice', 'Production office'], ['laundry', 'Laundry']
+  ];
+
+  function dsList(v) {
+    if (!Array.isArray(v)) return [];
+    return v.filter(function (r) { return isObj(r) && (String(r.band || '').trim() || String(r.time || '').trim()); });
+  }
+
+  // The day sheet as lines of text, ready for the group chat. Only what the
+  // tour manager actually filled in — no empty labels, no placeholders.
+  function daySheetLines(show) {
+    var d = show && isObj(show.daySheet) ? show.daySheet : {};
+    var lines = [];
+    var put = function (label, v) {
+      v = String(v == null ? '' : v).trim();
+      if (v) lines.push(label + ': ' + v);
+    };
+    put('Load in', d.loadIn);
+    dsList(d.soundchecks).forEach(function (r) {
+      lines.push('Soundcheck — ' + (String(r.band || '').trim() || 'TBA') + ': ' + (String(r.time || '').trim() || 'TBA'));
+    });
+    put('VIP', d.vip);
+    put('Doors', d.doors);
+    dsList(d.setTimes).forEach(function (r) {
+      lines.push((String(r.band || '').trim() || 'TBA') + ': ' + (String(r.time || '').trim() || 'TBA'));
+    });
+    put('Lobby call', d.lobbyCall);
+    put('Bus call', d.busCall);
+    put('Wifi', d.wifi);
+    put('Parking', d.parking);
+    var amen = [];
+    DS_AMENITIES.forEach(function (a) {
+      var v = d[a[0]];
+      if (v === 'yes') amen.push(a[1] + ' yes');
+      else if (v === 'no') amen.push('no ' + a[1].toLowerCase());
+    });
+    if (amen.length) lines.push(amen.join(' · '));
+    put('Drive to next venue', d.driveNext);
+    put('Notes', d.notes);
+    return lines;
+  }
+
+  function daySheetText(show) {
+    var head = [];
+    if (show) {
+      var city = String(show.city || '').trim();
+      var venue = String(show.venue || '').trim();
+      head.push([city, venue].filter(Boolean).join(' — ') || 'Day sheet');
+      if (parseDay(show.date)) {
+        head[0] = head[0] + ' · ' + new Intl.DateTimeFormat('en-US',
+          { weekday: 'short', month: 'short', day: 'numeric' }).format(parseDay(show.date));
+      }
+    }
+    return head.concat(daySheetLines(show)).join('\n');
+  }
+
   /* ---------------- Settlement sheets ---------------- */
 
   // What the reader hands back from a promoter settlement, made safe: only
@@ -518,6 +580,7 @@
     calc: calc, stateOf: stateOf, caption: caption,
     balanceSeries: balanceSeries, latestChange: latestChange,
     normalizeSettlement: normalizeSettlement,
+    DS_AMENITIES: DS_AMENITIES, daySheetLines: daySheetLines, daySheetText: daySheetText,
     dailyUpdate: dailyUpdate
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

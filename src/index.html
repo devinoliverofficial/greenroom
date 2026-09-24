@@ -362,6 +362,22 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .row.sn-row { min-height: 44px; }
 .row.sn-row .row-label { font-size: 14px; font-weight: 500; color: var(--ink-2); }
 .sn-val { font-size: 14px; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+/* Day sheet */
+.ds-nav { display: flex; align-items: center; gap: 6px; }
+.ds-where { flex: 1; min-width: 0; text-align: center; }
+.ds-city { font-size: 19px; font-weight: 650; display: inline-flex; align-items: center; gap: 7px; }
+.ds-tonight { width: 8px; height: 8px; border-radius: 50%; background: var(--pos); display: inline-block; }
+.row.ds-row { min-height: 50px; }
+.ds-time { font-size: 17px; white-space: nowrap; }
+.ds-val { font-size: 14px; font-weight: 600; text-align: right; max-width: 60%; overflow-wrap: anywhere; }
+.ds-amens { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.ds-amen { padding: 5px 11px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+.ds-amen.yes { background: var(--pos-soft); color: var(--pos); }
+.ds-amen.no { background: var(--surface-2); color: var(--ink-3); }
+.ds-drive { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 13px 15px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+.ds-drive strong { font-size: 17px; }
+.ds-yns { display: grid; gap: 8px; margin-bottom: 14px; }
+.ds-yn { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .row.head { min-height: 0; padding: 13px 15px 7px; background: var(--surface-2); font-size: 12px; font-weight: 600; color: var(--ink-3); }
 .row.total { background: var(--surface-2); }
 .row.total > span:first-child { flex: 1; font-weight: 700; }
