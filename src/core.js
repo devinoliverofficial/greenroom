@@ -194,6 +194,61 @@
 
   /* ---------------- The big number ---------------- */
 
+  /* ---------------- Cards carried into the tour ---------------- */
+
+  // A card's opening balance is pre-tour spending. It never sits in the debt
+  // pile: every dollar of it lands in exactly one category as already-paid
+  // money (the breakdown decides where; whatever isn't broken down goes to
+  // Misc), and max(projected, paid) then counts each dollar once.
+  function cardDebts(tour) {
+    return rows(tour && tour.debts).filter(function (d) { return d.kind === 'card'; });
+  }
+  function otherDebts(tour) {
+    return rows(tour && tour.debts).filter(function (d) { return d.kind !== 'card'; });
+  }
+  function cardSummary(card) {
+    var bd = isObj(card.breakdown) ? card.breakdown : {};
+    var accounted = 0;
+    TYPED_CATEGORIES.forEach(function (c) { accounted += num(bd[c.key]); });
+    var balance = num(card.amount);
+    return {
+      id: card.id, label: card.label || 'Card', balance: balance,
+      accounted: Math.min(accounted, balance),
+      remainder: Math.max(0, balance - accounted),
+      over: Math.max(0, accounted - balance)
+    };
+  }
+  // What each category was paid on cards going in: { key: [{label, amount}] }
+  function cardPaidDetail(tour) {
+    var out = {};
+    cardDebts(tour).forEach(function (card) {
+      var s = cardSummary(card);
+      var bd = isObj(card.breakdown) ? card.breakdown : {};
+      TYPED_CATEGORIES.forEach(function (c) {
+        var v = num(bd[c.key]);
+        if (v > 0) (out[c.key] = out[c.key] || []).push({ label: s.label, amount: v });
+      });
+      if (s.remainder > 0) {
+        (out.misc = out.misc || []).push({ label: s.label, amount: s.remainder, leftover: true });
+      }
+    });
+    return out;
+  }
+  // The last day whose charges are assumed inside the opening balances.
+  function preTourCutoff(tour) {
+    var cards = cardDebts(tour);
+    if (!cards.length) return null;
+    var shows = rows(tour && tour.shows).filter(function (s) { return parseDay(s.date); })
+      .map(function (s) { return s.date; }).sort();
+    var start = shows.length ? shows[0] : null;
+    var best = null;
+    cards.forEach(function (c) {
+      var cut = parseDay(c.cutoff) ? c.cutoff : start;
+      if (cut && (!best || cut > best)) best = cut;
+    });
+    return best;
+  }
+
   // `upTo` limits shows, day-by-day costs and card charges to that date or
   // earlier, which is how the balance chart walks the tour day by day.
   // Projections are committed from day one, so the curve starts deep in the red.
@@ -225,6 +280,13 @@
       chargedTo[k] = (chargedTo[k] || 0) + num(ch.amount);
     });
 
+    // Pre-tour card money lands here as already-paid, category by category.
+    var cardDetail = cardPaidDetail(tour);
+    var cardTo = {};
+    Object.keys(cardDetail).forEach(function (k) {
+      cardTo[k] = cardDetail[k].reduce(function (t, r) { return t + r.amount; }, 0);
+    });
+
     var expenses = normExpenses(tour && tour.expenses);
     var lines = [];
     var fixed = 0;
@@ -233,11 +295,12 @@
       var rec = expenses[c.key];
       // Crew's projection is the sum of what the crew is owed, not a typed number.
       var projected = c.key === 'crew' ? crewProjection(tour) || null : rec.projected;
-      var paid = num(rec.paid) + (chargedTo[c.key] || 0);
+      var paid = num(rec.paid) + (chargedTo[c.key] || 0) + (cardTo[c.key] || 0);
       var effective = projected == null ? paid : Math.max(projected, paid);
       fixed += effective;
       lines.push({
         key: c.key, label: c.label, projected: projected, paid: paid, effective: effective,
+        cards: cardDetail[c.key] || [],
         left: projected == null ? null : Math.max(0, projected - paid),
         over: projected == null ? 0 : Math.max(0, paid - projected)
       });
@@ -253,7 +316,9 @@
       over: Math.max(0, commissionPaid - commissionProjected)
     });
 
-    var debt = rows(tour && tour.debts).reduce(function (t, d) { return t + num(d.amount); }, 0);
+    // Only loans and gear payments live here: a card's balance already counts
+    // once through the categories above.
+    var debt = otherDebts(tour).reduce(function (t, d) { return t + num(d.amount); }, 0);
 
     var extras = rows(tour && tour.extras).filter(function (x) {
       return !upTo || (x.date && x.date <= upTo);
@@ -417,6 +482,9 @@
     normExpenses: normExpenses, normCommission: normCommission,
     showIncomeTotal: showIncomeTotal, crewProjection: crewProjection,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
+
+    cardDebts: cardDebts, otherDebts: otherDebts, cardSummary: cardSummary,
+    cardPaidDetail: cardPaidDetail, preTourCutoff: preTourCutoff,
 
     calc: calc, stateOf: stateOf, caption: caption,
     balanceSeries: balanceSeries, latestChange: latestChange,

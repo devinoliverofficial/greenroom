@@ -372,14 +372,26 @@
     });
   }
 
+  /**
+   * Charges dated on or before the cutoff are assumed to be inside a card's
+   * opening balance — counting them again would double the money.
+   */
+  function markPreCutoff(charges, cutoff) {
+    return (charges || []).map(function (c) {
+      var pre = !!(cutoff && c.date && c.date <= cutoff);
+      return Object.assign({}, c, { preCutoff: pre });
+    });
+  }
+
   function groupForReview(charges) {
-    var needs = [], filled = [], already = [];
+    var needs = [], filled = [], already = [], before = [];
     (charges || []).forEach(function (c) {
       if (c.duplicate) already.push(c);
+      else if (c.preCutoff) before.push(c);
       else if (c.category) filled.push(c);
       else needs.push(c);
     });
-    return { needs: needs, filled: filled, already: already };
+    return { needs: needs, filled: filled, already: already, before: before };
   }
 
   root.GRS = {
@@ -399,6 +411,7 @@
     learnLabel: learnLabel,
     forgetLabel: forgetLabel,
     applyLabels: applyLabels,
+    markPreCutoff: markPreCutoff,
     groupForReview: groupForReview
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

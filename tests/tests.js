@@ -225,6 +225,86 @@
     if (keys.indexOf('merch') < 0) throw new Error('merch missing from charge categories');
   });
 
+  /* ============ Cards carried into the tour ============ */
+
+  function cardTour() {
+    return {
+      expenses: {
+        bus: { projected: 40000, paid: 0 },      // projection exceeds card spend
+        hotels: { projected: 5000, paid: 0 },    // card spend exceeds projection
+        gas: { projected: 20000, paid: 0 },
+        misc: { projected: null, paid: 0 }
+      },
+      crew: {}, commission: {}, extras: {}, shows: {}, charges: {},
+      debts: keyed([{
+        label: 'Amex', amount: 28000, kind: 'card', createdAt: 1,
+        breakdown: { bus: 8500, hotels: 6000, gas: 9300 }   // 23,800 of 28,000
+      }])
+    };
+  }
+
+  test('a card balance with a partial breakdown sends the remainder to Misc', function () {
+    var c = G.calc(cardTour());
+    var misc = lineFor(c, 'misc');
+    eq(misc.paid, 4200, 'leftover lands in misc');
+    eq(misc.effective, 4200, 'misc counts it');
+    eq(misc.cards.length, 1, 'tagged with the card');
+    eq(misc.cards[0].label, 'Amex', 'card name');
+    eq(misc.cards[0].leftover, true, 'marked as leftover');
+  });
+
+  test('a projection bigger than the card spend counts once, not twice', function () {
+    var bus = lineFor(G.calc(cardTour()), 'bus');
+    eq(bus.projected, 40000, 'projected');
+    eq(bus.paid, 8500, 'paid on the card going in');
+    eq(bus.left, 31500, 'left to pay');
+    eq(bus.effective, 40000, 'counted once, inside the projection');
+  });
+
+  test('card spend past the projection raises the category, still counted once', function () {
+    var hotels = lineFor(G.calc(cardTour()), 'hotels');
+    eq(hotels.projected, 5000, 'projected');
+    eq(hotels.paid, 6000, 'paid on the card');
+    eq(hotels.over, 1000, 'over by');
+    eq(hotels.effective, 6000, 'the higher number wins');
+  });
+
+  test('the whole balance is in the total exactly once, and not in the owed pile', function () {
+    var c = G.calc(cardTour());
+    eq(c.debt, 0, 'cards are not loans');
+    // bus 40,000 + hotels 6,000 + gas 20,000 + misc 4,200 = 70,200
+    near(c.fixed, 70200, 'total');
+    near(c.out, 70200, 'out');
+  });
+
+  test('a card with no breakdown is one Misc lump — skipping is free', function () {
+    var t = cardTour();
+    t.debts.r0.breakdown = {};
+    var c = G.calc(t);
+    eq(lineFor(c, 'misc').paid, 28000, 'whole balance in misc');
+    eq(lineFor(c, 'bus').paid, 0, 'nothing invented elsewhere');
+    near(c.out, 40000 + 5000 + 20000 + 28000, 'total still right');
+  });
+
+  test('loans and gear payments still work the old way', function () {
+    var t = cardTour();
+    t.debts.r1 = { label: 'Gear payment', amount: 3000, createdAt: 2 };
+    var c = G.calc(t);
+    eq(c.debt, 3000, 'in the owed pile');
+    near(c.out, 73200, 'added on top');
+  });
+
+  test('the cutoff defaults to the first show and takes the latest card', function () {
+    var t = cardTour();
+    t.shows = keyed([{ date: '2026-05-10', city: 'A' }, { date: '2026-05-12', city: 'B' }]);
+    eq(G.preTourCutoff(t), '2026-05-10', 'defaults to tour start');
+    t.debts.r0.cutoff = '2026-05-14';
+    eq(G.preTourCutoff(t), '2026-05-14', 'an edited cutoff wins');
+    t.shows = {};
+    t.debts.r0.cutoff = null;
+    eq(G.preTourCutoff(t), null, 'no dates, no cutoff');
+  });
+
   /* ============ Commission behaviour ============ */
 
   test('percentage commission grows as income is logged', function () {

@@ -1204,8 +1204,8 @@
   function wzDebt(id, t) {
     var has = G.rows(t.debts).length > 0;
     return h('div', { class: 'wz-body' },
-      h('h1', { class: 'wz-title' }, 'Anything to pay off?'),
-      h('p', { class: 'wz-sub' }, 'Money that has to be cleared by the last show — a credit card balance you’re carrying in, a loan, a gear payment. Nothing to add? Skip it.'),
+      h('h1', { class: 'wz-title' }, 'What do you owe going in?'),
+      h('p', { class: 'wz-sub' }, 'The card balance you’re carrying into the tour, plus any loans or gear payments. Nothing owed? Skip it.'),
       debtSection(id, t, 'wizard'),
       wzFoot(function () { go({ name: 'wizard', id: id, step: 2 }); }, has ? 'Next' : 'Skip', async function () {
         if (await api.update(id, { setupStep: 4 })) go({ name: 'wizard', id: id, step: 4 });
@@ -1383,16 +1383,22 @@
   }
 
   /* Expenses tab: one row per category, each opening its own sheet. */
+  function cardBit(l) {
+    if (!l.cards || !l.cards.length) return '';
+    return ' · ' + l.cards.map(function (r) {
+      return money(r.amount) + (r.leftover ? ' left over from ' : ' on ') + r.label;
+    }).join(', ') + ' going in';
+  }
   function lineHint(l) {
-    if (l.over > 0) return { text: 'Over by ' + money(l.over) + ' · ' + money(l.paid) + ' paid', cls: ' over' };
+    if (l.over > 0) return { text: 'Over by ' + money(l.over) + ' · ' + money(l.paid) + ' paid' + cardBit(l), cls: ' over' };
     if (l.key === 'commission') {
       return { text: l.paid > 0 ? money(l.paid) + ' paid so far' : 'Worked out from income as you log shows', cls: '' };
     }
     if (l.projected == null) {
-      return { text: l.paid > 0 ? money(l.paid) + ' charged, nothing projected' : 'Nothing projected yet', cls: '' };
+      return { text: l.paid > 0 ? money(l.paid) + ' so far' + cardBit(l) : 'Nothing projected yet', cls: '' };
     }
-    if (l.left === 0) return { text: 'All ' + money(l.paid) + ' paid', cls: ' done' };
-    return { text: money(l.paid) + ' paid · ' + money(l.left) + ' left to pay', cls: '' };
+    if (l.left === 0) return { text: 'All ' + money(l.paid) + ' paid' + cardBit(l), cls: ' done' };
+    return { text: money(l.paid) + ' paid · ' + money(l.left) + ' left to pay' + cardBit(l), cls: '' };
   }
 
   function tabExpenses(id, t, c) {
@@ -1438,11 +1444,13 @@
     var rec = G.normExpenses(t && t.expenses)[key];
     var f = { projected: rec.projected, paid: G.num(rec.paid) };
     var charged = chargedTo(t, key);
+    var onCards = (G.cardPaidDetail(t)[key] || []);
+    var cardTotal = onCards.reduce(function (a, r) { return a + r.amount; }, 0);
 
     openSheet(function () {
       var readout = h('div', { class: 'preview' });
       function refresh() {
-        var paid = f.paid + charged;
+        var paid = f.paid + charged + cardTotal;
         var p = f.projected;
         var kids = [
           h('div', null, h('span', null, 'Projected'),
@@ -1479,7 +1487,13 @@
           field('Already paid', moneyInput({
             id: 'cat-paid', value: f.paid, label: cat.label + ' already paid', last: true,
             onValue: function (v) { f.paid = v; refresh(); }
-          }), charged > 0 ? money(charged) + ' of card charges is counted on top of this.' : 'Deposits or anything settled up front.'),
+          }), [
+            charged > 0 ? money(charged) + ' of imported charges is counted on top of this. ' : '',
+            onCards.map(function (r) {
+              return money(r.amount) + (r.leftover ? ' left over from ' : ' on ') + r.label + ' going in. ';
+            }).join(''),
+            (!charged && !onCards.length) ? 'Deposits or anything settled up front.' : ''
+          ].join('')),
           readout,
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
@@ -1666,13 +1680,17 @@
   /* ============================== Debt ============================== */
 
   function debtSection(id, t, mode) {
-    var debts = G.rows(t.debts).sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
-    var total = debts.reduce(function (s, d) { return s + G.num(d.amount); }, 0);
+    var cards = G.cardDebts(t).sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
+    var others = G.otherDebts(t).sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
+    var total = others.reduce(function (s, d) { return s + G.num(d.amount); }, 0);
     var parts = [];
-    if (canWrite()) parts.push(addDebtForm(id));
-    if (debts.length) {
+
+    cards.forEach(function (card) { parts.push(cardBlock(id, card)); });
+    if (canWrite()) parts.push(addDebtForm(id, cards.length === 0));
+
+    if (others.length) {
       parts.push(h('div', { class: 'ledger' },
-        debts.map(function (d) {
+        others.map(function (d) {
           return canWrite()
             ? h('button', { class: 'row rowbtn', type: 'button', onclick: function () { openDebtSheet(id, d); } },
                 h('span', { class: 'row-label' }, d.label || 'Debt'),
@@ -1683,46 +1701,212 @@
         }),
         h('div', { class: 'row total' },
           h('span', null, 'To pay off'), h('strong', { class: 'amt num' }, money(total)))));
-    } else if (mode === 'tab') {
-      parts.push(emptyState('Nothing to pay off', canWrite()
-        ? 'Add anything the tour has to clear by the last show, like a credit card balance you’re carrying in.'
-        : 'This tour has nothing to pay off.'));
+    } else if (mode === 'tab' && !cards.length) {
+      parts.push(emptyState('Nothing owed going in', canWrite()
+        ? 'Add the card balance you’re carrying into the tour, or a loan or gear payment.'
+        : 'This tour carries nothing in.'));
     }
     return parts;
   }
 
-  function addDebtForm(id) {
+  /* One card: its balance, and an optional breakdown of where that money went.
+     Whatever isn't broken down goes to Misc — plainly said, never required. */
+  function cardBlock(tourId, card) {
+    var s = G.cardSummary(card);
+    var bd = G.isObj(card.breakdown) ? card.breakdown : {};
+    var used = Object.keys(bd).filter(function (k) { return G.num(bd[k]) > 0; });
+
+    var kids = [
+      h('div', { class: 'row' },
+        h('div', { class: 'row-label' }, s.label,
+          h('span', { class: 'hint' }, 'Balance going into the tour')),
+        h('span', { class: 'amt num' }, money(s.balance)),
+        canWrite() ? h('button', {
+          class: 'iconbtn sm', type: 'button', 'aria-label': 'Edit ' + s.label,
+          onclick: function () { openCardSheet(tourId, card); }
+        }, icon('edit', 18)) : null)
+    ];
+    used.forEach(function (k) {
+      var cat = G.TYPED_CATEGORIES.filter(function (c) { return c.key === k; })[0];
+      kids.push(h('div', { class: 'row bd-row' },
+        h('span', { class: 'row-label' }, cat ? cat.label : k),
+        h('span', { class: 'amt num' }, money(G.num(bd[k])))));
+    });
+    if (s.over > 0) {
+      kids.push(h('div', { class: 'row bd-row' },
+        h('span', { class: 'row-label hint over' },
+          'That’s ' + money(s.over) + ' more than the balance — trim a line'),
+        h('span', null)));
+    } else {
+      kids.push(h('div', { class: 'row bd-row' },
+        h('span', { class: 'row-label' },
+          h('span', { class: 'hint' }, used.length
+            ? money(s.accounted) + ' of ' + money(s.balance) + ' accounted for' +
+              (s.remainder > 0 ? ' · ' + money(s.remainder) + ' left over goes to Misc' : '')
+            : 'Break it down by category if you remember — or don’t, and it all goes to Misc')),
+        canWrite() ? h('button', {
+          class: 'btn sm quiet', type: 'button',
+          onclick: function () { openCardSheet(tourId, card); }
+        }, used.length ? 'Edit breakdown' : 'Break it down') : null));
+    }
+    return h('div', { class: 'ledger', style: 'margin-bottom:14px' }, kids);
+  }
+
+  function addDebtForm(id, leadWithCard) {
     var key = 'debt:' + id;
-    var f = S.drafts[key] || (S.drafts[key] = { label: '', amount: 0 });
-    var chips;
+    var f = S.drafts[key] || (S.drafts[key] = { label: '', amount: 0, kind: leadWithCard ? 'card' : 'card' });
     var labelInput = h('input', {
       class: 'input', type: 'text', id: 'debt-label', 'data-k': 'debt-label', value: f.label,
-      maxlength: 60, autocomplete: 'off', placeholder: 'What is it?',
-      'aria-label': 'What the debt is', enterkeyhint: 'next',
-      oninput: function (e) { f.label = e.target.value; if (chips) chips.sync(f.label); },
+      maxlength: 60, autocomplete: 'off',
+      placeholder: f.kind === 'card' ? 'Which card? e.g. Amex' : 'What is it? e.g. Trailer loan',
+      'aria-label': 'Name it', enterkeyhint: 'next',
+      oninput: function (e) { f.label = e.target.value; },
       onkeydown: function (e) { if (e.key === 'Enter') { e.preventDefault(); advance(e.target); } }
     });
-    chips = chipRow(G.DEBT_CHIPS, f.label, function (v) { f.label = v; labelInput.value = v; });
+    var seg = segmented(['Card balance', 'Loan or other'], f.kind === 'card' ? 0 : 1, function (i) {
+      f.kind = i === 0 ? 'card' : 'other';
+      labelInput.placeholder = f.kind === 'card' ? 'Which card? e.g. Amex' : 'What is it? e.g. Trailer loan';
+    }, 'What kind of debt');
     var submit = async function (e) {
       e.preventDefault();
-      var label = f.label.trim();
-      if (!label) { toast('Name it first, like “Credit card”'); labelInput.focus(); return; }
+      var label = f.label.trim() || (f.kind === 'card' ? 'Card' : '');
+      if (!label) { toast('Name it first, like “Trailer loan”'); labelInput.focus(); return; }
       if (!(f.amount > 0)) { toast('Enter how much is owed'); return; }
       blurActive();
+      var did = newId();
       var patch = {};
-      patch[newId()] = { label: label, amount: f.amount, createdAt: Date.now() };
+      patch[did] = f.kind === 'card'
+        ? { label: label, amount: f.amount, kind: 'card', cutoff: null, breakdown: {}, createdAt: Date.now() }
+        : { label: label, amount: f.amount, createdAt: Date.now() };
       if (await api.update(id, { debts: patch })) {
         delete S.drafts[key];
-        toast('Added ' + label);
+        toast(f.kind === 'card'
+          ? label + ' added — break it down if you remember where it went'
+          : 'Added ' + label);
         render(true);
       }
     };
     return h('form', { class: 'card addform', onsubmit: submit, novalidate: true },
-      chips,
+      h('div', { style: 'margin-bottom:12px' }, seg),
       h('div', { class: 'af-row' }, labelInput,
         moneyInput({ id: 'debt-amount', value: f.amount, slim: true, label: 'Amount owed', last: true,
           onValue: function (v) { f.amount = v; } })),
       h('button', { class: 'btn quiet block', type: 'submit', style: 'margin-top:12px' }, 'Add'));
+  }
+
+  /* The card editor: balance, the breakdown, and the statement cutoff date. */
+  function openCardSheet(tourId, card) {
+    var f = {
+      label: card.label || 'Card',
+      amount: G.num(card.amount),
+      cutoff: card.cutoff || '',
+      bd: {}
+    };
+    var src = G.isObj(card.breakdown) ? card.breakdown : {};
+    G.TYPED_CATEGORIES.forEach(function (c) { if (G.num(src[c.key]) > 0) f.bd[c.key] = G.num(src[c.key]); });
+
+    openSheet(function () {
+      var tally = h('p', { class: 'note', 'aria-live': 'polite' }, '');
+      var rowsHost = h('div', { class: 'ledger' });
+
+      function refresh() {
+        var acc = 0;
+        Object.keys(f.bd).forEach(function (k) { acc += G.num(f.bd[k]); });
+        if (acc > f.amount) {
+          tally.textContent = 'That’s ' + money(acc - f.amount) + ' more than the balance — trim a line.';
+          tally.className = 'note over-note';
+        } else {
+          var left = f.amount - acc;
+          tally.textContent = acc
+            ? money(acc) + ' of ' + money(f.amount) + ' accounted for' +
+              (left > 0 ? ' · ' + money(left) + ' left over goes to Misc' : ' — all of it')
+            : 'Anything you don’t break down goes to Misc. That’s fine.';
+          tally.className = 'note';
+        }
+      }
+
+      function buildRows() {
+        var kids = [];
+        Object.keys(f.bd).forEach(function (k) {
+          var cat = G.TYPED_CATEGORIES.filter(function (c) { return c.key === k; })[0];
+          kids.push(h('div', { class: 'row' },
+            h('span', { class: 'row-label' }, cat ? cat.label : k),
+            moneyInput({
+              id: 'bd-' + k, value: f.bd[k], slim: true, label: (cat ? cat.label : k) + ' on this card',
+              onValue: function (v) { if (v > 0) f.bd[k] = v; else delete f.bd[k]; refresh(); }
+            }),
+            h('button', {
+              class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove this line',
+              onclick: function () { delete f.bd[k]; buildRows(); refresh(); }
+            }, icon('trash', 16))));
+        });
+        var unused = G.TYPED_CATEGORIES.filter(function (c) { return !(c.key in f.bd); });
+        if (unused.length) {
+          var sel = h('select', { class: 'input sm', 'aria-label': 'Add a category',
+            onchange: function (e) {
+              if (!e.target.value) return;
+              f.bd[e.target.value] = 0;
+              buildRows(); refresh();
+              var el = document.getElementById('bd-' + e.target.value);
+              if (el) { var inp = el.querySelector ? el.querySelector('input') : null; (inp || el).focus(); }
+            } });
+          sel.append(h('option', { value: '' }, '+ Where did it go?'));
+          unused.forEach(function (c) { sel.append(h('option', { value: c.key }, c.label)); });
+          kids.push(h('div', { class: 'row' }, sel));
+        }
+        rowsHost.replaceChildren.apply(rowsHost, kids);
+      }
+
+      var submit = async function (e) {
+        e.preventDefault();
+        blurActive();
+        if (!(f.amount > 0)) { toast('Enter the balance'); return; }
+        // one write: keep new lines, null out lines that were removed
+        var bd = {};
+        Object.keys(src).forEach(function (k) { bd[k] = null; });
+        Object.keys(f.bd).forEach(function (k) { if (G.num(f.bd[k]) > 0) bd[k] = G.num(f.bd[k]); });
+        var patch = {};
+        patch[card.id] = { label: f.label.trim() || 'Card', amount: f.amount, kind: 'card',
+          cutoff: f.cutoff || null, breakdown: bd };
+        if (await api.update(tourId, { debts: patch })) { closeSheet(); toast('Saved'); render(true); }
+      };
+
+      buildRows(); refresh();
+      return [
+        h('h2', { class: 'sh-title' }, f.label),
+        h('p', { class: 'sh-sub' }, 'The balance this card is carrying into the tour, and where that money went — as far as you remember.'),
+        h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
+          h('div', { class: 'field-row' },
+            field('Card name', h('input', { class: 'input', type: 'text', value: f.label, maxlength: 40,
+              autocomplete: 'off', oninput: function (e) { f.label = e.target.value; } })),
+            field('Balance', moneyInput({ id: 'card-balance', value: f.amount, label: 'Balance going in',
+              onValue: function (v) { f.amount = v; refresh(); } }))),
+          rowsHost,
+          tally,
+          field('Statement charges through', h('input', {
+            class: 'input', type: 'date', value: f.cutoff,
+            oninput: function (e) { f.cutoff = e.target.value; }
+          }), 'Charges on or before this date are already inside this balance, so imports set them aside. Left blank, it’s the first show.'),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
+            h('button', {
+              class: 'btn danger block', type: 'button',
+              onclick: function () {
+                confirmSheet({
+                  title: 'Remove ' + (f.label || 'this card') + '?',
+                  body: money(f.amount) + ' and its breakdown come off the tour.',
+                  action: 'Remove card', danger: true,
+                  onConfirm: async function () {
+                    var patch = {}; patch[card.id] = null;
+                    var ok = await api.update(tourId, { debts: patch });
+                    if (ok) toast('Removed');
+                    return ok;
+                  }
+                });
+              }
+            }, 'Remove card')))
+      ];
+    }, { label: 'Card balance' });
   }
 
   function openDebtSheet(id, d) {
@@ -2911,12 +3095,15 @@
       var labelled = GRS.applyLabels(cleaned, S.labels);
       var t = getTour(tourId);
       var marked = GRS.markDuplicates(labelled, G.rows(t && t.charges));
+      // Anything dated inside a card's opening balance is set aside, not counted.
+      marked = GRS.markPreCutoff(marked, G.preTourCutoff(t));
       // Raw descriptions stop here. Nothing past this point keeps them.
       var rows = marked.map(function (c) {
         return {
           date: c.date, merchant: c.merchant, amount: c.amount,
           category: c.category || '', source: c.source || null,
-          duplicate: !!c.duplicate, keep: !c.duplicate
+          duplicate: !!c.duplicate, preCutoff: !!c.preCutoff && !c.duplicate,
+          keep: !c.duplicate && !c.preCutoff
         };
       });
       openImportReview(tourId, rows, source);
@@ -3017,9 +3204,10 @@
         return Object.assign({}, r, { category: r.category || null });
       }));
       // Work against the live rows, not the copies the grouping made.
-      var needs = rows.filter(function (r) { return !r.duplicate && !r.category; });
-      var filled = rows.filter(function (r) { return !r.duplicate && r.category; });
+      var needs = rows.filter(function (r) { return !r.duplicate && !r.preCutoff && !r.category; });
+      var filled = rows.filter(function (r) { return !r.duplicate && !r.preCutoff && r.category; });
       var already = rows.filter(function (r) { return r.duplicate; });
+      var before = rows.filter(function (r) { return r.preCutoff && !r.duplicate; });
 
       var body = [];
       if (needs.length) {
@@ -3030,6 +3218,23 @@
       if (filled.length) {
         body.push(h('h3', { class: 'sh-h3' }, 'Filled in'));
         body.push(h('div', { class: 'review' }, filled.map(chargeRow)));
+      }
+      if (before.length) {
+        var t2 = getTour(tourId);
+        var cardNames = G.cardDebts(t2).map(function (c) { return c.label || 'your card'; });
+        var whose = cardNames.length === 1 ? 'the ' + cardNames[0] + ' balance' : 'the card balance';
+        var beforeList = h('div', { class: 'review', hidden: true }, before.map(chargeRow));
+        body.push(h('button', {
+          class: 'btn quiet block', type: 'button', style: 'margin-top:18px',
+          onclick: function (e) {
+            beforeList.hidden = !beforeList.hidden;
+            e.currentTarget.textContent = (beforeList.hidden ? 'Show ' : 'Hide ') +
+              plural(before.length, 'charge') + ' from before the tour started';
+          }
+        }, 'Show ' + plural(before.length, 'charge') + ' from before the tour started'));
+        body.push(h('p', { class: 'note' },
+          'These are already inside ' + whose + ' you entered, so adding them would count the money twice. Tick one only if it isn’t.'));
+        body.push(beforeList);
       }
       if (already.length) {
         var alreadyList = h('div', { class: 'review', hidden: true }, already.map(chargeRow));

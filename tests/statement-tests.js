@@ -264,6 +264,32 @@
     eq(g.needs.length, 1, 'needs');
     eq(g.filled.length, 2, 'filled');
     eq(g.already.length, 1, 'already');
+    eq(g.before.length, 0, 'before');
+  });
+
+  test('charges from before the cutoff are set aside, not counted', function () {
+    var marked = S.markPreCutoff([
+      { merchant: 'Pilot', date: '2026-05-08', amount: 60 },
+      { merchant: 'Shell', date: '2026-05-10', amount: 40 },
+      { merchant: 'Loves', date: '2026-05-11', amount: 80 }
+    ], '2026-05-10');
+    eq(marked[0].preCutoff, true, 'before the cutoff');
+    eq(marked[1].preCutoff, true, 'on the cutoff day counts as before');
+    eq(marked[2].preCutoff, false, 'after the cutoff');
+    var g = S.groupForReview(marked);
+    eq(g.before.length, 2, 'set aside');
+    eq(g.needs.length, 1, 'only the real one needs a label');
+  });
+
+  test('no cutoff means nothing is set aside', function () {
+    var marked = S.markPreCutoff([{ merchant: 'Pilot', date: '2026-05-08', amount: 60 }], null);
+    eq(marked[0].preCutoff, false, 'untouched');
+  });
+
+  test('a duplicate from before the cutoff reads as already imported first', function () {
+    var g = S.groupForReview([{ merchant: 'Pilot', date: '2026-05-08', duplicate: true, preCutoff: true }]);
+    eq(g.already.length, 1, 'already wins');
+    eq(g.before.length, 0, 'not double-listed');
   });
 
   globalThis.GR_STATEMENT_TESTS = { results: results };
