@@ -45,6 +45,7 @@ def build_artifact():
     for path in sorted((SRC / 'vendor').glob('*.mjs')):
         (dist / 'vendor' / path.name).write_text(
             escape_controls(path.read_text(encoding='utf-8')), encoding='utf-8')
+    shutil.copy(SRC / 'logo-full.png', dist / 'logo-full.png')
     print('dist/  (artifact) %d bytes of page' % len(page))
 
 
