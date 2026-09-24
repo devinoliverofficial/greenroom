@@ -353,9 +353,30 @@
     online();
   }
 
+  /* Tours made before signing in (phone-only mode) follow their owner into
+     the account the first time it's empty — nothing gets left behind. */
+  async function importLocalTours() {
+    if (cache.tours.size) return;
+    var raw = null;
+    try { raw = JSON.parse(localStorage.getItem('greenroom:v1') || 'null'); } catch (e) { return; }
+    if (!raw || !isObj(raw.tours)) return;
+    var ids = Object.keys(raw.tours).filter(function (k) { return isObj(raw.tours[k]); });
+    if (!ids.length) return;
+    for (var i = 0; i < ids.length; i++) {
+      try { await sb.from('tours').insert({ id: ids[i], doc: raw.tours[ids[i]] }); }
+      catch (e) { /* keep going; the backup below preserves it */ }
+    }
+    try {
+      localStorage.setItem('greenroom:v1:backup', JSON.stringify(raw));
+      localStorage.removeItem('greenroom:v1');
+    } catch (e) { /* cosmetic */ }
+    try { await refetch(); } catch (e) { /* realtime will catch up */ }
+  }
+
   async function online() {
     try { await sb.rpc('claim_invites'); } catch (e) { /* nothing to claim */ }
     try { await refetch(); } catch (e) { /* the app shows local mode */ }
+    try { await importLocalTours(); } catch (e) { /* local copies stay put */ }
     sb.channel('greenroom')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tours' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleRefetch)
