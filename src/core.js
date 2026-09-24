@@ -422,6 +422,35 @@
     return t;
   }
 
+  /* ---------------- Settlement sheets ---------------- */
+
+  // What the reader hands back from a promoter settlement, made safe: only
+  // real income fields, only positive numbers, notes as short label/value
+  // pairs. Nothing here is saved without the user looking at it first.
+  function normalizeSettlement(out) {
+    var src = isObj(out) ? out : {};
+    var incSrc = isObj(src.income) ? src.income : src;
+    var income = {};
+    var found = 0;
+    INCOME_FIELDS.forEach(function (f) {
+      var v = incSrc[f.key];
+      if (v == null || v === '') return;
+      var n = num(v);
+      if (n > 0) { income[f.key] = round(n * 100) / 100; found += 1; }
+    });
+    var miscLabel = String(incSrc.miscLabel == null ? '' : incSrc.miscLabel).trim().slice(0, 60);
+
+    var notes = [];
+    var rawNotes = Array.isArray(src.notes) ? src.notes : [];
+    rawNotes.slice(0, 12).forEach(function (n) {
+      if (!isObj(n)) return;
+      var label = String(n.label == null ? '' : n.label).trim().slice(0, 40);
+      var value = String(n.value == null ? '' : n.value).trim().slice(0, 120);
+      if (label && value) notes.push({ label: label, value: value });
+    });
+    return { income: income, miscLabel: miscLabel, notes: notes, found: found };
+  }
+
   /* ---------------- Daily update text ---------------- */
 
   function dailyUpdate(tour, now) {
@@ -488,6 +517,7 @@
 
     calc: calc, stateOf: stateOf, caption: caption,
     balanceSeries: balanceSeries, latestChange: latestChange,
+    normalizeSettlement: normalizeSettlement,
     dailyUpdate: dailyUpdate
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

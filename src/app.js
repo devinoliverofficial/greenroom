@@ -2102,6 +2102,8 @@
       draft[f.key] = G.num(G.isObj(s.income) ? s.income[f.key] : 0);
     });
     var miscLabel = String((G.isObj(s.income) && s.income.miscLabel) || '');
+    var settNotes = Array.isArray(s.settlementNotes)
+      ? JSON.parse(JSON.stringify(s.settlementNotes)) : [];
     var title = s.city || 'Show';
     var sub = [dayLong(s.date), s.venue].filter(Boolean).join(' · ');
 
@@ -2119,7 +2121,15 @@
             }),
             h('div', { class: 'row total' },
               h('span', null, 'This show'),
-              h('strong', { class: 'amt num' }, money(G.showIncomeTotal({ income: draft })))))
+              h('strong', { class: 'amt num' }, money(G.showIncomeTotal({ income: draft }))))),
+          settNotes.length ? [
+            h('h3', { class: 'sh-h3' }, 'From the settlement'),
+            h('div', { class: 'ledger' }, settNotes.map(function (n) {
+              return h('div', { class: 'row sn-row' },
+                h('span', { class: 'row-label' }, n.label),
+                h('span', { class: 'sn-val' }, n.value));
+            }))
+          ] : null
         ];
       }, { label: 'Income for ' + title });
       return;
@@ -2143,7 +2153,8 @@
         var income = Object.assign({}, draft);
         income.miscLabel = draft.misc > 0 ? miscLabel.trim() : '';
         var patch = {};
-        patch[showId] = { income: income, loggedAt: total > 0 ? Date.now() : null };
+        patch[showId] = { income: income, loggedAt: total > 0 ? Date.now() : null,
+          settlementNotes: settNotes.length ? settNotes : null };
         if (!(await api.update(id, { shows: patch }))) return;
         closeSheet();
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft } }).net;
@@ -2154,6 +2165,35 @@
         render(true);
       };
       var fields = G.INCOME_FIELDS;
+      var notesHost = h('div', null);
+      function renderNotes() {
+        if (!settNotes.length) { notesHost.replaceChildren(); return; }
+        notesHost.replaceChildren(
+          h('h3', { class: 'sh-h3' }, 'From the settlement'),
+          h('div', { class: 'ledger' }, settNotes.map(function (n) {
+            return h('div', { class: 'row sn-row' },
+              h('span', { class: 'row-label' }, n.label),
+              h('span', { class: 'sn-val' }, n.value));
+          })));
+      }
+      var reader = settlementReader({
+        show: s,
+        onResult: function (r) {
+          Object.keys(r.income).forEach(function (k) {
+            draft[k] = r.income[k];
+            var el = document.getElementById('inc-' + k);
+            if (el) el.value = r.income[k] ? (Math.round(r.income[k] * 100) / 100)
+              .toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
+          });
+          if (r.miscLabel) {
+            miscLabel = r.miscLabel;
+            var ml = document.getElementById('inc-misc-label');
+            if (ml) ml.value = r.miscLabel;
+          }
+          if (r.notes.length) settNotes = r.notes;
+          syncMisc(); renderNotes(); refresh();
+        }
+      });
       // Misc gets its own note, so "$400 misc" still means something in a month.
       var miscNote = h('input', {
         class: 'input sm', type: 'text', id: 'inc-misc-label', maxlength: 60,
@@ -2181,7 +2221,11 @@
       syncMisc();
 
       var form = h('form', { class: 'sh-form', onsubmit: save, novalidate: true },
+        reader ? h('div', { style: 'margin-bottom:14px' }, reader,
+          h('p', { class: 'note', style: 'margin-top:6px' },
+            'A photo or PDF of the promoter’s settlement — the numbers fill in for you to check.')) : null,
         h('div', { class: 'ledger' }, rows),
+        notesHost,
         h('div', { class: 'preview' },
           h('div', null, h('span', null, 'This show'), showEl),
           h('div', null, h('span', null, 'Tour after this show'), afterEl)),
@@ -2191,7 +2235,7 @@
             class: 'btn ghost block', type: 'button',
             onclick: function () { openShowSheet(id, showId); }
           }, 'Edit date, city or venue')));
-      refresh();
+      refresh(); renderNotes();
       if (!s.loggedAt) {
         var first = form.querySelector('input');
         if (first) first.setAttribute('autofocus', '');
@@ -2882,6 +2926,95 @@
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
       ];
     }, { label: 'Review shows from the flyer' });
+  }
+
+  /* ---------------- Settlement sheets ---------------- */
+
+  function settlementPrompt(body, isImage, show) {
+    return [
+      isImage
+        ? 'The attached image(s) are a concert settlement sheet from a promoter or venue.'
+        : 'The text below was pulled out of a concert settlement sheet from a promoter or venue.',
+      show && show.city ? 'The show: ' + show.city + (show.venue ? ', ' + show.venue : '') +
+        (show.date ? ', ' + show.date + '.' : '.') : '',
+      'Pull out what the ARTIST earned, and the story of the night.',
+      '',
+      'Reply with only a JSON object in this exact shape:',
+      '{"income":{"guarantee":null,"merch":null,"vip":null,"buyouts":null,"catering":null,"misc":null,"miscLabel":""},',
+      ' "notes":[{"label":"Attendance","value":"734 of 900"}]}',
+      '',
+      'Income rules:',
+      '- Fill a number ONLY if it is actually on the sheet; otherwise leave it null. Never estimate.',
+      '- guarantee: the contracted guarantee, before any tax or deductions.',
+      '- misc: overage / back end / bonus / percentage-of-door the artist hit, with miscLabel naming it (e.g. "Back end").',
+      '- merch: the artist’s merch money only if the sheet settles merch.',
+      '- vip, buyouts, catering: only if the sheet shows them as money paid to the artist.',
+      '',
+      'Notes: short label/value pairs, only for things the sheet actually shows. Use these labels when present:',
+      '- "Attendance" (e.g. "734 of 900"), "Pre-sale tickets", "Door sales", "Comps",',
+      '- "Tax withheld" (amount, and what the artist walked with if shown),',
+      '- "Back end" (whether the artist hit it, and the math if shown),',
+      '- "Ticket price", "Gross box office", and anything else a touring artist would want flagged.',
+      'Keep every value under a dozen words. If the sheet is unreadable, reply {"income":{},"notes":[]}.',
+      isImage ? '' : '\nSettlement text:\n' + body
+    ].join('\n');
+  }
+
+  /* Reads the promoter's settlement into the income sheet: numbers into the
+     fields (still yours to check before saving), the night's story into notes. */
+  function settlementReader(o) {
+    if (!S.sample) return null;
+    var reading = false;
+    var control = fileControl({
+      label: 'Read the settlement sheet', icon: 'card', cls: 'btn ghost block',
+      accept: 'application/pdf,.pdf,' + imageAccept(), multiple: true,
+      onFiles: async function (files) {
+        if (reading) return;
+        reading = true;
+        var btn = control[0];
+        var was = btn.textContent;
+        btn.textContent = 'Reading the settlement…';
+        btn.disabled = true;
+        try {
+          var pdfFile = files.filter(function (f) { return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); })[0];
+          var images = files.filter(function (f) { return /^image\//i.test(f.type); });
+          var out;
+          if (pdfFile) {
+            var got = await pdfToText(pdfFile);
+            if (got.text.replace(/\s/g, '').length > 60) {
+              out = await S.sample.json(settlementPrompt(got.text.slice(0, 40000), false, o.show), { cache: false });
+            } else {
+              var pages = await pdfToImages(got.doc, got.pages);
+              out = await S.sample.json(settlementPrompt('', true, o.show), { images: pages, cache: false });
+            }
+          } else if (images.length) {
+            out = await S.sample.json(settlementPrompt('', true, o.show), { images: images, cache: false });
+          } else {
+            toast('That file type isn’t supported — use a photo or a PDF.');
+            return;
+          }
+          var r = G.normalizeSettlement(out);
+          if (!r.found && !r.notes.length) {
+            toast('Couldn’t read that sheet. Try a sharper photo.');
+            return;
+          }
+          o.onResult(r);
+          toast(r.found
+            ? 'Filled in ' + plural(r.found, 'number') + ' — check them against the sheet, then save'
+            : 'No dollar amounts found, but the notes came through');
+        } catch (e) {
+          var code = e && e.code;
+          if (code === 'cancelled') return;
+          if (SAMPLE_GONE.indexOf(code) >= 0) { S.sample = null; toast('Reading isn’t available right now.'); return; }
+          toast(sampleErrorMessage(code, 'statement'));
+        } finally {
+          reading = false;
+          btn.textContent = was;
+          btn.disabled = false;
+        }
+      }
+    });
+    return control;
   }
 
   /* ---------------- Statements ---------------- */

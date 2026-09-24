@@ -443,6 +443,43 @@
     eq(ch.label, 'Detroit, MI', 'label');
   });
 
+  /* ============ Settlement sheets ============ */
+
+  test('a settlement fills only the numbers it actually found', function () {
+    var r = G.normalizeSettlement({
+      income: { guarantee: 10000, merch: '2,412.50', vip: null, buyouts: 0, misc: 500, miscLabel: 'Back end' },
+      notes: [
+        { label: 'Attendance', value: '734 of 900 (82%)' },
+        { label: 'Tax withheld', value: '$1,400 — you walked with $8,600' }
+      ]
+    });
+    eq(r.income.guarantee, 10000, 'guarantee');
+    eq(r.income.merch, 2412.5, 'merch survives commas');
+    eq('vip' in r.income, false, 'null stays empty');
+    eq('buyouts' in r.income, false, 'zero stays empty');
+    eq(r.income.misc, 500, 'backend in misc');
+    eq(r.miscLabel, 'Back end', 'labelled');
+    eq(r.found, 3, 'three fields found');
+    eq(r.notes.length, 2, 'notes kept');
+    eq(r.notes[0].label, 'Attendance', 'note label');
+  });
+
+  test('a garbage settlement read comes back empty, never invented', function () {
+    var r = G.normalizeSettlement('not even an object');
+    eq(r.found, 0, 'nothing found');
+    eq(r.notes.length, 0, 'no notes');
+    var r2 = G.normalizeSettlement({ income: { guarantee: -500, merch: 'abc' }, notes: [{ label: 'X' }, 'junk'] });
+    eq(r2.found, 0, 'negative and nonsense rejected');
+    eq(r2.notes.length, 0, 'half-notes rejected');
+  });
+
+  test('settlement notes are clipped, not trusted', function () {
+    var long = new Array(50).join('very ');
+    var r = G.normalizeSettlement({ notes: [{ label: long, value: long }] });
+    if (r.notes[0].label.length > 40) throw new Error('label not clipped');
+    if (r.notes[0].value.length > 120) throw new Error('value not clipped');
+  });
+
   /* ============ Dates ============ */
 
   test('the tour day rolls over at 5am, not midnight', function () {
