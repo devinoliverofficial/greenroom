@@ -49,7 +49,8 @@ $$;
 
 -- Tours: the manager and anyone invited can see; the manager and editors write.
 create policy tours_select on public.tours for select
-  using (public.my_role(id) is not null);
+  using (owner_id = auth.uid() or public.my_role(id) is not null);
+  -- owner_id checked directly so INSERT ... RETURNING can see its own new row
 create policy tours_insert on public.tours for insert
   with check (owner_id = auth.uid());
 create policy tours_update on public.tours for update
