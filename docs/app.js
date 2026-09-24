@@ -205,7 +205,13 @@
   function emptyState(title, body) {
     return h('div', { class: 'empty' }, h('h3', null, title), body ? h('p', null, body) : null);
   }
-  function backBtn() {
+  function backBtn(tour) {
+    var artist = tour ? String(tour.artist || '').trim() : '';
+    if (artist) {
+      return h('button', { class: 'iconbtn back', type: 'button',
+        onclick: function () { go({ name: 'artist', artist: artist }); } },
+        icon('back'), h('span', null, artist.length > 14 ? 'Tours' : artist));
+    }
     return h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
       icon('back'), h('span', null, 'Tours'));
   }
@@ -412,6 +418,7 @@
     if (!S.loaded) node = viewLoading();
     else if (S.route.name === 'wizard') node = viewWizard();
     else if (S.route.name === 'tour') node = viewTour();
+    else if (S.route.name === 'artist') node = viewArtist();
     else node = viewHome();
     view.replaceChildren(node);
 
@@ -969,17 +976,37 @@
     }, icon(t === 'light' ? 'moon' : 'sun', 19));
   }
 
-  function viewHome() {
+  function allTourEntries() {
     var entries = Array.from(S.tours.entries());
     Object.keys(S.pending).forEach(function (id) {
       if (!S.tours.has(id)) entries.push([id, S.pending[id]]);
     });
     entries.sort(function (a, b) { return (b[1].createdAt || 0) - (a[1].createdAt || 0); });
+    return entries;
+  }
 
-    var pill = null;
-    if (S.role === 'viewer' || S.writeRefused) pill = 'View only';
-    else if (S.role === 'editor') pill = 'Editor';
-    else if (S.mode === 'local') pill = store.lsOk ? 'Saved on this device' : 'Changes won’t be kept';
+  function artistOf(t) { return String(t && t.artist || '').trim(); }
+
+  function homePill() {
+    if (S.role === 'viewer' || S.writeRefused) return 'View only';
+    if (S.role === 'editor') return 'Editor';
+    if (S.mode === 'local') return store.lsOk ? 'Saved on this device' : 'Changes won’t be kept';
+    return null;
+  }
+
+  /* The first screen: artists as folders, plus any tours that don't belong to
+     one yet. With no artists named it looks exactly like a plain tour list. */
+  function viewHome() {
+    var entries = allTourEntries();
+    var byArtist = new Map();
+    var loose = [];
+    entries.forEach(function (e) {
+      var a = artistOf(e[1]);
+      if (!a) { loose.push(e); return; }
+      if (!byArtist.has(a)) byArtist.set(a, []);
+      byArtist.get(a).push(e);
+    });
+    var pill = homePill();
 
     return h('div', { class: 'page home' },
       h('header', { class: 'topbar' }, wordmark(),
@@ -990,21 +1017,82 @@
         ? h('button', { class: 'add-tour', type: 'button', onclick: startTour },
             icon('plus', 24), h('span', null, 'ADD TOUR'))
         : null,
+      byArtist.size
+        ? h('ul', { class: 'tour-list' }, Array.from(byArtist, function (pair) {
+            return h('li', null, artistCard(pair[0], pair[1]));
+          }))
+        : null,
+      loose.length
+        ? h('ul', { class: 'tour-list', style: byArtist.size ? 'margin-top:12px' : null },
+            loose.map(function (e) { return h('li', null, tourCard(e[0], e[1])); }))
+        : null,
+      (!byArtist.size && !loose.length)
+        ? emptyState('No tours yet', canWrite()
+            ? 'Add a tour, put in what it costs, then log each show as it happens. The big number tells you whether you’re in the red or in the green.'
+            : 'Nothing has been shared with you yet.')
+        : null,
+      canWrite()
+        ? h('div', { class: 'home-foot' },
+            h('button', { class: 'linkbtn', type: 'button', onclick: loadSample }, 'Load a sample tour'),
+            h('span', { class: 'hint' },
+              byArtist.size
+                ? 'A finished run you can poke at. Delete it whenever.'
+                : 'Managing more than one act? Name the artist when you add a tour, and this screen becomes one folder per artist.'))
+        : null);
+  }
+
+  /* One artist, all their runs rolled up. */
+  function artistCard(name, entries) {
+    var net = 0, active = false;
+    var count = entries.length;
+    entries.forEach(function (e) {
+      var c = G.calc(e[1]);
+      net += c.net;
+      if (c.out > 0 || c.income > 0) active = true;
+    });
+    var st = !active ? 'idle' : (G.round(net) < 0 ? 'red' : 'green');
+    return h('button', { class: 'tour-card ' + st, type: 'button',
+      onclick: function () { go({ name: 'artist', artist: name }); } },
+      h('div', { class: 'tc-top' },
+        h('div', { class: 'tc-name' }, name), icon('chevron', 20)),
+      h('div', { class: 'tc-meta' }, plural(count, 'tour')),
+      h('div', { class: 'tc-num' },
+        h('span', { class: 'tc-big num' }, money(net, true)),
+        h('span', { class: 'tc-cap' }, !active ? 'Nothing logged yet'
+          : (G.round(net) < 0 ? 'to break even, all tours' : 'in the green, all tours'))));
+  }
+
+  /* One artist's tours. */
+  function viewArtist() {
+    var name = S.route.artist || '';
+    var entries = allTourEntries().filter(function (e) { return artistOf(e[1]) === name; });
+    var pill = homePill();
+    return h('div', { class: 'page home' },
+      h('header', { class: 'topbar' },
+        h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
+          icon('back'), h('span', null, 'Artists')),
+        h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+        h('div', { class: 'topbar-actions' },
+          pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
+      dbBanner(),
+      h('h1', { class: 'tour-title' }, name),
+      canWrite()
+        ? h('button', { class: 'add-tour', type: 'button',
+            onclick: function () { startTour(name); } },
+            icon('plus', 24), h('span', null, 'ADD TOUR'))
+        : null,
       entries.length
         ? h('ul', { class: 'tour-list' }, entries.map(function (e) {
             return h('li', null, tourCard(e[0], e[1]));
           }))
-        : emptyState('No tours yet', canWrite()
-            ? 'Add a tour, put in what it costs, then log each show as it happens. The big number tells you whether you’re in the red or in the green.'
-            : 'Nothing has been shared with you yet.'),
-      canWrite()
-        ? h('div', { class: 'home-foot' },
-            h('button', { class: 'linkbtn', type: 'button', onclick: loadSample }, 'Load a sample tour'),
-            h('span', { class: 'hint' }, 'A finished run you can poke at. Delete it whenever.'))
-        : null);
+        : emptyState('No tours here yet', 'Add ' + name + '’s first run.'));
   }
 
-  function startTour() { S.drafts.wzName = ''; go({ name: 'wizard', id: null, step: 1 }); }
+  function startTour(artist) {
+    S.drafts.wzName = '';
+    S.drafts.wzArtist = typeof artist === 'string' ? artist : '';
+    go({ name: 'wizard', id: null, step: 1 });
+  }
 
   /* A worked-through tour, so the chart, the rolling number and the celebration
      have something to show. It is left a few thousand short of break even with
@@ -1147,38 +1235,60 @@
         : h('button', { class: 'btn primary', type: 'submit' }, label));
   }
 
+  function artistDatalist() {
+    var names = {};
+    allTourEntries().forEach(function (e) {
+      var a = artistOf(e[1]);
+      if (a) names[a] = true;
+    });
+    return h('datalist', { id: 'gr-artists' },
+      Object.keys(names).map(function (n) { return h('option', { value: n }); }));
+  }
+
   function wzName(id, t) {
     if (S.drafts.wzName == null) S.drafts.wzName = t ? t.name || '' : '';
+    if (S.drafts.wzArtist == null) S.drafts.wzArtist = t ? String(t.artist || '') : '';
     var input = h('input', {
       class: 'input big', type: 'text', id: 'wz-name', 'data-k': 'wz-name',
       value: S.drafts.wzName, maxlength: 80, placeholder: 'Fall headliner 2026',
       autocomplete: 'off', enterkeyhint: 'next', autofocus: true, 'aria-label': 'Tour name',
       oninput: function (e) { S.drafts.wzName = e.target.value; }
     });
+    var artistInput = h('input', {
+      class: 'input', type: 'text', id: 'wz-artist', 'data-k': 'wz-artist', list: 'gr-artists',
+      value: S.drafts.wzArtist, maxlength: 60, placeholder: 'Optional',
+      autocomplete: 'off', enterkeyhint: 'done', 'aria-label': 'Artist',
+      oninput: function (e) { S.drafts.wzArtist = e.target.value; }
+    });
     var submit = async function (e) {
       e.preventDefault();
       var name = String(S.drafts.wzName || '').trim();
+      var artist = String(S.drafts.wzArtist || '').trim();
       if (!name) { toast('Give the tour a name to keep going'); input.focus(); return; }
       blurActive();
       var tid = id;
       if (tid) {
-        if (!(await api.update(tid, { name: name }))) return;
+        if (!(await api.update(tid, { name: name, artist: artist }))) return;
       } else {
         tid = newId();
         var doc = {
-          name: name, createdAt: Date.now(), setupDone: false, setupStep: 2,
+          name: name, artist: artist, createdAt: Date.now(), setupDone: false, setupStep: 2,
           expenses: G.emptyExpenses(), commission: G.emptyCommission(),
           crew: {}, debts: {}, shows: {}, extras: {}, charges: {}, imports: {}
         };
         if (!(await api.create(tid, doc))) return;
       }
       delete S.drafts.wzName;
+      delete S.drafts.wzArtist;
       go({ name: 'wizard', id: tid, step: 2 });
     };
     return h('form', { class: 'wz-body', onsubmit: submit, novalidate: true },
       h('h1', { class: 'wz-title' }, 'Name the tour'),
       h('p', { class: 'wz-sub' }, 'Whatever you call it on the road.'),
       input,
+      field('Artist', artistInput,
+        'Managing more than one act? Tours group under their artist on the first screen.'),
+      artistDatalist(),
       wzFoot(null, 'Next'));
   }
 
@@ -1978,7 +2088,7 @@
     else body = tabShows(id, t, c);
 
     return h('div', { class: 'page tour' },
-      h('header', { class: 'topbar' }, backBtn(),
+      h('header', { class: 'topbar' }, backBtn(t),
         h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
         h('div', { class: 'topbar-actions' },
           h('button', { class: 'btn ghost sm', type: 'button', onclick: function () { openShare(id); } },
@@ -2660,24 +2770,34 @@
     var t = getTour(id);
     if (!t) return;
     var name = t.name || '';
+    var artist = String(t.artist || '');
     openSheet(function () {
       var input = h('input', {
         class: 'input', type: 'text', value: name, maxlength: 80, autocomplete: 'off',
         autofocus: true, oninput: function (e) { name = e.target.value; }
       });
+      var artistI = h('input', {
+        class: 'input', type: 'text', value: artist, maxlength: 60, autocomplete: 'off',
+        list: 'gr-artists', placeholder: 'Optional',
+        oninput: function (e) { artist = e.target.value; }
+      });
       var submit = async function (e) {
         e.preventDefault();
         var n = name.trim();
         if (!n) { toast('Enter a name for the tour'); return; }
-        if (await api.update(id, { name: n })) { closeSheet(); toast('Renamed'); render(true); }
+        if (await api.update(id, { name: n, artist: artist.trim() })) {
+          closeSheet(); toast('Saved'); render(true);
+        }
       };
       return [
-        h('h2', { class: 'sh-title' }, 'Rename tour'),
+        h('h2', { class: 'sh-title' }, 'Name and artist'),
         h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
           field('Tour name', input),
-          h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' }, 'Save name')))
+          field('Artist', artistI, 'Tours group under their artist on the first screen.'),
+          artistDatalist(),
+          h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' }, 'Save')))
       ];
-    }, { label: 'Rename tour' });
+    }, { label: 'Name and artist' });
   }
 
   function openTourMenu(id) {
@@ -2689,7 +2809,7 @@
         h('h2', { class: 'sh-title' }, t.name || 'Tour options'),
         h('div', { class: 'stack' },
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openRename(id); } },
-            icon('edit', 18), 'Rename tour'),
+            icon('edit', 18), 'Name and artist'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } },
             icon('people', 18), 'Crew'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportsSheet(id); } },
