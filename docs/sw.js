@@ -3,7 +3,7 @@
    deploy is picked up on the next open, and a tour bus with no signal still
    gets the app shell. The cache name carries the build stamp; installing a new
    version clears the old cache. */
-var CACHE = 'greenroom-20260924-191659';
+var CACHE = 'greenroom-20260924-192344';
 var SHELL = ['./', 'index.html', 'core.js', 'statements.js', 'app.js',
   'manifest.webmanifest', 'icon-180.png', 'icon-512.png', 'logo-full.png'];
 
@@ -38,4 +38,22 @@ self.addEventListener('fetch', function (e) {
       });
     })
   );
+});
+
+self.addEventListener('push', function (e) {
+  var d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { /* plain text */ }
+  e.waitUntil(self.registration.showNotification(d.title || 'Greenroom', {
+    body: d.body || '',
+    icon: 'icon-180.png',
+    badge: 'icon-180.png',
+    data: { tourId: d.tourId || null }
+  }));
+});
+self.addEventListener('notificationclick', function (e) {
+  e.notification.close();
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+    for (var i = 0; i < list.length; i++) { if ('focus' in list[i]) return list[i].focus(); }
+    return clients.openWindow('./');
+  }));
 });

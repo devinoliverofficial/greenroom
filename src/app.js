@@ -408,6 +408,8 @@
   /* ============================== Routing ============================== */
 
   function go(route) {
+    // The Day always opens on today's show, not wherever you last flipped to.
+    if (route.name === 'tour' && route.view === 'details') S.dsIndex = null;
     S.route = route;
     if (route.name === 'tour') lsSet(LS_LAST, route.id);
     else if (route.name === 'home') lsSet(LS_LAST, '');
@@ -2366,14 +2368,14 @@
           icon('chevron', 20)),
         h('button', { class: 'opt-card', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'details' }); } },
-          h('div', { class: 'opt-title' }, 'Tour details'),
+          h('div', { class: 'opt-title' }, 'The Day'),
           h('div', { class: 'opt-sub' }, next
             ? [h('b', null, next.city || 'Show'), ' · ' + dayMD(next.date)]
             : 'Day sheets, times, guest lists'),
           icon('chevron', 20)),
         h('button', { class: 'opt-card ' + st, type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'money', tab: 'shows' }); } },
-          h('div', { class: 'opt-title' }, 'Tour expenses'),
+          h('div', { class: 'opt-title' }, 'The Money'),
           h('div', { class: 'opt-sub' },
             h('b', { class: 'num opt-net' }, money(c.net, true)), ' · ' + G.caption(c)),
           icon('chevron', 20))));
@@ -2599,7 +2601,8 @@
         onclick: function () { S.dsIndex -= 1; render(true); } }, icon('back', 22)),
       h('div', { class: 'vh-mid' },
         h('div', { class: 'vh-date' }, dayLong(s.date),
-          s.date === today ? h('span', { class: 'vh-tonight' }, 'Tonight') : null),
+          s.date === today ? h('span', { class: 'vh-tonight' }, 'Tonight') : null,
+          s.soldOut ? h('span', { class: 'vh-soldout' }, 'SOLD OUT') : null),
         h('div', { class: 'vh-city' }, s.city || 'Show'),
         s.venue ? h('div', { class: 'vh-venue' }, s.venue) : null),
       h('button', { class: 'iconbtn vh-arrow', type: 'button', 'aria-label': 'Next show',
@@ -2772,6 +2775,8 @@
               qty: Math.max(1, Math.min(20, f.qty)), passType: f.passType
             });
             toast('On the list: ' + (f.firstName + ' ' + f.lastName).trim());
+            sendNotify(tourId, 'guest', { name: (f.firstName + ' ' + f.lastName).trim(),
+              city: show.city || '', tickets: Math.max(1, Math.min(20, f.qty)) });
             setTimeout(build, backend ? 500 : 150); // let the refetch land
           } catch (e2) { toast('Couldn\u2019t add them. Try again.'); }
         } },
@@ -3005,6 +3010,9 @@
         closeSheet();
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft } }).net;
         var r = G.round(after);
+        if (G.round(before) < 0 && r >= 0) sendNotify(id, 'green', { net: money(r, true) });
+        if (draft.merch > 0) sendNotify(id, 'merch', {
+          amount: money(draft.merch), amountRaw: draft.merch, city: s.city || '' });
         if (G.round(before) < 0 && r >= 0) toast('Income saved. You’re in the green.');
         else if (r < 0) toast('Income saved. ' + money(-r) + ' to break even.');
         else toast('Income saved. ' + money(r) + ' in the green.');
@@ -3105,7 +3113,8 @@
     var f = {
       date: s ? s.date : suggestDate(t),
       city: s ? s.city || '' : '',
-      venue: s ? s.venue || '' : ''
+      venue: s ? s.venue || '' : '',
+      soldOut: !!(s && s.soldOut)
     };
     openSheet(function () {
       var venueI;
@@ -3131,8 +3140,11 @@
         if (!city) { toast('Add a city for this show'); cityI.focus(); return; }
         var patch = {};
         if (s) {
-          patch[showId] = { date: f.date, city: city, venue: f.venue.trim() };
-          if (await api.update(id, { shows: patch })) { closeSheet(); toast('Show saved'); render(true); }
+          patch[showId] = { date: f.date, city: city, venue: f.venue.trim(), soldOut: f.soldOut };
+          if (await api.update(id, { shows: patch })) {
+            closeSheet(); toast('Show saved'); render(true);
+            if (f.soldOut && !s.soldOut) sendNotify(id, 'soldout', { city: city, date: f.date });
+          }
           return;
         }
         patch[newId()] = {
@@ -3160,6 +3172,10 @@
           : null,
         h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
           field('Date', dateI), field('City', cityI), field('Venue', venueI),
+          s ? h('div', { class: 'ds-yn', style: 'margin-bottom:14px' },
+            h('span', { class: 'field-label', style: 'margin:0' }, 'Sold out'),
+            segmented(['\u2014', 'Yes'], f.soldOut ? 1 : 0, function (i) { f.soldOut = i === 1; },
+              'Sold out')) : null,
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, s ? 'Save show' : 'Add show'),
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } },
@@ -3621,6 +3637,82 @@
       } }, icon('card', 18), 'Open a show to add merch');
   }
 
+  function sendNotify(tourId, type, data) {
+    if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.notify) {
+      window.GR_BACKEND.notify(tourId, type, data);
+    }
+  }
+
+  /* Per-device notification choices: what this phone wants to hear about. */
+  function openNotifications(tourId) {
+    var B = window.GR_BACKEND;
+    if (!B || S.mode !== 'db') {
+      readFail('Notifications need an account',
+        'Sign in and install Greenroom to your home screen, then each person picks what they want to hear about.',
+        null, null);
+      return;
+    }
+    if (!B.pushSupported()) {
+      readFail('This browser can\u2019t do notifications',
+        'On iPhone, add Greenroom to your home screen and open it from there \u2014 notifications work in the installed app.',
+        null, null);
+      return;
+    }
+    B.pushState().then(function (state) {
+      var on = state.on;
+      var prefs = {
+        guest: !!state.prefs.guest,
+        green: !!state.prefs.green,
+        soldout: !!state.prefs.soldout,
+        merch: G.num(state.prefs.merch) || 0
+      };
+      openSheet(function () {
+        function toggleRow(key, label, hint) {
+          return h('div', { class: 'ds-yn', style: 'min-height:48px' },
+            h('div', { class: 'row-label', style: 'flex:1' }, label,
+              hint ? h('span', { class: 'hint' }, hint) : null),
+            segmented(['Off', 'On'], prefs[key] ? 1 : 0, function (i) { prefs[key] = i === 1; }, label));
+        }
+        var merchIn = moneyInput({ id: 'notif-merch', value: prefs.merch, slim: true,
+          label: 'Merch milestone', placeholder: '\u2014',
+          onValue: function (v) { prefs.merch = v; } });
+        var saveBtn = h('button', { class: 'btn primary block', type: 'button',
+          onclick: async function () {
+            saveBtn.disabled = true;
+            var out = { guest: prefs.guest, green: prefs.green, soldout: prefs.soldout,
+              merch: prefs.merch > 0 ? prefs.merch : false };
+            try {
+              var any = prefs.guest || prefs.green || prefs.soldout || prefs.merch > 0;
+              if (any) { await B.pushEnable(out); toast('You\u2019ll hear about it'); }
+              else { await B.pushDisable(); toast('Notifications off'); }
+              closeSheet();
+            } catch (e) {
+              saveBtn.disabled = false;
+              toast(e && e.code === 'denied'
+                ? 'Your phone said no \u2014 allow notifications for Greenroom in Settings'
+                : 'Couldn\u2019t turn that on. Try again.');
+            }
+          } }, 'Save');
+        return [
+          h('h2', { class: 'sh-title' }, 'Notifications'),
+          h('p', { class: 'sh-sub' }, 'Your choices, this phone only \u2014 everyone on the tour picks their own.'),
+          h('div', { class: 'ds-yns' },
+            toggleRow('guest', 'Guest list', 'Someone adds a name'),
+            toggleRow('green', 'In the green', 'The tour crosses break even'),
+            toggleRow('soldout', 'Sold out', 'A show gets marked sold out')),
+          h('div', { class: 'ds-yn', style: 'min-height:48px;margin-top:8px' },
+            h('div', { class: 'row-label', style: 'flex:1' }, 'Merch milestone',
+              h('span', { class: 'hint' }, 'A show\u2019s merch hits this number \u2014 blank for off')),
+            merchIn),
+          h('div', { class: 'stack' }, saveBtn,
+            on ? h('button', { class: 'btn ghost block', type: 'button',
+              onclick: async function () { await B.pushDisable(); toast('Notifications off'); closeSheet(); }
+            }, 'Turn all of it off') : null)
+        ];
+      }, { label: 'Notifications' });
+    });
+  }
+
   function openTourMenu(id) {
     var t = getTour(id);
     if (!t) return;
@@ -3635,6 +3727,8 @@
             icon('people', 18), 'Crew'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportHub(id); } },
             icon('card', 18), 'Bring in your info'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openNotifications(id); } },
+            icon('share', 18), 'Notifications'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportsSheet(id); } },
             icon('history', 18), 'Card statement history'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLabelsSheet(); } },

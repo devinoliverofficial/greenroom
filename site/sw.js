@@ -39,3 +39,21 @@ self.addEventListener('fetch', function (e) {
     })
   );
 });
+
+self.addEventListener('push', function (e) {
+  var d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { /* plain text */ }
+  e.waitUntil(self.registration.showNotification(d.title || 'Greenroom', {
+    body: d.body || '',
+    icon: 'icon-180.png',
+    badge: 'icon-180.png',
+    data: { tourId: d.tourId || null }
+  }));
+});
+self.addEventListener('notificationclick', function (e) {
+  e.notification.close();
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+    for (var i = 0; i < list.length; i++) { if ('focus' in list[i]) return list[i].focus(); }
+    return clients.openWindow('./');
+  }));
+});

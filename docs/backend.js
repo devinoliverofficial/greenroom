@@ -274,6 +274,61 @@
       if (!q.data || !q.data.length) throw err('permission');
       scheduleRefetch();
     },
+    /* ---- notifications ---- */
+    notify: function (tourId, type, data) {
+      // fire and forget; the show must go on either way
+      fetch(cfg.url + '/functions/v1/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey,
+          Authorization: 'Bearer ' + (session ? session.access_token : cfg.anonKey) },
+        body: JSON.stringify({ tourId: tourId, type: type, data: data || {} })
+      }).catch(function () {});
+    },
+    pushSupported: function () {
+      return !!(navigator.serviceWorker && 'PushManager' in window && 'Notification' in window);
+    },
+    pushState: async function () {
+      if (!this.pushSupported()) return { on: false, prefs: {} };
+      try {
+        var reg = await navigator.serviceWorker.ready;
+        var sub = await reg.pushManager.getSubscription();
+        if (!sub) return { on: false, prefs: {} };
+        var q = await sb.from('push_subs').select('prefs').eq('endpoint', sub.endpoint).single();
+        return { on: !q.error, prefs: (q.data && q.data.prefs) || {} };
+      } catch (e) { return { on: false, prefs: {} }; }
+    },
+    pushEnable: async function (prefs) {
+      var perm = await Notification.requestPermission();
+      if (perm !== 'granted') throw err('denied');
+      var reg = await navigator.serviceWorker.ready;
+      var sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        var key = Uint8Array.from(atob((cfg.vapidPublic || '').replace(/-/g, '+').replace(/_/g, '/')
+          .padEnd(Math.ceil(cfg.vapidPublic.length / 4) * 4, '=')), function (c) { return c.charCodeAt(0); });
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      }
+      var j = sub.toJSON();
+      var q = await sb.from('push_subs').upsert({
+        endpoint: sub.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, prefs: prefs || {}
+      });
+      if (q.error) throw mapError(q.error);
+    },
+    pushSetPrefs: async function (prefs) {
+      var reg = await navigator.serviceWorker.ready;
+      var sub = await reg.pushManager.getSubscription();
+      if (!sub) return;
+      await sb.from('push_subs').update({ prefs: prefs }).eq('endpoint', sub.endpoint);
+    },
+    pushDisable: async function () {
+      try {
+        var reg = await navigator.serviceWorker.ready;
+        var sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await sb.from('push_subs').delete().eq('endpoint', sub.endpoint);
+          await sub.unsubscribe();
+        }
+      } catch (e) { /* already gone */ }
+    },
     signOut: async function () {
       try { await sb.auth.signOut(); } catch (e) { /* going anyway */ }
       location.reload();
