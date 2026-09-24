@@ -519,6 +519,21 @@ textarea.update {
   color: var(--ink); font-size: 15px; font-weight: 500; line-height: 1.55; resize: none;
 }
 
+/* ============================== Sign-in gate + people ============================== */
+#gr-gate {
+  position: fixed; inset: 0; z-index: 100; background: var(--bg);
+  display: grid; place-items: start center; padding: 16vh 22px 0;
+}
+.gate-card { display: grid; justify-items: center; gap: 10px; max-width: 380px; text-align: center; }
+.gate-card .logo-mark { background-size: contain; background-repeat: no-repeat; background-position: center; }
+.gate-card h2 { font-size: 24px; }
+.gate-card p { margin: 0 0 8px; color: var(--ink-2); }
+.gate-card form { display: grid; gap: 10px; width: 100%; }
+.gate-card .linkbtn { margin-top: 6px; }
+.people-row { display: flex; align-items: center; gap: 10px; min-height: 52px; }
+.people-row .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.people-row .role-tag { flex: none; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font-size: 12px; font-weight: 600; }
+
 /* ============================== Toast ============================== */
 #toast { position: fixed; left: 0; right: 0; top: 0; z-index: 80; display: flex; justify-content: center; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 0; pointer-events: none; }
 #toast .t {
@@ -561,6 +576,8 @@ textarea.update {
 <div id="sheet-root" hidden></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <canvas id="confetti" aria-hidden="true" hidden></canvas>
+<script src="config.js"></script>
+<script src="backend.js"></script>
 <script src="core.js"></script>
 <script src="statements.js"></script>
 <script src="app.js"></script>

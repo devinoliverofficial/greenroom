@@ -66,11 +66,18 @@ def build_web():
           "if ('serviceWorker' in navigator && location.protocol === 'https:') {\n"
           "  addEventListener('load', function () { navigator.serviceWorker.register('sw.js'); });\n"
           '}\n</script>\n</body>')
+    html = html.replace('<script src="core.js"></script>',
+                        '<script src="config.js"></script>\n'
+                        '<script src="backend.js"></script>\n'
+                        '<script src="core.js"></script>')
     html = html.replace('</body>', sw)
     (web / 'index.html').write_text(html, encoding='utf-8')
 
     for name in ['core.js', 'statements.js', 'app.js']:
         shutil.copy(SRC / name, web / name)
+    shutil.copy(SITE / 'config.js', web / 'config.js')
+    shutil.copy(SITE / 'backend.js', web / 'backend.js')
+    html = None  # guard against accidental reuse below
     for path in sorted((SRC / 'vendor').glob('*.mjs')):
         shutil.copy(path, web / 'vendor' / path.name)
     shutil.copy(SRC / 'icon-180.png', web / 'icon-180.png')

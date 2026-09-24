@@ -2278,7 +2278,9 @@
       });
 
       var roleBlock = [];
-      if (S.mode === 'db') {
+      if (window.GR_BACKEND && S.mode === 'db') {
+        roleBlock = [peopleSection(id)];
+      } else if (S.mode === 'db') {
         roleBlock = [
           h('p', { class: 'sh-p' }, ROLE_WORDS[S.role] || ROLE_WORDS.editor),
           h('p', { class: 'sh-p' }, 'Use Share at the top of this window to invite your band, crew or managers by email. Everyone you invite watches these numbers move live.'),
@@ -2326,6 +2328,79 @@
         ] : null
       ];
     }, { label: 'Share this tour' });
+  }
+
+  /* Real invites (the GitHub Pages build): the tour manager runs the guest
+     list; everyone else just sees who's on it. */
+  function peopleSection(tourId) {
+    var B = window.GR_BACKEND;
+    var owns = B.ownsTour(tourId);
+    var list = h('div', { class: 'ledger' },
+      h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading…')));
+
+    function renderMembers(rows) {
+      var kids = [h('div', { class: 'row people-row' },
+        h('span', { class: 'who' }, B.email() || 'You'),
+        h('span', { class: 'role-tag' }, owns ? 'Tour manager' : 'You'))];
+      rows.forEach(function (m) {
+        kids.push(h('div', { class: 'row people-row' },
+          h('span', { class: 'who' }, m.invited_email),
+          h('span', { class: 'role-tag' }, m.role === 'editor' ? 'Can edit' : 'Can view'),
+          owns ? h('button', {
+            class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + m.invited_email,
+            onclick: async function () {
+              try { await B.uninvite(tourId, m.invited_email); toast('Removed'); refresh(); }
+              catch (e) { toast('Couldn’t remove them. Try again.'); }
+            }
+          }, icon('trash', 18)) : null));
+      });
+      list.replaceChildren.apply(list, kids);
+    }
+    function refresh() {
+      B.members(tourId).then(renderMembers).catch(function () {
+        list.replaceChildren(h('div', { class: 'row' },
+          h('span', { class: 'hint' }, 'Couldn’t load the guest list.')));
+      });
+    }
+    refresh();
+
+    var form = null;
+    if (owns) {
+      var role = 'viewer';
+      var emailI = h('input', {
+        class: 'input', type: 'email', placeholder: 'their@email.com',
+        autocomplete: 'off', inputmode: 'email', 'aria-label': 'Email to invite'
+      });
+      form = h('form', {
+        class: 'card addform', novalidate: true, style: 'margin-top:14px',
+        onsubmit: async function (e) {
+          e.preventDefault();
+          var email = String(emailI.value || '').trim();
+          if (email.indexOf('@') < 1) { toast('Type their email address'); emailI.focus(); return; }
+          try {
+            await B.invite(tourId, email, role);
+            emailI.value = '';
+            toast('Invited ' + email + ' — a sign-in link is on its way');
+            refresh();
+          } catch (e2) { toast('Couldn’t send that invite. Try again.'); }
+        }
+      },
+        emailI,
+        h('div', { style: 'display:flex;gap:10px;align-items:center;margin-top:10px' },
+          segmented(['Can view', 'Can edit'], 0, function (i) { role = i ? 'editor' : 'viewer'; },
+            'Invite role'),
+          h('button', { class: 'btn primary', type: 'submit', style: 'flex:1' }, 'Invite')));
+    }
+
+    return h('div', null,
+      h('p', { class: 'sh-p' }, owns
+        ? 'Invite your band, crew or managers by email. Viewers watch the numbers move live; editors can log shows, costs and statements with you.'
+        : 'You’re on this tour’s guest list. The numbers update live as they’re logged.'),
+      list, form,
+      h('button', {
+        class: 'linkbtn', type: 'button', style: 'margin-top:10px',
+        onclick: function () { window.GR_BACKEND.signOut(); }
+      }, 'Sign out of Greenroom'));
   }
 
   function prettyTime(v) {
