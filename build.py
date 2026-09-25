@@ -81,6 +81,11 @@ def build_web():
                         '<script src="core.js"></script>')
     html = html.replace('</body>', sw)
     (web / 'index.html').write_text(html, encoding='utf-8')
+    # The same page under a second name: Safari keeps a per-URL icon database
+    # that re-adding does not flush, so a fresh URL is the reliable way to get
+    # a new home-screen icon (classic.html proved it). The manifest's
+    # start_url still opens ./, so the installed app is identical.
+    (web / 'app.html').write_text(html, encoding='utf-8')
 
     for name in ['core.js', 'statements.js', 'app.js']:
         shutil.copy(SRC / name, web / name)
