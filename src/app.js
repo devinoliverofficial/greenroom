@@ -3028,7 +3028,10 @@
           h('div', { class: 'row-label' }, name,
             sub ? h('span', { class: 'hint' }, sub) : null),
           h('span', { class: 'guest-pass' + (g.passType === 'All Access' ? ' aa' : '') },
-            'x' + Math.max(1, Math.min(20, G.num(g.qty) || 1)) + ' \u00b7 ' + (g.passType || 'GA')),
+            (function () {
+              var q = Math.max(1, Math.min(20, G.num(g.qty) || 1));
+              return (q > 1 ? '+' + (q - 1) + ' \u00b7 ' : '') + (g.passType || 'GA');
+            })()),
           canManage ? h('button', { class: 'iconbtn sm', type: 'button',
             'aria-label': 'Remove ' + name,
             onclick: async function () {
@@ -3081,9 +3084,10 @@
         oninput: function (e) { f[key] = e.target.value; }
       }, extra || {}));
     }
-    var qtySel = h('select', { class: 'input', 'aria-label': 'How many tickets',
+    var qtySel = h('select', { class: 'input', 'aria-label': 'How many they bring',
       onchange: function (e) { f.qty = G.num(e.target.value) || 1; } });
-    for (var i = 1; i <= 20; i++) qtySel.append(h('option', { value: String(i) }, String(i)));
+    qtySel.append(h('option', { value: '1' }, 'Just them'));
+    for (var i = 1; i <= 10; i++) qtySel.append(h('option', { value: String(i + 1) }, '+' + i));
     var passSel = h('select', { class: 'input', 'aria-label': 'Pass type',
       onchange: function (e) { f.passType = e.target.value; } });
     G.GUEST_PASSES.forEach(function (ptype) { passSel.append(h('option', { value: ptype }, ptype)); });
@@ -3118,7 +3122,7 @@
             field('Contact email', textIn('email', 'Optional', { type: 'email', inputmode: 'email' })),
             field('Contact phone', textIn('phone', 'Optional', { type: 'tel', inputmode: 'tel' }))),
           h('div', { class: 'field-row' },
-            field('Tickets', qtySel),
+            field('Brings', qtySel),
             field('Pass type', passSel)),
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Add to the list'),
@@ -3176,10 +3180,11 @@
       function renderRows() {
         listOut.replaceChildren.apply(listOut, parsed.map(function (g, i) {
           var name = [g.firstName, g.lastName].filter(Boolean).join(' ') || 'Guest';
-          var qtySel = h('select', { class: 'input', style: 'width:auto;flex:none', 'aria-label': 'Tickets for ' + name,
+          var qtySel = h('select', { class: 'input', style: 'width:auto;flex:none', 'aria-label': 'Who ' + name + ' brings',
             onchange: function (e) { g.qty = G.num(e.target.value) || 1; } });
-          for (var q = 1; q <= 20; q++) qtySel.append(h('option', { value: String(q) }, String(q)));
-          qtySel.value = String(Math.max(1, Math.min(20, G.num(g.qty) || 1)));
+          qtySel.append(h('option', { value: '1' }, 'Just them'));
+          for (var q = 1; q <= 10; q++) qtySel.append(h('option', { value: String(q + 1) }, '+' + q));
+          qtySel.value = String(Math.max(1, Math.min(11, G.num(g.qty) || 1)));
           var sub = [g.affiliation, g.email, g.phone].filter(Boolean).join(' \u00b7 ');
           return h('div', { class: 'row' },
             h('div', { class: 'row-label' }, name,
