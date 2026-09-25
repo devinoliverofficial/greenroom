@@ -351,10 +351,8 @@
       wrap.innerHTML =
         '<div class="gate-card">' +
         '<span class="logo-mark" style="width:76px;height:60px"></span>' +
-        '<h2>' + (signin ? 'Sign in to Greenroom' : 'Create your account') + '</h2>' +
-        '<p>' + (signin
-          ? 'Your tours and your band’s numbers, live on every phone.'
-          : 'One account and you’re on the guest list everywhere you’ve been invited.') + '</p>' +
+        '<img class="gate-bus" alt="" src="' +
+          (window.GR_SKIN === 'classic' ? 'icon-classic-180.png' : 'gr-stark-180.png') + '">' +
         '<form id="gr-gate-form" novalidate>' +
         '<input class="input" type="email" id="gr-gate-email" placeholder="you@band.com" autocomplete="email" inputmode="email" aria-label="Email">' +
         '<input class="input" type="password" id="gr-gate-pass" placeholder="Password" ' +
