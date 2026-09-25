@@ -61,11 +61,15 @@ def build_web():
     SCRATCH_CLASSIC = ROOT / 'site' / 'classic-icons'
     html = (SRC / 'index.html').read_text(encoding='utf-8')
 
-    inject = ('<link rel="manifest" href="manifest.webmanifest">\n'
+    inject = ('<link rel="manifest" href="manifest.webmanifest?v=' + stamp + '">\n'
               '<meta name="theme-color" content="#000000">\n'
               '<script>window.GREENROOM_BUILD = "' + stamp + '";</script>')
     html = html.replace('<title>Greenroom</title>',
                         '<title>Greenroom</title>\n' + inject)
+    import re as _re0
+    html = _re0.sub(r'<link rel="apple-touch-icon" href="[^"]+">',
+                    '<link rel="apple-touch-icon" href="icon-180.png?v=' + stamp + '">',
+                    html, count=1)
 
     sw = ('<script>\n'
           "if ('serviceWorker' in navigator && location.protocol === 'https:') {\n"
@@ -90,7 +94,10 @@ def build_web():
     shutil.copy(SRC / 'logo-atvenu.png', web / 'logo-atvenu.png')
     shutil.copy(SRC / 'icon-180.png', web / 'icon-180.png')
     shutil.copy(SRC / 'icon-512.png', web / 'icon-512.png')
-    shutil.copy(SITE / 'manifest.webmanifest', web / 'manifest.webmanifest')
+    _mf = (SITE / 'manifest.webmanifest').read_text(encoding='utf-8')
+    (web / 'manifest.webmanifest').write_text(
+        _mf.replace('icon-180.png', 'icon-180.png?v=' + stamp)
+           .replace('icon-512.png', 'icon-512.png?v=' + stamp), encoding='utf-8')
     (web / 'sw.js').write_text(
         (SITE / 'sw.js').read_text(encoding='utf-8').replace('__BUILD__', stamp),
         encoding='utf-8')
@@ -104,9 +111,12 @@ def build_web():
                  lambda mm: mm.group(1) + capple + mm.group(2), ch, count=1)
     ch = _re.sub(r'(<link rel="icon" href="data:image/png;base64,)[^"]+(")',
                  lambda mm: mm.group(1) + cfav + mm.group(2), ch, count=1)
+    ch = _re.sub(r'<link rel="apple-touch-icon" href="[^"]+">',
+                 '<link rel="apple-touch-icon" href="icon-classic-180.png?v=' + stamp + '">',
+                 ch, count=1)
     ch = ch.replace('<title>Greenroom</title>',
         '<title>Greenroom Classic</title>\n'
-        '<link rel="manifest" href="manifest-classic.webmanifest">\n'
+        '<link rel="manifest" href="manifest-classic.webmanifest?v=' + stamp + '">\n'
         '<meta name="theme-color" content="#000000">\n'
         '<script>window.GREENROOM_BUILD = "' + stamp + '";\n'
         "window.GR_SKIN = 'classic';\n"
@@ -123,7 +133,10 @@ def build_web():
     shutil.copy(SRC / 'icon-classic-180.png', web / 'icon-classic-180.png')
     shutil.copy(SRC / 'icon-classic-512.png', web / 'icon-classic-512.png')
     shutil.copy(SRC / 'logo-full-classic.png', web / 'logo-full-classic.png')
-    shutil.copy(SITE / 'manifest-classic.webmanifest', web / 'manifest-classic.webmanifest')
+    _mfc = (SITE / 'manifest-classic.webmanifest').read_text(encoding='utf-8')
+    (web / 'manifest-classic.webmanifest').write_text(
+        _mfc.replace('icon-classic-180.png', 'icon-classic-180.png?v=' + stamp)
+            .replace('icon-classic-512.png', 'icon-classic-512.png?v=' + stamp), encoding='utf-8')
 
     # GitHub Pages must not run Jekyll over this folder.
     (web / '.nojekyll').write_text('')
