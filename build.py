@@ -115,10 +115,15 @@ def build_web():
     # A brand-new icon FILENAME every build: Safari caches touch icons by
     # file name and ignores ?v= query strings, which is why six correct
     # deploys all replayed the same stale icon.
-    shutil.copy(SRC / 'gr-icon-1024.png', web / icon_name)
+    # The touch icon is EXACTLY 180x180 — the size iOS draws — so the OS
+    # never resamples it. Handing iOS a 1024 icon makes it downscale 5.7x
+    # and smears pixel-art edges into gray; a native app icon is crisp
+    # precisely because it is delivered at its final size.
+    shutil.copy(SRC / 'gr-stark-180.png', web / icon_name)
+    shutil.copy(SRC / 'gr-icon-360.png', web / 'gr-icon-360.png')
     _mf = (SITE / 'manifest.webmanifest').read_text(encoding='utf-8')
     (web / 'manifest.webmanifest').write_text(
-        _mf.replace('gr-icon-1024.png', icon_name)
+        _mf.replace('gr-stark-180.png', icon_name)
            .replace('gr-stark-512.png', 'gr-stark-512.png?v=' + stamp)
            .replace('gr-icon-192.png', 'gr-icon-192.png?v=' + stamp)
            .replace('gr-stark-180.png', 'gr-stark-180.png?v=' + stamp), encoding='utf-8')
