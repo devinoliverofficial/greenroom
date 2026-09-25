@@ -2559,8 +2559,7 @@
             S.sample ? fileControl({
               label: 'Upload flyer', icon: 'flyer', cls: 'btn primary', accept: imageAccept(),
               onFiles: function (files) { readFlyer(id, files[0]); }
-            }) : null,
-            settlementSourceControl(id))
+            }) : unavailableBtn('Upload flyer', 'btn primary'))
         : null,
       shows.length
         ? [h('p', { class: 'count-line' }, logged + ' of ' + plural(shows.length, 'show') + ' logged'),
@@ -3296,9 +3295,12 @@
               h('span', { class: 'sn-val' }, n.value));
           })));
       }
+      var readerResult = function (r) { /* assigned below */ };
       var reader = settlementReader({
         show: s,
-        onResult: function (r) {
+        onResult: function (r) { readerResult(r); }
+      });
+      readerResult = (function () { return function (r) {
           Object.keys(r.income).forEach(function (k) {
             draft[k] = r.income[k];
             var el = document.getElementById('inc-' + k);
@@ -3312,8 +3314,7 @@
           }
           if (r.notes.length) settNotes = r.notes;
           syncMisc(); renderNotes(); refresh();
-        }
-      });
+        }; })();
       // Misc gets its own note, so "$400 misc" still means something in a month.
       var miscNote = h('input', {
         class: 'input sm', type: 'text', id: 'inc-misc-label', maxlength: 60,
@@ -3336,6 +3337,12 @@
             last: i === fields.length - 1,
             onValue: function (v) { draft[f.key] = v; syncMisc(); refresh(); }
           })));
+        if (f.key === 'merch') {
+          rows.push(h('div', { class: 'row stackrow' },
+            settlementReader({ show: s, onResult: readerResult,
+              btnLabel: 'atVenu Settlement', btnLogo: 'logo-atvenu.png',
+              btnCls: 'btn ghost block sm' })));
+        }
         if (f.key === 'misc') rows.push(miscRow);
       });
       syncMisc();
@@ -4593,10 +4600,12 @@
   /* Reads the promoter's settlement into the income sheet: numbers into the
      fields (still yours to check before saving), the night's story into notes. */
   function settlementReader(o) {
-    if (!S.sample) return [unavailableBtn('Read a settlement or merch report', 'btn ghost block')];
+    var face = o.btnLabel || 'Read the promoter\u2019s settlement';
+    var cls = o.btnCls || 'btn ghost block';
+    if (!S.sample) return [unavailableBtn(face, cls)];
     var reading = false;
     var control = fileControl({
-      label: 'Read a settlement or merch report', icon: 'card', cls: 'btn ghost block',
+      label: face, logo: o.btnLogo, icon: o.btnLogo ? undefined : 'card', cls: cls,
       accept: 'application/pdf,.pdf,' + imageAccept(), multiple: true,
       onFiles: async function (files) {
         if (reading) return;
