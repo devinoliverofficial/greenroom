@@ -600,7 +600,7 @@
 
   /* ============================== The hero ============================== */
 
-  function heroNode(tour) {
+  function heroNode(tour, tourId) {
     var c = G.calc(tour);
     var st = G.stateOf(c);
     var series = G.balanceSeries(tour);
@@ -631,7 +631,7 @@
           dayLong(series[series.length - 1].date) + '. Now ' + money(c.net, true) + '. ' +
           'Use the left and right arrow keys to step through the tour night by night.'
       });
-      chart.__data = { series: series, nights: loggedNights(tour) };
+      chart.__data = { series: series, nights: loggedNights(tour), tourId: tourId };
     }
 
     var fill = h('div', { class: 'prog-fill', id: 'prog-fill' });
@@ -724,13 +724,16 @@
     var flag = h('span', { class: 'break-even' }, 'break even');
     flag.style.top = (y0 / H * 100) + '%';
     var pill = h('div', { class: 'scrub-pill', hidden: true });
+    // Comments for the night you're on, below the line.
+    var notes = h('div', { class: 'scrub-notes', hidden: true });
 
-    wrap.replaceChildren(svg, flag, pill,
+    wrap.replaceChildren(svg, flag, pill, notes,
       h('div', { class: 'chart-ends' },
         h('span', null, dayMD(series[0].date)),
         h('span', null, dayMD(series[last].date))));
 
-    wrap.__geo = { x: x, y: y, W: W, H: H, svg: svg, pill: pill, series: series, nights: d.nights };
+    wrap.__geo = { x: x, y: y, W: W, H: H, svg: svg, pill: pill, notes: notes,
+      series: series, nights: d.nights, tourId: d.tourId };
     animateDraw(svg);
     setupScrub(wrap);
   }
@@ -898,6 +901,17 @@
       geo.pill.style.left = (px / geo.W * 100) + '%';
       geo.pill.style.top = (py / geo.H * 100) + '%';
 
+      // Comments for this night ride under the line, SoundCloud style.
+      var mine = geo.tourId ? notesFor(getTour(geo.tourId), geo.tourId, p.date) : [];
+      geo.notes.hidden = !mine.length;
+      if (mine.length) {
+        geo.notes.replaceChildren.apply(geo.notes, mine.slice(0, 3).map(function (n) {
+          return h('div', { class: 'sn-bubble' },
+            h('b', null, n.author || 'Someone'), ' ' + n.body);
+        }));
+        geo.notes.style.left = (px / geo.W * 100) + '%';
+      }
+
       var pct = p.out > 0 ? Math.max(0, Math.min(100, Math.floor(p.income / p.out * 100))) : 0;
       hero.style.setProperty('--cov', pct + '%');
       setProgress(hero, pct, p.out);
@@ -915,6 +929,7 @@
       wrap.classList.remove('scrubbing');
       hero.classList.remove('scrubbing');
       geo.pill.hidden = true;
+      geo.notes.hidden = true;
       renderOdo(odo, restText, restText);
       setHeroState(hero, G.stateOf(c));
       cap.textContent = restCap;
@@ -923,10 +938,23 @@
       if (pctEl) pctEl.textContent = restPctText;
     }
 
+    var downAt = null;
     wrap.addEventListener('pointerdown', function (e) {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       wrap.setPointerCapture(e.pointerId);
+      downAt = { x: e.clientX, y: e.clientY, t: Date.now() };
       fromPointer(e);
+    });
+    // A tap, not a drag, opens the night's comments.
+    wrap.addEventListener('pointerup', function (e) {
+      if (!downAt) return;
+      var moved = Math.abs(e.clientX - downAt.x) + Math.abs(e.clientY - downAt.y);
+      var quick = Date.now() - downAt.t < 450;
+      var i = cur;
+      downAt = null;
+      if (moved < 10 && quick && geo.tourId && geo.series[i]) {
+        openDayNotes(geo.tourId, geo.series[i].date);
+      }
     });
     wrap.addEventListener('pointermove', function (e) {
       if (wrap.hasPointerCapture(e.pointerId)) fromPointer(e);
@@ -2615,7 +2643,7 @@
           h('button', { class: 'btn sm quiet', type: 'button',
             onclick: function () { openCloseout(id); } }, 'Tour closeout')) : null;
       })(),
-      heroNode(t),
+      heroNode(t, id),
       h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tour sections' },
         TABS.map(function (pair) {
           return h('button', {
@@ -3077,6 +3105,91 @@
     };
     return api.update(tourId, patch);
   }
+  /* One night's comments: read them, add one, take your own back. */
+  function openDayNotes(tourId, day) {
+    var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.notesFor);
+    var myUid = backend ? window.GR_BACKEND.uid() : null;
+    function build() {
+      var t = getTour(tourId);
+      var list = notesFor(t, tourId, day);
+      var night = (G.rows(t && t.shows) || []).filter(function (x) { return x.date === day; })[0];
+      var input = h('input', { class: 'input', type: 'text', maxlength: 180,
+        placeholder: 'Say something about this night\u2026', autocomplete: 'off',
+        enterkeyhint: 'send' });
+      var rows = list.map(function (n) {
+        var mine = !backend || (n.addedBy && n.addedBy === myUid);
+        return h('div', { class: 'row' },
+          h('div', { class: 'row-label' }, n.author || 'Someone',
+            h('span', { class: 'hint' }, n.body)),
+          (canWrite() || mine) ? h('button', { class: 'iconbtn sm', type: 'button',
+            'aria-label': 'Delete this note',
+            onclick: async function () {
+              try { await removeNote(tourId, day, n.id); setTimeout(build, backend ? 500 : 120); }
+              catch (e) { toast('Only the tour manager can delete someone else\u2019s note.'); }
+            } }, icon('trash', 16)) : null);
+      });
+      openSheet(function () {
+        return [
+          h('h2', { class: 'sh-title' }, dayLong(day)),
+          h('p', { class: 'sh-sub' }, night
+            ? (night.city || 'Show') + ' \u2014 anyone on the tour can leave a note here.'
+            : 'Anyone on the tour can leave a note here.'),
+          h('form', { class: 'sh-form', novalidate: true,
+            onsubmit: async function (e) {
+              e.preventDefault();
+              var body = String(input.value || '').trim();
+              if (!body) return;
+              blurActive();
+              try {
+                await saveNote(tourId, day, { id: newId(), body: body, author: myName() });
+                input.value = '';
+                setTimeout(build, backend ? 500 : 120);
+              } catch (e2) { toast('Couldn\u2019t post that. Try again.'); }
+            } },
+            input,
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Post')),
+          rows.length ? h('div', { class: 'ledger' }, rows)
+            : h('p', { class: 'note' }, 'Nothing yet \u2014 be the first.')
+        ];
+      }, { label: 'Notes' });
+    }
+    build();
+  }
+
+  /* Notes on a night — the comments that ride under the balance line.
+     Anyone on the tour can leave one, same as the guest list. */
+  function notesFor(t, tourId, day) {
+    if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.notesFor) {
+      return window.GR_BACKEND.notesFor(tourId, day);
+    }
+    var bag = t && G.isObj(t.dayNotes) && G.isObj(t.dayNotes[day]) ? t.dayNotes[day] : {};
+    return G.rows(bag).map(function (n) { return Object.assign({ day: day }, n); });
+  }
+  function myName() {
+    var e = window.GR_BACKEND && window.GR_BACKEND.email ? window.GR_BACKEND.email() : null;
+    return e ? String(e).split('@')[0] : 'You';
+  }
+  async function saveNote(tourId, day, note) {
+    if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.saveNote) {
+      await window.GR_BACKEND.saveNote(tourId, day, note);
+      return true;
+    }
+    var patch = { dayNotes: {} };
+    patch.dayNotes[day] = {};
+    patch.dayNotes[day][note.id] = { body: note.body, author: note.author, at: Date.now() };
+    return api.update(tourId, patch);
+  }
+  async function removeNote(tourId, day, noteId) {
+    if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.removeNote) {
+      await window.GR_BACKEND.removeNote(noteId);
+      return true;
+    }
+    var patch = { dayNotes: {} };
+    patch.dayNotes[day] = {};
+    patch.dayNotes[day][noteId] = null;
+    return api.update(tourId, patch);
+  }
+
   async function removeGuest(tourId, showId, guestId) {
     if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.removeGuest) {
       await window.GR_BACKEND.removeGuest(guestId);

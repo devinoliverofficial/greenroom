@@ -26,7 +26,7 @@
 
   var sb = null;           // supabase client
   var session = null;
-  var cache = { tours: new Map(), labels: new Map(), guests: [] };
+  var cache = { tours: new Map(), labels: new Map(), guests: [], notes: [] };
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
 
@@ -71,6 +71,8 @@
     cache.labels = new Map(labels.data.map(function (r) { return [r.id, r.doc]; }));
     var guests = await sb.from('guests').select('*');
     cache.guests = guests.error ? cache.guests : guests.data;
+    var notes = await sb.from('notes').select('*').order('created_at');
+    cache.notes = notes.error ? cache.notes : notes.data;
     emit('tours'); emit('labels');
   }
   function scheduleRefetch() {
@@ -274,6 +276,29 @@
       if (!q.data || !q.data.length) throw err('permission');
       scheduleRefetch();
     },
+    /* ---- notes on a night: anyone on the tour can leave one ---- */
+    notesFor: function (tourId, day) {
+      return cache.notes.filter(function (n) {
+        return n.tour_id === tourId && (!day || n.day === day);
+      }).map(function (n) {
+        return { id: n.id, day: n.day, body: n.body, author: n.author,
+          addedBy: n.added_by, at: n.created_at };
+      });
+    },
+    saveNote: async function (tourId, day, note) {
+      var q = await sb.from('notes').upsert({
+        id: note.id, tour_id: tourId, day: day,
+        body: note.body, author: note.author || ''
+      });
+      if (q.error) throw mapError(q.error);
+      scheduleRefetch();
+    },
+    removeNote: async function (noteId) {
+      var q = await sb.from('notes').delete().eq('id', noteId).select('id');
+      if (q.error) throw mapError(q.error);
+      if (!q.data || !q.data.length) throw err('permission');
+      scheduleRefetch();
+    },
     /* ---- notifications ---- */
     notify: function (tourId, type, data) {
       // fire and forget; the show must go on either way
@@ -461,6 +486,7 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tours' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, scheduleRefetch)
       .subscribe();
     resolvers.db(db);
     resolvers.user(user);
