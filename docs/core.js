@@ -20,13 +20,14 @@
     { key: 'production', label: 'Production' },
     { key: 'studio', label: 'Studio' },
     { key: 'supplies', label: 'Supplies' },
-    { key: 'utilities', label: 'Monthly utilities' },
     { key: 'interest', label: 'Interest charges' },
     // What the merch cost to make. Usually an advance that has to be earned back,
     // which is why it sits here as a cost rather than against merch income.
     { key: 'merch', label: 'Merch bill', note: 'Printing, plus any merch advance you have to pay back.' },
     { key: 'commission', label: 'Commission' },
-    { key: 'misc', label: 'Misc' }
+    { key: 'misc', label: 'Misc' },
+    // Monthly-type costs sit at the end, by request.
+    { key: 'utilities', label: 'Monthly utilities' }
   ];
   var TYPED_CATEGORIES = CATEGORIES.filter(function (c) { return c.key !== 'commission'; });
 

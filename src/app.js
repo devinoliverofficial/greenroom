@@ -2179,7 +2179,7 @@
       bd: {}
     };
     var src = G.isObj(card.breakdown) ? card.breakdown : {};
-    G.TYPED_CATEGORIES.forEach(function (c) { if (G.num(src[c.key]) > 0) f.bd[c.key] = G.num(src[c.key]); });
+    G.typedCategoriesFor(getTour(tourId)).forEach(function (c) { if (G.num(src[c.key]) > 0) f.bd[c.key] = G.num(src[c.key]); });
 
     openSheet(function () {
       var tally = h('p', { class: 'note', 'aria-live': 'polite' }, '');
@@ -2204,7 +2204,7 @@
       function buildRows() {
         var kids = [];
         Object.keys(f.bd).forEach(function (k) {
-          var cat = G.TYPED_CATEGORIES.filter(function (c) { return c.key === k; })[0];
+          var cat = G.typedCategoriesFor(getTour(tourId)).filter(function (c) { return c.key === k; })[0];
           kids.push(h('div', { class: 'row' },
             h('span', { class: 'row-label' }, cat ? cat.label : k),
             moneyInput({
@@ -2216,7 +2216,7 @@
               onclick: function () { delete f.bd[k]; buildRows(); refresh(); }
             }, icon('trash', 16))));
         });
-        var unused = G.TYPED_CATEGORIES.filter(function (c) { return !(c.key in f.bd); });
+        var unused = G.typedCategoriesFor(getTour(tourId)).filter(function (c) { return !(c.key in f.bd); });
         if (unused.length) {
           var sel = h('select', { class: 'input sm', 'aria-label': 'Add a category',
             onchange: function (e) {
