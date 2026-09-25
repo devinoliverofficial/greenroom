@@ -456,7 +456,7 @@
     window.scrollTo(0, 0);
     render(true);
   }
-  function clampStep(s) { return Math.min(4, Math.max(2, Number(s) || 2)); }
+  function clampStep(s) { return Math.min(3, Math.max(2, Number(s) || 2)); }
   function openTour(id) {
     var t = getTour(id);
     if (t && !t.setupDone && canWrite()) go({ name: 'wizard', id: id, step: clampStep(t.setupStep) });
@@ -1463,18 +1463,18 @@
     }
     var exit = function () { return id ? go({ name: 'tour', id: id, view: 'menu' }) : go({ name: 'home' }); };
     var head = h('div', { class: 'wz-head' },
-      h('div', { class: 'wz-bar', 'aria-hidden': 'true' }, [1, 2, 3, 4].map(function (n) {
+      h('div', { class: 'wz-bar', 'aria-hidden': 'true' }, [1, 2, 3].map(function (n) {
         return h('i', { class: n <= step ? 'on' : null });
       })),
       h('div', { class: 'wz-meta' },
-        h('span', null, 'Step ' + step + ' of 4'),
+        h('span', null, 'Step ' + step + ' of 3'),
         h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
         h('button', { class: 'linkbtn', type: 'button', onclick: exit }, id ? 'Finish later' : 'Cancel')));
 
     var body;
+    // What the tour costs is no longer asked here — the Expenses tab owns it.
     if (step === 2) body = wzShows(id, t);
-    else if (step === 3) body = wzExpenses(id);
-    else if (step === 4) body = wzDebt(id, t);
+    else if (step === 3) body = wzDebt(id, t);
     else body = wzName(id, t);
     return h('div', { class: 'page wizard' }, head, body);
   }
@@ -1545,30 +1545,6 @@
       wzFoot(null, 'Next'));
   }
 
-  function wzExpenses(id) {
-    var running = h('div', { class: 'running' },
-      h('span', { class: 'lbl' }, 'What the tour costs so far'),
-      h('strong', { class: 'amt num' }, '$0'));
-    S.runningLed = running;
-    var body = expensesEditor(id, 'wizard');
-    var submit = async function (e) {
-      e.preventDefault();
-      blurActive();
-      if (!(await saveExpenses(id, { setupStep: 4 }))) return;
-      go({ name: 'wizard', id: id, step: 4 });
-    };
-    var t2 = getTour(id);
-    var offer = (budgetIsBlank(t2) && baselineCandidates(id).length)
-      ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
-          onclick: function () { openBaselinePicker(id, function () { render(true); }); } },
-          icon('copy', 18), 'Start from a previous tour’s budget')
-      : null;
-    return h('form', { class: 'wz-body', onsubmit: submit, novalidate: true },
-      h('h1', { class: 'wz-title' }, 'What does the tour cost?'),
-      h('p', { class: 'wz-sub' }, 'Your best guess for the whole run. Leave anything you can’t predict blank — you can fill it in later.'),
-      offer, running, body,
-      wzFoot(function () { go({ name: 'wizard', id: id, step: 2 }); }, 'Next'));
-  }
 
   function wzDebt(id, t) {
     var has = G.rows(t.debts).length > 0;
@@ -1576,7 +1552,7 @@
       h('h1', { class: 'wz-title' }, 'What do you owe going in?'),
       h('p', { class: 'wz-sub' }, 'The card balance you’re carrying into the tour, plus any loans or gear payments. Nothing owed? Skip it.'),
       debtSection(id, t, 'wizard'),
-      wzFoot(function () { go({ name: 'wizard', id: id, step: 3 }); }, has ? 'Finish' : 'Skip', async function () {
+      wzFoot(function () { go({ name: 'wizard', id: id, step: 2 }); }, has ? 'Finish' : 'Skip', async function () {
         if (!(await api.update(id, { setupDone: true, setupStep: 5 }))) return;
         S.lastNet[id] = 0; // count in from zero the first time the hero is seen
         go({ name: 'tour', id: id, view: 'menu' });
@@ -3075,7 +3051,8 @@
         afterEl.textContent = after ? plural(after, 'day') + ' \u00b7 to ' + dayMD(G.addDays(last, after)) : 'None';
       }
       function stepper(get, set) {
-        return h('div', { class: 'seg' },
+        // Big targets: these were 38x34 and missed a lot of taps.
+        return h('div', { class: 'seg big' },
           h('button', { class: 'seg-b', type: 'button', 'aria-label': 'Fewer',
             onclick: function () { set(Math.max(0, get() - 1)); refresh(); } }, '\u2212'),
           h('button', { class: 'seg-b', type: 'button', 'aria-label': 'More',
@@ -5502,7 +5479,11 @@
 
     function counts() {
       var n = 0, total = 0;
-      rows.forEach(function (r) { if (r.keep) { n += 1; total += G.num(r.amount); } });
+      rows.forEach(function (r) {
+        if (!r.keep) return;
+        n += 1;
+        if (!r.accounted) total += G.num(r.amount);
+      });
       return { n: n, total: total };
     }
 
@@ -5521,9 +5502,10 @@
         // Only ever these four fields: no card numbers, no raw text, no file names.
         patch[newId() + i] = {
           date: r.date, merchant: r.merchant, amount: G.num(r.amount),
-          category: r.category, importId: importId, createdAt: Date.now() + i
+          category: r.category, accounted: !!r.accounted,
+          importId: importId, createdAt: Date.now() + i
         };
-        total += G.num(r.amount);
+        if (!r.accounted) total += G.num(r.amount);
       });
       var imports = {};
       imports[importId] = { createdAt: Date.now(), count: chosen.length, total: total, source: source };
@@ -5562,6 +5544,16 @@
           }
         });
 
+        // Some charges are already in the budget as money paid. Saying yes
+        // files the charge without counting it a second time.
+        var already = h('div', { class: 'rv-acc' },
+          h('span', { class: 'rv-acc-q' }, 'Already accounted for?'),
+          segmented(['No', 'Yes'], r.accounted ? 1 : 0, function (i) {
+            r.accounted = i === 1;
+            wrap.classList.toggle('accounted', r.accounted);
+            refresh();
+          }, 'Is this charge already accounted for?'));
+
         wrap.append(cb, h('div', { class: 'rv-fields' },
           h('div', { class: 'rv-head' },
             h('span', { class: 'rv-name' }, r.merchant),
@@ -5569,7 +5561,7 @@
           h('div', { class: 'rv-sub' }, dayMD(r.date),
             r.source === 'learned' ? h('span', { class: 'rv-flag learned' }, 'Learned') : null,
             r.source === 'suggested' ? h('span', { class: 'rv-flag' }, 'Suggested') : null),
-          sel));
+          sel, already));
         return wrap;
       }
 

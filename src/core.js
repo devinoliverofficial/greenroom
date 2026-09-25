@@ -343,7 +343,10 @@
     income = INCOME_FIELDS.reduce(function (t, f) { return t + incomeBy[f.key]; }, 0);
     guarantees = incomeBy.guarantee;
 
+    // A charge marked "already accounted for" is filed for the record but
+    // never counted again — its money is already in the budget as paid.
     var charges = rows(tour && tour.charges).filter(function (ch) {
+      if (ch.accounted) return false;
       return !upTo || (ch.date && ch.date <= upTo);
     });
     var chargedTo = {};

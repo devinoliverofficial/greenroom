@@ -333,6 +333,15 @@
     near(G.calc(t).commission, 300, 'management 200 + lawyer 100');
   });
 
+  test('a charge marked already accounted for is not counted twice', function () {
+    var base = { expenses: {}, crew: {}, debts: {}, commission: {}, extras: {}, shows: {}, imports: {},
+      charges: keyed([{ date: '2026-03-01', merchant: 'Pilot', amount: 400, category: 'gas' }]) };
+    near(G.calc(base).out, 400, 'a normal charge counts');
+    var marked = JSON.parse(JSON.stringify(base));
+    G.rows(marked.charges).forEach(function (c) { marked.charges[c.id].accounted = true; });
+    near(G.calc(marked).out, 0, 'an accounted charge does not');
+  });
+
   test('a custom category (extraCats) counts like any built-in', function () {
     var t = { expenses: {}, crew: {}, debts: {}, commission: {}, extras: {}, shows: {},
       extraCats: { 'x-security': 'Security' },
