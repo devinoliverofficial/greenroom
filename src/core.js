@@ -484,6 +484,8 @@
       v = String(v == null ? '' : v).trim();
       if (v) lines.push(label + ': ' + v);
     };
+    put('Address', d.venueAddress);
+    put('Venue phone', d.venuePhone);
     put('Load in', d.loadIn);
     dsList(d.soundchecks).forEach(function (r) {
       lines.push('Soundcheck — ' + (String(r.band || '').trim() || 'TBA') + ': ' + (String(r.time || '').trim() || 'TBA'));
@@ -560,6 +562,41 @@
   /* ---------------- Guest list ---------------- */
 
   var GUEST_PASSES = ['GA', 'VIP', 'All Access', 'Photo Pass'];
+
+  /* A pasted pile of guest names — texts, an email, whatever — into rows.
+     The offline fallback when Claude can't read it: one guest per line;
+     "+1"s, "x4"s, emails, phones and (parenthesized) affiliations peel off. */
+  function parseGuestList(text) {
+    var out = [];
+    String(text == null ? '' : text).split(/\r?\n|;/).forEach(function (raw) {
+      var line = String(raw).replace(/^[\s\u2022*\u2013\u2014-]+/, '')
+        .replace(/^\d{1,3}[.)]\s+/, '').trim();
+      if (!line) return;
+      var email = (line.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/) || [''])[0];
+      if (email) line = line.replace(email, ' ');
+      var phone = (line.match(/\+?\d[\d\s().-]{6,}\d/) || [''])[0];
+      if (phone) line = line.replace(phone, ' ');
+      var qty = 1;
+      var plus = line.match(/\+\s*(\d{1,2})\b/);
+      var times = line.match(/\bx\s*(\d{1,2})\b/i);
+      if (plus) { qty = Math.min(20, 1 + num(plus[1])); line = line.replace(plus[0], ' '); }
+      else if (times) { qty = Math.max(1, Math.min(20, num(times[1]))); line = line.replace(times[0], ' '); }
+      var affiliation = '';
+      var par = line.match(/\(([^)]*)\)/);
+      if (par) { affiliation = par[1].trim(); line = line.replace(par[0], ' '); }
+      var parts = line.split(/,| \u2013 | \u2014 | - /);
+      var name = String(parts[0] || '').replace(/\s+/g, ' ').trim()
+        .replace(/[\u2013\u2014-]+$/, '').trim();
+      if (!affiliation) affiliation = parts.slice(1).join(', ').replace(/\s+/g, ' ').trim();
+      var words = name ? name.split(' ') : [];
+      var row = {
+        firstName: words[0] || '', lastName: words.slice(1).join(' '),
+        affiliation: affiliation.slice(0, 80), email: email, phone: phone.trim(), qty: qty
+      };
+      if (row.firstName || row.email) out.push(row);
+    });
+    return out.slice(0, 100);
+  }
 
   function guestSummary(list) {
     var names = 0, tickets = 0;
@@ -872,6 +909,7 @@
     toCSV: toCSV, closeoutCSVs: closeoutCSVs,
     offDayLines: offDayLines, offDayText: offDayText,
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,
+    parseGuestList: parseGuestList,
     normalizeTourImport: normalizeTourImport, mergeDaySheet: mergeDaySheet,
     budgetFrom: budgetFrom, hasBudget: hasBudget, crewKey: crewKey,
     dailyUpdate: dailyUpdate

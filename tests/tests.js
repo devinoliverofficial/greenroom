@@ -333,6 +333,18 @@
     near(G.calc(t).commission, 300, 'management 200 + lawyer 100');
   });
 
+  test('bulk guest paste \u2014 +1s, emails and parens parse out', function () {
+    var g = G.parseGuestList('Sam Reyes +1 (Label)\n2. Dana Cole - dana@mail.com\nmgmt group x4\n\n');
+    eq(g.length, 3, 'three guests');
+    eq(g[0].firstName, 'Sam', 'first name');
+    eq(g[0].lastName, 'Reyes', 'last name');
+    eq(g[0].qty, 2, 'a +1 means two tickets');
+    eq(g[0].affiliation, 'Label', 'affiliation from parens');
+    eq(g[1].email, 'dana@mail.com', 'email peels off');
+    eq(g[1].firstName, 'Dana', 'bullet number stripped');
+    eq(g[2].qty, 4, 'x4 means four');
+  });
+
   test('commission base checkboxes — agent can take merch too, VIPs untouched', function () {
     var t = { expenses: {}, crew: {}, debts: {}, extras: {}, charges: {}, imports: {},
       commission: {

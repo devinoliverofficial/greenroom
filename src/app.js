@@ -2725,6 +2725,8 @@
           h('span', { class: 'row-label' }, label),
           h('span', { class: 'ds-time num' }, String(v).trim())));
       };
+      timeRow('Address', d.venueAddress);
+      timeRow('Venue phone', d.venuePhone);
       timeRow('Load in', d.loadIn);
       (Array.isArray(d.soundchecks) ? d.soundchecks : []).forEach(function (r) {
         if (r && (r.band || r.time)) timeRow('Soundcheck \u2014 ' + (r.band || 'TBA'), r.time || 'TBA');
@@ -2801,7 +2803,7 @@
     if (s) {
       var gl = guestsFor(t, id, s.id);
       var gsum = G.guestSummary(gl);
-      guestBtn = h('div', { class: 'ledger', style: 'margin-top:14px' },
+      guestBtn = h('div', { class: 'ledger inv-card', style: 'margin-top:14px' },
         h('button', { class: 'row rowbtn', type: 'button',
           onclick: function () { openGuestList(id, s.id); } },
           h('div', { class: 'row-label' }, 'Guest list',
@@ -3008,54 +3010,6 @@
       var show = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : {};
       var list = guestsFor(t, tourId, showId);
       var sum = G.guestSummary(list);
-      var f = { firstName: '', lastName: '', affiliation: '', email: '', phone: '',
-        qty: 1, passType: 'GA' };
-
-      function textIn(key, ph, extra) {
-        return h('input', Object.assign({
-          class: 'input', type: 'text', value: f[key], maxlength: 80,
-          autocomplete: 'off', placeholder: ph,
-          oninput: function (e) { f[key] = e.target.value; }
-        }, extra || {}));
-      }
-      var qtySel = h('select', { class: 'input', 'aria-label': 'How many tickets',
-        onchange: function (e) { f.qty = G.num(e.target.value) || 1; } });
-      for (var i = 1; i <= 20; i++) qtySel.append(h('option', { value: String(i) }, String(i)));
-      var passSel = h('select', { class: 'input', 'aria-label': 'Pass type',
-        onchange: function (e) { f.passType = e.target.value; } });
-      G.GUEST_PASSES.forEach(function (ptype) { passSel.append(h('option', { value: ptype }, ptype)); });
-
-      var form = h('form', { class: 'card addform', novalidate: true,
-        onsubmit: async function (e) {
-          e.preventDefault();
-          if (!f.firstName.trim() && !f.lastName.trim()) {
-            toast('Give the guest at least a name'); return;
-          }
-          blurActive();
-          try {
-            await saveGuest(tourId, showId, {
-              id: newId(),
-              firstName: f.firstName.trim(), lastName: f.lastName.trim(),
-              affiliation: f.affiliation.trim(), email: f.email.trim(), phone: f.phone.trim(),
-              qty: Math.max(1, Math.min(20, f.qty)), passType: f.passType
-            });
-            toast('On the list: ' + (f.firstName + ' ' + f.lastName).trim());
-            sendNotify(tourId, 'guest', { name: (f.firstName + ' ' + f.lastName).trim(),
-              city: show.city || '', tickets: Math.max(1, Math.min(20, f.qty)) });
-            setTimeout(build, backend ? 500 : 150); // let the refetch land
-          } catch (e2) { toast('Couldn\u2019t add them. Try again.'); }
-        } },
-        h('div', { class: 'field-row' },
-          field('First name', textIn('firstName', 'Devin')),
-          field('Last name', textIn('lastName', 'Oliver'))),
-        field('Affiliation', textIn('affiliation', 'Label, press, family\u2026')),
-        h('div', { class: 'field-row' },
-          field('Contact email', textIn('email', 'Optional', { type: 'email', inputmode: 'email' })),
-          field('Contact phone', textIn('phone', 'Optional', { type: 'tel', inputmode: 'tel' }))),
-        h('div', { class: 'field-row' },
-          field('Tickets', qtySel),
-          field('Pass type', passSel)),
-        h('button', { class: 'btn primary block', type: 'submit' }, 'Add to the list'));
 
       var rowsOut = list.slice().sort(function (a, b) {
         return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
@@ -3099,7 +3053,13 @@
           h('p', { class: 'sh-sub' }, sum.names
             ? plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket')
             : 'Anyone on the tour can add names here \u2014 band, crew, GA, everyone.'),
-          form,
+          h('div', { class: 'gl-actions' },
+            h('button', { class: 'add-mini', type: 'button',
+              onclick: function () { openGuestForm(tourId, showId, show, backend, build); } },
+              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
+            h('button', { class: 'add-mini', type: 'button',
+              onclick: function () { openGuestImport(tourId, showId, show, backend, build); } },
+              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import a list')),
           rowsOut.length ? h('div', { class: 'ledger' }, rowsOut) : null,
           copyBtn
         ];
@@ -3108,12 +3068,207 @@
     build();
   }
 
+  /* One guest at a time — its own sheet, then straight back to the list. */
+  function openGuestForm(tourId, showId, show, backend, done) {
+    var f = { firstName: '', lastName: '', affiliation: '', email: '', phone: '',
+      qty: 1, passType: 'GA' };
+    function textIn(key, ph, extra) {
+      return h('input', Object.assign({
+        class: 'input', type: 'text', value: f[key], maxlength: 80,
+        autocomplete: 'off', placeholder: ph,
+        oninput: function (e) { f[key] = e.target.value; }
+      }, extra || {}));
+    }
+    var qtySel = h('select', { class: 'input', 'aria-label': 'How many tickets',
+      onchange: function (e) { f.qty = G.num(e.target.value) || 1; } });
+    for (var i = 1; i <= 20; i++) qtySel.append(h('option', { value: String(i) }, String(i)));
+    var passSel = h('select', { class: 'input', 'aria-label': 'Pass type',
+      onchange: function (e) { f.passType = e.target.value; } });
+    G.GUEST_PASSES.forEach(function (ptype) { passSel.append(h('option', { value: ptype }, ptype)); });
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Add a guest \u2014 ' + (show.city || 'Show')),
+        h('form', { class: 'sh-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            if (!f.firstName.trim() && !f.lastName.trim()) {
+              toast('Give the guest at least a name'); return;
+            }
+            blurActive();
+            try {
+              await saveGuest(tourId, showId, {
+                id: newId(),
+                firstName: f.firstName.trim(), lastName: f.lastName.trim(),
+                affiliation: f.affiliation.trim(), email: f.email.trim(), phone: f.phone.trim(),
+                qty: Math.max(1, Math.min(20, f.qty)), passType: f.passType
+              });
+              toast('On the list: ' + (f.firstName + ' ' + f.lastName).trim());
+              sendNotify(tourId, 'guest', { name: (f.firstName + ' ' + f.lastName).trim(),
+                city: show.city || '', tickets: Math.max(1, Math.min(20, f.qty)) });
+              setTimeout(done, backend ? 500 : 150); // let the refetch land
+            } catch (e2) { toast('Couldn\u2019t add them. Try again.'); }
+          } },
+          h('div', { class: 'field-row' },
+            field('First name', textIn('firstName', 'Devin')),
+            field('Last name', textIn('lastName', 'Oliver'))),
+          field('Affiliation', textIn('affiliation', 'Label, press, family\u2026')),
+          h('div', { class: 'field-row' },
+            field('Contact email', textIn('email', 'Optional', { type: 'email', inputmode: 'email' })),
+            field('Contact phone', textIn('phone', 'Optional', { type: 'tel', inputmode: 'tel' }))),
+          h('div', { class: 'field-row' },
+            field('Tickets', qtySel),
+            field('Pass type', passSel)),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Add to the list'),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { done(); } }, 'Back to the list')))
+      ];
+    }, { label: 'Add a guest' });
+  }
+
+  /* Someone sends a pile of names: paste it, Claude (or a plain parser) sorts
+     it into guests, and the whole batch lands at once. */
+  function openGuestImport(tourId, showId, show, backend, done) {
+    var parsed = null;
+    var defaultPass = 'GA';
+    function sheet() { openSheet(body, { label: 'Import a guest list' }); }
+    function body() {
+      if (!parsed) {
+        var ta = h('textarea', { class: 'gl-paste',
+          placeholder: 'Sam Reyes +1 (label)\nDana Cole \u2014 dana@mail.com\nmgmt group x4',
+          'aria-label': 'The guest list text' });
+        var readBtn = h('button', { class: 'btn primary block', type: 'button',
+          onclick: async function () {
+            var text = String(ta.value || '').trim();
+            if (!text) { toast('Paste the list first'); return; }
+            readBtn.disabled = true; readBtn.textContent = 'Reading the list\u2026';
+            var got = null;
+            if (S.sample) {
+              try {
+                var out = await S.sample.json(guestImportPrompt(text), { modelTier: 'quick', cache: false });
+                got = normalizeGuestImport(out);
+              } catch (e) { got = null; }
+            }
+            if (!got || !got.length) got = G.parseGuestList(text);
+            if (!got.length) {
+              readBtn.disabled = false; readBtn.textContent = 'Read the list';
+              toast('No names found in that \u2014 check the text'); return;
+            }
+            parsed = got;
+            sheet();
+          } }, 'Read the list');
+        return [
+          h('h2', { class: 'sh-title' }, 'Import a guest list'),
+          h('p', { class: 'sh-sub' }, 'Drop in the whole pile \u2014 texts, an email, whatever. One name per line reads best; \u201c+1\u201ds, emails and phone numbers come along for the ride.'),
+          ta,
+          h('div', { class: 'stack' }, readBtn,
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { done(); } }, 'Cancel'))
+        ];
+      }
+      var passSel = h('select', { class: 'input', 'aria-label': 'Pass type for everyone',
+        onchange: function (e) { defaultPass = e.target.value; } });
+      G.GUEST_PASSES.forEach(function (ptype) { passSel.append(h('option', { value: ptype }, ptype)); });
+      passSel.value = defaultPass;
+      var listOut = h('div', { class: 'ledger' });
+      function renderRows() {
+        listOut.replaceChildren.apply(listOut, parsed.map(function (g, i) {
+          var name = [g.firstName, g.lastName].filter(Boolean).join(' ') || 'Guest';
+          var qtySel = h('select', { class: 'input', style: 'width:auto;flex:none', 'aria-label': 'Tickets for ' + name,
+            onchange: function (e) { g.qty = G.num(e.target.value) || 1; } });
+          for (var q = 1; q <= 20; q++) qtySel.append(h('option', { value: String(q) }, String(q)));
+          qtySel.value = String(Math.max(1, Math.min(20, G.num(g.qty) || 1)));
+          var sub = [g.affiliation, g.email, g.phone].filter(Boolean).join(' \u00b7 ');
+          return h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, name,
+              sub ? h('span', { class: 'hint' }, sub) : null),
+            qtySel,
+            h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + name,
+              onclick: function () {
+                parsed.splice(i, 1);
+                if (parsed.length) renderRows(); else { parsed = null; sheet(); }
+              } }, icon('trash', 16)));
+        }));
+      }
+      renderRows();
+      var addBtn = h('button', { class: 'btn primary block', type: 'button',
+        onclick: async function () {
+          addBtn.disabled = true; addBtn.textContent = 'Adding\u2026';
+          var n = 0; var first = ''; var tickets = 0;
+          try {
+            for (var i = 0; i < parsed.length; i++) {
+              var g = parsed[i];
+              var q2 = Math.max(1, Math.min(20, G.num(g.qty) || 1));
+              await saveGuest(tourId, showId, {
+                id: newId() + i, firstName: g.firstName, lastName: g.lastName,
+                affiliation: g.affiliation, email: g.email, phone: g.phone,
+                qty: q2, passType: defaultPass
+              });
+              if (!n) first = [g.firstName, g.lastName].filter(Boolean).join(' ');
+              n += 1; tickets += q2;
+            }
+          } catch (e) { /* whatever landed, landed */ }
+          if (n) {
+            toast(plural(n, 'guest') + ' on the list');
+            sendNotify(tourId, 'guest', {
+              name: n === 1 ? first : first + ' and ' + (n - 1) + ' more',
+              city: show.city || '', tickets: tickets });
+            setTimeout(done, backend ? 600 : 150);
+          } else {
+            addBtn.disabled = false; addBtn.textContent = 'Add them to the list';
+            toast('Couldn\u2019t add them. Try again.');
+          }
+        } }, 'Add them to the list');
+      return [
+        h('h2', { class: 'sh-title' }, plural(parsed.length, 'name') + ' found'),
+        h('p', { class: 'sh-sub' }, 'Check the tickets, pick everyone\u2019s pass type, then add the lot. Fix anyone\u2019s details from the list after.'),
+        field('Pass type for everyone', passSel),
+        listOut,
+        h('div', { class: 'stack' }, addBtn,
+          h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { parsed = null; sheet(); } }, 'Back to the paste'))
+      ];
+    }
+    sheet();
+  }
+
+  function guestImportPrompt(text) {
+    return [
+      'The text below is a concert guest list \u2014 names people sent in, however messy.',
+      'Turn it into structured guests. Reply with only a JSON object in this exact shape:',
+      '{"guests":[{"firstName":"","lastName":"","affiliation":"","email":"","phone":"","qty":1}]}',
+      '',
+      'Rules:',
+      '- qty is that entry\u2019s TOTAL tickets: "Sam +1" is qty 2, a plain name is 1. Cap at 20.',
+      '- affiliation only when the text says it (label, press, family, management). Never invent anything.',
+      '- Skip lines that are not guests \u2014 greetings, dates, sign-offs.',
+      '',
+      'Guest list text:',
+      String(text).slice(0, 8000)
+    ].join('\n');
+  }
+
+  function normalizeGuestImport(out) {
+    var arr = G.isObj(out) && Array.isArray(out.guests) ? out.guests : (Array.isArray(out) ? out : []);
+    var res = [];
+    arr.slice(0, 100).forEach(function (g) {
+      if (!G.isObj(g)) return;
+      var take = function (k, cap) { return String(g[k] == null ? '' : g[k]).trim().slice(0, cap || 80); };
+      var row = { firstName: take('firstName'), lastName: take('lastName'),
+        affiliation: take('affiliation'), email: take('email'), phone: take('phone', 40),
+        qty: Math.max(1, Math.min(20, G.num(g.qty) || 1)) };
+      if (row.firstName || row.lastName || row.email) res.push(row);
+    });
+    return res;
+  }
+
   function openDaySheetEditor(tourId, showId) {
     var t = getTour(tourId);
     var s = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : null;
     if (!s) return;
     var d0 = G.isObj(s.daySheet) ? s.daySheet : {};
     var f = {
+      venueAddress: d0.venueAddress || '', venuePhone: d0.venuePhone || '',
       loadIn: d0.loadIn || '', vip: d0.vip || '', doors: d0.doors || '',
       lobbyCall: d0.lobbyCall || '', busCall: d0.busCall || '',
       wifi: d0.wifi || '', parking: d0.parking || '',
@@ -3179,6 +3334,7 @@
             .map(function (r) { return { band: r.band.trim(), time: r.time.trim() }; });
         };
         var sheet = {
+          venueAddress: f.venueAddress.trim(), venuePhone: f.venuePhone.trim(),
           loadIn: f.loadIn.trim(), vip: f.vip.trim(), doors: f.doors.trim(),
           lobbyCall: f.lobbyCall.trim(), busCall: f.busCall.trim(),
           wifi: f.wifi.trim(), parking: f.parking.trim(),
@@ -3196,6 +3352,8 @@
         h('h2', { class: 'sh-title' }, 'Day sheet \u2014 ' + (s.city || 'Show')),
         h('p', { class: 'sh-sub' }, 'Everything the bus needs for the day. Leave anything blank and it just doesn\u2019t show.'),
         h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
+          field('Venue address', textIn('venueAddress', '2115 Woodward Ave')),
+          field('Venue phone', textIn('venuePhone', '(313) 961-5451')),
           h('div', { class: 'field-row' },
             field('Load in', textIn('loadIn', '2:00 PM')),
             field('Doors', textIn('doors', '7:00 PM'))),
@@ -4330,6 +4488,62 @@
     return rows;
   }
 
+  /* The flyer names the venues; Claude may know the buildings. Ask for the
+     address and phone ONLY where it is sure, pencil them into blank day
+     sheets, and say so — a wrong number is worse than a blank, so these are
+     flagged for a double-check and never overwrite anything a human typed. */
+  function venueInfoPrompt(items) {
+    return [
+      'These are concert venues on a tour. For each one, give the street address and the venue\u2019s main phone number',
+      'ONLY if you are confident you know that exact real venue. If you are not sure, use null for that field \u2014',
+      'never guess, never make up a number.',
+      'Reply with only a JSON array in this exact shape:',
+      '[{"venue":"The Fillmore","city":"Detroit, MI","address":"2115 Woodward Ave, Detroit, MI 48201","phone":"(313) 961-5451"}]',
+      '',
+      'Venues:',
+      items.map(function (v) { return '- ' + v.venue + ' \u2014 ' + v.city; }).join('\n')
+    ].join('\n');
+  }
+
+  async function lookupVenueInfo(tourId, showsPatch) {
+    if (!S.sample) return;
+    var items = [];
+    Object.keys(showsPatch).forEach(function (id) {
+      var sh = showsPatch[id];
+      if (sh && sh.venue) items.push({ id: id, venue: sh.venue, city: sh.city || '' });
+    });
+    if (!items.length) return;
+    try {
+      var out = await S.sample.json(venueInfoPrompt(items), { cache: false });
+      var byKey = {};
+      (Array.isArray(out) ? out : []).forEach(function (v) {
+        if (!G.isObj(v)) return;
+        byKey[String(v.venue || '').toLowerCase() + '|' + String(v.city || '').toLowerCase()] = v;
+      });
+      var patch = {}; var n = 0;
+      var t = getTour(tourId);
+      items.forEach(function (it) {
+        var hit = byKey[it.venue.toLowerCase() + '|' + it.city.toLowerCase()];
+        if (!hit) return;
+        var addr = String(hit.address == null ? '' : hit.address).trim().slice(0, 120);
+        var ph = String(hit.phone == null ? '' : hit.phone).trim().slice(0, 40);
+        if (!addr && !ph) return;
+        var cur = t && G.isObj(t.shows) && G.isObj(t.shows[it.id]) ? t.shows[it.id] : null;
+        if (!cur) return;
+        var ds = Object.assign({}, G.isObj(cur.daySheet) ? cur.daySheet : {});
+        if (ds.venueAddress || ds.venuePhone) return; // never overwrite a human
+        if (addr) ds.venueAddress = addr;
+        if (ph) ds.venuePhone = ph;
+        patch[it.id] = { daySheet: ds };
+        n += 1;
+      });
+      if (n && await api.update(tourId, { shows: patch })) {
+        toast('Address and phone penciled in for ' + plural(n, 'venue') + ' \u2014 double-check them on the day sheets');
+        render(true);
+      }
+    } catch (e) { /* a nicety, never worth an error */ }
+  }
+
   async function readFlyer(tourId, file) {
     if (!S.sample) return;
     if (S.imageMax && file.size > S.imageMax) {
@@ -4411,6 +4625,7 @@
       if (await api.update(tourId, { shows: patch })) {
         closeSheet(); toast(plural(n, 'show') + ' added'); render(true);
         setTimeout(function () { openTravelDaysSheet(tourId); }, 400);
+        lookupVenueInfo(tourId, patch); // fire and forget — a nicety
       }
     }
 
