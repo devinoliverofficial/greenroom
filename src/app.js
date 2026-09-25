@@ -935,7 +935,7 @@
     cv.height = window.innerHeight * dpr;
     var ctx = cv.getContext('2d');
     ctx.scale(dpr, dpr);
-    var colors = ['#0C0E00', '#2E3600', '#5C6604', '#FFFFFF', '#A8CC00'];
+    var colors = ['#CCF80A', '#A8CC00', '#E7FF4F', '#F1F4E3', '#FFFFFF'];
     var cx = window.innerWidth / 2, cy = window.innerHeight * 0.3;
     var bits = [];
     for (var i = 0; i < 90; i++) {
@@ -4871,7 +4871,10 @@
       '{"income":{"merch":null},"notes":[{"label":"Merch per head","value":"$12.40"}]}',
       '',
       'Rules:',
-      '- merch: the artist\u2019s NET merch money after any venue cut. Only if it is actually on the sheet; never estimate.',
+      '- merch: the merch sales total. On an atVenu summary this is the line called "Total Gross"',
+      '  (sometimes "Gross Total" or "Total Sales") \u2014 take that number exactly as printed. If the sheet',
+      '  only shows an artist-net figure after the venue cut, take that instead and add a "Venue merch cut" note.',
+      '- Never estimate a number that is not printed on the sheet.',
       '- notes may ONLY use these labels, and only when the sheet shows them:',
       '  "Gross merch", "Venue merch cut", "Merch per head" (dollars per attendee, shown or computable from gross and attendance), "Attendance".',
       'Keep every value under a dozen words. If the sheet is unreadable, reply {"income":{},"notes":[]}.',
