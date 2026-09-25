@@ -642,10 +642,12 @@
         h('span', { id: 'prog-pct' }, c.out > 0 ? pct + '% of the way to green' : 'No costs added yet'),
         h('span', { class: 'num' }, money(c.income) + ' in / ' + money(c.out) + ' out')));
 
-    // Comments ride beside the big number while you scrub.
-    var noteRail = h('div', { class: 'hero-notes', id: 'hero-notes', hidden: true });
+    // Under the number: the day's take on the left, its comment on the right.
+    // The row is always there at a fixed height, so nothing shifts when it fills.
+    var dayNote = h('div', { class: 'hero-note', id: 'hero-note' });
+    var capRow = h('div', { class: 'cap-row' }, cap, dayNote);
     var hero = h('section', { class: 'hero ' + st, id: 'hero', 'aria-label': 'Tour balance' },
-      noteRail, odo, cap, chip, chart, prog);
+      odo, capRow, chip, chart, prog);
     hero.__calc = c;
     hero.__series = series;
     hero.__pct = pct;
@@ -922,17 +924,16 @@
         : 'No show that night';
       geo.pill.style.left = (px / geo.W * 100) + '%';
 
-      // Comments for this one night, beside the big number.
-      var rail = $('#hero-notes', hero);
+      // That one night's comment, to the right of the day's take.
+      var noteEl = $('#hero-note', hero);
       var mine = geo.tourId ? notesFor(getTour(geo.tourId), geo.tourId, p.date) : [];
-      if (rail) {
-        rail.hidden = !mine.length;
-        hero.classList.toggle('has-note', !!mine.length);
+      if (noteEl) {
         if (mine.length) {
-          rail.replaceChildren.apply(rail, mine.slice(0, 3).map(function (n) {
-            return h('div', { class: 'sn-bubble' },
-              h('b', null, n.author || 'Someone'), ' ' + n.body);
-          }));
+          noteEl.replaceChildren(h('b', null, mine[0].author || 'Someone'), ' ' + mine[0].body);
+          noteEl.classList.add('on');
+        } else {
+          noteEl.replaceChildren();
+          noteEl.classList.remove('on');
         }
       }
       if (geo.pins) {
@@ -959,9 +960,8 @@
       hero.classList.remove('scrubbing');
       geo.pill.hidden = true;
       geo.notes.hidden = true;
-      var railEnd = $('#hero-notes', hero);
-      if (railEnd) railEnd.hidden = true;
-      hero.classList.remove('has-note');
+      var noteEnd = $('#hero-note', hero);
+      if (noteEnd) { noteEnd.replaceChildren(); noteEnd.classList.remove('on'); }
       cap.classList.remove('num', 'cap-odo');
       cap.__last = null;
       if (geo.pins) {

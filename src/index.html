@@ -350,14 +350,19 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .hero-cap.cap-odo .odo-strip > span { height: 1.15em; }
 
 /* Comments beside the big number while scrubbing. */
-/* The comment sits in its own row just above the number — a phone has no
-   room for a seven-figure number and a sentence side by side. */
-.hero-notes {
-  position: absolute; left: 18px; right: 18px; top: 16px; z-index: 2;
-  display: grid; gap: 6px; justify-items: end; pointer-events: none;
+/* One fixed row under the number: the day's take left, its comment right.
+   Fixed height and one line each, so scrubbing never moves the layout. */
+.cap-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; min-height: 26px; margin-top: 2px;
 }
-.hero.has-note .odo { margin-top: 44px; }
-.hero.scrubbing .odo { font-size: clamp(40px, 12.5vw, 58px); }
+.cap-row .hero-cap { flex: none; margin-top: 0; }
+.hero-note {
+  flex: 1; min-width: 0; text-align: right;
+  font-size: 13px; font-weight: 600; line-height: 26px; color: var(--pos);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hero-note b { font-weight: 800; opacity: .75; }
 .hero-cap.cap-odo .odo-c { white-space: pre; }
 
 .change-chip {
@@ -375,7 +380,8 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .hero.scrubbing .change-chip { opacity: 0; transition: opacity .12s ease; }
 
 /* Chart — the centrepiece */
-.chart-wrap { position: relative; margin: 18px 0 2px; touch-action: pan-y; cursor: crosshair; }
+/* touch-action:none — dragging the chart must never scroll the page. */
+.chart-wrap { position: relative; margin: 18px 0 2px; touch-action: none; cursor: crosshair; }
 .chart-wrap:focus { outline: none; }
 .chart-wrap:focus-visible { outline: 3px solid var(--brand); outline-offset: 4px; border-radius: 10px; }
 .chart { display: block; width: 100%; height: auto; overflow: visible; }
