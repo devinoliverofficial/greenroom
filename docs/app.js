@@ -2560,8 +2560,7 @@
               label: 'Upload flyer', icon: 'flyer', cls: 'btn primary', accept: imageAccept(),
               onFiles: function (files) { readFlyer(id, files[0]); }
             }) : null,
-            h('button', { class: 'btn ghost', type: 'button', onclick: function () { openShowSheet(id); } },
-              icon('plus', 18), 'Add show'))
+            settlementSourceControl(id))
         : null,
       shows.length
         ? [h('p', { class: 'count-line' }, logged + ' of ' + plural(shows.length, 'show') + ' logged'),
