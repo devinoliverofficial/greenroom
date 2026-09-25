@@ -7,10 +7,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Greenroom">
 <title>Greenroom</title>
-<link rel="manifest" href="manifest.webmanifest?v=20260925-024812">
+<link rel="manifest" href="manifest.webmanifest?v=20260925-025445">
 <meta name="theme-color" content="#000000">
-<script>window.GREENROOM_BUILD = "20260925-024812";</script>
-<link rel="apple-touch-icon" href="icon-180.png?v=20260925-024812">
+<script>window.GREENROOM_BUILD = "20260925-025445";</script>
+<link rel="apple-touch-icon" sizes="180x180" href="gr-stark-180.png?v=20260925-025445">
 <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAA7klEQVR42u3ZTQ6EIAyGYdYT4/0PNQeapXvjGFq+/pC8CUsT+0gpBcf399l6DAAAAAAAAAAAAAAAAOQDjnPMj3YAU/TtANboGwFahW4GNIxeAChf6MMdfZMZ88chjz4VEBG9j2EGRGTOiqEpYN6gBwi3xT0A7jqhBCzmQzFgPaErAZIVWQaQlJTsMur7osJ8ywD8m7eIbiKpFwqKfqkbfX/lJCDvPGBdr6YU6nUie69dlQDrpmstvl0Aj0kv7N6SrlVuT8r3r7yrxflKFbWRhdoyTmRVjJ1up2O7UQD84AAAAAAAAAAAAAAAAEDMuACKO7j1KNgFpgAAAABJRU5ErkJggg==">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -292,6 +292,13 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   background-size: contain; background-repeat: no-repeat; background-position: center;
   opacity: .1; pointer-events: none;
 }
+
+/* Artist logos: small in the bubbles, a touch bigger by the name. */
+.tc-artist { display: flex; align-items: center; gap: 12px; }
+.artist-logo { width: 38px; height: 38px; border-radius: 9px; object-fit: contain; flex: none; }
+.artist-title { display: flex; align-items: center; gap: 12px; }
+.artist-title .artist-logo { width: 44px; height: 44px; }
+.linkbtn.logo-import { min-height: 34px; font-size: 13px; color: var(--ink-3); text-decoration: none; display: block; }
 
 /* Recently deleted: a whisper in the corner. */
 .home-corner { display: flex; justify-content: flex-end; gap: 22px; margin-top: 34px; }

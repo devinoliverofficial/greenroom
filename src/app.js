@@ -245,7 +245,7 @@
       snap.docs.forEach(function (d) {
         if (!d.exists) return;
         var v = d.data();
-        if (G.isObj(v) && (G.isObj(v.cats) || v.kind === 'crew')) m[d.id] = v;
+        if (G.isObj(v) && (G.isObj(v.cats) || v.kind === 'crew' || v.kind === 'artistLogo')) m[d.id] = v;
       });
       S.labels = m;
       if (S.loaded) render();
@@ -289,6 +289,46 @@
     if (S.mode === 'db' && store.db) {
       try { await store.db.doc('labels/' + key).delete(); } catch (e) { /* fine */ }
     } else saveLocalLabels();
+  }
+
+  /* Artist logos ride the shared labels store too, under alogo: keys —
+     one logo per artist name, following the account across tours. */
+  function artistLogoKey(name) {
+    return 'alogo:' + String(name || '').trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  }
+  function artistLogo(name) {
+    var rec = S.labels[artistLogoKey(name)];
+    return rec && rec.kind === 'artistLogo' && rec.dataUrl ? rec.dataUrl : null;
+  }
+  async function saveArtistLogo(name, dataUrl) {
+    var key = artistLogoKey(name);
+    if (key === 'alogo:') return false;
+    var rec = { kind: 'artistLogo', name: String(name), dataUrl: dataUrl };
+    S.labels[key] = rec;
+    if (S.mode === 'db' && store.db) {
+      try { await store.db.doc('labels/' + key).set(rec); } catch (e) { /* a nicety */ }
+    } else saveLocalLabels();
+    return true;
+  }
+  /* Any image in, a small square PNG out — logos stay tiny in the store. */
+  function readLogoFile(file, cb) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      var SZ = 128;
+      var c = document.createElement('canvas');
+      c.width = SZ; c.height = SZ;
+      var ctx = c.getContext('2d');
+      var r = Math.min(SZ / img.width, SZ / img.height);
+      var w2 = Math.max(1, Math.round(img.width * r));
+      var h2 = Math.max(1, Math.round(img.height * r));
+      ctx.drawImage(img, (SZ - w2) / 2, (SZ - h2) / 2, w2, h2);
+      URL.revokeObjectURL(url);
+      cb(c.toDataURL('image/png'));
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); toast('Couldn\u2019t read that image \u2014 try a PNG or JPG'); };
+    img.src = url;
   }
 
   async function removeLabel(merchant) {
@@ -1199,10 +1239,14 @@
 
   /* One artist: just the name. The numbers wait behind the doors. */
   function artistCard(name, entries) {
+    var logo = artistLogo(name);
     return h('button', { class: 'tour-card idle name-card', type: 'button',
       onclick: function () { go({ name: 'artist', artist: name }); } },
       h('div', { class: 'tc-top' },
-        h('div', { class: 'tc-name' }, name), icon('chevron', 20)));
+        h('div', { class: 'tc-name tc-artist' },
+          logo ? h('img', { class: 'artist-logo', src: logo, alt: '' }) : null,
+          name),
+        icon('chevron', 20)));
   }
 
   /* One artist's tours. */
@@ -1218,12 +1262,24 @@
           pill ? null : h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('div', { class: 'topbar-actions' },
             pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
-        h('h1', { class: 'tour-title' }, name),
+        h('h1', { class: 'tour-title artist-title' },
+          artistLogo(name) ? h('img', { class: 'artist-logo', src: artistLogo(name), alt: '' }) : null,
+          name),
         canWrite()
           ? h('button', { class: 'add-mini', type: 'button',
               onclick: function () { startTour(name); } },
               h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
-          : null),
+          : null,
+        canWrite() ? fileControl({
+          label: artistLogo(name) ? 'Change logo' : 'Import logo',
+          cls: 'linkbtn quiet logo-import', accept: imageAccept(),
+          ariaLabel: (artistLogo(name) ? 'Change' : 'Import') + ' the logo for ' + name,
+          onFiles: function (files) {
+            readLogoFile(files[0], async function (dataUrl) {
+              if (await saveArtistLogo(name, dataUrl)) { toast('Logo in \u2014 it shows on the artists page'); render(true); }
+            });
+          }
+        }) : null),
       dbBanner(),
       entries.length
         ? h('ul', { class: 'tour-list' }, entries.map(function (e) {
@@ -5510,7 +5566,7 @@
   function openLabelsSheet() {
     function build() {
       var keys = Object.keys(S.labels).filter(function (k) {
-        return k.indexOf('crew:') !== 0;
+        return k.indexOf('crew:') !== 0 && k.indexOf('alogo:') !== 0;
       }).sort(function (a, b) {
         var an = (S.labels[a].merchant || a).toLowerCase();
         var bn = (S.labels[b].merchant || b).toLowerCase();

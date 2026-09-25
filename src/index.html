@@ -290,6 +290,13 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   opacity: .1; pointer-events: none;
 }
 
+/* Artist logos: small in the bubbles, a touch bigger by the name. */
+.tc-artist { display: flex; align-items: center; gap: 12px; }
+.artist-logo { width: 38px; height: 38px; border-radius: 9px; object-fit: contain; flex: none; }
+.artist-title { display: flex; align-items: center; gap: 12px; }
+.artist-title .artist-logo { width: 44px; height: 44px; }
+.linkbtn.logo-import { min-height: 34px; font-size: 13px; color: var(--ink-3); text-decoration: none; display: block; }
+
 /* Recently deleted: a whisper in the corner. */
 .home-corner { display: flex; justify-content: flex-end; gap: 22px; margin-top: 34px; }
 .home-corner .linkbtn {
