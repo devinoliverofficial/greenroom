@@ -3295,6 +3295,13 @@
               h('span', { class: 'sn-val' }, n.value));
           })));
       }
+      var perHeadEl = h('span', { class: 'hint ph-hint' }, '');
+      function updatePerHead() {
+        var hit = (settNotes || []).filter(function (x) { return /per head/i.test(x.label); })[0];
+        perHeadEl.textContent = hit ? hit.value + ' per head' : '$ per head fills in from atVenu';
+        perHeadEl.classList.toggle('known', !!hit);
+      }
+      updatePerHead();
       var readerResult = function (r) { /* assigned below */ };
       var reader = settlementReader({
         show: s,
@@ -3313,7 +3320,7 @@
             if (ml) ml.value = r.miscLabel;
           }
           if (r.notes.length) settNotes = r.notes;
-          syncMisc(); renderNotes(); refresh();
+          syncMisc(); renderNotes(); refresh(); updatePerHead();
         }; })();
       // Misc gets its own note, so "$400 misc" still means something in a month.
       var miscNote = h('input', {
@@ -3328,20 +3335,26 @@
 
       var rows = [];
       fields.forEach(function (f, i) {
-        rows.push(h('div', { class: 'row' },
-          h('label', { class: 'row-label', for: 'inc-' + f.key }, f.label),
-          moneyInput({
-            id: 'inc-' + f.key, value: draft[f.key], label: f.label,
-            nextId: f.key === 'misc' ? 'inc-misc-label'
-              : (i < fields.length - 1 ? 'inc-' + fields[i + 1].key : null),
-            last: i === fields.length - 1,
-            onValue: function (v) { draft[f.key] = v; syncMisc(); refresh(); }
-          })));
+        var mkInput = moneyInput({
+          id: 'inc-' + f.key, value: draft[f.key], label: f.label,
+          nextId: f.key === 'misc' ? 'inc-misc-label'
+            : (i < fields.length - 1 ? 'inc-' + fields[i + 1].key : null),
+          last: i === fields.length - 1,
+          onValue: function (v) { draft[f.key] = v; syncMisc(); refresh(); }
+        });
         if (f.key === 'merch') {
-          rows.push(h('div', { class: 'row stackrow' },
+          rows.push(h('div', { class: 'row' },
+            h('div', { class: 'row-label' },
+              h('label', { for: 'inc-merch' }, f.label),
+              perHeadEl),
             settlementReader({ show: s, onResult: readerResult,
-              btnLabel: 'atVenu Settlement', btnLogo: 'logo-atvenu.png',
-              btnCls: 'btn ghost block sm' })));
+              btnLabel: '', btnLogo: 'logo-atvenu.png',
+              ariaLabel: 'Read the atVenu settlement', btnCls: 'av-bubble' }),
+            mkInput));
+        } else {
+          rows.push(h('div', { class: 'row' },
+            h('label', { class: 'row-label', for: 'inc-' + f.key }, f.label),
+            mkInput));
         }
         if (f.key === 'misc') rows.push(miscRow);
       });
@@ -4204,9 +4217,11 @@
       }
     });
     var btn = h('button', {
-      class: o.cls || 'btn ghost', type: 'button', onclick: function () { input.click(); }
+      class: o.cls || 'btn ghost', type: 'button',
+      'aria-label': o.ariaLabel || null,
+      onclick: function () { input.click(); }
     }, o.logo ? h('img', { class: 'brand-logo', src: o.logo, alt: '' })
-      : (o.icon ? icon(o.icon, 18) : null), o.label);
+      : (o.icon ? icon(o.icon, 18) : null), o.label || null);
     return [btn, input];
   }
 
@@ -4600,20 +4615,22 @@
   /* Reads the promoter's settlement into the income sheet: numbers into the
      fields (still yours to check before saving), the night's story into notes. */
   function settlementReader(o) {
-    var face = o.btnLabel || 'Read the promoter\u2019s settlement';
+    var face = o.btnLabel != null ? o.btnLabel : 'Read the promoter\u2019s settlement';
     var cls = o.btnCls || 'btn ghost block';
-    if (!S.sample) return [unavailableBtn(face, cls)];
+    if (!S.sample) return [unavailableBtn(face || 'atVenu Settlement', cls)];
     var reading = false;
     var control = fileControl({
       label: face, logo: o.btnLogo, icon: o.btnLogo ? undefined : 'card', cls: cls,
+      ariaLabel: o.ariaLabel,
       accept: 'application/pdf,.pdf,' + imageAccept(), multiple: true,
       onFiles: async function (files) {
         if (reading) return;
         reading = true;
         var btn = control[0];
         var was = btn.textContent;
-        btn.textContent = 'Reading the settlement…';
+        if (face) btn.textContent = 'Reading the settlement…';
         btn.disabled = true;
+        btn.classList.add('reading');
         try {
           var pdfFile = files.filter(function (f) { return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); })[0];
           var images = files.filter(function (f) { return /^image\//i.test(f.type); });
@@ -4648,8 +4665,9 @@
           toast(sampleErrorMessage(code, 'statement'));
         } finally {
           reading = false;
-          btn.textContent = was;
+          if (face) btn.textContent = was;
           btn.disabled = false;
+          btn.classList.remove('reading');
         }
       }
     });

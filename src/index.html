@@ -465,6 +465,17 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .row.rowbtn .ic { color: var(--ink-3); }
 .row.stackrow { min-height: 0; padding: 0 15px 13px; margin-top: -6px; }
 .row.stackrow .input { width: 100%; }
+/* The atVenu bubble sits in the merch row, sized like the money input. */
+.av-bubble {
+  appearance: none; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-2); cursor: pointer;
+  flex: none; width: 54px; height: 46px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.av-bubble .brand-logo { width: 22px; height: 22px; margin: 0; vertical-align: 0; }
+.av-bubble.reading { animation: avpulse 1s ease-in-out infinite; }
+@keyframes avpulse { 50% { opacity: .45; } }
+.ph-hint.known { color: var(--pos); font-weight: 600; }
 .row-pair { display: flex; gap: 8px; flex: none; }
 .comm-sub { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .comm-sub .hint { display: inline; }
