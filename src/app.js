@@ -1121,14 +1121,15 @@
     var pill = homePill();
 
     return h('div', { class: 'page home' },
-      h('header', { class: 'topbar' }, wordmark(),
-        h('div', { class: 'topbar-actions' },
-          pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
+      h('div', { class: 'headband' },
+        h('header', { class: 'topbar' }, wordmark(),
+          h('div', { class: 'topbar-actions' },
+            pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
+        canWrite()
+          ? h('button', { class: 'add-mini', type: 'button', onclick: function () { startTour(''); } },
+              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
+          : null),
       dbBanner(),
-      canWrite()
-        ? h('button', { class: 'add-mini', type: 'button', onclick: function () { startTour(''); } },
-            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
-        : null,
       byArtist.size
         ? h('ul', { class: 'tour-list' }, Array.from(byArtist, function (pair) {
             var cardEl = artistCard(pair[0], pair[1]);
@@ -1166,14 +1167,11 @@
             ? 'Add your artist, then their first tour. Every act you manage gets its own folder here.'
             : 'Nothing has been shared with you yet.')
         : null,
-      canWrite()
-        ? h('div', { class: 'home-foot' },
-            trashedEntries().length ? h('button', { class: 'linkbtn', type: 'button', onclick: openTrash },
-              'Recently deleted (' + trashedEntries().length + ')') : null,
-            h('button', { class: 'linkbtn', type: 'button', onclick: loadSample }, 'Load a sample tour'),
-            h('span', { class: 'hint' }, 'A finished run you can poke at. Delete it whenever.'),
-            h('span', { class: 'hint', style: 'margin-top:8px;opacity:.6' },
-              'Version ' + (window.GREENROOM_BUILD || 'dev')))
+      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
+      canWrite() && trashedEntries().length
+        ? h('div', { class: 'home-corner' },
+            h('button', { class: 'linkbtn', type: 'button', onclick: openTrash },
+              'Recently deleted (' + trashedEntries().length + ')'))
         : null);
   }
 
@@ -1191,19 +1189,20 @@
     var entries = allTourEntries().filter(function (e) { return artistOf(e[1]) === name; });
     var pill = homePill();
     return h('div', { class: 'page home' },
-      h('header', { class: 'topbar' },
-        h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
-          icon('back'), h('span', null, 'Artists')),
-        h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-        h('div', { class: 'topbar-actions' },
-          pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
+      h('div', { class: 'headband' },
+        h('header', { class: 'topbar' },
+          h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
+            icon('back'), h('span', null, 'Artists')),
+          pill ? null : h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('div', { class: 'topbar-actions' },
+            pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
+        h('h1', { class: 'tour-title' }, name),
+        canWrite()
+          ? h('button', { class: 'add-mini', type: 'button',
+              onclick: function () { startTour(name); } },
+              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
+          : null),
       dbBanner(),
-      h('h1', { class: 'tour-title' }, name),
-      canWrite()
-        ? h('button', { class: 'add-mini', type: 'button',
-            onclick: function () { startTour(name); } },
-            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
-        : null,
       entries.length
         ? h('ul', { class: 'tour-list' }, entries.map(function (e) {
             var cardEl = tourCard(e[0], e[1]);
@@ -2359,9 +2358,13 @@
     var got = daySheetShowFor(t);
     var next = got ? got.shows[got.index] : null;
     return h('div', { class: 'page tour' },
-      tourTopbar(t, id, 'menu'),
+      h('div', { class: 'headband' },
+        tourTopbar(t, id, 'menu'),
+        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+        h('button', { class: 'add-mini', type: 'button',
+          onclick: function () { go({ name: 'tour', id: id, view: 'addshows' }); } },
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add shows')),
       dbBanner(),
-      h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
       !t.setupDone && canWrite()
         ? h('div', { class: 'banner' },
             h('span', null, 'Setup isn’t finished'),
@@ -2369,9 +2372,6 @@
               onclick: function () { go({ name: 'wizard', id: id, step: clampStep(t.setupStep) }); }
             }, 'Continue'))
         : null,
-      h('button', { class: 'add-mini', type: 'button',
-        onclick: function () { go({ name: 'tour', id: id, view: 'addshows' }); } },
-        h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add shows'),
       h('div', { class: 'opt-cards' },
         h('button', { class: 'opt-card', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'details' }); } },
@@ -2498,9 +2498,10 @@
     else body = tabShows(id, t, c);
 
     return h('div', { class: 'page tour' },
-      tourTopbar(t, id, 'money'),
+      h('div', { class: 'headband' },
+        tourTopbar(t, id, 'money'),
+        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
       dbBanner(),
-      h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
       !t.setupDone && canWrite()
         ? h('div', { class: 'banner' },
             h('span', null, 'Setup isn’t finished'),
@@ -2629,7 +2630,7 @@
 
   function viewTourDetails(id, t) {
     return h('div', { class: 'page tour' },
-      tourTopbar(t, id, 'details'),
+      h('div', { class: 'headband' }, tourTopbar(t, id, 'details')),
       dbBanner(),
       detailsBody(id, t));
   }
@@ -3473,7 +3474,7 @@
       updatePerHead();
       var readerResult = function (r) { /* assigned below */ };
       var reader = settlementReader({
-        show: s,
+        show: s, btnCls: 'btn primary block',
         onResult: function (r) { readerResult(r); }
       });
       readerResult = (function () { return function (r) {
@@ -3552,9 +3553,9 @@
           h('p', { class: 'note', style: 'margin-top:6px' },
             'The promoter’s settlement sheet — photo or PDF. ' +
             'The numbers fill in for you to check. Merch has its own atVenu bubble below.')) : null,
-        h('div', { class: 'ledger' }, rows),
+        h('div', { class: 'ledger inv-card' }, rows),
         notesHost,
-        h('div', { class: 'preview' },
+        h('div', { class: 'preview inv-card' },
           h('div', null, h('span', null, 'This show'), showEl),
           h('div', null, h('span', null, 'Tour after this show'), afterEl)),
         h('div', { class: 'stack' },
@@ -3994,6 +3995,7 @@
       openSheet(function () {
         return [
           h('h2', { class: 'sh-title' }, 'Recently deleted'),
+          h('p', { class: 'hint', style: 'margin:-4px 0 10px;opacity:.7' }, 'Version ' + (window.GREENROOM_BUILD || 'dev')),
           h('p', { class: 'sh-sub' }, 'Deleted tours wait here for ' + TRASH_DAYS +
             ' days, then clear out on their own.'),
           list.length ? h('div', { class: 'ledger' }, list.map(function (e) {
