@@ -68,7 +68,10 @@ def build_web():
                         '<title>Greenroom</title>\n' + inject)
     import re as _re0
     icon_name = 'icon-' + stamp + '.png'
+    # -precomposed tells iOS the icon is finished art: no gloss, no gradient,
+    # no shine overlay. Without it iOS fades the icon top-to-bottom.
     html = _re0.sub(r'<link rel="apple-touch-icon" href="[^"]+">',
+                    '<link rel="apple-touch-icon-precomposed" href="' + icon_name + '">\n'
                     '<link rel="apple-touch-icon" href="' + icon_name + '">',
                     html, count=1)
 
@@ -132,8 +135,11 @@ def build_web():
                  lambda mm: mm.group(1) + capple + mm.group(2), ch, count=1)
     ch = _re.sub(r'(<link rel="icon" href="data:image/png;base64,)[^"]+(")',
                  lambda mm: mm.group(1) + cfav + mm.group(2), ch, count=1)
+    cicon = 'icon-classic-' + stamp + '.png'
+    shutil.copy(SRC / 'icon-classic-512.png', web / cicon)
     ch = _re.sub(r'<link rel="apple-touch-icon" href="[^"]+">',
-                 '<link rel="apple-touch-icon" href="icon-classic-180.png?v=' + stamp + '">',
+                 '<link rel="apple-touch-icon-precomposed" href="' + cicon + '">\n'
+                 '<link rel="apple-touch-icon" href="' + cicon + '">',
                  ch, count=1)
     ch = ch.replace('<title>Greenroom</title>',
         '<title>Greenroom Classic</title>\n'
