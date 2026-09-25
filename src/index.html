@@ -422,13 +422,9 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 }
 .opt-card .ic { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: var(--ink-3); }
 .opt-title { font-size: 22px; font-weight: 650; letter-spacing: -.015em; }
-/* The line under each door speaks in the same 8-bit green as the logo. */
-.opt-sub, .opt-sub b {
-  font-family: "Silkscreen", "Space Grotesk", monospace;
-  font-size: 11px; font-weight: 700; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--pos);
-}
-.opt-sub { margin-top: 9px; }
+/* The line under each door: faint green, clean font. */
+.opt-sub { margin-top: 6px; font-size: 15px; color: var(--pos); opacity: .55; }
+.opt-sub b { font-weight: 650; }
 .opt-card.red .opt-net { color: var(--neg); }
 .opt-card.green .opt-net { color: var(--pos); }
 
