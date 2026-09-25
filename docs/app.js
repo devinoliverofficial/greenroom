@@ -5071,7 +5071,8 @@
       '- Keep the brand. "PILOT TRAVEL CTR #482 TOLEDO OH" becomes "Pilot".',
       '- If the merchant is already in the known names list, reuse that exact spelling.',
       '- Set "category" ONLY when it is a no-brainer: an airline is "flights",',
-      '  a hotel, motel or other lodging is "hotels". Otherwise leave category null.',
+      '  a hotel, motel or other lodging is "hotels", Uber or Lyft is "rideshare".',
+      '  Otherwise leave category null.',
       '',
       known.length ? 'Known names: ' + known.join(', ') : 'Known names: (none yet)',
       '',
@@ -5100,7 +5101,7 @@
         var cat = String(r.category == null ? '' : r.category).trim();
         return Object.assign({}, c, {
           merchant: name || GRS.cleanMerchant(c.description),
-          suggested: (cat === 'flights' || cat === 'hotels') && valid[cat] ? cat : null
+          suggested: (cat === 'flights' || cat === 'hotels' || cat === 'rideshare') && valid[cat] ? cat : null
         });
       });
     } catch (e) {
