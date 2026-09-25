@@ -565,6 +565,43 @@
     eq(G.crewKey('  SAM  REYES!  '), 'crew:sam-reyes', 'case and junk ignored');
   });
 
+  /* ============ Tour closeout ============ */
+
+  test('CSV cells with commas, quotes and lines survive intact', function () {
+    var out = G.toCSV([['a', 'has, comma', 'has "quote"'], ['b', 'plain', '']]);
+    eq(out.split('\n')[0], 'a,"has, comma","has ""quote"""', 'escaping');
+    eq(out.split('\n')[1], 'b,plain,', 'plain row');
+  });
+
+  test('the closeout bundle carries every table an accountant needs', function () {
+    var t = tourOne();
+    t.charges = keyed([{ date: '2026-03-01', merchant: 'Pilot', amount: 60, category: 'gas' }]);
+    var files = G.closeoutCSVs(t);
+    var names = Object.keys(files);
+    eq(names.length, 5, 'five files');
+    var shows = files['shows.csv'].split('\n');
+    eq(shows[0].indexOf('Guarantee') > 0 && shows[0].indexOf('Back end') > 0, true, 'gig log header');
+    eq(shows[1].indexOf('Detroit, MI') > 0 && shows[1].indexOf('7500') > 0, true, 'detroit row');
+    var exp = files['expenses-budget-vs-actual.csv'];
+    eq(exp.indexOf('NET') > 0, true, 'net line');
+    eq(exp.indexOf('Owed: Credit card') > 0, true, 'loans listed');
+    var charges = files['card-charges.csv'].split('\n');
+    eq(charges[1], '2026-03-01,Pilot,60,Gas', 'audit trail row');
+    var comm = files['commissions.csv'];
+    eq(comm.indexOf('15%') > 0 && comm.indexOf('Booking agent') > 0, true, 'commission deal');
+  });
+
+  test('food in the day-by-day is flagged for the 50% meal rule', function () {
+    var t = tourOne();
+    t.extras = keyed([
+      { date: '2026-03-01', label: 'Food run', amount: 40 },
+      { date: '2026-03-01', label: 'Parking', amount: 20 }
+    ]);
+    var rows = G.closeoutCSVs(t)['day-by-day.csv'].split('\n');
+    eq(rows[1].indexOf('MEAL (50% rule)') > 0, true, 'food flagged');
+    eq(rows[2].indexOf('MEAL') < 0, true, 'parking not flagged');
+  });
+
   /* ============ Guest list ============ */
 
   test('the guest summary counts names and tickets, clamped sane', function () {

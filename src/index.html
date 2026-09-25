@@ -647,6 +647,53 @@ textarea.update {
 .people-row .role-tag { flex: none; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; font-weight: 700; letter-spacing: .05em; }
 .people-row .role-tag.aa { background: var(--pos-soft); color: var(--pos); }
 
+/* ============================== The closeout report ==============================
+   Paper, not app: white, serif-free, printable. */
+#gr-report {
+  position: fixed; inset: 0; z-index: 140; overflow-y: auto;
+  background: #FFFFFF; color: #111827;
+  font-family: "Inter", -apple-system, Helvetica, Arial, sans-serif;
+  padding: 0 0 60px;
+}
+#gr-report section, #gr-report header, #gr-report footer { max-width: 720px; margin: 0 auto; padding: 0 22px; }
+.rp-bar { position: sticky; top: 0; display: flex; justify-content: space-between; gap: 10px;
+  padding: 10px 16px calc(10px); background: #F3F4F6; border-bottom: 1px solid #E5E7EB; }
+.rp-head { padding-top: 26px; }
+.rp-kicker { font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #6B7280; }
+#gr-report h1 { font-size: 30px; font-weight: 800; letter-spacing: -.02em; margin: 4px 0 2px; color: #111827; }
+.rp-sub { color: #4B5563; margin: 0 0 8px; }
+#gr-report h2 { font-size: 15px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: #111827; margin: 28px 0 10px; padding-top: 14px; border-top: 2px solid #111827; }
+#gr-report h3 { font-size: 13px; font-weight: 700; margin: 14px 0 6px; color: #374151; }
+.rp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.rp-card { border: 1px solid #E5E7EB; border-radius: 10px; padding: 10px 12px; }
+.rp-card span { display: block; font-size: 12px; color: #6B7280; }
+.rp-card strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.rp-pos { color: #047857; } .rp-neg { color: #B91C1C; }
+.rp-table { width: 100%; border-collapse: collapse; font-size: 13px; display: block; overflow-x: auto; }
+.rp-table thead, .rp-table tbody { display: table; width: 100%; }
+.rp-table td { padding: 6px 8px; border-bottom: 1px solid #E5E7EB; vertical-align: top; }
+.rp-table thead td { font-weight: 700; color: #374151; border-bottom: 2px solid #111827; }
+.rp-l { text-align: left; } .rp-n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rp-table .rp-l { text-align: left; }
+.rp-total td { font-weight: 700; }
+.rp-net td { font-size: 15px; border-top: 2px solid #111827; }
+.rp-wide { display: block; overflow-x: auto; }
+.rp-note { font-size: 13px; color: #374151; margin: 6px 0; }
+.rp-tax p { font-size: 13px; color: #374151; }
+.rp-foot { margin-top: 34px; padding-top: 10px; border-top: 1px solid #E5E7EB;
+  font-size: 12px; color: #9CA3AF; }
+@media print {
+  body.reporting > *:not(#gr-report) { display: none !important; }
+  #gr-report { position: static; overflow: visible; }
+  .rp-bar { display: none; }
+  #gr-report section, #gr-report header, #gr-report footer { max-width: none; padding: 0; }
+  #gr-report h2 { break-after: avoid; }
+  .rp-table tr { break-inside: avoid; }
+  .rp-table { display: table; overflow: visible; }
+  .rp-table thead, .rp-table tbody { display: table-row-group; width: auto; }
+}
+
 /* ============================== Toast ============================== */
 #toast { position: fixed; left: 0; right: 0; top: 0; z-index: 80; display: flex; justify-content: center; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 0; pointer-events: none; }
 #toast .t {

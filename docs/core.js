@@ -673,6 +673,91 @@
     return { income: income, miscLabel: miscLabel, notes: notes, found: found };
   }
 
+  /* ---------------- Tour closeout ---------------- */
+
+  function csvCell(v) {
+    var t = String(v == null ? '' : v);
+    return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  }
+  function toCSV(rows) {
+    return rows.map(function (r) { return r.map(csvCell).join(','); }).join('\n') + '\n';
+  }
+
+  function settlementNoteText(show) {
+    return (Array.isArray(show.settlementNotes) ? show.settlementNotes : [])
+      .map(function (n) { return n.label + ': ' + n.value; }).join('; ');
+  }
+
+  // The accountant-facing bundle: every number the tour knows, in rows a
+  // bookkeeper can import untouched.
+  function closeoutCSVs(tour) {
+    var c = calc(tour);
+    var shows = c.allShows;
+
+    var showRows = [['Date', 'City', 'Venue', 'Sold out'].concat(
+      INCOME_FIELDS.map(function (f) { return f.label; }), ['Show total', 'Notes'])];
+    shows.forEach(function (s) {
+      var inc = isObj(s.income) ? s.income : {};
+      showRows.push([s.date || '', s.city || '', s.venue || '', s.soldOut ? 'yes' : ''].concat(
+        INCOME_FIELDS.map(function (f) { return num(inc[f.key]) || ''; }),
+        [showIncomeTotal(s) || '', settlementNoteText(s)]));
+    });
+
+    var expRows = [['Category', 'Projected', 'Actual paid', 'Variance', 'Counted']];
+    c.lines.forEach(function (l) {
+      expRows.push([l.label,
+        l.projected == null ? '' : l.projected,
+        l.paid,
+        l.projected == null ? '' : (l.paid - l.projected),
+        l.effective]);
+    });
+    otherDebts(tour).forEach(function (d) {
+      expRows.push(['Owed: ' + (d.label || 'Debt'), '', num(d.amount), '', num(d.amount)]);
+    });
+    expRows.push(['Day by day', '', c.dayByDay, '', c.dayByDay]);
+    expRows.push(['TOTAL OUT', '', '', '', c.out]);
+    expRows.push(['TOTAL INCOME', '', '', '', c.income]);
+    expRows.push(['NET', '', '', '', round(c.net)]);
+
+    var catLabel = {};
+    CHARGE_CATEGORIES.forEach(function (x) { catLabel[x.key] = x.label; });
+    var chargeRows = [['Date', 'Merchant', 'Amount', 'Category']];
+    rows(tour && tour.charges).sort(byDate).forEach(function (ch) {
+      chargeRows.push([ch.date || '', ch.merchant || '', num(ch.amount),
+        catLabel[ch.category] || ch.category || '']);
+    });
+
+    var dayRows = [['Date', 'Label', 'Amount', 'Source', 'Meals flag']];
+    rows(tour && tour.extras).sort(byDate).forEach(function (x) {
+      dayRows.push([x.date || '', x.label || '', num(x.amount), 'Logged',
+        /food|meal|catering/i.test(String(x.label)) ? 'MEAL (50% rule)' : '']);
+    });
+    rows(tour && tour.charges).sort(byDate).forEach(function (ch) {
+      if (ch.category !== DAY_BY_DAY) return;
+      dayRows.push([ch.date || '', ch.merchant || '', num(ch.amount), 'Card', '']);
+    });
+
+    var comm = normCommission(tour && tour.commission);
+    var commRows = [['Line', 'Deal', 'Base', 'Amount']];
+    COMMISSION_LINES.forEach(function (line) {
+      var r = comm[line.key];
+      commRows.push([line.label,
+        r.mode === 'pct' ? r.value + '%' : 'Flat ' + money(r.value),
+        r.mode === 'pct' ? (line.basis === 'guarantee' ? 'Guarantees ' + money(c.guarantees)
+          : 'All income ' + money(c.income)) : '',
+        round(commissionLine(line, r, c.income, c.guarantees))]);
+    });
+    commRows.push(['TOTAL', '', '', round(c.commission)]);
+
+    return {
+      'shows.csv': toCSV(showRows),
+      'expenses-budget-vs-actual.csv': toCSV(expRows),
+      'card-charges.csv': toCSV(chargeRows),
+      'day-by-day.csv': toCSV(dayRows),
+      'commissions.csv': toCSV(commRows)
+    };
+  }
+
   /* ---------------- Daily update text ---------------- */
 
   function dailyUpdate(tour, now) {
@@ -741,6 +826,7 @@
     balanceSeries: balanceSeries, latestChange: latestChange,
     normalizeSettlement: normalizeSettlement,
     DS_AMENITIES: DS_AMENITIES, daySheetLines: daySheetLines, daySheetText: daySheetText,
+    toCSV: toCSV, closeoutCSVs: closeoutCSVs,
     offDayLines: offDayLines, offDayText: offDayText,
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,
     normalizeTourImport: normalizeTourImport, mergeDaySheet: mergeDaySheet,

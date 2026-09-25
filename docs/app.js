@@ -2509,6 +2509,14 @@
               }
             }, 'Send it'))
         : null,
+      (function () {
+        var dated = c.allShows.filter(function (x) { return G.parseDay(x.date); });
+        var over = dated.length && dated[dated.length - 1].date < G.tourToday();
+        return over && canWrite() ? h('div', { class: 'banner' },
+          h('span', null, 'The run is over \u2014 wrap it up'),
+          h('button', { class: 'btn sm quiet', type: 'button',
+            onclick: function () { openCloseout(id); } }, 'Tour closeout')) : null;
+      })(),
       heroNode(t),
       h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tour sections' },
         TABS.map(function (pair) {
@@ -3972,6 +3980,167 @@
     });
   }
 
+  /* ---------------- Tour closeout ----------------
+     The professional package: a printable report for humans, CSVs for the
+     bookkeeper. Presentation only — every number comes from calc(). */
+
+  function openCloseout(id) {
+    var t = getTour(id);
+    if (!t) return;
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Tour closeout'),
+        h('p', { class: 'sh-sub' }, 'The package your business manager actually wants: a clean report to read, and spreadsheets their bookkeeper can import untouched.'),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button',
+            onclick: function () { closeSheet(); openReport(id); } },
+            'Open the report'),
+          h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { shareCloseoutCSVs(id); } },
+            icon('share', 18), 'Share the spreadsheets'),
+          h('p', { class: 'note' },
+            'The report prints to PDF from the share button on the next screen. The spreadsheets are five CSV files — shows, budget vs actual, card charges, day by day, commissions.'))
+      ];
+    }, { label: 'Tour closeout' });
+  }
+
+  async function shareCloseoutCSVs(id) {
+    var t = getTour(id);
+    var files = G.closeoutCSVs(t);
+    var stamp = (t.name || 'tour').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    var list = Object.keys(files).map(function (name) {
+      return new File([files[name]], stamp + '-' + name, { type: 'text/csv' });
+    });
+    if (navigator.canShare && navigator.canShare({ files: list })) {
+      try { await navigator.share({ files: list, title: (t.name || 'Tour') + ' closeout' }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    // No share sheet here: hand the files over one by one.
+    list.forEach(function (f) {
+      var a = h('a', { href: URL.createObjectURL(f), download: f.name });
+      document.body.appendChild(a); a.click(); a.remove();
+    });
+    toast('Spreadsheets saved');
+  }
+
+  function repRow(cells, cls) {
+    return h('tr', { class: cls || null }, cells.map(function (cell, i) {
+      return h('td', { class: i === 0 ? 'rp-l' : 'rp-n' }, cell);
+    }));
+  }
+
+  function openReport(id) {
+    var t = getTour(id);
+    var c = G.calc(t);
+    var shows = c.allShows;
+    var first = shows.length ? shows[0].date : null;
+    var last = shows.length ? shows[shows.length - 1].date : null;
+    var comm = G.normCommission(t.commission);
+    var today = new Intl.DateTimeFormat('en-US', { dateStyle: 'long' }).format(new Date());
+
+    var budget = h('table', { class: 'rp-table' },
+      h('thead', null, repRow(['Category', 'Projected', 'Actual paid', 'Variance', 'Counted'])),
+      h('tbody', null,
+        c.lines.map(function (l) {
+          var v = l.projected == null ? '' : l.paid - l.projected;
+          return repRow([l.label,
+            l.projected == null ? '\u2014' : money(l.projected),
+            money(l.paid),
+            v === '' ? '\u2014' : (v > 0 ? money(v) + ' over' : v < 0 ? money(-v) + ' under' : 'on budget'),
+            money(l.effective)]);
+        }),
+        G.otherDebts(t).map(function (d) {
+          return repRow(['Owed: ' + (d.label || 'Debt'), '\u2014', money(G.num(d.amount)), '\u2014', money(G.num(d.amount))]);
+        }),
+        repRow(['Day by day', '\u2014', money(c.dayByDay), '\u2014', money(c.dayByDay)]),
+        repRow(['Total out', '', '', '', money(c.out)], 'rp-total'),
+        repRow(['Total income', '', '', '', money(c.income)], 'rp-total'),
+        repRow(['Net', '', '', '', money(c.net, true)], 'rp-total rp-net')));
+
+    var gig = h('table', { class: 'rp-table rp-wide' },
+      h('thead', null, repRow(['Date', 'City \u00b7 venue'].concat(
+        G.INCOME_FIELDS.map(function (f) { return f.label; }), ['Total']))),
+      h('tbody', null, shows.map(function (sh) {
+        var inc = G.isObj(sh.income) ? sh.income : {};
+        return repRow([dayMD(sh.date),
+          (sh.city || '') + (sh.venue ? ' \u00b7 ' + sh.venue : '') + (sh.soldOut ? ' (sold out)' : '')].concat(
+          G.INCOME_FIELDS.map(function (f) { return G.num(inc[f.key]) ? money(G.num(inc[f.key])) : '\u2014'; }),
+          [money(G.showIncomeTotal(sh))]));
+      }),
+      repRow(['', 'Total'].concat(G.INCOME_FIELDS.map(function (f) {
+        var sum = shows.reduce(function (a, sh) {
+          return a + G.num((sh.income || {})[f.key]); }, 0);
+        return sum ? money(sum) : '\u2014';
+      }), [money(c.income)]), 'rp-total')));
+
+    var notes = shows.filter(function (sh) {
+      return Array.isArray(sh.settlementNotes) && sh.settlementNotes.length;
+    }).map(function (sh) {
+      return h('p', { class: 'rp-note' }, h('b', null, (sh.city || '') + ' \u00b7 ' + dayMD(sh.date) + ': '),
+        sh.settlementNotes.map(function (n) { return n.label + ' \u2014 ' + n.value; }).join('; '));
+    });
+
+    var commTable = h('table', { class: 'rp-table' },
+      h('thead', null, repRow(['Line', 'Deal', 'Base', 'Amount'])),
+      h('tbody', null, G.COMMISSION_LINES.map(function (line) {
+        var r = comm[line.key];
+        return repRow([line.label,
+          r.mode === 'pct' ? r.value + '%' : 'Flat',
+          r.mode === 'pct' ? (line.basis === 'guarantee' ? 'Guarantees, ' + money(c.guarantees)
+            : 'All income, ' + money(c.income)) : '\u2014',
+          money(G.commissionLine(line, r, c.income, c.guarantees))]);
+      }),
+      repRow(['Total commission', '', '', money(c.commission)], 'rp-total')));
+
+    var cards = G.cardDebts(t).map(function (card) {
+      var sm = G.cardSummary(card);
+      var bd = G.isObj(card.breakdown) ? card.breakdown : {};
+      var bits = G.TYPED_CATEGORIES.filter(function (x) { return G.num(bd[x.key]) > 0; })
+        .map(function (x) { return x.label + ' ' + money(G.num(bd[x.key])); });
+      if (sm.remainder > 0) bits.push('Misc ' + money(sm.remainder));
+      return h('p', { class: 'rp-note' }, h('b', null, sm.label + ' \u2014 ' + money(sm.balance) + ' carried in. '),
+        bits.length ? 'Broken down: ' + bits.join(', ') + '.' : 'Not broken down.');
+    });
+
+    var wrap = h('div', { id: 'gr-report' },
+      h('div', { class: 'rp-bar' },
+        h('button', { class: 'btn quiet sm', type: 'button',
+          onclick: function () { wrap.remove(); document.body.classList.remove('reporting'); } }, 'Close'),
+        h('button', { class: 'btn primary sm', type: 'button',
+          onclick: function () { window.print(); } }, 'Print / save as PDF')),
+      h('header', { class: 'rp-head' },
+        h('div', { class: 'rp-kicker' }, 'Final tour report'),
+        h('h1', null, t.name || 'Tour'),
+        h('p', { class: 'rp-sub' },
+          [t.artist, first && last ? dayLong(first) + ' \u2013 ' + dayLong(last) : null,
+           plural(shows.length, 'show')].filter(Boolean).join(' \u00b7 '))),
+      h('section', null,
+        h('h2', null, 'Summary'),
+        h('div', { class: 'rp-cards' },
+          h('div', { class: 'rp-card' }, h('span', null, 'Total income'), h('strong', null, money(c.income))),
+          h('div', { class: 'rp-card' }, h('span', null, 'Total out'), h('strong', null, money(c.out))),
+          h('div', { class: 'rp-card' }, h('span', null, 'Net'), h('strong', {
+            class: G.round(c.net) < 0 ? 'rp-neg' : 'rp-pos' }, money(c.net, true))),
+          h('div', { class: 'rp-card' }, h('span', null, 'Costs covered'),
+            h('strong', null, Math.floor(c.coverage * 100) + '%')))),
+      h('section', null, h('h2', null, 'Budget vs actual'), budget),
+      h('section', null, h('h2', null, 'Income by show'), gig,
+        notes.length ? [h('h3', null, 'Settlement notes'), notes] : null),
+      h('section', null, h('h2', null, 'Commissions'), commTable),
+      cards.length ? h('section', null, h('h2', null, 'Carried in on cards'), cards) : null,
+      h('section', { class: 'rp-tax' },
+        h('h2', null, 'Notes for your tax preparer'),
+        h('p', null, 'Categories are the tour\u2019s own, not Schedule C lines \u2014 mapping is yours. ' +
+          'Day-by-day food entries are flagged as meals in the spreadsheets (50% limit generally applies). ' +
+          'Receipts are kept outside this app. Card charges carry dates and merchant names for your audit trail.')),
+      h('footer', { class: 'rp-foot' },
+        'Prepared with Greenroom \u00b7 ' + today));
+
+    document.body.appendChild(wrap);
+    document.body.classList.add('reporting');
+    wrap.scrollTop = 0;
+  }
+
   function openTourMenu(id) {
     var t = getTour(id);
     if (!t) return;
@@ -3988,6 +4157,8 @@
             icon('card', 18), 'Bring in your info'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openNotifications(id); } },
             icon('share', 18), 'Notifications'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCloseout(id); } },
+            icon('copy', 18), 'Tour closeout'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportsSheet(id); } },
             icon('history', 18), 'Card statement history'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLabelsSheet(); } },
