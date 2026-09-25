@@ -68,7 +68,8 @@ def build_web():
                         '<title>Greenroom</title>\n' + inject)
     import re as _re0
     html = _re0.sub(r'<link rel="apple-touch-icon" href="[^"]+">',
-                    '<link rel="apple-touch-icon" sizes="180x180" href="gr-stark-180.png?v=' + stamp + '">',
+                    '<link rel="apple-touch-icon" href="gr-icon-1024.png?v=' + stamp + '">\n'
+                    '<link rel="apple-touch-icon" sizes="1024x1024" href="gr-icon-1024.png?v=' + stamp + '">',
                     html, count=1)
 
     sw = ('<script>\n'
@@ -106,10 +107,14 @@ def build_web():
     shutil.copy(SRC / 'icon-512.png', web / 'icon-512.png')
     shutil.copy(SRC / 'gr-stark-180.png', web / 'gr-stark-180.png')
     shutil.copy(SRC / 'gr-stark-512.png', web / 'gr-stark-512.png')
+    shutil.copy(SRC / 'gr-icon-1024.png', web / 'gr-icon-1024.png')
+    shutil.copy(SRC / 'gr-icon-192.png', web / 'gr-icon-192.png')
     _mf = (SITE / 'manifest.webmanifest').read_text(encoding='utf-8')
     (web / 'manifest.webmanifest').write_text(
-        _mf.replace('gr-stark-180.png', 'gr-stark-180.png?v=' + stamp)
-           .replace('gr-stark-512.png', 'gr-stark-512.png?v=' + stamp), encoding='utf-8')
+        _mf.replace('gr-icon-1024.png', 'gr-icon-1024.png?v=' + stamp)
+           .replace('gr-stark-512.png', 'gr-stark-512.png?v=' + stamp)
+           .replace('gr-icon-192.png', 'gr-icon-192.png?v=' + stamp)
+           .replace('gr-stark-180.png', 'gr-stark-180.png?v=' + stamp), encoding='utf-8')
     (web / 'sw.js').write_text(
         (SITE / 'sw.js').read_text(encoding='utf-8').replace('__BUILD__', stamp),
         encoding='utf-8')
