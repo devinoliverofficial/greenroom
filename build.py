@@ -145,6 +145,20 @@ def build_web():
         _mfc.replace('icon-classic-180.png', 'icon-classic-180.png?v=' + stamp)
             .replace('icon-classic-512.png', 'icon-classic-512.png?v=' + stamp), encoding='utf-8')
 
+    # A one-purpose icon diagnostic: unmistakable test icon, virgin URL.
+    (web / 'icontest.html').write_text(
+        '<!doctype html><html><head><meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        '<title>GR Icon Test</title>\n'
+        '<link rel="apple-touch-icon" sizes="180x180" href="icon-test.png?v=' + stamp + '">\n'
+        '<meta name="apple-mobile-web-app-capable" content="yes">\n'
+        '</head><body style="font-family:-apple-system,sans-serif;background:#111;color:#eee;'
+        'display:grid;place-items:center;height:100vh;margin:0;text-align:center">\n'
+        '<div><h1>Icon test</h1><p>Share \u2192 Add to Home Screen.<br>'
+        'The icon should be a RED square with a white 1.</p></div></body></html>\n',
+        encoding='utf-8')
+    shutil.copy(SRC / 'icon-test.png', web / 'icon-test.png')
+
     # GitHub Pages must not run Jekyll over this folder.
     (web / '.nojekyll').write_text('')
     print('docs/  (real site) build %s' % stamp)
