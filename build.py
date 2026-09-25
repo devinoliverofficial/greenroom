@@ -86,6 +86,11 @@ def build_web():
     # a new home-screen icon (classic.html proved it). The manifest's
     # start_url still opens ./, so the installed app is identical.
     (web / 'app.html').write_text(html, encoding='utf-8')
+    # ...and one whose NAME changes with every build: always a virgin URL,
+    # so Safari's per-URL icon memory can never have seen it. The build
+    # prints the current one; hand that to whoever needs a fresh add.
+    (web / ('add-' + stamp + '.html')).write_text(html, encoding='utf-8')
+    print('fresh add-from URL: add-' + stamp + '.html')
 
     for name in ['core.js', 'statements.js', 'app.js']:
         shutil.copy(SRC / name, web / name)
