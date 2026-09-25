@@ -1008,10 +1008,17 @@
   /* ============================== Views: loading + home ============================== */
 
   // The mark gets its moment here, before the money takes the screen back.
+  /* The bus, driving — shown wherever the app is working. */
+  function roadie() {
+    return h('div', { class: 'roadie', 'aria-hidden': 'true' },
+      h('span', { class: 'bus-mark' }),
+      h('span', { class: 'rd-road' }));
+  }
+
   function viewLoading() {
     return h('div', { class: 'page' },
       h('div', { class: 'splash' },
-        h('span', { class: 'logo-mark', role: 'img', 'aria-label': 'Greenroom' }),
+        roadie(),
         h('div', { class: 'splash-name' }, 'Loading your tours…')));
   }
   // The mark carries the name on its own — no wordmark beside it.
@@ -4507,8 +4514,7 @@
       return [
         h('h2', { class: 'sh-title' }, title),
         h('p', { class: 'sh-sub' }, body),
-        h('div', { class: 'scanner', 'aria-hidden': 'true' },
-          Array.from({ length: 22 }, function (_, i) { return h('i', { style: '--i:' + i }); })),
+        roadie(),
         h('button', { class: 'btn ghost block', type: 'button', onclick: onStop }, 'Stop')
       ];
     }, { label: title });
@@ -4988,6 +4994,10 @@
         if (face) btn.textContent = 'Reading the settlement…';
         btn.disabled = true;
         btn.classList.add('reading');
+        // The bus drives next to the button while the sheet is being read.
+        var road = roadie();
+        road.style.margin = '12px 0 4px';
+        if (btn.parentNode) btn.parentNode.insertBefore(road, btn.nextSibling);
         try {
           var pdfFile = files.filter(function (f) { return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); })[0];
           var images = files.filter(function (f) { return /^image\//i.test(f.type); });
@@ -5037,6 +5047,7 @@
           if (face) btn.textContent = was;
           btn.disabled = false;
           btn.classList.remove('reading');
+          road.remove();
         }
       }
     });
