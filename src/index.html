@@ -340,6 +340,25 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .odo-strip { display: flex; flex-direction: column; transition: transform .62s cubic-bezier(.22, .9, .18, 1); transition-delay: calc(var(--i, 0) * 45ms); }
 .odo-strip > span { display: block; height: 1.02em; }
 .hero-cap { margin-top: 2px; font-size: 15px; font-weight: 500; color: var(--ink-2); }
+/* Scrubbing turns the caption into the day's take, rolling like the number. */
+.hero-cap.cap-odo {
+  display: flex; align-items: flex-end; overflow: hidden;
+  font-family: var(--font-num); font-weight: 700; font-size: 19px;
+  letter-spacing: -.01em; color: var(--pos); line-height: 1.15;
+}
+.hero-cap.cap-odo .odo-d { height: 1.15em; }
+.hero-cap.cap-odo .odo-strip > span { height: 1.15em; }
+
+/* Comments beside the big number while scrubbing. */
+/* The comment sits in its own row just above the number — a phone has no
+   room for a seven-figure number and a sentence side by side. */
+.hero-notes {
+  position: absolute; left: 18px; right: 18px; top: 16px; z-index: 2;
+  display: grid; gap: 6px; justify-items: end; pointer-events: none;
+}
+.hero.has-note .odo { margin-top: 44px; }
+.hero.scrubbing .odo { font-size: clamp(40px, 12.5vw, 58px); }
+.hero-cap.cap-odo .odo-c { white-space: pre; }
 
 .change-chip {
   display: inline-flex; align-items: center; gap: 6px; margin-top: 12px;
@@ -399,11 +418,7 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 }
 
 /* The comments that ride under the balance line while you scrub. */
-.scrub-notes {
-  position: absolute; bottom: 26px; transform: translateX(-50%);
-  display: grid; gap: 4px; justify-items: center;
-  width: max-content; max-width: 88%; pointer-events: none;
-}
+.scrub-notes { display: none; }
 .sn-bubble {
   padding: 6px 13px; border-radius: 999px;
   background: var(--pos); border: 0; color: var(--on-brand);

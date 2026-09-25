@@ -642,8 +642,10 @@
         h('span', { id: 'prog-pct' }, c.out > 0 ? pct + '% of the way to green' : 'No costs added yet'),
         h('span', { class: 'num' }, money(c.income) + ' in / ' + money(c.out) + ' out')));
 
+    // Comments ride beside the big number while you scrub.
+    var noteRail = h('div', { class: 'hero-notes', id: 'hero-notes', hidden: true });
     var hero = h('section', { class: 'hero ' + st, id: 'hero', 'aria-label': 'Tour balance' },
-      odo, cap, chip, chart, prog);
+      noteRail, odo, cap, chip, chart, prog);
     hero.__calc = c;
     hero.__series = series;
     hero.__pct = pct;
@@ -905,7 +907,14 @@
       setHeroState(hero, up ? 'green' : 'red');
 
       var night = geo.nights[p.date];
-      cap.textContent = dayLong(p.date);
+      // Under the number: what came in that day, rolling like the number does.
+      var took = night ? night.total : 0;
+      var tookText = money(took) + ' in';
+      if (cap.__last !== tookText) {
+        cap.classList.add('num', 'cap-odo');
+        renderOdo(cap, tookText, cap.__last || tookText);
+        cap.__last = tookText;
+      }
 
       geo.pill.hidden = false;
       geo.pill.textContent = night
@@ -913,15 +922,18 @@
         : 'No show that night';
       geo.pill.style.left = (px / geo.W * 100) + '%';
 
-      // Comments for this night ride under the line, SoundCloud style.
+      // Comments for this one night, beside the big number.
+      var rail = $('#hero-notes', hero);
       var mine = geo.tourId ? notesFor(getTour(geo.tourId), geo.tourId, p.date) : [];
-      geo.notes.hidden = !mine.length;
-      if (mine.length) {
-        geo.notes.replaceChildren.apply(geo.notes, mine.slice(0, 3).map(function (n) {
-          return h('div', { class: 'sn-bubble' },
-            h('b', null, n.author || 'Someone'), ' ' + n.body);
-        }));
-        geo.notes.style.left = (px / geo.W * 100) + '%';
+      if (rail) {
+        rail.hidden = !mine.length;
+        hero.classList.toggle('has-note', !!mine.length);
+        if (mine.length) {
+          rail.replaceChildren.apply(rail, mine.slice(0, 3).map(function (n) {
+            return h('div', { class: 'sn-bubble' },
+              h('b', null, n.author || 'Someone'), ' ' + n.body);
+          }));
+        }
       }
       if (geo.pins) {
         Array.prototype.forEach.call(geo.pins.children, function (pin) {
@@ -947,6 +959,11 @@
       hero.classList.remove('scrubbing');
       geo.pill.hidden = true;
       geo.notes.hidden = true;
+      var railEnd = $('#hero-notes', hero);
+      if (railEnd) railEnd.hidden = true;
+      hero.classList.remove('has-note');
+      cap.classList.remove('num', 'cap-odo');
+      cap.__last = null;
       if (geo.pins) {
         Array.prototype.forEach.call(geo.pins.children, function (pin) { pin.classList.remove('on'); });
       }
