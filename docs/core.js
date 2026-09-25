@@ -16,8 +16,12 @@
     { key: 'hotels', label: 'Hotels' },
     { key: 'flights', label: 'Flights' },
     { key: 'rideshare', label: 'Uber/Lyft' },
+    { key: 'transport', label: 'Transportation' },
     { key: 'production', label: 'Production' },
+    { key: 'studio', label: 'Studio' },
     { key: 'supplies', label: 'Supplies' },
+    { key: 'utilities', label: 'Monthly utilities' },
+    { key: 'interest', label: 'Interest charges' },
     // What the merch cost to make. Usually an advance that has to be earned back,
     // which is why it sits here as a cost rather than against merch income.
     { key: 'merch', label: 'Merch bill', note: 'Printing, plus any merch advance you have to pay back.' },
