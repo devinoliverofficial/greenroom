@@ -935,7 +935,7 @@
     cv.height = window.innerHeight * dpr;
     var ctx = cv.getContext('2d');
     ctx.scale(dpr, dpr);
-    var colors = ['#CCF80A', '#A8CC00', '#E7FF4F', '#F1F4E3', '#FFFFFF'];
+    var colors = ['#0C0E00', '#2E3600', '#5C6604', '#FFFFFF', '#A8CC00'];
     var cx = window.innerWidth / 2, cy = window.innerHeight * 0.3;
     var bits = [];
     for (var i = 0; i < 90; i++) {
@@ -1331,9 +1331,9 @@
         h('button', { class: 'linkbtn', type: 'button', onclick: exit }, id ? 'Finish later' : 'Cancel')));
 
     var body;
-    if (step === 2) body = wzExpenses(id);
-    else if (step === 3) body = wzDebt(id, t);
-    else if (step === 4) body = wzShows(id, t);
+    if (step === 2) body = wzShows(id, t);
+    else if (step === 3) body = wzExpenses(id);
+    else if (step === 4) body = wzDebt(id, t);
     else body = wzName(id, t);
     return h('div', { class: 'page wizard' }, head, body);
   }
@@ -1413,8 +1413,8 @@
     var submit = async function (e) {
       e.preventDefault();
       blurActive();
-      if (!(await saveExpenses(id, { setupStep: 3 }))) return;
-      go({ name: 'wizard', id: id, step: 3 });
+      if (!(await saveExpenses(id, { setupStep: 4 }))) return;
+      go({ name: 'wizard', id: id, step: 4 });
     };
     var t2 = getTour(id);
     var offer = (budgetIsBlank(t2) && baselineCandidates(id).length)
@@ -1426,7 +1426,7 @@
       h('h1', { class: 'wz-title' }, 'What does the tour cost?'),
       h('p', { class: 'wz-sub' }, 'Your best guess for the whole run. Leave anything you can’t predict blank — you can fill it in later.'),
       offer, running, body,
-      wzFoot(function () { go({ name: 'wizard', id: id, step: 1 }); }, 'Next'));
+      wzFoot(function () { go({ name: 'wizard', id: id, step: 2 }); }, 'Next'));
   }
 
   function wzDebt(id, t) {
@@ -1435,8 +1435,10 @@
       h('h1', { class: 'wz-title' }, 'What do you owe going in?'),
       h('p', { class: 'wz-sub' }, 'The card balance you’re carrying into the tour, plus any loans or gear payments. Nothing owed? Skip it.'),
       debtSection(id, t, 'wizard'),
-      wzFoot(function () { go({ name: 'wizard', id: id, step: 2 }); }, has ? 'Next' : 'Skip', async function () {
-        if (await api.update(id, { setupStep: 4 })) go({ name: 'wizard', id: id, step: 4 });
+      wzFoot(function () { go({ name: 'wizard', id: id, step: 3 }); }, has ? 'Finish' : 'Skip', async function () {
+        if (!(await api.update(id, { setupDone: true, setupStep: 5 }))) return;
+        S.lastNet[id] = 0; // count in from zero the first time the hero is seen
+        go({ name: 'tour', id: id, view: 'menu' });
       }));
   }
 
@@ -1445,8 +1447,8 @@
     return h('div', { class: 'wz-body' },
       h('h1', { class: 'wz-title' }, 'Add your shows'),
       h('p', { class: 'wz-sub' }, S.sample
-        ? 'Upload the tour flyer and the dates fill themselves in, or add them one at a time.'
-        : 'Each date and city. You can add more any time.'),
+        ? 'Upload the tour flyer and the dates fill themselves in \u2014 they land in OVERVIEW and BUDGET both.'
+        : 'Each date and city \u2014 they land in OVERVIEW and BUDGET both.'),
       S.sample
         ? h('div', { class: 'stack', style: 'margin-top:0;margin-bottom:18px' },
             fileControl({
@@ -1466,10 +1468,8 @@
             }, dateBlock(s.date), whereBlock(s), icon('chevron', 18)));
           }))
         : null,
-      wzFoot(function () { go({ name: 'wizard', id: id, step: 3 }); }, 'Finish', async function () {
-        if (!(await api.update(id, { setupDone: true, setupStep: 5 }))) return;
-        S.lastNet[id] = 0; // count in from zero the first time the hero is seen
-        go({ name: 'tour', id: id, view: 'menu' });
+      wzFoot(function () { go({ name: 'wizard', id: id, step: 1 }); }, 'Next', async function () {
+        if (await api.update(id, { setupStep: 3 })) go({ name: 'wizard', id: id, step: 3 });
       }));
   }
 
@@ -1556,7 +1556,7 @@
         var paid = G.num(d.expenses[cat.key].paid) + chargedTo(t, cat.key);
         sum += p == null ? paid : Math.max(p, paid);
       });
-      return sum + G.commissionTotal(d.commission, base.income, base.guarantees);
+      return sum + G.commissionTotal(d.commission, base.income, base.guarantees, base.incomeBy);
     }
     function refresh() {
       var total = draftTotal();
@@ -1605,9 +1605,27 @@
     var holder = h('div', null);
     var hint = h('span', { class: 'hint' }, '');
     function setHint() {
-      hint.textContent = r.mode === 'pct'
-        ? (line.basis === 'guarantee' ? 'of guarantees' : 'of all income')
-        : 'flat amount';
+      hint.textContent = r.mode === 'pct' ? 'of ' + G.commissionBaseLabel(r) : 'flat amount';
+    }
+    // Every team's deal is different: a % deal picks which income it comes
+    // out of, one chip per stream.
+    var chipRow = h('div', { class: 'row stackrow cbase' });
+    function buildChips() {
+      if (r.mode !== 'pct') { chipRow.replaceChildren(); chipRow.hidden = true; return; }
+      chipRow.hidden = false;
+      chipRow.replaceChildren.apply(chipRow, G.INCOME_FIELDS.map(function (f) {
+        var b = h('button', {
+          class: 'cbase-chip', type: 'button',
+          'aria-pressed': r.base && r.base[f.key] ? 'true' : 'false',
+          onclick: function () {
+            if (!r.base) r.base = {};
+            r.base[f.key] = !r.base[f.key];
+            b.setAttribute('aria-pressed', r.base[f.key] ? 'true' : 'false');
+            setHint(); changed();
+          }
+        }, f.key === 'guarantee' ? 'Guarantees' : f.label);
+        return b;
+      }));
     }
     function build() {
       holder.replaceChildren(moneyInput({
@@ -1620,14 +1638,14 @@
     var seg = segmented(['$', '%'], r.mode === 'pct' ? 1 : 0, function (i) {
       var m = i ? 'pct' : 'flat';
       if (m === r.mode) return;
-      r.mode = m; r.value = 0; build(); setHint(); changed();
+      r.mode = m; r.value = 0; build(); buildChips(); setHint(); changed();
     }, line.label + ' commission type');
-    build(); setHint();
-    return h('div', { class: 'row' },
+    build(); buildChips(); setHint();
+    return [h('div', { class: 'row' },
       h('div', { class: 'row-label' },
         h('label', { for: 'comm-' + line.key }, line.label),
         h('div', { class: 'comm-sub' }, seg, hint)),
-      holder);
+      holder), chipRow];
   }
 
   function crewRow(id, t) {
@@ -1802,11 +1820,11 @@
       var readout = h('div', { class: 'preview' });
       function refresh() {
         var kids = G.COMMISSION_LINES.map(function (line) {
-          var v = G.commissionLine(line, d.commission[line.key], base.income, base.guarantees);
+          var v = G.commissionLine(line, d.commission[line.key], base.income, base.guarantees, base.incomeBy);
           return h('div', null, h('span', null, line.label), h('strong', { class: 'num' }, money(v)));
         });
         kids.push(h('div', null, h('span', null, 'Commission so far'),
-          h('strong', { class: 'num' }, money(G.commissionTotal(d.commission, base.income, base.guarantees)))));
+          h('strong', { class: 'num' }, money(G.commissionTotal(d.commission, base.income, base.guarantees, base.incomeBy)))));
         readout.replaceChildren.apply(readout, kids);
       }
       var rows = G.COMMISSION_LINES.map(function (line) {
@@ -1823,7 +1841,7 @@
       refresh();
       return [
         h('h2', { class: 'sh-title' }, 'Commission'),
-        h('p', { class: 'sh-sub' }, 'Management and your lawyer take a cut of all income. Your booking agent takes a cut of guarantees only.'),
+        h('p', { class: 'sh-sub' }, 'Every team\u2019s deal is different \u2014 set the cut, then check which pieces of the income it comes out of.'),
         h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
           h('div', { class: 'ledger' }, rows),
           readout,
@@ -3315,6 +3333,24 @@
           if (r.notes.length) settNotes = r.notes;
           syncMisc(); renderNotes(); refresh(); updatePerHead();
         }; })();
+      // The atVenu summary touches merch and its notes only — the guarantee,
+      // back end and the promoter's numbers stay exactly as they were.
+      var atvenuResult = function (r) {
+        if (r.income.merch != null) {
+          draft.merch = r.income.merch;
+          var el = document.getElementById('inc-merch');
+          if (el) el.value = (Math.round(r.income.merch * 100) / 100)
+            .toLocaleString('en-US', { maximumFractionDigits: 2 });
+        }
+        if (r.notes.length) {
+          var seen = {};
+          r.notes.forEach(function (n) { seen[n.label.toLowerCase()] = true; });
+          settNotes = (settNotes || []).filter(function (n) {
+            return !seen[n.label.toLowerCase()];
+          }).concat(r.notes);
+        }
+        renderNotes(); refresh(); updatePerHead();
+      };
       // Misc gets its own note, so "$400 misc" still means something in a month.
       var miscNote = h('input', {
         class: 'input sm', type: 'text', id: 'inc-misc-label', maxlength: 60,
@@ -3340,9 +3376,9 @@
             h('div', { class: 'row-label' },
               h('label', { for: 'inc-merch' }, f.label),
               perHeadEl),
-            settlementReader({ show: s, onResult: readerResult,
+            settlementReader({ show: s, mode: 'atvenu', onResult: atvenuResult,
               btnLabel: '', btnLogo: 'logo-atvenu.png',
-              ariaLabel: 'Read the atVenu settlement', btnCls: 'av-bubble' }),
+              ariaLabel: 'Read the atVenu merch summary', btnCls: 'av-bubble' }),
             mkInput));
         } else {
           rows.push(h('div', { class: 'row' },
@@ -3356,8 +3392,8 @@
       var form = h('form', { class: 'sh-form', onsubmit: save, novalidate: true },
         reader ? h('div', { style: 'margin-bottom:14px' }, reader,
           h('p', { class: 'note', style: 'margin-top:6px' },
-            'The promoter’s settlement sheet, or a merch report from atVenu — photo or PDF. ' +
-            'The numbers fill in for you to check.')) : null,
+            'The promoter’s settlement sheet — photo or PDF. ' +
+            'The numbers fill in for you to check. Merch has its own atVenu bubble below.')) : null,
         h('div', { class: 'ledger' }, rows),
         notesHost,
         h('div', { class: 'preview' },
@@ -4576,8 +4612,8 @@
   function settlementPrompt(body, isImage, show) {
     return [
       isImage
-        ? 'The attached image(s) are a concert settlement sheet from a promoter or venue, or a merch settlement report (for example from atVenu).'
-        : 'The text below was pulled out of a concert settlement sheet from a promoter or venue, or a merch settlement report (for example from atVenu).',
+        ? 'The attached image(s) are a concert settlement sheet from a promoter or venue.'
+        : 'The text below was pulled out of a concert settlement sheet from a promoter or venue.',
       show && show.city ? 'The show: ' + show.city + (show.venue ? ', ' + show.venue : '') +
         (show.date ? ', ' + show.date + '.' : '.') : '',
       'Pull out what the ARTIST earned, and the story of the night.',
@@ -4591,7 +4627,7 @@
       '- guarantee: the contracted guarantee, before any tax or deductions.',
       '- backend: overage / points / percentage-of-door the artist hit, past the guarantee.',
       '- misc: anything else paid to the artist, with miscLabel naming it.',
-      '- merch: the artist’s NET merch money after any venue cut, if the sheet settles merch. A merch-only report fills merch and leaves the rest null.',
+      '- merch: the artist’s NET merch money after any venue cut, if the sheet settles merch.',
       '- vip, buyouts, catering: only if the sheet shows them as money paid to the artist.',
       '',
       'Notes: short label/value pairs, only for things the sheet actually shows. Use these labels when present:',
@@ -4605,11 +4641,35 @@
     ].join('\n');
   }
 
+  /* atVenu is merch-only: the summary fills merch and the per-head, never the
+     guarantee or the promoter's side of the night. */
+  function atvenuPrompt(body, isImage) {
+    return [
+      isImage
+        ? 'The attached image(s) are a merch summary or merch settlement from atVenu (or a similar merch report).'
+        : 'The text below was pulled out of a merch summary or merch settlement from atVenu (or a similar merch report).',
+      'Pull out ONLY the merch story \u2014 nothing about guarantees, back end or the promoter deal.',
+      '',
+      'Reply with only a JSON object in this exact shape:',
+      '{"income":{"merch":null},"notes":[{"label":"Merch per head","value":"$12.40"}]}',
+      '',
+      'Rules:',
+      '- merch: the artist\u2019s NET merch money after any venue cut. Only if it is actually on the sheet; never estimate.',
+      '- notes may ONLY use these labels, and only when the sheet shows them:',
+      '  "Gross merch", "Venue merch cut", "Merch per head" (dollars per attendee, shown or computable from gross and attendance), "Attendance".',
+      'Keep every value under a dozen words. If the sheet is unreadable, reply {"income":{},"notes":[]}.',
+      isImage ? '' : '\nMerch report text:\n' + body
+    ].join('\n');
+  }
+
   /* Reads the promoter's settlement into the income sheet: numbers into the
      fields (still yours to check before saving), the night's story into notes. */
   function settlementReader(o) {
     var face = o.btnLabel != null ? o.btnLabel : 'Read the promoter\u2019s settlement';
     var cls = o.btnCls || 'btn ghost block';
+    var mkPrompt = o.mode === 'atvenu'
+      ? function (b, img) { return atvenuPrompt(b, img); }
+      : function (b, img) { return settlementPrompt(b, img, o.show); };
     if (!S.sample) return [unavailableBtn(face || 'atVenu Settlement', cls)];
     var reading = false;
     var control = fileControl({
@@ -4631,26 +4691,38 @@
           if (pdfFile) {
             var got = await pdfToText(pdfFile);
             if (got.text.replace(/\s/g, '').length > 60) {
-              out = await S.sample.json(settlementPrompt(got.text.slice(0, 40000), false, o.show), { cache: false });
+              out = await S.sample.json(mkPrompt(got.text.slice(0, 40000), false), { cache: false });
             } else {
               var pages = await pdfToImages(got.doc, got.pages);
-              out = await S.sample.json(settlementPrompt('', true, o.show), { images: pages, cache: false });
+              out = await S.sample.json(mkPrompt('', true), { images: pages, cache: false });
             }
           } else if (images.length) {
-            out = await S.sample.json(settlementPrompt('', true, o.show), { images: images, cache: false });
+            out = await S.sample.json(mkPrompt('', true), { images: images, cache: false });
           } else {
             toast('That file type isn’t supported — use a photo or a PDF.');
             return;
           }
           var r = G.normalizeSettlement(out);
+          if (o.mode === 'atvenu') {
+            var m = r.income.merch;
+            r.income = m != null ? { merch: m } : {};
+            r.found = m != null ? 1 : 0;
+            r.miscLabel = '';
+            r.notes = r.notes.filter(function (n) { return /merch|attendance|per head/i.test(n.label); });
+          }
           if (!r.found && !r.notes.length) {
             toast('Couldn’t read that sheet. Try a sharper photo.');
             return;
           }
           o.onResult(r);
-          toast(r.found
-            ? 'Filled in ' + plural(r.found, 'number') + ' — check them against the sheet, then save'
-            : 'No dollar amounts found, but the notes came through');
+          if (o.mode === 'atvenu') {
+            toast(r.found ? 'Merch filled in from atVenu — check it, then save'
+              : 'No merch total found, but the notes came through');
+          } else {
+            toast(r.found
+              ? 'Filled in ' + plural(r.found, 'number') + ' — check them against the sheet, then save'
+              : 'No dollar amounts found, but the notes came through');
+          }
         } catch (e) {
           var code = e && e.code;
           if (code === 'cancelled') return;

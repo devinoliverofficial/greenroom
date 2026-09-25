@@ -17,30 +17,30 @@
    Black is the default: on an OLED phone the card edges disappear and the
    money is the only lit thing on screen. Light stays a tap away. */
 :root {
-  --bg: #000000;
-  --surface: #0C0F02;
-  --surface-2: #161A07;
-  --ink: #F1F4E3;
-  --ink-2: #8F947B;   /* quiet: labels, captions, anything that is not money */
-  --ink-3: #626750;
-  --line: #1F2408;
-  --line-2: #151805;
-  --brand: #CCF80A;
-  --on-brand: #121500;
-  --pos: #CCF80A;
-  --neg: #FF5F57;
-  --pos-soft: rgba(204, 248, 10, .12);
-  --neg-soft: rgba(255, 95, 87, .11);
-  --hero-red: #150908;
-  --hero-green: #1B2202;
-  --scrim: rgba(0, 0, 0, .74);
-  --ring: rgba(204, 248, 10, .3);
-  --shadow: 0 1px 2px rgba(0, 0, 0, .6), 0 10px 30px rgba(0, 0, 0, .45);
-  --glow-fade: 56%;
-  --fill-a: .24;
+  --bg: #CCF80A;
+  --surface: #C3ED0A;
+  --surface-2: #BBE309;
+  --ink: #0C0E00;
+  --ink-2: #3A4201;   /* quiet: labels, captions, anything that is not money */
+  --ink-3: #5D6704;
+  --line: #A9CE08;
+  --line-2: #B4DA09;
+  --brand: #0C0E00;
+  --on-brand: #CCF80A;
+  --pos: #0C0E00;
+  --neg: #C21F15;
+  --pos-soft: rgba(12, 14, 0, .08);
+  --neg-soft: rgba(194, 31, 21, .12);
+  --hero-red: #C3ED0A;
+  --hero-green: #C3ED0A;
+  --scrim: rgba(20, 24, 0, .55);
+  --ring: rgba(12, 14, 0, .3);
+  --shadow: 0 1px 2px rgba(31, 38, 0, .22), 0 10px 30px rgba(31, 38, 0, .16);
+  --glow-fade: 100%;
+  --fill-a: .14;
   --font: "Inter", -apple-system, "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
   --font-num: "Space Grotesk", "Inter", -apple-system, system-ui, sans-serif;
-  color-scheme: dark;
+  color-scheme: light;
 }
 :root[data-theme="light"] {
   --bg: #F6F7EC;
@@ -100,17 +100,6 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .page { max-width: 600px; margin: 0 auto; padding: 4px 18px 72px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 60px; }
 .topbar-actions { display: flex; align-items: center; gap: 4px; }
-/* The chartreuse head: the logo's field caps every screen; black app below. */
-.topbar, .wz-meta {
-  background: #CCF80A; color: #0C0E00;
-  margin: -4px -18px 10px; padding: 2px 14px;
-  border-radius: 0 0 20px 20px;
-}
-.wz-meta { margin-top: 0; padding-top: 8px; padding-bottom: 8px; }
-.topbar .iconbtn, .wz-meta .iconbtn, .topbar .iconbtn.back, .wz-meta .iconbtn.back { color: #0C0E00; }
-.topbar .pill, .topbar .btn, .topbar .btn.ghost {
-  background: transparent; border: 1px solid rgba(12, 14, 0, .38); color: #0C0E00;
-}
 /* The GR mark. 322x243 artwork, so width tracks height at 1.324:1. */
 .logo-mark {
   display: block; flex: none; width: 32px; height: 24px;
@@ -124,7 +113,7 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   width: 32px; height: 24px; pointer-events: none;
 }
 .splash { display: grid; place-items: center; gap: 14px; padding: 18vh 0 0; }
-.splash .logo-mark { width: 92px; height: 72px; background-color: #CCF80A; border-radius: 16px; background-size: 68%; background-repeat: no-repeat; background-position: center; }
+.splash .logo-mark { width: 79px; height: 60px; }
 .splash-name { font-size: 17px; font-weight: 650; letter-spacing: -.01em; color: var(--ink-2); }
 .pill {
   font-size: 13px; font-weight: 600; color: var(--ink-2);
@@ -293,7 +282,8 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .chart .curve { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
 .chart .curve.pos { stroke: var(--pos); }
 .chart .curve.neg { stroke: var(--neg); }
-.chart .fill-neg { fill: var(--neg); opacity: var(--fill-a); }
+/* Red over chartreuse mixes to mustard, so underwater shades in ink. */
+.chart .fill-neg { fill: var(--ink); opacity: .09; }
 .chart .fill-pos { fill: var(--pos); opacity: var(--fill-a); }
 /* A 2px surface ring keeps each night's mark off the line it sits on. */
 .chart .night { fill: var(--surface); stroke-width: 2.5; }
@@ -478,6 +468,14 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .row.rowbtn .ic { color: var(--ink-3); }
 .row.stackrow { min-height: 0; padding: 0 15px 13px; margin-top: -6px; }
 .row.stackrow .input { width: 100%; }
+/* Which income streams a % deal comes out of */
+.row.stackrow.cbase { display: flex; flex-wrap: wrap; gap: 6px; }
+.cbase-chip {
+  appearance: none; cursor: pointer; font: inherit; font-size: 12px; font-weight: 700;
+  padding: 6px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+}
+.cbase-chip[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
 /* The atVenu bubble sits in the merch row, sized like the money input. */
 .av-bubble {
   appearance: none; border: 1px solid var(--line); border-radius: 12px;
@@ -659,7 +657,7 @@ textarea.update {
   display: grid; place-items: start center; padding: 16vh 22px 0;
 }
 .gate-card { display: grid; justify-items: center; gap: 10px; max-width: 380px; text-align: center; }
-.gate-card .logo-mark { background-color: #CCF80A; border-radius: 16px; background-size: 68%; background-repeat: no-repeat; background-position: center; width: 88px; height: 70px; }
+.gate-card .logo-mark { background-size: contain; background-repeat: no-repeat; background-position: center; }
 .gate-card h2 { font-size: 24px; }
 .gate-card p { margin: 0 0 8px; color: var(--ink-2); }
 .gate-card form { display: grid; gap: 10px; width: 100%; }

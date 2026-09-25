@@ -333,6 +333,19 @@
     near(G.calc(t).commission, 300, 'management 200 + lawyer 100');
   });
 
+  test('commission base checkboxes — agent can take merch too, VIPs untouched', function () {
+    var t = { expenses: {}, crew: {}, debts: {}, extras: {}, charges: {}, imports: {},
+      commission: {
+        management: { mode: 'flat', value: 0 }, lawyer: { mode: 'flat', value: 0 },
+        agent: { mode: 'pct', value: 10,
+          base: { guarantee: true, backend: false, merch: true, vip: false,
+                  buyouts: false, catering: false, misc: false } }
+      },
+      shows: keyed([{ date: '2026-03-01', income: { guarantee: 1000, merch: 500, vip: 250 } }])
+    };
+    near(G.calc(t).commission, 150, '10% of guarantee 1000 + merch 500');
+  });
+
   test('a flat commission ignores income entirely', function () {
     var t = {
       expenses: {}, crew: {}, debts: {}, extras: {},

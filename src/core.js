@@ -140,8 +140,20 @@
 
   function emptyCommission() {
     var o = {};
-    COMMISSION_LINES.forEach(function (c) { o[c.key] = { mode: 'flat', value: 0 }; });
+    COMMISSION_LINES.forEach(function (c) {
+      o[c.key] = { mode: 'flat', value: 0, base: defaultCommissionBase(c) };
+    });
     return o;
+  }
+
+  // Which income streams a deal's percentage comes out of, by default:
+  // booking agents commission guarantees only; everyone else, everything.
+  function defaultCommissionBase(line) {
+    var b = {};
+    INCOME_FIELDS.forEach(function (f) {
+      b[f.key] = line.basis === 'guarantee' ? f.key === 'guarantee' : true;
+    });
+    return b;
   }
 
   function emptyIncome() {
@@ -165,7 +177,9 @@
     var src = isObj(c) ? c : {};
     COMMISSION_LINES.forEach(function (line) {
       var r = isObj(src[line.key]) ? src[line.key] : {};
-      out[line.key] = { mode: r.mode === 'pct' ? 'pct' : 'flat', value: num(r.value) };
+      var base = defaultCommissionBase(line);
+      if (isObj(r.base)) INCOME_FIELDS.forEach(function (f) { base[f.key] = !!r.base[f.key]; });
+      out[line.key] = { mode: r.mode === 'pct' ? 'pct' : 'flat', value: num(r.value), base: base };
     });
     return out;
   }
@@ -181,16 +195,37 @@
 
   /* ---------------- Commission ---------------- */
 
-  function commissionLine(line, rule, income, guarantees) {
+  // The checked streams' total for one deal, or null when the rule carries no
+  // base (old data before checkboxes) or the caller has no per-stream sums.
+  function commissionBase(rule, incomeBy) {
+    var b = isObj(rule) && isObj(rule.base) ? rule.base : null;
+    if (!b || !isObj(incomeBy)) return null;
+    return INCOME_FIELDS.reduce(function (t, f) {
+      return t + (b[f.key] ? num(incomeBy[f.key]) : 0);
+    }, 0);
+  }
+
+  function commissionBaseLabel(rule) {
+    var b = isObj(rule) && isObj(rule.base) ? rule.base : {};
+    var on = INCOME_FIELDS.filter(function (f) { return b[f.key]; });
+    if (!on.length) return 'nothing yet';
+    if (on.length === INCOME_FIELDS.length) return 'all income';
+    return on.map(function (f) {
+      return f.key === 'guarantee' ? 'guarantees' : f.label.toLowerCase();
+    }).join(' + ');
+  }
+
+  function commissionLine(line, rule, income, guarantees, incomeBy) {
     if (rule.mode !== 'pct') return num(rule.value);
-    var basis = line.basis === 'guarantee' ? guarantees : income;
+    var basis = commissionBase(rule, incomeBy);
+    if (basis == null) basis = line.basis === 'guarantee' ? guarantees : income;
     return (num(rule.value) / 100) * basis;
   }
 
-  function commissionTotal(commission, income, guarantees) {
+  function commissionTotal(commission, income, guarantees, incomeBy) {
     var c = normCommission(commission);
     return COMMISSION_LINES.reduce(function (t, line) {
-      return t + commissionLine(line, c[line.key], income, guarantees);
+      return t + commissionLine(line, c[line.key], income, guarantees, incomeBy);
     }, 0);
   }
 
@@ -267,10 +302,14 @@
     var shows = upTo ? allShows.filter(function (s) { return s.date && s.date <= upTo; }) : allShows;
 
     var income = 0, guarantees = 0;
+    var incomeBy = {};
+    INCOME_FIELDS.forEach(function (f) { incomeBy[f.key] = 0; });
     shows.forEach(function (s) {
-      income += showIncomeTotal(s);
-      guarantees += num(isObj(s.income) ? s.income.guarantee : 0);
+      var inc = isObj(s.income) ? s.income : {};
+      INCOME_FIELDS.forEach(function (f) { incomeBy[f.key] += num(inc[f.key]); });
     });
+    income = INCOME_FIELDS.reduce(function (t, f) { return t + incomeBy[f.key]; }, 0);
+    guarantees = incomeBy.guarantee;
 
     var charges = rows(tour && tour.charges).filter(function (ch) {
       return !upTo || (ch.date && ch.date <= upTo);
@@ -308,7 +347,7 @@
       });
     });
 
-    var commissionProjected = commissionTotal(tour && tour.commission, income, guarantees);
+    var commissionProjected = commissionTotal(tour && tour.commission, income, guarantees, incomeBy);
     var commissionPaid = chargedTo.commission || 0;
     var commissionEffective = Math.max(commissionProjected, commissionPaid);
     lines.push({
@@ -331,7 +370,7 @@
     var out = fixed + commissionEffective + debt + dayByDay;
 
     return {
-      shows: shows, allShows: allShows, income: income, guarantees: guarantees,
+      shows: shows, allShows: allShows, income: income, guarantees: guarantees, incomeBy: incomeBy,
       lines: lines, fixed: fixed,
       commission: commissionEffective, commissionProjected: commissionProjected,
       debt: debt, dayByDay: dayByDay, out: out, net: income - out,
@@ -743,9 +782,12 @@
       var r = comm[line.key];
       commRows.push([line.label,
         r.mode === 'pct' ? r.value + '%' : 'Flat ' + money(r.value),
-        r.mode === 'pct' ? (line.basis === 'guarantee' ? 'Guarantees ' + money(c.guarantees)
-          : 'All income ' + money(c.income)) : '',
-        round(commissionLine(line, r, c.income, c.guarantees))]);
+        r.mode === 'pct' ? (function () {
+          var lbl = commissionBaseLabel(r);
+          return lbl.charAt(0).toUpperCase() + lbl.slice(1) + ' ' +
+            money(commissionBase(r, c.incomeBy) || 0);
+        })() : '',
+        round(commissionLine(line, r, c.income, c.guarantees, c.incomeBy))]);
     });
     commRows.push(['TOTAL', '', '', round(c.commission)]);
 
@@ -818,6 +860,7 @@
     normExpenses: normExpenses, normCommission: normCommission,
     showIncomeTotal: showIncomeTotal, crewProjection: crewProjection,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
+    commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 
     cardDebts: cardDebts, otherDebts: otherDebts, cardSummary: cardSummary,
     cardPaidDetail: cardPaidDetail, preTourCutoff: preTourCutoff,
