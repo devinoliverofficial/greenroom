@@ -1174,11 +1174,27 @@
             : 'Nothing has been shared with you yet.')
         : null,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
-      canWrite() && trashedEntries().length
-        ? h('div', { class: 'home-corner' },
-            h('button', { class: 'linkbtn', type: 'button', onclick: openTrash },
-              'Recently deleted (' + trashedEntries().length + ')'))
-        : null);
+      (function () {
+        var bits = [];
+        if (canWrite() && trashedEntries().length) {
+          bits.push(h('button', { class: 'linkbtn', type: 'button', onclick: openTrash },
+            'Recently deleted (' + trashedEntries().length + ')'));
+        }
+        if (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.signOut) {
+          var who = window.GR_BACKEND.email ? window.GR_BACKEND.email() : null;
+          bits.push(h('button', { class: 'linkbtn', type: 'button',
+            onclick: function () {
+              confirmSheet({
+                title: 'Sign out of Greenroom?',
+                body: (who ? 'You\u2019re signed in as ' + who + '. ' : '') +
+                  'Your tours stay safe in your account.',
+                action: 'Sign out',
+                onConfirm: function () { window.GR_BACKEND.signOut(); return true; }
+              });
+            } }, 'Sign out'));
+        }
+        return bits.length ? h('div', { class: 'home-corner' }, bits) : null;
+      })());
   }
 
   /* One artist: just the name. The numbers wait behind the doors. */
