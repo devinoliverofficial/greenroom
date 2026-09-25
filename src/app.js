@@ -935,7 +935,7 @@
     cv.height = window.innerHeight * dpr;
     var ctx = cv.getContext('2d');
     ctx.scale(dpr, dpr);
-    var colors = ['#2BE38C', '#16C16C', '#0FA35B', '#8FF3C4', '#FFFFFF'];
+    var colors = ['#CCF80A', '#A8CC00', '#E7FF4F', '#F1F4E3', '#FFFFFF'];
     var cx = window.innerWidth / 2, cy = window.innerHeight * 0.3;
     var bits = [];
     for (var i = 0; i < 90; i++) {
