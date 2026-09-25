@@ -390,10 +390,11 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   font-size: 11px; font-weight: 600; color: var(--ink-3);
   pointer-events: none; letter-spacing: .01em;
 }
+/* Pinned to the top of the chart so a thumb on the line never covers it. */
 .scrub-pill {
-  position: absolute; transform: translate(-50%, -160%); white-space: nowrap; pointer-events: none;
+  position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; pointer-events: none;
   padding: 5px 10px; border-radius: 999px; background: var(--ink); color: var(--bg);
-  font-size: 12.5px; font-weight: 700; box-shadow: 0 4px 14px rgba(14, 32, 25, .22);
+  font-size: 12.5px; font-weight: 700; box-shadow: 0 4px 14px rgba(0, 0, 0, .3);
   max-width: 84%; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -401,18 +402,34 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .scrub-notes {
   position: absolute; bottom: 26px; transform: translateX(-50%);
   display: grid; gap: 4px; justify-items: center;
-  width: max-content; max-width: 78%; pointer-events: none;
+  width: max-content; max-width: 88%; pointer-events: none;
 }
 .sn-bubble {
-  padding: 4px 10px; border-radius: 999px;
-  background: var(--surface-2); border: 1px solid var(--line);
-  color: var(--ink-2); font-size: 11.5px; font-weight: 550; line-height: 1.35;
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  animation: snpop .18s ease-out;
+  padding: 6px 13px; border-radius: 999px;
+  background: var(--pos); border: 0; color: var(--on-brand);
+  font-size: 13px; font-weight: 650; line-height: 1.32; text-align: center;
+  max-width: 100%; white-space: normal; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  box-shadow: 0 0 20px color-mix(in oklab, var(--pos), transparent 62%), 0 3px 10px rgba(0, 0, 0, .35);
+  animation: snpop .22s cubic-bezier(.22, 1.4, .3, 1);
 }
-.sn-bubble b { color: var(--pos); font-weight: 750; }
-@keyframes snpop { from { opacity: 0; transform: translateY(4px); } }
-@media (prefers-reduced-motion: reduce) { .sn-bubble { animation: none; } }
+.sn-bubble b { font-weight: 800; opacity: .72; }
+@keyframes snpop { from { opacity: 0; transform: translateY(7px) scale(.88); } }
+
+/* Pins mark the nights that already have something said about them. */
+.note-pins { position: absolute; left: 0; right: 0; bottom: 30px; height: 0; pointer-events: none; }
+.note-pin {
+  position: absolute; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%;
+  background: var(--pos); box-shadow: 0 0 10px color-mix(in oklab, var(--pos), transparent 45%);
+  animation: pinbeat 2.4s ease-in-out infinite;
+  transition: transform .16s ease;
+}
+.note-pin.on { transform: scale(2.1); }
+@keyframes pinbeat { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .sn-bubble { animation: none; }
+  .note-pin { animation: none; opacity: .9; }
+}
 
 /* Progress */
 .prog { margin-top: 16px; }

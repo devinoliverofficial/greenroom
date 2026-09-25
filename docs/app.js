@@ -726,14 +726,27 @@
     var pill = h('div', { class: 'scrub-pill', hidden: true });
     // Comments for the night you're on, below the line.
     var notes = h('div', { class: 'scrub-notes', hidden: true });
+    // A pin under every night that carries a comment, so you can see
+    // where the talk is before you ever touch the line.
+    var pins = h('div', { class: 'note-pins', 'aria-hidden': 'true' });
+    if (d.tourId) {
+      var tt = getTour(d.tourId);
+      series.forEach(function (pt, i) {
+        var n = notesFor(tt, d.tourId, pt.date).length;
+        if (!n) return;
+        var pin = h('span', { class: 'note-pin', 'data-i': String(i) });
+        pin.style.left = (x(i) / W * 100) + '%';
+        pins.append(pin);
+      });
+    }
 
-    wrap.replaceChildren(svg, flag, pill, notes,
+    wrap.replaceChildren(svg, flag, pill, notes, pins,
       h('div', { class: 'chart-ends' },
         h('span', null, dayMD(series[0].date)),
         h('span', null, dayMD(series[last].date))));
 
     wrap.__geo = { x: x, y: y, W: W, H: H, svg: svg, pill: pill, notes: notes,
-      series: series, nights: d.nights, tourId: d.tourId };
+      series: series, nights: d.nights, tourId: d.tourId, pins: pins };
     animateDraw(svg);
     setupScrub(wrap);
   }
@@ -899,7 +912,6 @@
         ? night.city + ' · ' + money(night.total) + ' in'
         : 'No show that night';
       geo.pill.style.left = (px / geo.W * 100) + '%';
-      geo.pill.style.top = (py / geo.H * 100) + '%';
 
       // Comments for this night ride under the line, SoundCloud style.
       var mine = geo.tourId ? notesFor(getTour(geo.tourId), geo.tourId, p.date) : [];
@@ -910,6 +922,11 @@
             h('b', null, n.author || 'Someone'), ' ' + n.body);
         }));
         geo.notes.style.left = (px / geo.W * 100) + '%';
+      }
+      if (geo.pins) {
+        Array.prototype.forEach.call(geo.pins.children, function (pin) {
+          pin.classList.toggle('on', Number(pin.getAttribute('data-i')) === i);
+        });
       }
 
       var pct = p.out > 0 ? Math.max(0, Math.min(100, Math.floor(p.income / p.out * 100))) : 0;
@@ -930,6 +947,9 @@
       hero.classList.remove('scrubbing');
       geo.pill.hidden = true;
       geo.notes.hidden = true;
+      if (geo.pins) {
+        Array.prototype.forEach.call(geo.pins.children, function (pin) { pin.classList.remove('on'); });
+      }
       renderOdo(odo, restText, restText);
       setHeroState(hero, G.stateOf(c));
       cap.textContent = restCap;
@@ -3124,7 +3144,7 @@
           (canWrite() || mine) ? h('button', { class: 'iconbtn sm', type: 'button',
             'aria-label': 'Delete this note',
             onclick: async function () {
-              try { await removeNote(tourId, day, n.id); setTimeout(build, backend ? 500 : 120); }
+              try { await removeNote(tourId, day, n.id); render(true); setTimeout(build, backend ? 500 : 120); }
               catch (e) { toast('Only the tour manager can delete someone else\u2019s note.'); }
             } }, icon('trash', 16)) : null);
       });
@@ -3143,6 +3163,7 @@
               try {
                 await saveNote(tourId, day, { id: newId(), body: body, author: myName() });
                 input.value = '';
+                render(true);
                 setTimeout(build, backend ? 500 : 120);
               } catch (e2) { toast('Couldn\u2019t post that. Try again.'); }
             } },
