@@ -2836,7 +2836,7 @@
     });
 
     return [hero, rail,
-      canWrite() ? h('div', { class: 'btnrow', style: 'margin-top:14px' },
+      canWrite() ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
         s
           ? h('button', { class: 'btn quiet', type: 'button',
               onclick: function () { openDaySheetEditor(id, s.id); } },
