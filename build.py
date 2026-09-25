@@ -141,7 +141,8 @@ def build_web():
     ch = _re.sub(r'(<link rel="icon" href="data:image/png;base64,)[^"]+(")',
                  lambda mm: mm.group(1) + cfav + mm.group(2), ch, count=1)
     cicon = 'icon-classic-' + stamp + '.png'
-    shutil.copy(SRC / 'icon-classic-512.png', web / cicon)
+    # exactly 180 for the same reason as the main skin: no resampling
+    shutil.copy(SRC / 'icon-classic-180.png', web / cicon)
     ch = _re.sub(r'<link rel="apple-touch-icon" href="[^"]+">',
                  '<link rel="apple-touch-icon-precomposed" href="' + cicon + '">\n'
                  '<link rel="apple-touch-icon" href="' + cicon + '">',
@@ -162,12 +163,15 @@ def build_web():
                     '<script src="core.js"></script>')
     ch = ch.replace('</body>', sw)
     (web / 'classic.html').write_text(ch, encoding='utf-8')
+    # virgin add-from URL for Classic too, same reasoning as the main skin
+    (web / ('add-classic-' + stamp + '.html')).write_text(ch, encoding='utf-8')
+    print('fresh CLASSIC add-from URL: add-classic-' + stamp + '.html')
     shutil.copy(SRC / 'icon-classic-180.png', web / 'icon-classic-180.png')
     shutil.copy(SRC / 'icon-classic-512.png', web / 'icon-classic-512.png')
     shutil.copy(SRC / 'logo-full-classic.png', web / 'logo-full-classic.png')
     _mfc = (SITE / 'manifest-classic.webmanifest').read_text(encoding='utf-8')
     (web / 'manifest-classic.webmanifest').write_text(
-        _mfc.replace('icon-classic-180.png', 'icon-classic-180.png?v=' + stamp)
+        _mfc.replace('icon-classic-180.png', cicon)
             .replace('icon-classic-512.png', 'icon-classic-512.png?v=' + stamp), encoding='utf-8')
 
     # A one-purpose icon diagnostic: unmistakable test icon, virgin URL.
