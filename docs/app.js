@@ -408,11 +408,9 @@
   /* ============================== Routing ============================== */
 
   function go(route) {
-    // The Day always opens on today's show, not wherever you last flipped to.
+    // OVERVIEW always opens on today's show, not wherever you last flipped to.
     if (route.name === 'tour' && route.view === 'details') S.dsIndex = null;
     S.route = route;
-    if (route.name === 'tour') lsSet(LS_LAST, route.id);
-    else if (route.name === 'home') lsSet(LS_LAST, '');
     S.focusOnRender = true;
     window.scrollTo(0, 0);
     render(true);
@@ -423,14 +421,9 @@
     if (t && !t.setupDone && canWrite()) go({ name: 'wizard', id: id, step: clampStep(t.setupStep) });
     else go({ name: 'tour', id: id, view: 'menu' });
   }
-  function restoreLastTour() {
-    if (S.restored) return;
-    S.restored = true;
-    if (S.route.name !== 'home') return;
-    var last = lsGet(LS_LAST);
-    var t = last ? S.tours.get(last) : null;
-    if (t && t.setupDone && !t.deletedAt) S.route = { name: 'tour', id: last, view: 'menu' };
-  }
+  // A hard close and reopen always lands on the Artists screen — the top of
+  // the app, not wherever the last session wandered.
+  function restoreLastTour() {}
 
   function render(force) {
     var view = $('#view');
@@ -3298,7 +3291,7 @@
       var perHeadEl = h('span', { class: 'hint ph-hint' }, '');
       function updatePerHead() {
         var hit = (settNotes || []).filter(function (x) { return /per head/i.test(x.label); })[0];
-        perHeadEl.textContent = hit ? hit.value + ' per head' : '$ per head fills in from atVenu';
+        perHeadEl.textContent = hit ? hit.value + ' per head' : 'atVenu $ per head';
         perHeadEl.classList.toggle('known', !!hit);
       }
       updatePerHead();
