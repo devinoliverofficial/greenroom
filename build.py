@@ -58,6 +58,7 @@ def build_web():
     (web / 'vendor').mkdir(parents=True)
 
     stamp = time.strftime('%Y%m%d-%H%M%S')
+    SCRATCH_CLASSIC = ROOT / 'site' / 'classic-icons'
     html = (SRC / 'index.html').read_text(encoding='utf-8')
 
     inject = ('<link rel="manifest" href="manifest.webmanifest">\n'
@@ -93,6 +94,37 @@ def build_web():
     (web / 'sw.js').write_text(
         (SITE / 'sw.js').read_text(encoding='utf-8').replace('__BUILD__', stamp),
         encoding='utf-8')
+    # ---- Greenroom Classic: the same app in the original skin, as its own
+    # install (second home-screen icon). Only looks differ; code is shared. ----
+    import re as _re
+    ch = (SRC / 'index.html').read_text(encoding='utf-8')
+    capple = (SCRATCH_CLASSIC / 'classic_apple_b64.txt').read_text().strip()
+    cfav = (SCRATCH_CLASSIC / 'classic_fav_b64.txt').read_text().strip()
+    ch = _re.sub(r'(<link rel="apple-touch-icon" href="data:image/png;base64,)[^"]+(")',
+                 lambda mm: mm.group(1) + capple + mm.group(2), ch, count=1)
+    ch = _re.sub(r'(<link rel="icon" href="data:image/png;base64,)[^"]+(")',
+                 lambda mm: mm.group(1) + cfav + mm.group(2), ch, count=1)
+    ch = ch.replace('<title>Greenroom</title>',
+        '<title>Greenroom Classic</title>\n'
+        '<link rel="manifest" href="manifest-classic.webmanifest">\n'
+        '<meta name="theme-color" content="#000000">\n'
+        '<script>window.GREENROOM_BUILD = "' + stamp + '";\n'
+        "window.GR_SKIN = 'classic';\n"
+        "document.documentElement.setAttribute('data-theme', 'light');</script>")
+    ch = ch.replace('position: fixed; inset: 0; z-index: 120; background: #CCF80A;',
+                    'position: fixed; inset: 0; z-index: 120; background: #000A05;')
+    ch = ch.replace('<img src="logo-full.png" alt="">', '<img src="logo-full-classic.png" alt="">')
+    ch = ch.replace('<script src="core.js"></script>',
+                    '<script src="config.js"></script>\n'
+                    '<script src="backend.js"></script>\n'
+                    '<script src="core.js"></script>')
+    ch = ch.replace('</body>', sw)
+    (web / 'classic.html').write_text(ch, encoding='utf-8')
+    shutil.copy(SRC / 'icon-classic-180.png', web / 'icon-classic-180.png')
+    shutil.copy(SRC / 'icon-classic-512.png', web / 'icon-classic-512.png')
+    shutil.copy(SRC / 'logo-full-classic.png', web / 'logo-full-classic.png')
+    shutil.copy(SITE / 'manifest-classic.webmanifest', web / 'manifest-classic.webmanifest')
+
     # GitHub Pages must not run Jekyll over this folder.
     (web / '.nojekyll').write_text('')
     print('docs/  (real site) build %s' % stamp)

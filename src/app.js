@@ -6,7 +6,8 @@
   var LS_DATA = 'greenroom:v1';
   var LS_LAST = 'greenroom:last';
   var LS_LABELS = 'greenroom:labels';
-  var LS_THEME = 'greenroom:theme';
+  // Each skin (the main app and Greenroom Classic) remembers its own choice.
+  var LS_THEME = 'greenroom:theme' + (window.GR_SKIN ? ':' + window.GR_SKIN : '');
   var TABS = [['shows', 'Shows'], ['expenses', 'Expenses'], ['days', 'Day by day']];
   var VIEW_ONLY = 'You have view-only access, so changes can’t be saved.';
 
@@ -979,7 +980,12 @@
   }
 
   /* ---- Theme ---- */
-  function currentTheme() { return lsGet(LS_THEME) === 'light' ? 'light' : 'black'; }
+  function currentTheme() {
+    var stored = lsGet(LS_THEME);
+    if (stored === 'light' || stored === 'black') return stored;
+    // Classic boots on the original look; the main app on the new green.
+    return window.GR_SKIN === 'classic' ? 'light' : 'black';
+  }
   function applyTheme(t) {
     if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
     else document.documentElement.removeAttribute('data-theme');
