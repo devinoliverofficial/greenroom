@@ -918,24 +918,16 @@
         cap.__last = tookText;
       }
 
-      geo.pill.hidden = false;
-      geo.pill.textContent = night
-        ? night.city + ' · ' + money(night.total) + ' in'
-        : 'No show that night';
-      geo.pill.style.left = (px / geo.W * 100) + '%';
-
-      // That one night's comment, to the right of the day's take.
-      var noteEl = $('#hero-note', hero);
-      var mine = geo.tourId ? notesFor(getTour(geo.tourId), geo.tourId, p.date) : [];
-      if (noteEl) {
-        if (mine.length) {
-          noteEl.replaceChildren(h('b', null, mine[0].author || 'Someone'), ' ' + mine[0].body);
-          noteEl.classList.add('on');
-        } else {
-          noteEl.replaceChildren();
-          noteEl.classList.remove('on');
-        }
+      var mineNow = geo.tourId ? notesFor(getTour(geo.tourId), geo.tourId, p.date) : [];
+      geo.pill.hidden = !mineNow.length;
+      if (mineNow.length) {
+        geo.pill.replaceChildren(h('b', null, mineNow[0].author || 'Someone'), ' ' + mineNow[0].body);
+        geo.pill.style.left = (px / geo.W * 100) + '%';
       }
+
+      // Where the comment used to sit: the night itself.
+      var noteEl = $('#hero-note', hero);
+      if (noteEl) noteEl.textContent = night ? (night.city || 'Show') : 'No show that night';
       if (geo.pins) {
         Array.prototype.forEach.call(geo.pins.children, function (pin) {
           pin.classList.toggle('on', Number(pin.getAttribute('data-i')) === i);
@@ -961,7 +953,7 @@
       geo.pill.hidden = true;
       geo.notes.hidden = true;
       var noteEnd = $('#hero-note', hero);
-      if (noteEnd) { noteEnd.replaceChildren(); noteEnd.classList.remove('on'); }
+      if (noteEnd) noteEnd.textContent = '';
       cap.classList.remove('num', 'cap-odo');
       cap.__last = null;
       if (geo.pins) {
@@ -3154,15 +3146,25 @@
         placeholder: 'Say something about this night\u2026', autocomplete: 'off',
         enterkeyhint: 'send' });
       var rows = list.map(function (n) {
-        var mine = !backend || (n.addedBy && n.addedBy === myUid);
+        // Yours to delete if you wrote it — or if we can't tell yet, let the
+        // server be the judge rather than hiding the button.
+        var mine = !backend || !myUid || (n.addedBy && n.addedBy === myUid);
         return h('div', { class: 'row' },
           h('div', { class: 'row-label' }, n.author || 'Someone',
             h('span', { class: 'hint' }, n.body)),
           (canWrite() || mine) ? h('button', { class: 'iconbtn sm', type: 'button',
             'aria-label': 'Delete this note',
             onclick: async function () {
-              try { await removeNote(tourId, day, n.id); render(true); setTimeout(build, backend ? 500 : 120); }
-              catch (e) { toast('Only the tour manager can delete someone else\u2019s note.'); }
+              var gone = false;
+              try {
+                await removeNote(tourId, day, n.id);
+                gone = true;
+              } catch (e) {
+                toast(e && e.code === 'permission'
+                  ? 'That note belongs to someone else.'
+                  : 'That note could not be deleted. Try again.');
+              }
+              if (gone) { render(true); setTimeout(build, backend ? 500 : 120); }
             } }, icon('trash', 16)) : null);
       });
       openSheet(function () {
