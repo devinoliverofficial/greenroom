@@ -350,8 +350,7 @@
       var signin = mode === 'signin';
       wrap.innerHTML =
         '<div class="gate-card">' +
-        '<img class="gate-bus" alt="Greenroom" src="' +
-          (window.GR_SKIN === 'classic' ? 'icon-classic-180.png' : 'gr-stark-180.png') + '">' +
+        '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
         '<form id="gr-gate-form" novalidate>' +
         '<input class="input" type="email" id="gr-gate-email" placeholder="you@band.com" autocomplete="email" inputmode="email" aria-label="Email">' +
         '<input class="input" type="password" id="gr-gate-pass" placeholder="Password" ' +
