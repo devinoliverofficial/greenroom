@@ -333,6 +333,16 @@
     near(G.calc(t).commission, 300, 'management 200 + lawyer 100');
   });
 
+  test('a custom category (extraCats) counts like any built-in', function () {
+    var t = { expenses: {}, crew: {}, debts: {}, commission: {}, extras: {}, shows: {},
+      extraCats: { 'x-security': 'Security' },
+      charges: keyed([{ date: '2026-03-01', merchant: 'Guard Co', amount: 250, category: 'x-security' }]),
+      imports: {} };
+    near(G.calc(t).out, 250, 'the security charge is counted');
+    eq(G.typedCategoriesFor(t).filter(function (c) { return c.key === 'x-security'; })[0].label,
+      'Security', 'label rides along');
+  });
+
   test('bulk guest paste \u2014 +1s, emails and parens parse out', function () {
     var g = G.parseGuestList('Sam Reyes +1 (Label)\n2. Dana Cole - dana@mail.com\nmgmt group x4\n\n');
     eq(g.length, 3, 'three guests');

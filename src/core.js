@@ -11,6 +11,7 @@
   var CATEGORIES = [
     { key: 'bus', label: 'Bus' },
     { key: 'crew', label: 'Crew' },
+    { key: 'food', label: 'Food' },
     { key: 'gas', label: 'Gas' },
     { key: 'hotels', label: 'Hotels' },
     { key: 'flights', label: 'Flights' },
@@ -50,6 +51,24 @@
   // Charges can also land on the day-by-day pile, which is not an expense category.
   var DAY_BY_DAY = 'dayByDay';
   var CHARGE_CATEGORIES = CATEGORIES.concat([{ key: DAY_BY_DAY, label: 'Day by day' }]);
+
+  /* Tours can grow their own expense categories (tour.extraCats: {key: label},
+     keys prefixed "x-" so they can never collide with the built-ins). They
+     count exactly like typed categories everywhere. */
+  function extraCategories(tour) {
+    var src = tour && isObj(tour.extraCats) ? tour.extraCats : {};
+    return Object.keys(src)
+      .filter(function (k) { return k.indexOf('x-') === 0 && String(src[k] || '').trim(); })
+      .sort(function (a, b) { return String(src[a]).localeCompare(String(src[b])); })
+      .map(function (k) { return { key: k, label: String(src[k]).trim().slice(0, 30) }; });
+  }
+  function typedCategoriesFor(tour) { return TYPED_CATEGORIES.concat(extraCategories(tour)); }
+  function chargeCategoriesFor(tour) { return CHARGE_CATEGORIES.concat(extraCategories(tour)); }
+  function slugCategory(label) {
+    var s = String(label == null ? '' : label).toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
+    return s ? 'x-' + s : '';
+  }
 
   /* ---------------- Numbers ---------------- */
 
@@ -168,6 +187,12 @@
     var out = emptyExpenses();
     var src = isObj(e) ? e : {};
     Object.keys(out).forEach(function (k) {
+      var r = isObj(src[k]) ? src[k] : {};
+      out[k] = { projected: optNum(r.projected), paid: num(r.paid) };
+    });
+    // Custom categories ride along under their x- keys.
+    Object.keys(src).forEach(function (k) {
+      if (out[k] || k.indexOf('x-') !== 0) return;
       var r = isObj(src[k]) ? src[k] : {};
       out[k] = { projected: optNum(r.projected), paid: num(r.paid) };
     });
@@ -334,8 +359,8 @@
     var lines = [];
     var fixed = 0;
 
-    TYPED_CATEGORIES.forEach(function (c) {
-      var rec = expenses[c.key];
+    typedCategoriesFor(tour).forEach(function (c) {
+      var rec = expenses[c.key] || { projected: null, paid: 0 };
       // Crew's projection is the sum of what the crew is owed, not a typed number.
       var projected = c.key === 'crew' ? crewProjection(tour) || null : rec.projected;
       var paid = num(rec.paid) + (chargedTo[c.key] || 0) + (cardTo[c.key] || 0);
@@ -884,6 +909,8 @@
     COMMISSION_LINES: COMMISSION_LINES,
     INCOME_FIELDS: INCOME_FIELDS,
     CHARGE_CATEGORIES: CHARGE_CATEGORIES,
+    extraCategories: extraCategories, typedCategoriesFor: typedCategoriesFor,
+    chargeCategoriesFor: chargeCategoriesFor, slugCategory: slugCategory,
     CREW_TITLES: CREW_TITLES,
     DEBT_CHIPS: DEBT_CHIPS,
     DAILY_CHIPS: DAILY_CHIPS,

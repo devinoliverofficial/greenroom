@@ -1546,11 +1546,12 @@
     var note = h('p', { class: 'note' }, '');
 
     function projectedFor(k) {
-      return k === 'crew' ? (G.crewProjection(t) || null) : d.expenses[k].projected;
+      return k === 'crew' ? (G.crewProjection(t) || null)
+        : (d.expenses[k] ? d.expenses[k].projected : null);
     }
     function draftTotal() {
       var sum = 0;
-      G.TYPED_CATEGORIES.forEach(function (cat) {
+      G.typedCategoriesFor(t).forEach(function (cat) {
         var p = projectedFor(cat.key);
         var paid = G.num(d.expenses[cat.key].paid) + chargedTo(t, cat.key);
         sum += p == null ? paid : Math.max(p, paid);
@@ -1569,9 +1570,9 @@
     }
     var changed = function () { d.dirty = true; refresh(); };
 
-    var rows = G.TYPED_CATEGORIES.map(function (cat) {
+    var rows = G.typedCategoriesFor(t).map(function (cat) {
       if (cat.key === 'crew') return crewRow(id, t);
-      var rec = d.expenses[cat.key];
+      var rec = d.expenses[cat.key] || (d.expenses[cat.key] = { projected: null, paid: 0 });
       var paid = G.num(rec.paid) + chargedTo(t, cat.key);
       return h('div', { class: 'row' },
         h('div', { class: 'row-label' },
@@ -1743,9 +1744,9 @@
   }
 
   function openCategorySheet(id, key) {
-    var cat = G.TYPED_CATEGORIES.filter(function (c) { return c.key === key; })[0];
     var t = getTour(id);
-    var rec = G.normExpenses(t && t.expenses)[key];
+    var cat = G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0];
+    var rec = G.normExpenses(t && t.expenses)[key] || { projected: null, paid: 0 };
     var f = { projected: rec.projected, paid: G.num(rec.paid) };
     var charged = chargedTo(t, key);
     var onCards = (G.cardPaidDetail(t)[key] || []);
@@ -5197,6 +5198,58 @@
     function finishFail(title, msg) { readFail(title, msg, null, null); }
   }
 
+  /* A category picker that can grow: its last option turns into a small
+     name-it input, and the new category is saved on the tour (extraCats) and
+     counted like any built-in. */
+  function categorySelect(tourId, o) {
+    var holder = h('span', { class: 'catpick' });
+    var sel;
+    function build() {
+      sel = h('select', { class: o.cls || 'input sm', 'aria-label': o.aria || 'Category',
+        onchange: function (e) {
+          if (e.target.value === '__new') { grow(); return; }
+          o.value = e.target.value;
+          o.onPick(e.target.value || null);
+        } });
+      sel.append(h('option', { value: '' }, o.noneLabel || 'Pick a category'));
+      G.chargeCategoriesFor(getTour(tourId)).forEach(function (c) {
+        sel.append(h('option', { value: c.key }, c.label));
+      });
+      sel.append(h('option', { value: '__new' }, '+ New category\u2026'));
+      sel.value = o.value || '';
+      holder.replaceChildren(sel);
+    }
+    function grow() {
+      var inp = h('input', { class: 'input sm', type: 'text', maxlength: 30,
+        placeholder: 'Name it \u2014 e.g. Security', autocomplete: 'off',
+        onkeydown: function (e) { if (e.key === 'Enter') { e.preventDefault(); commit(); } } });
+      async function commit() {
+        var label = String(inp.value || '').trim();
+        var key = G.slugCategory(label);
+        if (!label || !key) { build(); return; }
+        var t = getTour(tourId);
+        var clash = G.chargeCategoriesFor(t).filter(function (c) {
+          return c.key === key || c.label.toLowerCase() === label.toLowerCase();
+        })[0];
+        if (clash) key = clash.key;
+        else {
+          var patch = { extraCats: {} };
+          patch.extraCats[key] = label;
+          if (!(await api.update(tourId, patch))) { build(); return; }
+          toast('\u201c' + label + '\u201d is a category now \u2014 on this tour everywhere');
+        }
+        o.value = key;
+        build();
+        o.onPick(key);
+      }
+      holder.replaceChildren(h('span', { class: 'af-row', style: 'display:flex;gap:8px' }, inp,
+        h('button', { class: 'btn sm primary', type: 'button', onclick: commit }, 'Add')));
+      setTimeout(function () { inp.focus(); }, 30);
+    }
+    build();
+    return holder;
+  }
+
   function openImportReview(tourId, rows, source) {
     var importId = newId();
 
@@ -5251,19 +5304,16 @@
         });
         cb.checked = r.keep;
 
-        var sel = h('select', { class: 'input sm', 'aria-label': 'Category for ' + r.merchant,
-          onchange: function (e) {
-            r.category = e.target.value;
-            r.source = r.category ? 'chosen' : null;
+        var sel = categorySelect(tourId, {
+          value: r.category || '', aria: 'Category for ' + r.merchant,
+          onPick: function (v) {
+            r.category = v;
+            r.source = v ? 'chosen' : null;
             var tagEl = $('.rv-flag', wrap);
             if (tagEl) tagEl.remove();
             refresh();
-          } });
-        sel.append(h('option', { value: '' }, 'Pick a category'));
-        G.CHARGE_CATEGORIES.forEach(function (c) {
-          sel.append(h('option', { value: c.key }, c.label));
+          }
         });
-        sel.value = r.category || '';
 
         wrap.append(cb, h('div', { class: 'rv-fields' },
           h('div', { class: 'rv-head' },
@@ -5345,7 +5395,7 @@
         return String(b.date || '').localeCompare(String(a.date || ''));
       });
       var catLabel = {};
-      G.CHARGE_CATEGORIES.forEach(function (c) { catLabel[c.key] = c.label; });
+      G.chargeCategoriesFor(getTour(tourId)).forEach(function (c) { catLabel[c.key] = c.label; });
 
       if (!charges.length) {
         return [
@@ -5359,19 +5409,17 @@
         h('div', { class: 'ledger' }, charges.map(function (ch) {
           var right;
           if (canWrite()) {
-            var sel = h('select', { class: 'input sm slim', 'aria-label': 'Category for ' + ch.merchant,
-              onchange: async function (e) {
-                var v = e.target.value;
+            right = categorySelect(tourId, {
+              value: ch.category || '', cls: 'input sm slim', noneLabel: 'No category',
+              aria: 'Category for ' + ch.merchant,
+              onPick: async function (v) {
                 var patch = {}; patch[ch.id] = { category: v || null };
                 if (await api.update(tourId, { charges: patch })) {
                   if (v) await writeLabel(ch.merchant, v);
                   toast('Saved'); render(true);
                 }
-              } });
-            sel.append(h('option', { value: '' }, 'No category'));
-            G.CHARGE_CATEGORIES.forEach(function (c) { sel.append(h('option', { value: c.key }, c.label)); });
-            sel.value = ch.category || '';
-            right = sel;
+              }
+            });
           } else {
             right = h('span', { class: 'hint' }, catLabel[ch.category] || 'No category');
           }
@@ -5456,7 +5504,8 @@
           var rec = S.labels[k];
           var cats = Object.keys(rec.cats || {}).filter(function (c) { return rec.cats[c] > 0; });
           var text = cats.length === 1
-            ? catLabel[cats[0]] || cats[0]
+            ? catLabel[cats[0]] || (String(cats[0]).indexOf('x-') === 0
+              ? cats[0].slice(2).replace(/-/g, ' ') : cats[0])
             : 'Labelled ' + cats.length + ' different ways — left blank';
           return h('div', { class: 'row' },
             h('div', { class: 'row-label' }, rec.merchant || k,
