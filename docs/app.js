@@ -3362,7 +3362,7 @@
           onclick: async function () {
             var text = String(ta.value || '').trim();
             if (!text) { toast('Paste the list first'); return; }
-            readBtn.disabled = true; readBtn.textContent = 'Reading the list\u2026';
+            readBtn.disabled = true; readBtn.textContent = 'Extracting\u2026';
             var got = null;
             if (S.sample) {
               try {
@@ -4639,12 +4639,12 @@
     return (S.imageTypes.length ? S.imageTypes : ['image/jpeg', 'image/png', 'image/webp']).join(',');
   }
 
+  /* Reading anything looks the same: the bus, and one word. */
   function busySheet(title, body, onStop) {
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, title),
-        h('p', { class: 'sh-sub' }, body),
         roadie(),
+        h('div', { class: 'busy-word' }, 'Extracting'),
         h('button', { class: 'btn ghost block', type: 'button', onclick: onStop }, 'Stop')
       ];
     }, { label: title });
@@ -5121,7 +5121,7 @@
         reading = true;
         var btn = control[0];
         var was = btn.textContent;
-        if (face) btn.textContent = 'Reading the settlement…';
+        if (face) btn.textContent = 'Extracting…';
         btn.disabled = true;
         btn.classList.add('reading');
         // The bus drives next to the button while the sheet is being read.

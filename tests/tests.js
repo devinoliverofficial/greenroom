@@ -333,6 +333,49 @@
     near(G.calc(t).commission, 300, 'management 200 + lawyer 100');
   });
 
+  /* Single entry: anything typed once must reach every readout, and nothing
+     may be counted twice. */
+  function auditTour() {
+    return {
+      name: 'Audit',
+      expenses: { gas: { projected: 1000, paid: 0 }, hotels: { projected: 0, paid: 500 } },
+      crew: keyed([{ name: 'Sam', title: 'TM', pay: 2000 }]),
+      commission: { management: { mode: 'pct', value: 10 },
+                    agent: { mode: 'flat', value: 0 }, lawyer: { mode: 'flat', value: 0 } },
+      debts: keyed([{ label: 'Amex', amount: 3000, kind: 'card', cutoff: null, breakdown: { gas: 1200 } }]),
+      extras: keyed([{ date: '2026-03-01', label: 'Parking', amount: 40, createdAt: 1 }]),
+      charges: keyed([{ date: '2026-03-01', merchant: 'Pilot', amount: 300, category: 'gas' },
+                      { date: '2026-03-01', merchant: 'Already', amount: 999, category: 'gas', accounted: true }]),
+      imports: {},
+      shows: { s1: { date: '2026-03-01', city: 'Detroit, MI', loggedAt: 1,
+        income: { guarantee: 5000, merch: 1000, backend: 0, vip: 0, buyouts: 0, catering: 0, misc: 0 } } }
+    };
+  }
+
+  test('single entry — income typed once reaches total, commission, chart and closeout', function () {
+    var t = auditTour();
+    var c = G.calc(t);
+    near(c.income, 6000, 'income');
+    near(c.commission, 600, 'commission off that same income');
+    var series = G.balanceSeries(t);
+    var last = series[series.length - 1];
+    near(last.income, c.income, 'chart income');
+    near(last.net, c.net, 'chart net');
+    var csv = G.closeoutCSVs(t)['shows.csv'];
+    if (csv.indexOf('Detroit, MI') < 0) throw new Error('show missing from closeout');
+  });
+
+  test('single entry — crew pay, card breakdown and charges each count exactly once', function () {
+    var t = auditTour();
+    var c = G.calc(t);
+    near(G.crewProjection(t), 2000, 'crew projection');
+    var gas = c.lines.filter(function (l) { return l.key === 'gas'; })[0];
+    near(gas.paid, 1500, 'card breakdown 1200 + charge 300, accounted one excluded');
+    near(c.debt, 0, 'a card never doubles as debt');
+    near(c.dayByDay, 40, 'day by day');
+    near(c.out, c.fixed + c.commission + c.debt + c.dayByDay, 'out is exactly its parts');
+  });
+
   test('a charge marked already accounted for is not counted twice', function () {
     var base = { expenses: {}, crew: {}, debts: {}, commission: {}, extras: {}, shows: {}, imports: {},
       charges: keyed([{ date: '2026-03-01', merchant: 'Pilot', amount: 400, category: 'gas' }]) };
