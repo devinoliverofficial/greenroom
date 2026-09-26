@@ -229,6 +229,69 @@
       var n = m ? String(m.username || '').trim() : '';
       return n || null;
     },
+    myProfile: function () {
+      var m = (session && session.user && session.user.user_metadata) || {};
+      return {
+        fullName: String(m.full_name || '').trim(),
+        username: String(m.username || '').trim(),
+        phone: String(m.phone || '').trim(),
+        email: session && session.user ? session.user.email : ''
+      };
+    },
+    /* One card, two homes: the account metadata (so it follows you to any
+       phone) and the profiles table (so the rest of the tour can read it). */
+    saveProfile: async function (p) {
+      var card = {
+        full_name: String(p.fullName || '').trim().slice(0, 60),
+        username: String(p.username || '').trim().slice(0, 24),
+        phone: String(p.phone || '').trim().slice(0, 30)
+      };
+      var q = await sb.auth.updateUser({ data: card });
+      if (q.error) throw mapError(q.error);
+      if (q.data && q.data.user && session) session.user = q.data.user;
+      await pushProfile();
+    },
+    /* The tour's phone book: everyone invited, plus the manager who owns it. */
+    crew: async function (tourId) {
+      var mq = await sb.from('members')
+        .select('invited_email, role, user_id, display_name, phone')
+        .eq('tour_id', tourId).order('created_at');
+      if (mq.error) throw mapError(mq.error);
+      var rows = mq.data || [];
+      var doc = cache.tours.get(tourId);
+      var ownerId = doc ? doc._ownerId : null;
+      var ids = rows.map(function (r) { return r.user_id; }).filter(Boolean);
+      if (ownerId) ids.push(ownerId);
+      var byId = {};
+      if (ids.length) {
+        var pq = await sb.from('profiles')
+          .select('user_id, full_name, username, email, phone').in('user_id', ids);
+        (pq.data || []).forEach(function (x) { byId[x.user_id] = x; });
+      }
+      var out = [];
+      if (ownerId) {
+        var op = byId[ownerId] || {};
+        out.push({
+          owner: true, role: 'owner',
+          name: op.full_name || '', username: op.username || '',
+          email: op.email || (ownerId === (session && session.user && session.user.id) ? session.user.email : ''),
+          phone: op.phone || '', joined: true
+        });
+      }
+      rows.forEach(function (r) {
+        var pr = byId[r.user_id] || {};
+        out.push({
+          owner: false, role: r.role,
+          name: pr.full_name || r.display_name || '',
+          username: pr.username || '',
+          email: pr.email || r.invited_email,
+          invitedEmail: r.invited_email,
+          phone: pr.phone || r.phone || '',
+          joined: !!r.user_id
+        });
+      });
+      return out;
+    },
     setUsername: async function (name) {
       var clean = String(name || '').trim().slice(0, 24);
       var q = await sb.auth.updateUser({ data: { username: clean } });
@@ -245,13 +308,14 @@
       if (q.error) throw mapError(q.error);
       return q.data;
     },
-    invite: async function (tourId, email, role, name) {
+    invite: async function (tourId, email, role, name, phone) {
       var addr = String(email).trim().toLowerCase();
       var q = await sb.from('members').upsert({
         tour_id: tourId,
         invited_email: addr,
         role: role === 'editor' ? 'editor' : 'viewer',
-        display_name: String(name || '').trim().slice(0, 24)
+        display_name: String(name || '').trim().slice(0, 60),
+        phone: String(phone || '').trim().slice(0, 30)
       });
       if (q.error) throw mapError(q.error);
       // The row alone is enough — an account made with this address claims it.
@@ -401,9 +465,14 @@
         '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
         '<form id="gr-gate-form" novalidate>' +
         (signin ? '' :
+          '<input class="input" type="text" id="gr-gate-full" placeholder="Full name" ' +
+            'maxlength="60" autocomplete="name" aria-label="Full name">' +
           '<input class="input" type="text" id="gr-gate-name" placeholder="Username \u2014 what the tour sees" ' +
             'maxlength="24" autocomplete="nickname" aria-label="Username">') +
         '<input class="input" type="email" id="gr-gate-email" placeholder="you@band.com" autocomplete="email" inputmode="email" aria-label="Email">' +
+        (signin ? '' :
+          '<input class="input" type="tel" id="gr-gate-phone" placeholder="Phone number" ' +
+            'maxlength="30" autocomplete="tel" inputmode="tel" aria-label="Phone number">') +
         '<input class="input" type="password" id="gr-gate-pass" placeholder="Password" ' +
           'autocomplete="' + (signin ? 'current-password' : 'new-password') + '" aria-label="Password">' +
         '<div class="gate-err" id="gr-gate-err" role="alert"></div>' +
@@ -427,15 +496,22 @@
         var email = String(emailI.value || '').trim();
         var pass = String(passI.value || '');
         var nameI = wrap.querySelector('#gr-gate-name');
+        var fullI = wrap.querySelector('#gr-gate-full');
+        var phoneI = wrap.querySelector('#gr-gate-phone');
         var uname = nameI ? String(nameI.value || '').trim() : '';
+        var full = fullI ? String(fullI.value || '').trim() : '';
+        var phone = phoneI ? String(phoneI.value || '').trim() : '';
+        if (fullI && full.length < 2) { errEl.textContent = 'Type your full name.'; fullI.focus(); return; }
         if (nameI && uname.length < 2) { errEl.textContent = 'Pick a username \u2014 it\u2019s what the tour sees in chat.'; nameI.focus(); return; }
+        if (phoneI && phone.replace(/\D/g, '').length < 7) { errEl.textContent = 'Type a phone number the tour can reach you on.'; phoneI.focus(); return; }
         if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email address.'; emailI.focus(); return; }
         if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
         btn.disabled = true;
         try {
           var res = signin
             ? await sb.auth.signInWithPassword({ email: email, password: pass })
-            : await sb.auth.signUp({ email: email, password: pass, options: { data: { username: uname.slice(0, 24) } } });
+            : await sb.auth.signUp({ email: email, password: pass, options: { data: {
+                username: uname.slice(0, 24), full_name: full.slice(0, 60), phone: phone.slice(0, 30) } } });
           if (res.error) throw res.error;
           if (!res.data || !res.data.session) throw new Error('no session');
           // onAuthStateChange finishes the job
@@ -554,8 +630,25 @@
     });
   }
 
+  /* The account is the truth; the profiles row is the copy the crew can read. */
+  async function pushProfile() {
+    if (!session || !session.user) return;
+    var m = session.user.user_metadata || {};
+    try {
+      await sb.from('profiles').upsert({
+        user_id: session.user.id,
+        full_name: String(m.full_name || '').slice(0, 60),
+        username: String(m.username || '').slice(0, 24),
+        email: session.user.email || '',
+        phone: String(m.phone || '').slice(0, 30),
+        updated_at: new Date().toISOString()
+      });
+    } catch (e) { /* the phone book can wait for the next sign-in */ }
+  }
+
   async function online() {
     try { await sb.rpc('claim_invites'); } catch (e) { /* nothing to claim */ }
+    pushProfile();
     if (session && session.user && session.user.user_metadata &&
         session.user.user_metadata.invited === true) passwordGate();
     try { await refetch(); } catch (e) { /* the app shows local mode */ }

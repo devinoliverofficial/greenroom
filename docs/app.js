@@ -110,6 +110,7 @@
     tabcost: '<path d="M4 20V10M10 20V5M16 20v-7M22 20H2"/>',
     tabchat: '<path d="M21 11.5c0 3.6-4 6.5-9 6.5-1.1 0-2.1-.13-3-.37L4 20l1.5-3.4C4.1 15.4 3 13.6 3 11.5 3 7.9 7 5 12 5s9 2.9 9 6.5z"/>',
     bell: '<path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16l-2-3z"/><path d="M10.5 21a2.2 2.2 0 0 0 3 0"/>',
+    phone: '<path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3z"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
     chevron: '<path d="M9 5l7 7-7 7"/>',
     close: '<path d="M6 6l12 12M18 6L6 18"/>',
@@ -1330,7 +1331,7 @@
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       (function () {
         if (S.mode === 'db' && !S.askedUsername && window.GR_BACKEND &&
-            window.GR_BACKEND.setUsername && window.GR_BACKEND.username && !window.GR_BACKEND.username()) {
+            window.GR_BACKEND.saveProfile && window.GR_BACKEND.username && !window.GR_BACKEND.username()) {
           S.askedUsername = true;
           setTimeout(function () { openUsernameSheet(true); }, 700);
         }
@@ -1342,11 +1343,11 @@
           bits.push(h('button', { class: 'linkbtn', type: 'button', onclick: openTrash },
             'Recently deleted (' + trashedEntries().length + ')'));
         }
-        if (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.setUsername) {
+        if (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.saveProfile) {
           bits.push(h('button', { class: 'linkbtn', type: 'button',
             onclick: function () { openUsernameSheet(false); } },
             (window.GR_BACKEND.username && window.GR_BACKEND.username())
-              ? 'Change username' : 'Pick a username'));
+              ? 'Your contact card' : 'Add your details'));
         }
         if (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.signOut) {
           var who = window.GR_BACKEND.email ? window.GR_BACKEND.email() : null;
@@ -2913,14 +2914,64 @@
       canWrite() ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:16px',
         onclick: function () { openTodaySheet(id, next ? next.id : null); } },
         icon('edit', 18), quote || d.presale ? 'Edit today' : 'Add pre-sale and a message') : null,
-      (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.ownsTour &&
-       window.GR_BACKEND.ownsTour(id)) ? [
-        h('div', { class: 'sec-head', style: 'margin-top:30px' },
-          h('h2', { class: 'sec-title' }, 'INVITE CREW'),
-          h('p', { class: 'sec-sub' }, 'They get an email, make a password, and the tour is already in their account.')),
-        peopleSection(id)
-      ] : null
+      (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
+  }
+
+  /* The tour's phone book: who is on the run and how to reach them. */
+  function crewSection(tourId) {
+    var B = window.GR_BACKEND;
+    var owns = B.ownsTour && B.ownsTour(tourId);
+    var list = h('div', { class: 'ledger' },
+      h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading\u2026')));
+
+    function draw(rows) {
+      if (!rows.length) {
+        list.replaceChildren(h('div', { class: 'row' },
+          h('span', { class: 'hint' }, 'Nobody else on the run yet.')));
+        return;
+      }
+      list.replaceChildren.apply(list, rows.map(function (m) {
+        var title = m.name || m.username || m.email;
+        var sub = [];
+        if (m.username && m.username !== title) sub.push('@' + m.username);
+        if (m.email) sub.push(m.email);
+        if (m.phone) sub.push(m.phone);
+        if (!m.joined) sub.push('invited');
+        return h('div', { class: 'row crew-row' },
+          h('div', { class: 'row-label' }, title,
+            h('span', { class: 'hint crew-sub' }, sub.join(' \u00b7 '))),
+          h('div', { class: 'crew-side' },
+            h('span', { class: 'role-tag' + (m.role === 'editor' || m.owner ? ' aa' : '') },
+              m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA')),
+            m.phone ? h('a', { class: 'crew-call', href: 'tel:' + String(m.phone).replace(/[^0-9+]/g, ''),
+              'aria-label': 'Call ' + title }, icon('phone', 17)) : null));
+      }));
+    }
+    B.crew(tourId).then(draw).catch(function () {
+      list.replaceChildren(h('div', { class: 'row' },
+        h('span', { class: 'hint' }, 'Couldn\u2019t load the crew.')));
+    });
+
+    return [
+      h('div', { class: 'sec-head crew-head', style: 'margin-top:30px' },
+        h('h2', { class: 'sec-title' }, 'CREW'),
+        owns ? h('button', { class: 'crew-invite', type: 'button',
+          onclick: function () { openInviteSheet(tourId); } },
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew') : null),
+      list
+    ];
+  }
+
+  /* Inviting is its own sheet now — the Overview keeps one small button. */
+  function openInviteSheet(tourId) {
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Invite crew'),
+        h('p', { class: 'sh-sub' }, 'They get an email, pick a password, and this tour is already in their account.'),
+        peopleSection(tourId)
+      ];
+    }, { label: 'Invite crew' });
   }
 
   /* Pre-sale and the quote of the day, kept with that night's day sheet. */
@@ -3805,38 +3856,48 @@
     return e ? String(e).split('@')[0] : 'You';
   }
 
-  /* The name the tour sees. Asked once for accounts made before usernames
-     existed, changeable any time from the home page. */
+  /* Your card in the tour's phone book. Asked once for accounts made before
+     it existed, changeable any time from the home page. */
   function openUsernameSheet(firstRun) {
     var B = window.GR_BACKEND;
-    if (!B || !B.setUsername) return;
-    var f = { name: (B.username && B.username()) || '' };
+    if (!B || !B.saveProfile) return;
+    var cur = B.myProfile ? B.myProfile() : {};
+    var f = { fullName: cur.fullName || '', username: cur.username || '', phone: cur.phone || '' };
     openSheet(function () {
+      function textIn(key, ph, extra) {
+        return h('input', Object.assign({
+          class: 'input', type: 'text', value: f[key], maxlength: 60,
+          autocomplete: 'off', placeholder: ph,
+          oninput: function (e) { f[key] = e.target.value; }
+        }, extra || {}));
+      }
       return [
-        h('h2', { class: 'sh-title' }, f.name ? 'Change your username' : 'Pick a username'),
-        h('p', { class: 'sh-sub' }, 'What everyone on the tour sees next to what you write \u2014 chat, notes, guest adds.'),
+        h('h2', { class: 'sh-title' }, f.username ? 'Your contact card' : 'Add your details'),
+        h('p', { class: 'sh-sub' }, 'The username rides everything you write. The rest is how the tour reaches you \u2014 everyone on the run can see it.'),
         h('form', { class: 'sh-form', novalidate: true,
           onsubmit: async function (e) {
             e.preventDefault();
-            var name = f.name.trim();
-            if (name.length < 2) { toast('Pick a username first'); return; }
+            if (f.fullName.trim().length < 2) { toast('Type your full name'); return; }
+            if (f.username.trim().length < 2) { toast('Pick a username'); return; }
             blurActive();
             try {
-              await B.setUsername(name);
+              await B.saveProfile(f);
               closeSheet();
-              toast('You\u2019re ' + name + ' to the tour');
+              toast('You\u2019re ' + f.username.trim() + ' to the tour');
               render(true);
             } catch (e2) { toast('Couldn\u2019t save it. Try again.'); }
           } },
-          field('Username', h('input', { class: 'input', type: 'text', maxlength: 24,
-            value: f.name, placeholder: 'DevinO', autocomplete: 'nickname',
-            oninput: function (e) { f.name = e.target.value; } })),
+          field('Full name', textIn('fullName', 'Devin Oliver', { autocomplete: 'name' })),
+          field('Username', textIn('username', 'DevinO', { maxlength: 24, autocomplete: 'nickname' })),
+          field('Phone', textIn('phone', '(555) 555-5555',
+            { type: 'tel', inputmode: 'tel', maxlength: 30, autocomplete: 'tel' })),
+          cur.email ? h('p', { class: 'note' }, 'Signed in as ' + cur.email) : null,
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
             h('button', { class: 'btn ghost block', type: 'button',
               onclick: function () { closeSheet(); } }, firstRun ? 'Later' : 'Cancel')))
       ];
-    }, { label: 'Username' });
+    }, { label: 'Your details' });
   }
   async function saveNote(tourId, day, note) {
     if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.saveNote) {
@@ -4818,6 +4879,10 @@
         class: 'input', type: 'email', placeholder: 'their@email.com',
         autocomplete: 'off', inputmode: 'email', 'aria-label': 'Email to invite'
       });
+      var phoneI = h('input', {
+        class: 'input', type: 'tel', placeholder: 'Their phone (optional)', maxlength: 30,
+        autocomplete: 'off', inputmode: 'tel', 'aria-label': 'Phone'
+      });
       form = h('form', {
         class: 'card addform', novalidate: true, style: 'margin-top:14px',
         onsubmit: async function (e) {
@@ -4827,8 +4892,8 @@
           if (!name) { toast('Type their name first'); nameI.focus(); return; }
           if (email.indexOf('@') < 1) { toast('Type their email address'); emailI.focus(); return; }
           try {
-            var status = await B.invite(tourId, email, role, name);
-            nameI.value = ''; emailI.value = '';
+            var status = await B.invite(tourId, email, role, name, String(phoneI.value || '').trim());
+            nameI.value = ''; emailI.value = ''; phoneI.value = '';
             if (status === 'sent') toast(name + ' is invited — the email is on its way');
             else if (status === 'existing') toast(name + ' already has an account — the tour is in it now');
             else toast(name + ' is on the list — the email service is busy, but signing up with ' + email + ' works');
@@ -4838,6 +4903,7 @@
       },
         nameI,
         emailI,
+        phoneI,
         h('div', { style: 'display:flex;gap:10px;align-items:center;margin-top:10px' },
           segmented(['GA', 'ALL ACCESS'], 0, function (i) { role = i ? 'editor' : 'viewer'; },
             'Invite role'),
@@ -4848,11 +4914,7 @@
       h('p', { class: 'sh-p' }, owns
         ? 'Invite your band, crew or managers by email. GA watches the numbers move live. ALL ACCESS can log shows, costs and statements with you.'
         : 'You’re on this tour’s guest list. The numbers update live as they’re logged.'),
-      list, form,
-      h('button', {
-        class: 'linkbtn', type: 'button', style: 'margin-top:10px',
-        onclick: function () { window.GR_BACKEND.signOut(); }
-      }, 'Sign out of Greenroom'));
+      list, form);
   }
 
   function prettyTime(v) {
