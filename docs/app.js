@@ -1277,7 +1277,7 @@
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' }, pill ? h('span', { class: 'pill' }, pill) : null),
-          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('span', { class: 'home-bus', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
               onclick: openSettingsSheet }, icon('more')))),
