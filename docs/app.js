@@ -1883,7 +1883,7 @@
       return { text: l.paid > 0 ? money(l.paid) + ' paid so far' : 'Worked out from income as you log shows', cls: '' };
     }
     if (l.projected == null) {
-      return { text: l.paid > 0 ? money(l.paid) + ' so far' + cardBit(l) : 'Nothing projected yet', cls: '' };
+      return { text: l.paid > 0 ? money(l.paid) + ' so far' + cardBit(l) : '', cls: '' };
     }
     if (l.left === 0) return { text: 'All ' + money(l.paid) + ' paid' + cardBit(l), cls: ' done' };
     return { text: money(l.paid) + ' paid · ' + money(l.left) + ' left to pay' + cardBit(l), cls: '' };
@@ -1894,7 +1894,8 @@
       var hint = lineHint(l);
       var amount = money(l.effective); // what the category actually counts against the tour
       var inner = [
-        h('div', { class: 'row-label' }, l.label, h('span', { class: 'hint' + hint.cls }, hint.text)),
+        h('div', { class: 'row-label' }, l.label,
+          hint.text ? h('span', { class: 'hint' + hint.cls }, hint.text) : null),
         h('span', { class: 'amt num' }, amount)
       ];
       if (!canWrite()) return h('div', { class: 'row' }, inner);
@@ -1918,17 +1919,23 @@
       : null;
     return [
       baselineOffer,
-      canWrite() ? h('div', { class: 'btnrow' }, fileControl({
-        label: 'Import card statement', icon: 'card', cls: 'btn ghost',
-        accept: '.csv,.tsv,text/csv,application/pdf,' + imageAccept(), multiple: true,
-        onFiles: function (files) { readStatement(id, files); }
-      })) : null,
+      h('div', { class: 'btnrow' },
+        canWrite() ? fileControl({
+          label: 'Import card statement', icon: 'card', cls: 'btn ghost',
+          accept: '.csv,.tsv,text/csv,application/pdf,' + imageAccept(), multiple: true,
+          onFiles: function (files) { readStatement(id, files); }
+        }) : null,
+        h('button', { class: 'btn ghost', type: 'button',
+          onclick: function () { go({ name: 'tour', id: id, view: 'daybyday' }); } },
+          icon('edit', 18), 'Log an expense')),
       h('div', { class: 'ledger' }, rows),
       canWrite() ? h('p', { class: 'note' }, 'Tap a category to set what you expect it to cost and what you’ve already paid.') : null,
-      h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'What you owe going in'),
-      h('p', { class: 'note', style: 'margin:2px 2px 12px' },
-        'Card balances feed the categories above as money already spent. Loans and gear payments sit on top.'),
-      debtSection(id, t, 'tab'),
+      // Debts logged before Credit card and Loan became plain categories still
+      // count, so a tour that has them keeps its ledger; fresh tours never see it.
+      G.rows(t && t.debts).length ? [
+        h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'What you owe going in'),
+        debtSection(id, t, 'tab')
+      ] : null,
       charges.length ? h('button', {
         class: 'btn quiet block', type: 'button', style: 'margin-top:14px',
         onclick: function () { openChargesSheet(id); }
@@ -2527,11 +2534,14 @@
   /* ============================== Tour view ============================== */
 
   function tourTopbar(t, id, view) {
-    // Inside a tour the tabs do the moving, so back always leaves it.
-    var back = view === 'addshows'
+    // Inside a tour the tabs do the moving, so back always leaves it —
+    // except the subpages, which step back to the tab they hang off.
+    var back = view === 'addshows' || view === 'daybyday'
       ? h('button', { class: 'iconbtn back', type: 'button',
-          onclick: function () { go({ name: 'tour', id: id, view: 'details' }); } },
-          icon('back'), h('span', null, 'Tour'))
+          onclick: function () {
+            go({ name: 'tour', id: id, view: view === 'daybyday' ? 'costs' : 'details' });
+          } },
+          icon('back'), h('span', null, view === 'daybyday' ? 'Expenses' : 'Tour'))
       : backBtn(t);
     return h('header', { class: 'topbar' }, back,
       h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
@@ -2686,7 +2696,14 @@
           h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
         dbBanner(),
         tabExpenses(id, t, c),
-        h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'Day by day'),
+        tourTabs(id, 'costs'));
+    }
+    if (view === 'daybyday') {
+      return h('div', { class: 'page tour has-tabs' },
+        h('div', { class: 'headband' },
+          tourTopbar(t, id, 'daybyday'),
+          h('h1', { class: 'tour-title' }, 'Day by day')),
+        dbBanner(),
         tabDays(id, t, c),
         tourTabs(id, 'costs'));
     }
@@ -2829,14 +2846,118 @@
         overviewBody(id, t),
         tourTabs(id, view));
     }
-    var only = view === 'day' ? 'sheet' : 'guests';
     return h('div', { class: 'page tour has-tabs' },
       h('div', { class: 'headband' },
         tourTopbar(t, id, view),
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
       dbBanner(),
-      detailsBody(id, t, only),
+      view === 'guests' ? guestsBody(id, t) : detailsBody(id, t, 'sheet'),
       tourTabs(id, view));
+  }
+
+  /* Guest list tab: tonight's list up front, any other night one tap away. */
+  function guestsBody(id, t) {
+    var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.guestsFor);
+    var myUid = backend ? window.GR_BACKEND.uid() : null;
+    var today = G.tourToday();
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    if (!shows.length) {
+      return emptyState('No dates yet', 'Once shows are on the run, each night gets its own guest list.');
+    }
+    // Tonight's show, else the next one, else the last one we played.
+    var s = shows.filter(function (x) { return x.date === today; })[0] ||
+      shows.filter(function (x) { return x.date > today; })[0] || shows[shows.length - 1];
+    var refresh = function () { setTimeout(function () { render(true); }, backend ? 500 : 150); };
+    var list = guestsFor(t, id, s.id);
+    var sum = G.guestSummary(list);
+
+    var rowsOut = list.slice().sort(function (a, b) {
+      return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
+        String(a.firstName || '').localeCompare(String(b.firstName || ''));
+    }).map(function (g) {
+      var name = [g.firstName, g.lastName].map(function (x) { return String(x || '').trim(); })
+        .filter(Boolean).join(' ') || 'Guest';
+      var mine = !backend || (g.addedBy && g.addedBy === myUid);
+      var canManage = canWrite() || mine;
+      var sub = [String(g.affiliation || '').trim(),
+        [String(g.email || '').trim(), String(g.phone || '').trim()].filter(Boolean).join(' · ')]
+        .filter(Boolean).join(' · ');
+      return h('div', { class: 'row' },
+        h('div', { class: 'row-label' }, name,
+          sub ? h('span', { class: 'hint' }, sub) : null),
+        h('span', { class: 'guest-pass' + (g.passType === 'All Access' ? ' aa' : '') },
+          (function () {
+            var q = Math.max(1, Math.min(20, G.num(g.qty) || 1));
+            return (q > 1 ? '+' + (q - 1) + ' · ' : '') + (g.passType || 'GA');
+          })()),
+        canManage ? h('button', { class: 'iconbtn sm', type: 'button',
+          'aria-label': 'Remove ' + name,
+          onclick: async function () {
+            try { await removeGuest(id, s.id, g.id); toast('Off the list'); refresh(); }
+            catch (e2) { toast('Only the tour manager can remove someone else’s guest.'); }
+          } }, icon('trash', 16)) : null);
+    });
+
+    var copyBtn = list.length ? h('button', {
+      class: 'btn ghost block', type: 'button', style: 'margin-top:14px',
+      onclick: async function () {
+        var text = G.guestListText(s, list);
+        var ta = h('textarea', { class: 'sr', readonly: true, value: text });
+        document.body.appendChild(ta);
+        var ok = await copyText(text, ta);
+        ta.remove();
+        toast(ok ? 'Guest list copied for the box office' : 'Press and hold to copy');
+      }
+    }, icon('copy', 18), 'Copy for the box office') : null;
+
+    return [
+      h('h3', { class: 'sh-h3', style: 'margin-top:4px' }, 'Guest list for ' + dayLong(s.date)),
+      h('p', { class: 'note', style: 'margin:2px 2px 12px' },
+        [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
+        (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
+      rowsOut.length
+        ? h('div', { class: 'ledger' }, rowsOut)
+        : emptyState('No names yet for this night',
+            'Anyone on the tour can add guests — band, crew, GA, everyone.'),
+      h('div', { class: 'gl-actions', style: 'margin-top:14px' },
+        h('button', { class: 'add-mini', type: 'button',
+          onclick: function () { openGuestDatePicker(id); } },
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
+        h('button', { class: 'add-mini', type: 'button',
+          onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import a list')),
+      copyBtn
+    ];
+  }
+
+  /* Add guest starts with the night: pick the date, then the name. */
+  function openGuestDatePicker(tourId) {
+    var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.guestsFor);
+    var t = getTour(tourId);
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    if (!shows.length) { toast('Add a show first'); return; }
+    var today = G.tourToday();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Which night?'),
+        h('p', { class: 'sh-sub' }, 'Pick the date the guest is coming to.'),
+        h('div', { class: 'ledger' }, shows.map(function (x) {
+          var n = G.guestSummary(guestsFor(t, tourId, x.id)).names;
+          return h('button', { class: 'row rowbtn', type: 'button',
+            onclick: function () {
+              openGuestForm(tourId, x.id, x, backend, function () {
+                closeSheet();
+                setTimeout(function () { render(true); }, backend ? 500 : 150);
+              });
+            } },
+            h('div', { class: 'row-label' },
+              dayMD(x.date) + ' · ' + (String(x.city || '').split(',')[0] || 'Show'),
+              h('span', { class: 'hint' }, x.date === today ? 'Tonight'
+                : (n ? plural(n, 'name') + ' so far' : 'No names yet'))),
+            icon('chevron', 18));
+        }))
+      ];
+    }, { label: 'Add a guest' });
   }
 
   function dateBlock(ds) {
@@ -2858,15 +2979,42 @@
     var shows = c.allShows;
     var tonight = shows.filter(function (s) { return s.date === today; })[0];
     var logged = shows.filter(function (s) { return s.loggedAt; }).length;
+    // The whole run, travel and off days included — the schedule tells the truth.
+    var got = overviewDays(t);
+    var rowsOut;
+    if (got) {
+      var firstShow = got.days.filter(function (x) { return x.show; })[0];
+      var lastShow = got.days.slice().reverse().filter(function (x) { return x.show; })[0];
+      rowsOut = got.days.map(function (x) {
+        if (x.show) return showRow(id, x.show, today);
+        var travel = (firstShow && x.date < firstShow.date) || (lastShow && x.date > lastShow.date);
+        return offDayRow(t, x.date, travel);
+      });
+      shows.forEach(function (s) { // undated holds keep their place at the end
+        if (!G.parseDay(s.date)) rowsOut.push(showRow(id, s, today));
+      });
+    } else {
+      rowsOut = shows.map(function (s) { return showRow(id, s, today); });
+    }
     return [
       tonight ? tonightCard(id, tonight) : null,
       shows.length
         ? [h('p', { class: 'count-line' }, logged + ' of ' + plural(shows.length, 'show') + ' logged'),
-           h('ul', { class: 'shows' }, shows.map(function (s) { return showRow(id, s, today); }))]
+           h('ul', { class: 'shows' }, rowsOut)]
         : emptyState('No shows yet', canWrite()
             ? 'Add each date and city as they get confirmed.'
             : 'No dates have been added.')
     ];
+  }
+
+  function offDayRow(t, date, travel) {
+    var off = offDayFor(t, date);
+    return h('li', null, h('div', { class: 'show-row is-off' },
+      dateBlock(date),
+      h('div', { class: 'where' },
+        h('div', { class: 'city' }, off.city || (travel ? 'Travel day' : 'Day off')),
+        off.hotel ? h('div', { class: 'venue' }, off.hotel) : null),
+      h('span', { class: 'tag quiet' }, travel ? 'Travel' : 'Off')));
   }
 
   function showRow(id, s, today) {

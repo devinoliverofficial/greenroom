@@ -395,6 +395,17 @@
       'Security', 'label rides along');
   });
 
+  test('Credit card and Loan are plain categories that count', function () {
+    var t = { expenses: { card: { projected: null, paid: 900 }, loan: { projected: null, paid: 400 } },
+      crew: {}, debts: {}, commission: {}, extras: {}, shows: {}, charges: {}, imports: {} };
+    near(G.calc(t).out, 1300, 'both count against the tour');
+    ['card', 'loan'].forEach(function (k) {
+      if (!G.CATEGORIES.some(function (c) { return c.key === k; })) {
+        throw new Error(k + ' missing from CATEGORIES');
+      }
+    });
+  });
+
   test('bulk guest paste \u2014 +1s, emails and parens parse out', function () {
     var g = G.parseGuestList('Sam Reyes +1 (Label)\n2. Dana Cole - dana@mail.com\nmgmt group x4\n\n');
     eq(g.length, 3, 'three guests');

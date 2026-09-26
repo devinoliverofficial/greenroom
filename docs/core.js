@@ -20,6 +20,9 @@
     { key: 'production', label: 'Production' },
     { key: 'studio', label: 'Studio' },
     { key: 'supplies', label: 'Supplies' },
+    // Debts ride as plain categories now — no separate "owed going in" ledger.
+    { key: 'card', label: 'Credit card' },
+    { key: 'loan', label: 'Loan' },
     { key: 'interest', label: 'Interest charges' },
     // What the merch cost to make. Usually an advance that has to be earned back,
     // which is why it sits here as a cost rather than against merch income.
