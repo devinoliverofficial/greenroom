@@ -95,13 +95,13 @@ function prompt(kind: "text" | "files", body: string): string {
     '{"show":{"date":"YYYY-MM-DD","venue":"","city":""},"income":{"merch":null},"notes":[{"label":"Merch per head","value":"$12.40"}]}',
     "",
     "Rules:",
-    '- merch: the merch sales total. On an atVenu summary this is the line called "Total Gross"',
-    '  (sometimes "Gross Total" or "Total Sales") — take that number exactly as printed. If only an',
-    '  artist-net figure after the venue cut is shown, take that instead and add a "Venue merch cut" note.',
+    '- merch: what the band actually keeps — the NET. Look for "Net to Artist", "Artist Net",',
+    '  "Due to Artist" or the total after the venue cut and fees. Only if no net line exists anywhere',
+    '  take "Total Gross" instead and add a note "Gross merch" so it is clear no net was shown.',
     "- show.date: the show's date in YYYY-MM-DD, from the report (not the email's sent date, unless nothing else is given).",
-    "- Never estimate a number that is not printed.",
+    "- Never estimate a number that is not printed — do NOT compute the net yourself.",
     "- notes may ONLY use these labels, and only when shown:",
-    '  "Gross merch", "Venue merch cut", "Merch per head" (dollars per attendee, shown or computable from gross and attendance), "Attendance".',
+    '  "Gross merch", "Venue merch cut", "Card fees", "Merch per head" (dollars per attendee, shown or computable from gross and attendance), "Attendance".',
     'Keep every value under a dozen words. If unreadable, reply {"show":{},"income":{},"notes":[]}.',
     kind === "text" ? "\nEmail text:\n" + body.slice(0, 40_000) : "",
   ].join("\n");
@@ -115,7 +115,7 @@ function ariPrompt(body: string, where: string, merch: number, notes: { label: s
     "Explain it to the whole crew in a group chat — the drummer, the merch kid, the guitar tech.",
     "Most of them have never read a settlement and will not ask questions if it sounds complicated.",
     "",
-    "What the app already logged: $" + merch.toLocaleString("en-US") + " merch" +
+    "What the app already logged: $" + merch.toLocaleString("en-US") + " merch (the artist's net — what the band keeps)" +
       (notes.length ? " · " + notes.map((n) => n.label + " " + n.value).join(" · ") : "") + ".",
     "",
     "Rules for your message:",
@@ -137,6 +137,12 @@ function jsonOut(text: string): Record<string, unknown> {
 }
 
 const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+// "\$3,915.00" is a number wearing clothes. Undress it before judging it.
+const money = (v: unknown): number => {
+  if (typeof v === "number") return v;
+  const m = String(v ?? "").replace(/[^0-9.\-]/g, "");
+  return m ? Number(m) : NaN;
+};
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return ok({ status: "ignored" });
@@ -180,7 +186,7 @@ Deno.serve(async (req) => {
   const out = jsonOut(res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join(""));
   const show = (out.show ?? {}) as Record<string, unknown>;
   const income = (out.income ?? {}) as Record<string, unknown>;
-  const merch = Math.round(Number(income.merch ?? 0) * 100) / 100;
+  const merch = Math.round((money(income.merch) || 0) * 100) / 100;
   const date = String(show.date ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(merch > 0)) {
     await logMail(mail.from, mail.subject, "nothing_found", "date=" + date + " merch=" + merch);

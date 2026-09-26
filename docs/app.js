@@ -4511,7 +4511,7 @@
       var perHeadEl = h('span', { class: 'hint ph-hint' }, '');
       function updatePerHead() {
         var hit = (settNotes || []).filter(function (x) { return /per head/i.test(x.label); })[0];
-        perHeadEl.textContent = hit ? hit.value + ' per head' : 'atVenu $ per head';
+        perHeadEl.textContent = hit ? hit.value + ' per head' : 'atVenu net $ per head';
         perHeadEl.classList.toggle('known', !!hit);
       }
       updatePerHead();
@@ -5933,12 +5933,12 @@
       '{"income":{"merch":null},"notes":[{"label":"Merch per head","value":"$12.40"}]}',
       '',
       'Rules:',
-      '- merch: the merch sales total. On an atVenu summary this is the line called "Total Gross"',
-      '  (sometimes "Gross Total" or "Total Sales") \u2014 take that number exactly as printed. If the sheet',
-      '  only shows an artist-net figure after the venue cut, take that instead and add a "Venue merch cut" note.',
-      '- Never estimate a number that is not printed on the sheet.',
+      '- merch: what the band actually keeps \u2014 the NET. Look for "Net to Artist", "Artist Net",',
+      '  "Due to Artist" or the total after the venue cut and fees. Only if no net line exists anywhere',
+      '  take "Total Gross" instead and add a note "Gross merch" so it is clear no net was shown.',
+      '- Never estimate a number that is not printed on the sheet \u2014 do NOT compute the net yourself.',
       '- notes may ONLY use these labels, and only when the sheet shows them:',
-      '  "Gross merch", "Venue merch cut", "Merch per head" (dollars per attendee, shown or computable from gross and attendance), "Attendance".',
+      '  "Gross merch", "Venue merch cut", "Card fees", "Merch per head" (dollars per attendee, shown or computable from gross and attendance), "Attendance".',
       'Keep every value under a dozen words. If the sheet is unreadable, reply {"income":{},"notes":[]}.',
       isImage ? '' : '\nMerch report text:\n' + body
     ].join('\n');
@@ -5994,7 +5994,7 @@
             r.income = m != null ? { merch: m } : {};
             r.found = m != null ? 1 : 0;
             r.miscLabel = '';
-            r.notes = r.notes.filter(function (n) { return /merch|attendance|per head/i.test(n.label); });
+            r.notes = r.notes.filter(function (n) { return /merch|attendance|per head|fees/i.test(n.label); });
           }
           if (!r.found && !r.notes.length) {
             toast('Couldn’t read that sheet. Try a sharper photo.');

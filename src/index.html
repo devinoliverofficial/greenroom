@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Greenroom">
@@ -95,10 +95,12 @@
 
 /* ============================== Base ============================== */
 *, *::before, *::after { box-sizing: border-box; }
-/* touch-action: manipulation kills double-tap-to-zoom. Pinch still works. */
-html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: manipulation; }
+/* pan-x pan-y allows scrolling and nothing else — no double-tap zoom, no
+   pinch zoom. An accidental pinch used to leave the page not fitting the
+   screen with no obvious way back. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: pan-x pan-y; }
 /* No rubber-band bounce: the overscroll stretch is what tugs fixed bars around. */
-body { touch-action: manipulation; overscroll-behavior-y: none; }
+body { touch-action: pan-x pan-y; overscroll-behavior-y: none; }
 body {
   margin: 0;
   padding: env(safe-area-inset-top, 0px) 0 0;
@@ -1120,6 +1122,12 @@ textarea.update {
 <div id="sheet-root" hidden></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <canvas id="confetti" aria-hidden="true" hidden></canvas>
+<script>
+// iOS's pinch arrives as gesture events before CSS gets a say. Refuse them.
+['gesturestart', 'gesturechange', 'gestureend'].forEach(function (n) {
+  document.addEventListener(n, function (e) { e.preventDefault(); }, { passive: false });
+});
+</script>
 <script src="core.js"></script>
 <script src="statements.js"></script>
 <script src="app.js"></script>
