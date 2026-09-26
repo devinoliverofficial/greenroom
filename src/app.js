@@ -111,6 +111,7 @@
     tabcost: '<path d="M4 20V10M10 20V5M16 20v-7M22 20H2"/>',
     tabchat: '<path d="M21 11.5c0 3.6-4 6.5-9 6.5-1.1 0-2.1-.13-3-.37L4 20l1.5-3.4C4.1 15.4 3 13.6 3 11.5 3 7.9 7 5 12 5s9 2.9 9 6.5z"/>',
     bell: '<path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16l-2-3z"/><path d="M10.5 21a2.2 2.2 0 0 0 3 0"/>',
+    gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M21.2 12h-3M5.8 12h-3M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1M18.5 18.5l-2.1-2.1M7.6 7.6L5.5 5.5"/>',
     phone: '<path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3z"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
     chevron: '<path d="M9 5l7 7-7 7"/>',
@@ -1277,7 +1278,11 @@
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' }, pill ? h('span', { class: 'pill' }, pill) : null),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-          h('span', { class: 'top-side right' })),
+          h('span', { class: 'top-side right' },
+            (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.signOut)
+              ? h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
+                  onclick: openSettingsSheet }, icon('gear'))
+              : null)),
         h('div', { class: 'band-row' },
           h('span'),
           canWrite()
@@ -1341,33 +1346,39 @@
         }
         return null;
       })(),
-      (function () {
-        var bits = [];
-        if (canWrite() && trashedEntries().length) {
-          bits.push(h('button', { class: 'linkbtn', type: 'button', onclick: openTrash },
-            'Recently deleted (' + trashedEntries().length + ')'));
-        }
-        if (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.saveProfile) {
-          bits.push(h('button', { class: 'linkbtn', type: 'button',
+      canWrite() && trashedEntries().length
+        ? h('div', { class: 'home-corner' },
+            h('button', { class: 'iconbtn dim', type: 'button',
+              'aria-label': 'Recently deleted (' + trashedEntries().length + ')',
+              onclick: openTrash }, icon('trash', 19)))
+        : null);
+  }
+
+  /* Settings, behind the gear: who you are to the tour, and the way out. */
+  function openSettingsSheet() {
+    var B = window.GR_BACKEND;
+    var who = B && B.email ? B.email() : null;
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Settings'),
+        who ? h('p', { class: 'sh-sub' }, 'Signed in as ' + who) : null,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openUsernameSheet(false); } },
-            (window.GR_BACKEND.username && window.GR_BACKEND.username())
-              ? 'Your contact card' : 'Add your details'));
-        }
-        if (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.signOut) {
-          var who = window.GR_BACKEND.email ? window.GR_BACKEND.email() : null;
-          bits.push(h('button', { class: 'linkbtn', type: 'button',
+            icon('people', 18),
+            (B && B.username && B.username()) ? 'Your contact card' : 'Add your details'),
+          h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () {
               confirmSheet({
                 title: 'Sign out of Greenroom?',
                 body: (who ? 'You\u2019re signed in as ' + who + '. ' : '') +
                   'Your tours stay safe in your account.',
                 action: 'Sign out',
-                onConfirm: function () { window.GR_BACKEND.signOut(); return true; }
+                onConfirm: function () { B.signOut(); return true; }
               });
-            } }, 'Sign out'));
-        }
-        return bits.length ? h('div', { class: 'home-corner' }, bits) : null;
-      })());
+            } }, icon('back', 18), 'Sign out'))
+      ];
+    }, { label: 'Settings' });
   }
 
   /* One artist: just the name. The numbers wait behind the doors. */

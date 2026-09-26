@@ -419,9 +419,10 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 /* The quiet links live on the floor of the screen, centred — margin-top:auto
    does the pinning, so no other margin may ever appear on this rule again. */
 .home-corner {
-  display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
-  gap: 8px 22px; margin-top: auto; padding-top: 34px;
+  display: flex; align-items: center; justify-content: flex-start;
+  margin-top: auto; padding-top: 34px;
 }
+.iconbtn.dim { color: var(--ink-3); }
 .home-corner .linkbtn {
   font-size: 12px; font-weight: 600; color: var(--ink-3);
   text-decoration: none; min-height: 32px;
