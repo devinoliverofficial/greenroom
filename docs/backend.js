@@ -224,6 +224,17 @@
 
   window.GR_BACKEND = {
     email: function () { return session && session.user ? session.user.email : null; },
+    username: function () {
+      var m = session && session.user ? session.user.user_metadata : null;
+      var n = m ? String(m.username || '').trim() : '';
+      return n || null;
+    },
+    setUsername: async function (name) {
+      var clean = String(name || '').trim().slice(0, 24);
+      var q = await sb.auth.updateUser({ data: { username: clean } });
+      if (q.error) throw mapError(q.error);
+      if (q.data && q.data.user && session) session.user = q.data.user;
+    },
     ownsTour: function (tourId) {
       var doc = cache.tours.get(tourId);
       return !!(doc && session && doc._ownerId === session.user.id);
@@ -377,6 +388,9 @@
         '<div class="gate-card">' +
         '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
         '<form id="gr-gate-form" novalidate>' +
+        (signin ? '' :
+          '<input class="input" type="text" id="gr-gate-name" placeholder="Username \u2014 what the tour sees" ' +
+            'maxlength="24" autocomplete="nickname" aria-label="Username">') +
         '<input class="input" type="email" id="gr-gate-email" placeholder="you@band.com" autocomplete="email" inputmode="email" aria-label="Email">' +
         '<input class="input" type="password" id="gr-gate-pass" placeholder="Password" ' +
           'autocomplete="' + (signin ? 'current-password' : 'new-password') + '" aria-label="Password">' +
@@ -400,13 +414,16 @@
         errEl.textContent = '';
         var email = String(emailI.value || '').trim();
         var pass = String(passI.value || '');
+        var nameI = wrap.querySelector('#gr-gate-name');
+        var uname = nameI ? String(nameI.value || '').trim() : '';
+        if (nameI && uname.length < 2) { errEl.textContent = 'Pick a username \u2014 it\u2019s what the tour sees in chat.'; nameI.focus(); return; }
         if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email address.'; emailI.focus(); return; }
         if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
         btn.disabled = true;
         try {
           var res = signin
             ? await sb.auth.signInWithPassword({ email: email, password: pass })
-            : await sb.auth.signUp({ email: email, password: pass });
+            : await sb.auth.signUp({ email: email, password: pass, options: { data: { username: uname.slice(0, 24) } } });
           if (res.error) throw res.error;
           if (!res.data || !res.data.session) throw new Error('no session');
           // onAuthStateChange finishes the job

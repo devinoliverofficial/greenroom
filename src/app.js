@@ -1329,10 +1329,24 @@
         : null,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       (function () {
+        if (S.mode === 'db' && !S.askedUsername && window.GR_BACKEND &&
+            window.GR_BACKEND.setUsername && window.GR_BACKEND.username && !window.GR_BACKEND.username()) {
+          S.askedUsername = true;
+          setTimeout(function () { openUsernameSheet(true); }, 700);
+        }
+        return null;
+      })(),
+      (function () {
         var bits = [];
         if (canWrite() && trashedEntries().length) {
           bits.push(h('button', { class: 'linkbtn', type: 'button', onclick: openTrash },
             'Recently deleted (' + trashedEntries().length + ')'));
+        }
+        if (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.setUsername) {
+          bits.push(h('button', { class: 'linkbtn', type: 'button',
+            onclick: function () { openUsernameSheet(false); } },
+            (window.GR_BACKEND.username && window.GR_BACKEND.username())
+              ? 'Change username' : 'Pick a username'));
         }
         if (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.signOut) {
           var who = window.GR_BACKEND.email ? window.GR_BACKEND.email() : null;
@@ -3725,8 +3739,45 @@
     return G.rows(bag).map(function (n) { return Object.assign({ day: day }, n); });
   }
   function myName() {
-    var e = window.GR_BACKEND && window.GR_BACKEND.email ? window.GR_BACKEND.email() : null;
+    var B = window.GR_BACKEND;
+    var u = B && B.username ? B.username() : null;
+    if (u) return u;
+    var e = B && B.email ? B.email() : null;
     return e ? String(e).split('@')[0] : 'You';
+  }
+
+  /* The name the tour sees. Asked once for accounts made before usernames
+     existed, changeable any time from the home page. */
+  function openUsernameSheet(firstRun) {
+    var B = window.GR_BACKEND;
+    if (!B || !B.setUsername) return;
+    var f = { name: (B.username && B.username()) || '' };
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, f.name ? 'Change your username' : 'Pick a username'),
+        h('p', { class: 'sh-sub' }, 'What everyone on the tour sees next to what you write \u2014 chat, notes, guest adds.'),
+        h('form', { class: 'sh-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            var name = f.name.trim();
+            if (name.length < 2) { toast('Pick a username first'); return; }
+            blurActive();
+            try {
+              await B.setUsername(name);
+              closeSheet();
+              toast('You\u2019re ' + name + ' to the tour');
+              render(true);
+            } catch (e2) { toast('Couldn\u2019t save it. Try again.'); }
+          } },
+          field('Username', h('input', { class: 'input', type: 'text', maxlength: 24,
+            value: f.name, placeholder: 'DevinO', autocomplete: 'nickname',
+            oninput: function (e) { f.name = e.target.value; } })),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { closeSheet(); } }, firstRun ? 'Later' : 'Cancel')))
+      ];
+    }, { label: 'Username' });
   }
   async function saveNote(tourId, day, note) {
     if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.saveNote) {
