@@ -1310,25 +1310,28 @@
   /* One artist: just the name. The numbers wait behind the doors. */
   function artistCard(name, entries) {
     var logo = artistLogo(name);
-    // Newest run first, so the shortcut goes where the work is.
-    var live = (entries || []).slice().sort(function (a, b) {
-      return (b[1].createdAt || 0) - (a[1].createdAt || 0);
-    })[0];
-    var jump = live
-      ? h('button', { class: 'row-pill', type: 'button',
-          'aria-label': 'Open ' + (live[1].name || 'the tour'),
-          onclick: function (e) { e.stopPropagation(); go({ name: 'tour', id: live[0], view: 'menu' }); } }, 'Tour')
-      : (canWrite() ? h('button', { class: 'row-pill', type: 'button',
-          'aria-label': 'Start a tour for ' + name,
-          onclick: function (e) { e.stopPropagation(); startTour(name); } }, '+ Tour') : null);
+    var open = function () { go({ name: 'artist', artist: name }); };
+    // A + right beside the name: the one job is bringing in their logo.
+    var plus = canWrite() ? fileControl({
+      label: '+', cls: 'logo-plus', accept: imageAccept(),
+      ariaLabel: (logo ? 'Change' : 'Import') + ' the logo for ' + name,
+      onFiles: function (files) {
+        readLogoFile(files[0], async function (dataUrl) {
+          if (await saveArtistLogo(name, dataUrl)) { toast('Logo in'); render(true); }
+        });
+      }
+    }) : null;
     return h('div', { class: 'tour-card idle name-card art-row' },
-      h('button', { class: 'art-main', type: 'button',
-        onclick: function () { go({ name: 'artist', artist: name }); } },
+      h('button', { class: 'art-main', type: 'button', onclick: open },
         logo ? h('img', { class: 'artist-logo', src: logo, alt: '' })
              : h('span', { class: 'artist-logo blank', 'aria-hidden': 'true' },
                  String(name || '?').trim().charAt(0).toUpperCase()),
         h('span', { class: 'tc-name' }, name)),
-      jump);
+      plus,
+      h('span', { class: 'art-gap' }),
+      h('button', { class: 'row-pill', type: 'button',
+        'aria-label': name + '\u2019s tours',
+        onclick: function (e) { e.stopPropagation(); open(); } }, 'Tours'));
   }
 
   /* One artist's tours. */
