@@ -1241,6 +1241,12 @@
           : null),
       dbBanner(),
       byArtist.size
+        ? h('div', { class: 'sec-head' },
+            h('h2', { class: 'sec-title' }, 'ARTISTS'),
+            h('p', { class: 'sec-sub' }, plural(byArtist.size, 'act') +
+              ' \u00b7 ' + plural(entries.filter(function (e) { return artistOf(e[1]); }).length, 'run')))
+        : null,
+      byArtist.size
         ? h('ul', { class: 'tour-list' }, Array.from(byArtist, function (pair) {
             var cardEl = artistCard(pair[0], pair[1]);
             if (!canWrite()) return h('li', null, cardEl);
@@ -1304,13 +1310,25 @@
   /* One artist: just the name. The numbers wait behind the doors. */
   function artistCard(name, entries) {
     var logo = artistLogo(name);
-    return h('button', { class: 'tour-card idle name-card', type: 'button',
-      onclick: function () { go({ name: 'artist', artist: name }); } },
-      h('div', { class: 'tc-top' },
-        h('div', { class: 'tc-name tc-artist' },
-          logo ? h('img', { class: 'artist-logo', src: logo, alt: '' }) : null,
-          name),
-        icon('chevron', 20)));
+    // Newest run first, so the shortcut goes where the work is.
+    var live = (entries || []).slice().sort(function (a, b) {
+      return (b[1].createdAt || 0) - (a[1].createdAt || 0);
+    })[0];
+    var jump = live
+      ? h('button', { class: 'row-pill', type: 'button',
+          'aria-label': 'Open ' + (live[1].name || 'the tour'),
+          onclick: function (e) { e.stopPropagation(); go({ name: 'tour', id: live[0], view: 'menu' }); } }, 'Tour')
+      : (canWrite() ? h('button', { class: 'row-pill', type: 'button',
+          'aria-label': 'Start a tour for ' + name,
+          onclick: function (e) { e.stopPropagation(); startTour(name); } }, '+ Tour') : null);
+    return h('div', { class: 'tour-card idle name-card art-row' },
+      h('button', { class: 'art-main', type: 'button',
+        onclick: function () { go({ name: 'artist', artist: name }); } },
+        logo ? h('img', { class: 'artist-logo', src: logo, alt: '' })
+             : h('span', { class: 'artist-logo blank', 'aria-hidden': 'true' },
+                 String(name || '?').trim().charAt(0).toUpperCase()),
+        h('span', { class: 'tc-name' }, name)),
+      jump);
   }
 
   /* One artist's tours. */
