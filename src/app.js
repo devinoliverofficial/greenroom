@@ -2476,13 +2476,12 @@
   /* ============================== Tour view ============================== */
 
   function tourTopbar(t, id, view) {
-    var back;
-    if (view === 'menu') back = backBtn(t);
-    else {
-      back = h('button', { class: 'iconbtn back', type: 'button',
-        onclick: function () { go({ name: 'tour', id: id, view: 'menu' }); } },
-        icon('back'), h('span', null, 'Tour'));
-    }
+    // Inside a tour the tabs do the moving, so back always leaves it.
+    var back = view === 'addshows'
+      ? h('button', { class: 'iconbtn back', type: 'button',
+          onclick: function () { go({ name: 'tour', id: id, view: 'details' }); } },
+          icon('back'), h('span', null, 'Tour'))
+      : backBtn(t);
     return h('header', { class: 'topbar' }, back,
       h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
       h('div', { class: 'topbar-actions' },
@@ -2494,32 +2493,12 @@
         }, icon('more')) : null));
   }
 
-  /* The run at a glance — Overview's own half, now that the day sheet and the
-     guest list have tabs of their own. */
-  function runSummary(id, t) {
-    var c = G.calc(t);
-    var dated = c.allShows.filter(function (x) { return G.parseDay(x.date); });
-    var today = G.tourToday();
-    var next = dated.filter(function (x) { return x.date >= today; })[0] || dated[dated.length - 1];
-    var logged = c.allShows.filter(function (x) { return x.loggedAt; }).length;
-    function row(label, value, cls) {
-      return h('div', { class: 'row' },
-        h('span', { class: 'row-label' }, label),
-        h('span', { class: 'amt num ' + (cls || '') }, value));
-    }
-    return h('div', { class: 'ledger inv-card', style: 'margin-top:16px' },
-      row('Shows', logged + ' of ' + dated.length + ' logged'),
-      dated.length ? row('Dates', dayMD(dated[0].date) + ' \u2013 ' + dayMD(dated[dated.length - 1].date)) : null,
-      next ? row('Next stop', next.city || 'Show') : null,
-      row('Money in', money(c.income)),
-      row('Where it stands', money(c.net, true), c.net >= 0 ? 'pos' : 'neg'));
-  }
 
   /* Five tabs along the bottom. The day sheet is where a tour opens. */
   var TOUR_TABS = [
+    { view: 'details', label: 'Overview', icon: 'tabmap' },
     { view: 'day', label: 'Day sheet', icon: 'tabsheet' },
     { view: 'money', label: 'Budget', icon: 'tabmoney' },
-    { view: 'details', label: 'Overview', icon: 'tabmap' },
     { view: 'guests', label: 'Guest list', icon: 'tabguest' },
     { view: 'costs', label: 'Expenses', icon: 'tabcost' }
   ];
@@ -2637,7 +2616,7 @@
 
   function viewTour() {
     var id = S.route.id;
-    var view = S.route.view || 'money';
+    var view = S.route.view || 'details';
     var tab = S.route.tab || 'shows';
     var t = getTour(id);
     if (!t) {
@@ -2646,7 +2625,7 @@
         emptyState('This tour isn’t here anymore', 'It may have been deleted.'));
     }
     if (view === 'addshows') return viewAddShows(id, t);
-    if (view === 'menu') view = 'day';
+    if (view === 'menu') view = 'details';
     if (view === 'day' || view === 'details' || view === 'guests') {
       return viewTourDay(id, t, view);
     }
@@ -3021,7 +3000,6 @@
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
     if (only === 'sheet') return [hero, rail, editRow, body, copyBtn];
-    if (only === 'overview') return [hero, rail, runSummary(id, t)];
     return [hero, rail, editRow, body, guestBtn, copyBtn];
   }
 
