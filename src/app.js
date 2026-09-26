@@ -1420,9 +1420,7 @@
           pill ? null : h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('div', { class: 'topbar-actions' },
             pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
-        h('h1', { class: 'tour-title artist-title' },
-          artistLogo(name) ? h('img', { class: 'artist-logo', src: artistLogo(name), alt: '' }) : null,
-          name),
+        h('h1', { class: 'tour-title artist-title' }, name),
         canWrite()
           ? h('button', { class: 'add-mini', type: 'button',
               onclick: function () { startTour(name); } },
