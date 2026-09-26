@@ -1274,13 +1274,15 @@
 
     return h('div', { class: 'page home' },
       h('div', { class: 'headband' },
-        h('header', { class: 'topbar' }, wordmark(),
-          h('div', { class: 'topbar-actions' },
-            pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
-        canWrite()
-          ? h('button', { class: 'add-mini', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
-              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
-          : null),
+        h('header', { class: 'topbar' },
+          h('span', { class: 'top-side' }, pill ? h('span', { class: 'pill' }, pill) : null),
+          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('span', { class: 'top-side right' })),
+        h('div', { class: 'band-row' },
+          canWrite()
+            ? h('button', { class: 'add-mini', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
+                h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
+            : null)),
       dbBanner(),
       byArtist.size
         ? h('div', { class: 'sec-head' },
@@ -1431,17 +1433,18 @@
     return h('div', { class: 'page home' },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
-            icon('back'), h('span', null, 'Artists')),
-          pill ? null : h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-          h('div', { class: 'topbar-actions' },
-            pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
-        h('h1', { class: 'tour-title artist-title' }, name),
-        canWrite()
-          ? h('button', { class: 'add-mini', type: 'button',
-              onclick: function () { startTour(name); } },
-              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
-          : null,),
+          h('span', { class: 'top-side' },
+            h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
+              icon('back'), h('span', null, 'Artists'))),
+          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('span', { class: 'top-side right' }, pill ? h('span', { class: 'pill' }, pill) : null)),
+        h('div', { class: 'band-row' },
+          h('h1', { class: 'band-name' }, name),
+          canWrite()
+            ? h('button', { class: 'add-mini', type: 'button',
+                onclick: function () { startTour(name); } },
+                h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
+            : null)),
       dbBanner(),
       entries.length
         ? h('div', { class: 'sec-head' },
@@ -2562,12 +2565,10 @@
     return h('header', { class: 'topbar' }, back,
       h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
       h('div', { class: 'topbar-actions' },
-        h('button', { class: 'btn ghost sm', type: 'button', onclick: function () { openShare(id); } },
-          icon('share', 17), 'Share'),
-        canWrite() ? h('button', {
+        canEditTour(id) ? h('button', {
           class: 'iconbtn', type: 'button', 'aria-label': 'Tour options',
           onclick: function () { openTourMenu(id); }
-        }, icon('more')) : null));
+        }, icon('more')) : h('span', { style: 'width:44px' })));
   }
 
 
@@ -2648,16 +2649,15 @@
       } catch (e2) { toast('Couldn\u2019t send that. Try again.'); }
     };
 
-    return h('div', { class: 'page tour has-tabs' },
+    return h('div', { class: 'page tour has-tabs chat-page' },
       h('div', { class: 'headband' },
         tourTopbar(t, id, 'chat'),
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
       dbBanner(),
-      canEditTour(id) ? h('div', { class: 'stack', style: 'margin-bottom:4px' },
-        h('button', { class: 'btn ghost block', type: 'button',
-          onclick: function () { openAlertSheet(id); } },
-          icon('bell', 18), 'Send alert notification'),
-        askAriControl(id)) : null,
+      canEditTour(id) ? h('button', { class: 'btn ghost block', type: 'button',
+        style: 'margin-bottom:4px',
+        onclick: function () { openAlertSheet(id); } },
+        icon('bell', 18), 'Send alert notification') : null,
       msgs.length
         ? h('div', { class: 'chat-list' }, msgs)
         : emptyState('Special requests, notes for the team, send here.', null),
@@ -3096,12 +3096,13 @@
     });
 
     return [
-      h('div', { class: 'sec-head crew-head', style: 'margin-top:30px' },
-        h('h2', { class: 'sec-title' }, 'CREW'),
-        owns ? h('button', { class: 'crew-invite', type: 'button',
+      h('div', { class: 'sec-head', style: 'margin-top:30px;text-align:center' },
+        h('h2', { class: 'sec-title' }, 'CREW')),
+      list,
+      owns ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
+        h('button', { class: 'crew-invite', type: 'button',
           onclick: function () { openInviteSheet(tourId); } },
-          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew') : null),
-      list
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew')) : null
     ];
   }
 
@@ -3163,7 +3164,7 @@
         overviewBody(id, t),
         tourTabs(id, view));
     }
-    return h('div', { class: 'page tour has-tabs' },
+    return h('div', { class: 'page tour has-tabs' + (view === 'guests' ? ' guest-page' : '') },
       h('div', { class: 'headband' },
         tourTopbar(t, id, view),
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
@@ -3241,27 +3242,32 @@
         h('span', { class: 'ds-chip-d num' }, dd ? String(dd.getDate()) : '?'),
         h('span', { class: 'ds-chip-c' }, String(x.city || '').split(',')[0] || 'Show'));
     }));
+    // The night you are on sits centred in the strip, like the day sheet's rail.
+    requestAnimationFrame(function () {
+      var sel = rail.querySelector('.ds-chip.on');
+      if (sel && sel.scrollIntoView) sel.scrollIntoView({ inline: 'center', block: 'nearest' });
+    });
 
     return [
-      h('h3', { class: 'sh-h3', style: 'margin-top:4px' },
-        s.date === today ? 'Today\u2019s guest list' : 'Guest list for ' + dayLong(s.date)),
-      rail,
-      h('p', { class: 'note', style: 'margin:10px 2px 12px' },
+      h('div', { class: 'sec-head', style: 'margin-top:8px;text-align:center;margin-bottom:4px' },
+        h('h2', { class: 'sec-title' }, 'GUEST LIST')),
+      h('p', { class: 'note', style: 'margin:0 2px 2px;text-align:center' },
         [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
         (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
-      h('div', { class: 'sec-head', style: 'margin-top:6px;text-align:center' },
-        h('h2', { class: 'sec-title' }, 'GUEST LIST')),
+      h('p', { class: 'note', style: 'margin:0 2px 10px;text-align:center;color:var(--pos);font-weight:650' },
+        s.date === today ? 'Today\u2019s guest list' : 'Guest list for ' + dayLong(s.date)),
+      rail,
       rowsOut.length
         ? h('div', { class: 'ledger' }, rowsOut)
-        : h('div', { style: 'min-height:90px' }),
-      h('div', { class: 'gl-actions', style: 'margin-top:14px' },
+        : h('div', { style: 'min-height:60px' }),
+      copyBtn,
+      h('div', { class: 'gl-dock' },
         h('button', { class: 'add-mini', type: 'button',
           onclick: function () { openGuestDatePicker(id); } },
           h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
         h('button', { class: 'add-mini', type: 'button',
           onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
-          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import a list')),
-      copyBtn
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import a list'))
     ];
   }
 
@@ -5452,6 +5458,8 @@
       return [
         h('h2', { class: 'sh-title' }, t.name || 'Tour options'),
         h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openShare(id); } },
+            icon('share', 18), 'Share this tour'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openRename(id); } },
             icon('edit', 18), 'Name and artist'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } },

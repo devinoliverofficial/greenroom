@@ -131,6 +131,17 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .page { max-width: 600px; margin: 0 auto; padding: 4px 18px 72px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 60px; }
 .topbar-actions { display: flex; align-items: center; gap: 4px; }
+/* Equal wings either side of the mark: the GR sits dead centre on every page. */
+.topbar .top-side { flex: 1 1 0; display: flex; align-items: center; min-width: 0; }
+.topbar .top-side.right { justify-content: flex-end; }
+/* The second header row: same height on the Artists page and an artist's page,
+   so the green band never jumps when toggling between them. */
+.band-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; }
+.band-name {
+  margin: 0; flex: 1 1 auto; min-width: 0; font-size: 25px; font-weight: 800;
+  letter-spacing: -.02em; line-height: 1.1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 /* The GR mark. 322x243 artwork, so width tracks height at 1.324:1. */
 .logo-mark {
   display: block; flex: none; width: 32px; height: 24px;
@@ -283,6 +294,12 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .tabbar-b.on { color: var(--pos); }
 .tabbar-b.on .ic { opacity: 1; }
 .page.has-tabs { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+/* Chat and Guest list dock controls above the tab bar; their pages leave room. */
+.page.chat-page, .page.guest-page { padding-bottom: calc(170px + env(safe-area-inset-bottom, 0px)); }
+/* The home page is a column, so its quiet links can sink to the floor. */
+.page.home { display: flex; flex-direction: column; min-height: 100dvh; }
+.page.home > * { flex: none; }
+.home-corner { margin-top: auto; padding-top: 30px; }
 
 /* The inverted cards: the logo's black fields floating on the green.
    Re-scoping the tokens flips everything inside — ink, lines, chips, charts.
@@ -562,7 +579,7 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--pos); }
 
 /* ============================== Shows ============================== */
-.count-line { margin: 0 0 8px; font-size: 13px; font-weight: 500; color: var(--ink-3); }
+.count-line { margin: 18px 0 8px; font-size: 13px; font-weight: 500; color: var(--ink-3); text-align: center; }
 .shows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .show-row {
   display: grid; grid-template-columns: 50px minmax(0, 1fr) auto; align-items: center; gap: 14px;
@@ -675,8 +692,18 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   background: var(--surface); color: var(--pos);
   font-family: var(--font-num); font-size: 12.5px; overflow-wrap: anywhere;
 }
-.chat-form { display: flex; gap: 8px; margin-top: 16px; }
+.chat-form {
+  position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  z-index: 39; display: flex; gap: 8px; margin: 0; padding: 10px 14px;
+  background: var(--bg); border-top: 1px solid var(--line);
+}
 .chat-form .input { flex: 1; min-width: 0; }
+/* Guest list's two doors, one on each side, right above the tabs. */
+.gl-dock {
+  position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  z-index: 39; display: flex; align-items: center; justify-content: space-between;
+  margin: 0; padding: 12px 18px; background: var(--bg); border-top: 1px solid var(--line);
+}
 
 .ds-amens { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .ds-amen { padding: 5px 11px; border-radius: 999px; font-size: 13px; font-weight: 600; }
@@ -754,6 +781,9 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 
 /* The dates rail under it */
 .ds-rail { display: flex; gap: 7px; overflow-x: auto; padding: 4px 2px 2px; scrollbar-width: none; }
+/* Auto margins centre the strip when it fits and bow out when it scrolls. */
+.ds-rail > :first-child { margin-left: auto; }
+.ds-rail > :last-child { margin-right: auto; }
 .ds-rail::-webkit-scrollbar { display: none; }
 .ds-chip {
   flex: none; display: grid; justify-items: center; gap: 1px; min-width: 46px;
@@ -864,7 +894,11 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .addform .chips { margin: 10px 0 14px; }
 .af-row { display: flex; gap: 10px; align-items: stretch; }
 .af-row .input { flex: 1; min-width: 0; }
-.af-row input[type="date"].input { flex: 0 0 152px; }
+/* The date grows to the money box's height instead of hovering beside it. */
+.af-row input[type="date"].input {
+  flex: 0 0 152px; height: auto; align-self: stretch;
+  display: inline-flex; align-items: center;
+}
 
 /* ============================== Day by day ============================== */
 .section-total { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 4px 2px 12px; font-weight: 600; color: var(--ink-2); }
