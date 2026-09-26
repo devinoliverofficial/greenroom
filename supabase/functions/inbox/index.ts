@@ -37,8 +37,9 @@ async function readMail(req: Request): Promise<Mail | null> {
       }
     }
     return {
-      from: String(form.get("from") ?? form.get("envelope[from]") ?? ""),
-      subject: String(form.get("subject") ?? form.get("headers[subject]") ?? ""),
+      from: [form.get("from"), form.get("envelope[from]"), form.get("headers[From]"),
+             form.get("headers[from]")].filter(Boolean).join(" "),
+      subject: String(form.get("subject") ?? form.get("headers[Subject]") ?? form.get("headers[subject]") ?? ""),
       text: String(form.get("plain") ?? form.get("text") ?? form.get("html") ?? ""),
       attachments: atts,
     };
@@ -46,16 +47,26 @@ async function readMail(req: Request): Promise<Mail | null> {
   let j: Record<string, unknown>;
   try { j = await req.json(); } catch { return null; }
   const headers = (j.headers ?? {}) as Record<string, unknown>;
+  // CloudMailin capitalises header names; Postmark uses top-level keys.
+  const hget = (name: string): string => {
+    for (const [k, v] of Object.entries(headers)) {
+      if (k.toLowerCase() === name) return String(v ?? "");
+    }
+    return "";
+  };
+  const env = (j.envelope ?? {}) as Record<string, unknown>;
   const rawAtts = (Array.isArray(j.Attachments) ? j.Attachments : Array.isArray(j.attachments) ? j.attachments : []) as Record<string, unknown>[];
   return {
-    from: String(j.From ?? j.from ?? (j.envelope as Record<string, unknown>)?.from ?? headers.from ?? ""),
-    subject: String(j.Subject ?? j.subject ?? headers.subject ?? ""),
+    // Both senders matter: a forwarded settlement carries the forwarder in the
+    // envelope and atVenu in the From header, and either one may be the proof.
+    from: [j.From, j.from, env.from, hget("from")].filter(Boolean).join(" "),
+    subject: String(j.Subject ?? j.subject ?? hget("subject") ?? ""),
     text: String(j.TextBody ?? j.plain ?? j.HtmlBody ?? j.html ?? ""),
     attachments: rawAtts.slice(0, 6).map((a) => ({
       name: String(a.Name ?? a.file_name ?? a.fileName ?? "file"),
       type: String(a.ContentType ?? a.content_type ?? a.contentType ?? ""),
       b64: String(a.Content ?? a.content ?? ""),
-    })).filter((a) => a.b64 && a.b64.length < 11_000_000),
+    })).filter((a) => a.b64 && !/^https?:/i.test(a.b64) && a.b64.length < 11_000_000),
   };
 }
 
