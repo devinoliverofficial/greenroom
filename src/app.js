@@ -1399,7 +1399,7 @@
     return h('div', { class: 'tour-card idle name-card art-row' },
       slot,
       h('button', { class: 'art-main', type: 'button', onclick: open },
-        h('span', { class: 'tc-name' }, name),
+        h('span', { class: 'tc-name glow' }, name),
         icon('chevron', 20)));
   }
 
@@ -1447,7 +1447,6 @@
               icon('back'), h('span', null, 'Artists'))),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
-            pill ? h('span', { class: 'pill' }, pill) : null,
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
               onclick: openSettingsSheet }, icon('more')))),
         h('div', { class: 'band-row' },
@@ -1567,7 +1566,7 @@
     return h('button', { class: 'tour-card idle name-card', type: 'button', onclick: function () { openTour(id); } },
       h('div', { class: 'tc-top' },
         num ? h('span', { class: 'tour-num num', 'aria-hidden': 'true' }, String(num)) : null,
-        h('div', { class: 'tc-name' + (num ? ' centered' : '') }, t.name || 'Untitled tour'),
+        h('div', { class: 'tc-name glow' + (num ? ' centered' : '') }, t.name || 'Untitled tour'),
         icon('chevron', 20)));
   }
 

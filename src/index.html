@@ -134,7 +134,12 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .topbar > .logo-mark.bar { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
 .topbar-actions { display: flex; align-items: center; gap: 4px; }
 /* Equal wings either side of the mark: the GR sits dead centre on every page. */
-.topbar .top-side { flex: 1 1 0; display: flex; align-items: center; min-width: 0; }
+.topbar .top-side {
+  flex: 1 1 0; display: flex; align-items: center; min-width: 0;
+  /* A wing may never reach the centred mark, whatever it is asked to hold. */
+  max-width: calc(50% - 26px); overflow: hidden;
+}
+.topbar .pill { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .topbar .top-side.right { justify-content: flex-end; }
 /* The second header row: same height on the Artists page and an artist's page,
    so the green band never jumps when toggling between them. */
