@@ -1924,7 +1924,7 @@
       var inner = [
         h('div', { class: 'row-label' }, l.label,
           hint.text ? h('span', { class: 'hint' + hint.cls }, hint.text) : null),
-        h('span', { class: 'amt num' }, amount)
+        h('span', { class: 'amt num glow' }, amount)
       ];
       if (!canEditTour(id)) return h('div', { class: 'row' }, inner);
       return h('button', {
@@ -1938,7 +1938,7 @@
     });
     rows.push(h('div', { class: 'row total' },
       h('span', null, 'What the tour costs'),
-      h('strong', { class: 'amt num' }, money(c.fixed + c.commission))));
+      h('strong', { class: 'amt num glow' }, money(c.fixed + c.commission))));
     var charges = G.rows(t && t.charges);
     var baselineOffer = (canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
       ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
@@ -3265,7 +3265,7 @@
       h('p', { class: 'note', style: 'margin:0 2px 2px;text-align:center' },
         [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
         (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
-      h('p', { class: 'note', style: 'margin:0 2px 10px;text-align:center;color:var(--pos);font-weight:650' },
+      h('p', { class: 'note glow', style: 'margin:0 2px 10px;text-align:center;color:var(--pos);font-weight:650' },
         s.date === today ? 'Today\u2019s guest list' : 'Guest list for ' + dayLong(s.date)),
       rowsOut.length
         ? h('div', { class: 'ledger' }, rowsOut)
@@ -3630,10 +3630,10 @@
 
     var editRow = canEditTour(id) ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
       s
-        ? h('button', { class: 'btn quiet', type: 'button',
+        ? h('button', { class: 'btn quiet glow', type: 'button',
             onclick: function () { openDaySheetEditor(id, s.id); } },
             icon('edit', 18), lines.length ? 'Edit day sheet' : 'Fill in the day sheet')
-        : h('button', { class: 'btn quiet', type: 'button',
+        : h('button', { class: 'btn quiet glow', type: 'button',
             onclick: function () { openOffDaySheet(id, entry.date); } },
             icon('edit', 18), lines.length ? 'Edit the off day' : 'Fill in the off day'),
       tourImportControl(id)) : null;
