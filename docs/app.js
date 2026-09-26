@@ -788,9 +788,9 @@
 
     // The bus rides the line: parked at the head, and out in front of the dot
     // while a finger is on the chart. It never hangs off either edge.
-    var BUS_W = 42;
+    var BUS_W = 42, BUS_DX = 0.2; // BUS_DX matches .chart-bus's translateX
     var parkBus = function (el, px, py, up) {
-      var lx = Math.max(BUS_W * 0.14, Math.min(px, W - BUS_W * 0.86));
+      var lx = Math.max(0, Math.min(px, W - BUS_W * (1 + BUS_DX)));
       el.style.left = (lx / W * 100) + '%';
       el.style.top = (py / H * 100) + '%';
       el.classList.toggle('neg', !up);
