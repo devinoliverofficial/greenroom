@@ -657,14 +657,22 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .ds-city { font-size: 19px; font-weight: 650; display: inline-flex; align-items: center; gap: 7px; }
 .ds-tonight { width: 8px; height: 8px; border-radius: 50%; background: var(--pos); display: inline-block; }
 /* Overview: the TM's message wears a small label; pre-sale stands centred. */
+/* The tour manager's pencil, top-right where the black begins. */
+.ov-today { position: relative; }
+.ov-edit { position: absolute; top: -4px; right: -6px; color: var(--pos); }
+
 .ov-msg-k {
   display: block; margin: 20px 2px 6px; font-size: 12px; font-weight: 700;
   letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3);
 }
-.ov-msg .ov-quote { margin-top: 4px; }
+.ov-msg { text-align: center; }
+.ov-msg .ov-quote { margin-top: 4px; padding: 0 10px; border-left: 0; }
 .ov-presale { text-align: center; margin: 22px 0 6px; }
 .ov-presale .ov-msg-k { margin: 0 0 4px; }
-.ov-presale-n { display: block; font-size: 36px; font-weight: 800; letter-spacing: -.02em; color: var(--pos); }
+.ov-presale-n {
+  display: block; font-size: 36px; font-weight: 800; letter-spacing: -.02em; color: var(--pos);
+  filter: drop-shadow(0 0 13px color-mix(in oklab, var(--pos), transparent var(--glow-fade)));
+}
 
 /* Day sheet rows: the labels in white, the information in green. */
 .row.ds-row { min-height: 50px; }
@@ -796,7 +804,9 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .ov-when { display: flex; align-items: center; justify-content: center; gap: 8px;
   font-size: 13px; font-weight: 600; color: var(--ink-3); }
 .ov-city { margin-top: 8px; font-size: clamp(30px, 8.6vw, 38px); font-weight: 700;
-  letter-spacing: -.028em; line-height: 1.06; color: var(--pos); overflow-wrap: anywhere; }
+  letter-spacing: -.028em; line-height: 1.06; color: var(--pos); overflow-wrap: anywhere;;
+  filter: drop-shadow(0 0 15px color-mix(in oklab, var(--pos), transparent var(--glow-fade)));
+}
 .ov-venue { margin-top: 6px; font-size: 16px; font-weight: 500; color: var(--ink-2); overflow-wrap: anywhere; }
 .ov-lines { display: grid; gap: 1px; }
 .ov-line { display: flex; align-items: baseline; justify-content: space-between; gap: 14px;

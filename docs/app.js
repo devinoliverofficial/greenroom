@@ -1280,7 +1280,7 @@
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
-              onclick: openSettingsSheet }, icon('gear')))),
+              onclick: openSettingsSheet }, icon('gear', 17)))),
         h('div', { class: 'band-row' })),
       dbBanner(),
       h('div', { class: 'sec-head split' },
@@ -3046,6 +3046,10 @@
     var quote = String(d.quote || '').trim();
     return [
       h('div', { class: 'ov-today' },
+        canEditTour(id) ? h('button', { class: 'iconbtn ov-edit', type: 'button',
+          'aria-label': 'Edit today',
+          onclick: function () { openTodaySheet(id, next ? next.id : null); } },
+          icon('edit', 20)) : null,
         h('div', { class: 'ov-when' }, dayLong(s ? today : (next ? next.date : today)),
           h('span', { class: 'vh-when' + (s ? ' vh-tonight' : '') }, when)),
         h('div', { class: 'ov-city' }, s ? (s.city || 'Show')
@@ -3062,9 +3066,7 @@
       h('div', { class: 'ov-lines' },
         line('Doors', d.doors),
         line('Address', d.venueAddress)),
-      canEditTour(id) ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:16px',
-        onclick: function () { openTodaySheet(id, next ? next.id : null); } },
-        icon('edit', 18), quote || d.presale ? 'Edit today' : 'Add pre-sale and a message') : null,
+
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
   }
