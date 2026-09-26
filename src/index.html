@@ -97,7 +97,8 @@
 *, *::before, *::after { box-sizing: border-box; }
 /* touch-action: manipulation kills double-tap-to-zoom. Pinch still works. */
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: manipulation; }
-body { touch-action: manipulation; }
+/* No rubber-band bounce: the overscroll stretch is what tugs fixed bars around. */
+body { touch-action: manipulation; overscroll-behavior-y: none; }
 body {
   margin: 0;
   padding: env(safe-area-inset-top, 0px) 0 0;
@@ -261,9 +262,11 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
   display: grid; grid-template-columns: repeat(6, 1fr);
   padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
-  background: color-mix(in oklab, var(--bg), transparent 8%);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  /* Solid and on its own layer: iOS lets a blurred fixed bar drift during
+     scroll, and a bar that moves is worse than a bar that shimmers. */
+  background: var(--bg);
   border-top: 1px solid var(--line);
+  transform: translateZ(0);
 }
 .tabbar-b {
   appearance: none; border: 0; background: none; cursor: pointer;
