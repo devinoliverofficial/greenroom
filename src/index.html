@@ -256,10 +256,10 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .note { margin: 10px 2px 0; font-size: 14px; color: var(--ink-2); }
 .tour-title { margin: 2px 0 14px; font-size: 29px; overflow-wrap: anywhere; }
 
-/* Five tabs along the bottom: icon over label, the live one lit. */
+/* Six tabs along the bottom: icon over label, the live one lit. */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
   background: color-mix(in oklab, var(--bg), transparent 8%);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
@@ -271,7 +271,7 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   color: var(--ink-3); font: inherit;
 }
 .tabbar-b span {
-  font-size: 11px; font-weight: 650; letter-spacing: -.005em;
+  font-size: 10px; font-weight: 650; letter-spacing: -.005em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 .tabbar-b .ic { opacity: .85; }
@@ -613,9 +613,33 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .ds-where { flex: 1; min-width: 0; text-align: center; }
 .ds-city { font-size: 19px; font-weight: 650; display: inline-flex; align-items: center; gap: 7px; }
 .ds-tonight { width: 8px; height: 8px; border-radius: 50%; background: var(--pos); display: inline-block; }
+/* Overview: the TM's message wears a small label; pre-sale stands centred. */
+.ov-msg-k {
+  display: block; margin: 20px 2px 6px; font-size: 12px; font-weight: 700;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3);
+}
+.ov-msg .ov-quote { margin-top: 4px; }
+.ov-presale { text-align: center; margin: 22px 0 6px; }
+.ov-presale .ov-msg-k { margin: 0 0 4px; }
+.ov-presale-n { display: block; font-size: 36px; font-weight: 800; letter-spacing: -.02em; color: var(--pos); }
+
+/* Day sheet rows: the labels in white, the information in green. */
 .row.ds-row { min-height: 50px; }
+.ds-row .row-label { color: var(--ink); }
+.ds-row .ds-time, .ds-row .ds-val { color: var(--pos); }
 .ds-time { font-size: 17px; white-space: nowrap; }
 .ds-val { font-size: 14px; font-weight: 600; text-align: right; max-width: 60%; overflow-wrap: anywhere; }
+/* The bus chat: author in green, words in white, time in a whisper. */
+.chat-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.chat-msg { padding: 10px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.chat-top { display: flex; align-items: center; gap: 8px; }
+.chat-a { font-size: 12.5px; font-weight: 700; color: var(--pos); }
+.chat-t { font-size: 11px; color: var(--ink-3); }
+.chat-x { margin-left: auto; }
+.chat-b { margin-top: 3px; font-size: 15px; line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
+.chat-form { display: flex; gap: 8px; margin-top: 16px; }
+.chat-form .input { flex: 1; min-width: 0; }
+
 .ds-amens { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .ds-amen { padding: 5px 11px; border-radius: 999px; font-size: 13px; font-weight: 600; }
 .ds-amen.yes { background: var(--pos-soft); color: var(--pos); }

@@ -37,6 +37,10 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
       return { title: tourName, body: `Merch milestone: ${d.amount ?? ""} at ${city || "tonight's show"}` };
     case "soldout":
       return { title: tourName, body: `${city || "Tonight"} is SOLD OUT` };
+    case "alert": {
+      const text = String(d.message ?? "").trim().slice(0, 200);
+      return text ? { title: `\u{1F6A8} ${tourName}`, body: text } : null;
+    }
     default:
       return null;
   }
@@ -59,16 +63,23 @@ Deno.serve(async (req) => {
   const tourId = String(body.tourId ?? "");
   const type = String(body.type ?? "");
   const data = body.data ?? {};
-  if (!tourId || !["guest", "green", "merch", "soldout"].includes(type)) {
+  if (!tourId || !["guest", "green", "merch", "soldout", "alert"].includes(type)) {
     return reply(400, { error: "invalid" });
   }
 
   // The sender must actually be on this tour.
   const { data: tour } = await admin.from("tours").select("id, owner_id, doc").eq("id", tourId).single();
   if (!tour) return reply(404, { error: "no_tour" });
-  const { data: members } = await admin.from("members").select("user_id").eq("tour_id", tourId);
+  const { data: members } = await admin.from("members").select("user_id, role").eq("tour_id", tourId);
   const memberIds = new Set<string>([tour.owner_id, ...(members ?? []).map((m) => m.user_id).filter(Boolean)]);
   if (!memberIds.has(senderId)) return reply(403, { error: "not_on_tour" });
+
+  // Alerts are the tour manager's siren: only the owner or an editor may pull it.
+  if (type === "alert") {
+    const canAlert = senderId === tour.owner_id ||
+      (members ?? []).some((m) => m.user_id === senderId && m.role === "editor");
+    if (!canAlert) return reply(403, { error: "not_manager" });
+  }
 
   const tourName = String((tour.doc as Record<string, unknown>)?.name ?? "Greenroom");
   const msg = message(type, data, tourName);
@@ -85,7 +96,9 @@ Deno.serve(async (req) => {
   const dead: string[] = [];
   for (const sub of subs ?? []) {
     const prefs = (sub.prefs ?? {}) as Record<string, unknown>;
-    if (type === "merch") {
+    if (type === "alert") {
+      // An alert ignores preferences — that is the point of it.
+    } else if (type === "merch") {
       const threshold = Number(prefs.merch);
       if (!threshold || Number(data.amountRaw ?? 0) < threshold) continue;
     } else if (!prefs[type]) continue;

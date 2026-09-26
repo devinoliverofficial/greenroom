@@ -108,6 +108,8 @@
     tabmap: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>',
     tabguest: '<circle cx="9" cy="8" r="3.4"/><path d="M3.5 20c.6-3.4 2.9-5.2 5.5-5.2s4.9 1.8 5.5 5.2"/><path d="M17 9h5M19.5 6.5v5"/>',
     tabcost: '<path d="M4 20V10M10 20V5M16 20v-7M22 20H2"/>',
+    tabchat: '<path d="M21 11.5c0 3.6-4 6.5-9 6.5-1.1 0-2.1-.13-3-.37L4 20l1.5-3.4C4.1 15.4 3 13.6 3 11.5 3 7.9 7 5 12 5s9 2.9 9 6.5z"/>',
+    bell: '<path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16l-2-3z"/><path d="M10.5 21a2.2 2.2 0 0 0 3 0"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
     chevron: '<path d="M9 5l7 7-7 7"/>',
     close: '<path d="M6 6l12 12M18 6L6 18"/>',
@@ -2558,10 +2560,11 @@
   /* Five tabs along the bottom. The day sheet is where a tour opens. */
   var TOUR_TABS = [
     { view: 'details', label: 'Overview', icon: 'tabmap' },
-    { view: 'day', label: 'Day sheet', icon: 'tabsheet' },
     { view: 'money', label: 'Budget', icon: 'tabmoney' },
+    { view: 'day', label: 'Day sheet', icon: 'tabsheet' },
+    { view: 'costs', label: 'Expenses', icon: 'tabcost' },
     { view: 'guests', label: 'Guest list', icon: 'tabguest' },
-    { view: 'costs', label: 'Expenses', icon: 'tabcost' }
+    { view: 'chat', label: 'Chat', icon: 'tabchat' }
   ];
 
   function tourTabs(id, current) {
@@ -2576,6 +2579,105 @@
       }));
   }
 
+
+  /* The bus group chat: one thread for the whole run, riding the notes
+     store under the 'chat' day so GA can talk too and RLS stays the judge. */
+  function viewTourChat(id, t) {
+    var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.notesFor);
+    var myUid = backend && window.GR_BACKEND.uid ? window.GR_BACKEND.uid() : null;
+    var list = notesFor(t, id, 'chat').slice().sort(function (a, b) {
+      var ta = typeof a.at === 'number' ? a.at : Date.parse(a.at) || 0;
+      var tb = typeof b.at === 'number' ? b.at : Date.parse(b.at) || 0;
+      return ta - tb;
+    });
+    var refresh = function () { setTimeout(function () { render(true); }, backend ? 500 : 150); };
+
+    var msgs = list.map(function (n) {
+      var ts = typeof n.at === 'number' ? n.at : Date.parse(n.at) || 0;
+      var dt = ts ? new Date(ts) : null;
+      var sameDay = dt && G.ymd(dt) === G.ymd(new Date());
+      var when = !dt ? '' : sameDay
+        ? dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        : dayMD(G.ymd(dt));
+      var mine = !backend || !myUid || (n.addedBy && n.addedBy === myUid);
+      return h('div', { class: 'chat-msg' },
+        h('div', { class: 'chat-top' },
+          h('span', { class: 'chat-a' }, n.author || 'Someone'),
+          h('span', { class: 'chat-t' }, when),
+          (canWrite() || mine) ? h('button', { class: 'iconbtn sm chat-x', type: 'button',
+            'aria-label': 'Delete this message',
+            onclick: async function () {
+              try { await removeNote(id, 'chat', n.id); refresh(); }
+              catch (e2) { toast('Only the tour manager can delete someone else\u2019s message.'); }
+            } }, icon('trash', 14)) : null),
+        h('div', { class: 'chat-b' }, n.body));
+    });
+
+    var draftKey = 'chat:' + id;
+    var input = h('input', { class: 'input', type: 'text', maxlength: 300,
+      value: S.drafts[draftKey] || '', placeholder: 'Message the tour\u2026',
+      autocomplete: 'off', enterkeyhint: 'send', 'aria-label': 'Message',
+      oninput: function (e) { S.drafts[draftKey] = e.target.value; } });
+    var send = async function (e) {
+      e.preventDefault();
+      var body = String(S.drafts[draftKey] || '').trim();
+      if (!body) return;
+      try {
+        await saveNote(id, 'chat', { id: newId(), body: body, author: myName() });
+        delete S.drafts[draftKey];
+        refresh();
+      } catch (e2) { toast('Couldn\u2019t send that. Try again.'); }
+    };
+
+    return h('div', { class: 'page tour has-tabs' },
+      h('div', { class: 'headband' },
+        tourTopbar(t, id, 'chat'),
+        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
+      dbBanner(),
+      canWrite() ? h('button', { class: 'btn ghost block', type: 'button',
+        onclick: function () { openAlertSheet(id); } },
+        icon('bell', 18), 'Send alert notification') : null,
+      msgs.length
+        ? h('div', { class: 'chat-list' }, msgs)
+        : emptyState('Nothing said yet', 'Anyone on the tour can talk here \u2014 band, crew, GA, everyone.'),
+      h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
+        input,
+        h('button', { class: 'btn primary', type: 'submit' }, 'Send')),
+      tourTabs(id, 'chat'));
+  }
+
+  /* The tour manager's siren: a push to every phone on the tour, and the
+     same words dropped into the chat so there's a record. */
+  function openAlertSheet(tourId) {
+    var f = { message: '' };
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Send an alert'),
+        h('p', { class: 'sh-sub' }, 'A push notification to everyone on this tour, right now. It lands in the chat too.'),
+        h('form', { class: 'sh-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            var msg = f.message.trim();
+            if (!msg) { toast('Write the alert first'); return; }
+            blurActive();
+            try {
+              await saveNote(tourId, 'chat', { id: newId(), body: '\ud83d\udea8 ' + msg, author: myName() });
+            } catch (e2) { toast('Couldn\u2019t post it. Try again.'); return; }
+            sendNotify(tourId, 'alert', { message: msg });
+            closeSheet();
+            toast(S.mode === 'db' ? 'Alert on its way to the tour' : 'Posted \u2014 pushes go out on the real app');
+            setTimeout(function () { render(true); }, 400);
+          } },
+          field('The alert', h('textarea', { class: 'gl-paste', maxlength: 200,
+            placeholder: 'Bus call moved to 11:30\u2026',
+            oninput: function (e) { f.message = e.target.value; } })),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Send it'),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { closeSheet(); } }, 'Cancel')))
+      ];
+    }, { label: 'Alert' });
+  }
 
   function tourBands(t) {
     return Array.isArray(t && t.bands)
@@ -2660,10 +2762,6 @@
         h('button', { class: 'linkbtn', type: 'button', onclick: function () { openTravelDaysSheet(id); } },
           'Travel days before or after the run')) : null,
       canWrite() ? [
-        h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'The lineup'),
-        h('p', { class: 'note', style: 'margin:2px 2px 10px' },
-          'Every band on this run, in set order. Day sheets pre-fill a soundcheck and set-time row for each \u2014 delete a row on any night someone drops.'),
-        lineupEditor(id, t),
         h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, h('img', { class: 'brand-logo', src: 'logo-mastertour.png', alt: '' }), 'Master Tour'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
           'Print your day sheets or itinerary to PDF in Master Tour (or export CSV) and upload it \u2014 ' +
@@ -2688,6 +2786,7 @@
     if (view === 'day' || view === 'details' || view === 'guests') {
       return viewTourDay(id, t, view);
     }
+    if (view === 'chat') return viewTourChat(id, t);
     var c = G.calc(t);
     if (view === 'costs') {
       return h('div', { class: 'page tour has-tabs' },
@@ -2786,16 +2885,20 @@
         h('div', { class: 'ov-city' }, s ? (s.city || 'Show')
           : (off && off.city ? off.city : (next ? next.city : 'Day off'))),
         next && next.venue ? h('div', { class: 'ov-venue' }, next.venue) : null),
+      quote
+        ? h('div', { class: 'ov-msg' },
+            h('span', { class: 'ov-msg-k' }, 'Message from the tour manager'),
+            h('blockquote', { class: 'ov-quote' }, h('p', null, quote)))
+        : null,
+      d.presale ? h('div', { class: 'ov-presale' },
+        h('span', { class: 'ov-msg-k' }, 'Pre-sale'),
+        h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       h('div', { class: 'ov-lines' },
-        line('Pre-sale', d.presale),
         line('Doors', d.doors),
         line('Address', d.venueAddress)),
-      quote
-        ? h('blockquote', { class: 'ov-quote' }, h('p', null, quote))
-        : null,
       canWrite() ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:16px',
         onclick: function () { openTodaySheet(id, next ? next.id : null); } },
-        icon('edit', 18), quote || d.presale ? 'Edit today' : 'Add pre-sale and a quote') : null
+        icon('edit', 18), quote || d.presale ? 'Edit today' : 'Add pre-sale and a message') : null
     ];
   }
 
@@ -2824,8 +2927,8 @@
           field('Pre-sale', h('input', { class: 'input', type: 'text', maxlength: 40,
             value: f.presale, placeholder: '312 of 900', autocomplete: 'off',
             oninput: function (e) { f.presale = e.target.value; } })),
-          field('Quote of the day', h('textarea', { class: 'gl-paste', maxlength: 180,
-            placeholder: 'Something worth repeating on the bus\u2026',
+          field('Message from the tour manager', h('textarea', { class: 'gl-paste', maxlength: 180,
+            placeholder: 'Anything the whole tour should know today\u2026',
             oninput: function (e) { f.quote = e.target.value; } }, f.quote)),
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Post it'),
@@ -2864,9 +2967,13 @@
     if (!shows.length) {
       return emptyState('No dates yet', 'Once shows are on the run, each night gets its own guest list.');
     }
-    // Tonight's show, else the next one, else the last one we played.
-    var s = shows.filter(function (x) { return x.date === today; })[0] ||
+    // Tonight's show by default; the rail scrolls to any other night.
+    var picked = S.glTour === id && S.glShow
+      ? shows.filter(function (x) { return x.id === S.glShow; })[0] : null;
+    var s = picked ||
+      shows.filter(function (x) { return x.date === today; })[0] ||
       shows.filter(function (x) { return x.date > today; })[0] || shows[shows.length - 1];
+    S.glTour = id; S.glShow = s.id;
     var refresh = function () { setTimeout(function () { render(true); }, backend ? 500 : 150); };
     var list = guestsFor(t, id, s.id);
     var sum = G.guestSummary(list);
@@ -2910,9 +3017,22 @@
       }
     }, icon('copy', 18), 'Copy for the box office') : null;
 
+    var rail = h('div', { class: 'ds-rail' }, shows.map(function (x) {
+      var dd = G.parseDay(x.date);
+      return h('button', {
+        class: 'ds-chip' + (x.id === s.id ? ' on' : '') + (x.date === today ? ' tonight' : ''),
+        type: 'button',
+        onclick: function () { S.glShow = x.id; S.glTour = id; render(true); }
+      },
+        h('span', { class: 'ds-chip-d num' }, dd ? String(dd.getDate()) : '?'),
+        h('span', { class: 'ds-chip-c' }, String(x.city || '').split(',')[0] || 'Show'));
+    }));
+
     return [
-      h('h3', { class: 'sh-h3', style: 'margin-top:4px' }, 'Guest list for ' + dayLong(s.date)),
-      h('p', { class: 'note', style: 'margin:2px 2px 12px' },
+      h('h3', { class: 'sh-h3', style: 'margin-top:4px' },
+        s.date === today ? 'Today\u2019s guest list' : 'Guest list for ' + dayLong(s.date)),
+      rail,
+      h('p', { class: 'note', style: 'margin:10px 2px 12px' },
         [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
         (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
       rowsOut.length
@@ -3179,19 +3299,19 @@
         h('span', { class: 'row-label' }, 'Wifi'), h('span', { class: 'ds-val' }, d.wifi)));
       if (String(d.parking || '').trim()) venueRows.push(h('div', { class: 'row ds-row' },
         h('span', { class: 'row-label' }, 'Parking'), h('span', { class: 'ds-val' }, d.parking)));
-      var amen = [];
+      // Every amenity listed, a plain yes or no beside it.
       G.DS_AMENITIES.forEach(function (a) {
-        if (d[a[0]] === 'yes') amen.push(h('span', { class: 'ds-amen yes' }, a[1]));
-        else if (d[a[0]] === 'no') amen.push(h('span', { class: 'ds-amen no' }, 'No ' + a[1].toLowerCase()));
+        var v = d[a[0]] === 'yes' ? 'Yes' : (d[a[0]] === 'no' ? 'No' : '\u2014');
+        venueRows.push(h('div', { class: 'row ds-row' },
+          h('span', { class: 'row-label' }, a[1]),
+          h('span', { class: 'ds-val' }, v)));
       });
       body = [
         rowsOut.length ? h('div', { class: 'ledger' }, rowsOut) : null,
         venueRows.length ? h('div', { class: 'ledger', style: 'margin-top:12px' }, venueRows) : null,
-        amen.length ? h('div', { class: 'ds-amens' }, amen) : null,
         String(d.driveNext || '').trim() ? h('div', { class: 'ds-drive' },
           h('span', { class: 'hint' }, 'Drive to next venue'),
-          h('strong', { class: 'num' }, d.driveNext)) : null,
-        String(d.notes || '').trim() ? h('p', { class: 'note' }, d.notes) : null
+          h('strong', { class: 'num' }, d.driveNext)) : null
       ];
     } else {
       // An off day: the hotel and the plans.
@@ -3281,7 +3401,7 @@
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
-    if (only === 'sheet') return [hero, rail, editRow, body, copyBtn];
+    if (only === 'sheet') return [rail, editRow, body, copyBtn];
     return [hero, rail, editRow, body, guestBtn, copyBtn];
   }
 
