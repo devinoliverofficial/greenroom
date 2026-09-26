@@ -968,10 +968,11 @@ textarea.update {
 #gr-splash img { width: min(78vw, 560px); height: auto; }
 
 /* ============================== Sign-in gate + people ============================== */
-#gr-gate {
+#gr-gate, #gr-pass-gate {
   position: fixed; inset: 0; z-index: 100; background: var(--bg);
   display: grid; place-items: start center; padding: 16vh 22px 0;
 }
+.gate-hi { font-size: 16px; line-height: 1.5; }
 .gate-card { display: grid; justify-items: center; gap: 10px; max-width: 380px; text-align: center; }
 .gate-card .logo-mark { background-size: contain; background-repeat: no-repeat; background-position: center; }
 .gate-card h2 { font-size: 24px; }

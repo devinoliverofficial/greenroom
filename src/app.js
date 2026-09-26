@@ -2910,7 +2910,14 @@
         line('Address', d.venueAddress)),
       canWrite() ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:16px',
         onclick: function () { openTodaySheet(id, next ? next.id : null); } },
-        icon('edit', 18), quote || d.presale ? 'Edit today' : 'Add pre-sale and a message') : null
+        icon('edit', 18), quote || d.presale ? 'Edit today' : 'Add pre-sale and a message') : null,
+      (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.ownsTour &&
+       window.GR_BACKEND.ownsTour(id)) ? [
+        h('div', { class: 'sec-head', style: 'margin-top:30px' },
+          h('h2', { class: 'sec-title' }, 'INVITE CREW'),
+          h('p', { class: 'sec-sub' }, 'They get an email, make a password, and the tour is already in their account.')),
+        peopleSection(id)
+      ] : null
     ];
   }
 
@@ -4724,8 +4731,10 @@
         h('span', { class: 'who' }, B.email() || 'You'),
         h('span', { class: 'role-tag' }, owns ? 'Tour manager' : 'You'))];
       rows.forEach(function (m) {
+        var shown = String(m.display_name || '').trim();
         kids.push(h('div', { class: 'row people-row' },
-          h('span', { class: 'who' }, m.invited_email),
+          h('span', { class: 'who' }, shown || m.invited_email,
+            shown ? h('span', { class: 'hint', style: 'display:block' }, m.invited_email) : null),
           h('span', { class: 'role-tag' + (m.role === 'editor' ? ' aa' : '') },
             m.role === 'editor' ? 'ALL ACCESS' : 'GA'),
           owns ? h('button', {
@@ -4749,6 +4758,10 @@
     var form = null;
     if (owns) {
       var role = 'viewer';
+      var nameI = h('input', {
+        class: 'input', type: 'text', placeholder: 'Their name', maxlength: 24,
+        autocomplete: 'off', 'aria-label': 'Name'
+      });
       var emailI = h('input', {
         class: 'input', type: 'email', placeholder: 'their@email.com',
         autocomplete: 'off', inputmode: 'email', 'aria-label': 'Email to invite'
@@ -4757,16 +4770,21 @@
         class: 'card addform', novalidate: true, style: 'margin-top:14px',
         onsubmit: async function (e) {
           e.preventDefault();
+          var name = String(nameI.value || '').trim();
           var email = String(emailI.value || '').trim();
+          if (!name) { toast('Type their name first'); nameI.focus(); return; }
           if (email.indexOf('@') < 1) { toast('Type their email address'); emailI.focus(); return; }
           try {
-            await B.invite(tourId, email, role);
-            emailI.value = '';
-            toast(email + ' is on the list — tell them to make an account with that email');
+            var status = await B.invite(tourId, email, role, name);
+            nameI.value = ''; emailI.value = '';
+            if (status === 'sent') toast(name + ' is invited — the email is on its way');
+            else if (status === 'existing') toast(name + ' already has an account — the tour is in it now');
+            else toast(name + ' is on the list — the email service is busy, but signing up with ' + email + ' works');
             refresh();
           } catch (e2) { toast('Couldn’t send that invite. Try again.'); }
         }
       },
+        nameI,
         emailI,
         h('div', { style: 'display:flex;gap:10px;align-items:center;margin-top:10px' },
           segmented(['GA', 'ALL ACCESS'], 0, function (i) { role = i ? 'editor' : 'viewer'; },

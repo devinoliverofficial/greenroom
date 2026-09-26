@@ -240,20 +240,32 @@
       return !!(doc && session && doc._ownerId === session.user.id);
     },
     members: async function (tourId) {
-      var q = await sb.from('members').select('invited_email, role, user_id')
+      var q = await sb.from('members').select('invited_email, role, user_id, display_name')
         .eq('tour_id', tourId).order('created_at');
       if (q.error) throw mapError(q.error);
       return q.data;
     },
-    invite: async function (tourId, email, role) {
+    invite: async function (tourId, email, role, name) {
+      var addr = String(email).trim().toLowerCase();
       var q = await sb.from('members').upsert({
         tour_id: tourId,
-        invited_email: String(email).trim().toLowerCase(),
-        role: role === 'editor' ? 'editor' : 'viewer'
+        invited_email: addr,
+        role: role === 'editor' ? 'editor' : 'viewer',
+        display_name: String(name || '').trim().slice(0, 24)
       });
       if (q.error) throw mapError(q.error);
-      // No email goes out: the moment they create an account with this
-      // address, the guest list recognizes them.
+      // The row alone is enough — an account made with this address claims it.
+      // The edge function adds the nicety: the account and the invite email.
+      try {
+        var r = await fetch(cfg.url + '/functions/v1/invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey,
+            Authorization: 'Bearer ' + (session ? session.access_token : cfg.anonKey) },
+          body: JSON.stringify({ tourId: tourId, email: addr, name: String(name || '').trim() })
+        });
+        var out = await r.json();
+        return out && out.status ? out.status : 'nomail';
+      } catch (e) { return 'nomail'; }
     },
     uninvite: async function (tourId, email) {
       var q = await sb.from('members').delete()
@@ -495,8 +507,57 @@
     try { await refetch(); } catch (e) { /* realtime will catch up */ }
   }
 
+  /* Someone arriving from an invite email is signed in but has no password
+     yet. One card: pick the password, then go add it to the home screen. */
+  function passwordGate() {
+    if (document.getElementById('gr-pass-gate')) return;
+    var wrap = document.createElement('div');
+    wrap.id = 'gr-pass-gate';
+    wrap.className = 'gr-gate-like';
+    var uname = (session.user.user_metadata && session.user.user_metadata.username) || '';
+    wrap.innerHTML =
+      '<div class="gate-card">' +
+      '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
+      '<p class="gate-hi">' + (uname ? 'Welcome, ' + uname + '. ' : '') +
+        'You\u2019re on the tour \u2014 create a password so you can sign in anywhere.</p>' +
+      '<form id="gr-pass-form" novalidate>' +
+      '<input class="input" type="password" id="gr-pass-new" placeholder="Create a password" ' +
+        'autocomplete="new-password" aria-label="Create a password">' +
+      '<div class="gate-err" id="gr-pass-err" role="alert"></div>' +
+      '<button class="btn primary block" type="submit">Save password</button>' +
+      '</form></div>';
+    document.body.appendChild(wrap);
+    var form = wrap.querySelector('#gr-pass-form');
+    var passI = wrap.querySelector('#gr-pass-new');
+    var errEl = wrap.querySelector('#gr-pass-err');
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var pass = String(passI.value || '');
+      if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
+      form.querySelector('button').disabled = true;
+      try {
+        var meta = Object.assign({}, session.user.user_metadata || {}, { invited: false });
+        var q = await sb.auth.updateUser({ password: pass, data: meta });
+        if (q.error) throw q.error;
+        if (q.data && q.data.user) session.user = q.data.user;
+        wrap.querySelector('.gate-card').innerHTML =
+          '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
+          '<p class="gate-hi">Password saved. Put Greenroom on your home screen:</p>' +
+          '<p class="gate-hi">Tap the Share button below, then \u201cAdd to Home Screen\u201d. ' +
+          'Open it from there and sign in with your email and this password.</p>' +
+          '<button class="btn primary block" id="gr-pass-done" type="button">Keep going here</button>';
+        wrap.querySelector('#gr-pass-done').addEventListener('click', function () { wrap.remove(); });
+      } catch (e2) {
+        form.querySelector('button').disabled = false;
+        errEl.textContent = 'Couldn\u2019t save it. Try again.';
+      }
+    });
+  }
+
   async function online() {
     try { await sb.rpc('claim_invites'); } catch (e) { /* nothing to claim */ }
+    if (session && session.user && session.user.user_metadata &&
+        session.user.user_metadata.invited === true) passwordGate();
     try { await refetch(); } catch (e) { /* the app shows local mode */ }
     try { await importLocalTours(); } catch (e) { /* local copies stay put */ }
     sb.channel('greenroom')
