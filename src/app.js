@@ -1283,19 +1283,17 @@
               ? h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
                   onclick: openSettingsSheet }, icon('gear'))
               : null)),
-        h('div', { class: 'band-row' },
-          h('span'),
-          canWrite()
-            ? h('button', { class: 'add-mini', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
-                h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
-            : null)),
+        h('div', { class: 'band-row' })),
       dbBanner(),
-      byArtist.size
-        ? h('div', { class: 'sec-head' },
-            h('h2', { class: 'sec-title' }, 'ARTISTS'),
-            h('p', { class: 'sec-sub' }, plural(byArtist.size, 'act') +
-              ' \u00b7 ' + plural(entries.filter(function (e) { return artistOf(e[1]); }).length, 'run')))
-        : null,
+      h('div', { class: 'sec-head split' },
+        h('div', null,
+          h('h2', { class: 'sec-title' }, 'ARTISTS'),
+          byArtist.size ? h('p', { class: 'sec-sub' }, plural(byArtist.size, 'act') +
+            ' \u00b7 ' + plural(entries.filter(function (e) { return artistOf(e[1]); }).length, 'run')) : null),
+        canWrite()
+          ? h('button', { class: 'add-mini', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
+              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
+          : null),
       byArtist.size
         ? h('ul', { class: 'tour-list' }, Array.from(byArtist, function (pair) {
             var cardEl = artistCard(pair[0], pair[1]);
@@ -1451,18 +1449,17 @@
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' }, pill ? h('span', { class: 'pill' }, pill) : null)),
         h('div', { class: 'band-row' },
-          h('h1', { class: 'band-name' }, name),
-          canWrite()
-            ? h('button', { class: 'add-mini', type: 'button',
-                onclick: function () { startTour(name); } },
-                h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
-            : null)),
+          h('h1', { class: 'band-name' }, name))),
       dbBanner(),
-      entries.length
-        ? h('div', { class: 'sec-head' },
-            h('h2', { class: 'sec-title' }, 'TOURS'),
-            h('p', { class: 'sec-sub' }, plural(entries.length, 'run') + ' for ' + name))
-        : null,
+      h('div', { class: 'sec-head split' },
+        h('div', null,
+          h('h2', { class: 'sec-title' }, 'TOURS'),
+          entries.length ? h('p', { class: 'sec-sub' }, plural(entries.length, 'run') + ' for ' + name) : null),
+        canWrite()
+          ? h('button', { class: 'add-mini', type: 'button',
+              onclick: function () { startTour(name); } },
+              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
+          : null),
       entries.length
         ? h('ul', { class: 'tour-list' }, entries.map(function (e, i) {
             var cardEl = tourCard(e[0], e[1], i + 1);
