@@ -113,6 +113,7 @@
     bell: '<path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16l-2-3z"/><path d="M10.5 21a2.2 2.2 0 0 0 3 0"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     phone: '<path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3z"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 7l8.5 6 8.5-6"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
     chevron: '<path d="M9 5l7 7-7 7"/>',
     close: '<path d="M6 6l12 12M18 6L6 18"/>',
@@ -3082,9 +3083,17 @@
       return emptyState('No dates yet', 'Once shows are on the run, today shows up here.');
     }
     var when = s ? 'Tonight' : (next ? 'Next show' : 'Last show');
-    var line = function (label, value) {
-      return value ? h('div', { class: 'ov-line' },
-        h('span', { class: 'ov-k' }, label), h('span', { class: 'ov-v' }, value)) : null;
+    var line = function (label, value, href) {
+      if (!value) return null;
+      return h('div', { class: 'ov-line' },
+        h('span', { class: 'ov-msg-k' }, label),
+        href
+          ? h('a', { class: 'ov-v ov-link', href: href, target: '_blank', rel: 'noopener' }, value)
+          : h('span', { class: 'ov-v' }, value));
+    };
+    // Apple Maps on an iPhone; the same link opens a map anywhere else.
+    var mapsHref = function (addr) {
+      return 'https://maps.apple.com/?q=' + encodeURIComponent(String(addr).trim());
     };
     var quote = String(d.quote || '').trim();
     return [
@@ -3093,8 +3102,9 @@
           'aria-label': 'Edit today',
           onclick: function () { openTodaySheet(id, next ? next.id : null); } },
           icon('edit', 20)) : null,
-        h('div', { class: 'ov-when' }, dayLong(s ? today : (next ? next.date : today)),
-          h('span', { class: 'vh-when' + (s ? ' vh-tonight' : '') }, when)),
+        h('div', { class: 'ov-when' },
+          h('span', { class: 'vh-when' + (s ? ' vh-tonight' : '') }, when),
+          h('span', null, dayLong(s ? today : (next ? next.date : today)))),
         h('div', { class: 'ov-city' }, s ? (s.city || 'Show')
           : (off && off.city ? off.city : (next ? next.city : 'Day off'))),
         next && next.venue ? h('div', { class: 'ov-venue' }, next.venue) : null),
@@ -3108,7 +3118,7 @@
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       h('div', { class: 'ov-lines' },
         line('Doors', d.doors),
-        line('Address', d.venueAddress)),
+        line('Address', d.venueAddress, d.venueAddress ? mapsHref(d.venueAddress) : null)),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
@@ -3131,17 +3141,21 @@
         var title = m.name || m.username || m.email;
         var sub = [];
         if (m.username && m.username !== title) sub.push('@' + m.username);
-        if (m.email) sub.push(m.email);
-        if (m.phone) sub.push(m.phone);
         if (!m.joined) sub.push('invited');
         return h('div', { class: 'row crew-row' },
           h('div', { class: 'row-label' }, title,
-            h('span', { class: 'hint crew-sub' }, sub.join(' \u00b7 '))),
+            sub.length ? h('span', { class: 'hint crew-sub' }, sub.join(' \u00b7 ')) : null),
           h('div', { class: 'crew-side' },
             h('span', { class: 'role-tag' + (m.role === 'editor' || m.owner ? ' aa' : '') },
               m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA')),
+            // Fixed slots: a missing phone leaves an empty seat, so every mail
+            // icon and every phone icon lines up in its own column.
+            m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
+              'aria-label': 'Email ' + title }, icon('mail', 17))
+              : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }),
             m.phone ? h('a', { class: 'crew-call', href: 'tel:' + String(m.phone).replace(/[^0-9+]/g, ''),
-              'aria-label': 'Call ' + title }, icon('phone', 17)) : null));
+              'aria-label': 'Call ' + title }, icon('phone', 17))
+              : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' })));
       }));
     }
     B.crew(tourId).then(draw).catch(function () {

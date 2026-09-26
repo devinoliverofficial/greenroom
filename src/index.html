@@ -735,7 +735,8 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .crew-invite:active { transform: translateY(1px); }
 .crew-invite .plus { font-size: 14px; line-height: 1; }
 .crew-row .crew-sub { display: block; font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
-.crew-side { display: flex; align-items: center; gap: 10px; flex: none; }
+.crew-side { display: flex; align-items: center; gap: 8px; flex: none; }
+.crew-call.empty { visibility: hidden; }
 /* The badge labels the person; it does not announce itself over their name. */
 .crew-side .role-tag {
   flex: none; padding: 3px 9px; border-radius: 999px;
@@ -844,7 +845,8 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 
 /* Overview: tonight, in as few marks as possible. */
 .ov-today { text-align: center; padding: 18px 0 20px; }
-.ov-when { display: flex; align-items: center; justify-content: center; gap: 8px;
+/* Tonight on top, the date under it — one centred stack. */
+.ov-when { display: flex; flex-direction: column; align-items: center; gap: 6px;
   font-size: 13px; font-weight: 600; color: var(--ink-3); }
 .ov-city { margin-top: 8px; font-size: clamp(30px, 8.6vw, 38px); font-weight: 700;
   letter-spacing: -.028em; line-height: 1.06; color: var(--pos); overflow-wrap: anywhere;;
@@ -852,12 +854,14 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
           drop-shadow(0 0 18px color-mix(in oklab, var(--pos), transparent var(--glow-fade)));
 }
 .ov-venue { margin-top: 6px; font-size: 16px; font-weight: 500; color: var(--ink-2); overflow-wrap: anywhere; }
-.ov-lines { display: grid; gap: 1px; }
-.ov-line { display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
-  padding: 13px 2px; border-bottom: 1px solid var(--line-2); }
-.ov-line:last-child { border-bottom: 0; }
-.ov-k { font-size: 14px; font-weight: 600; color: var(--ink-3); }
-.ov-v { min-width: 0; text-align: right; font-size: 16px; font-weight: 650; color: var(--ink); overflow-wrap: anywhere; }
+/* Doors and Address read like Pre-sale: the label above, the value centred. */
+.ov-lines { display: grid; gap: 18px; margin-top: 22px; }
+.ov-line { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.ov-line .ov-msg-k { margin: 0 0 4px; }
+.ov-v { min-width: 0; font-size: 16px; font-weight: 650; color: var(--ink); overflow-wrap: anywhere; }
+/* The address is a door to Apple Maps: green, underlined, with a pin. */
+.ov-link { color: var(--pos); text-decoration: underline; text-underline-offset: 3px;
+  text-decoration-color: color-mix(in oklab, var(--pos), transparent 55%); }
 .ov-quote { margin: 20px 0 0; padding: 0 0 0 16px; border-left: 3px solid var(--pos); }
 .ov-quote p { margin: 0; font-size: 17px; font-weight: 500; font-style: italic; line-height: 1.45; color: var(--ink); }
 
