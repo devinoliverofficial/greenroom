@@ -786,13 +786,26 @@
       });
     }
 
-    wrap.replaceChildren(svg, flag, pill, notes, pins,
+    // The bus rides the line: parked at the head, and out in front of the dot
+    // while a finger is on the chart. It never hangs off either edge.
+    var BUS_W = 34;
+    var parkBus = function (el, px, py, up) {
+      var lx = Math.max(BUS_W * 0.14, Math.min(px, W - BUS_W * 0.86));
+      el.style.left = (lx / W * 100) + '%';
+      el.style.top = (py / H * 100) + '%';
+      el.classList.toggle('neg', !up);
+    };
+    var bus = h('span', { class: 'chart-bus', 'aria-hidden': 'true' });
+    parkBus(bus, x(last), y(series[last].net), series[last].net >= 0);
+
+    wrap.replaceChildren(svg, flag, pill, notes, pins, bus,
       h('div', { class: 'chart-ends' },
         h('span', null, dayMD(series[0].date)),
         h('span', null, dayMD(series[last].date))));
 
     wrap.__geo = { x: x, y: y, W: W, H: H, svg: svg, pill: pill, notes: notes,
-      series: series, nights: d.nights, tourId: d.tourId, pins: pins };
+      series: series, nights: d.nights, tourId: d.tourId, pins: pins, bus: bus,
+      headI: last, parkBus: parkBus };
     animateDraw(svg);
     setupScrub(wrap);
   }
@@ -946,6 +959,7 @@
       cursor.setAttribute('x1', px); cursor.setAttribute('x2', px);
       dot.setAttribute('cx', px); dot.setAttribute('cy', py);
       dot.setAttribute('class', 'dot ' + (up ? 'pos' : 'neg'));
+      if (geo.bus) geo.parkBus(geo.bus, px, py, up);
 
       renderOdo(odo, money(p.net, true), money(p.net, true));
       setHeroState(hero, up ? 'green' : 'red');
@@ -992,6 +1006,10 @@
       cur = -1;
       wrap.classList.remove('scrubbing');
       hero.classList.remove('scrubbing');
+      if (geo.bus) {
+        var hp = geo.series[geo.headI];
+        geo.parkBus(geo.bus, geo.x(geo.headI), geo.y(hp.net), hp.net >= 0);
+      }
       geo.pill.hidden = true;
       geo.notes.hidden = true;
       var noteEnd = $('#hero-note', hero);
@@ -1012,7 +1030,9 @@
     var downAt = null;
     wrap.addEventListener('pointerdown', function (e) {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
-      wrap.setPointerCapture(e.pointerId);
+      // A refused capture must not cost us the scrub — the swipe cards learned
+      // this the same way.
+      try { wrap.setPointerCapture(e.pointerId); } catch (e2) { /* track anyway */ }
       downAt = { x: e.clientX, y: e.clientY, t: Date.now() };
       fromPointer(e);
     });
@@ -1028,7 +1048,9 @@
       }
     });
     wrap.addEventListener('pointermove', function (e) {
-      if (wrap.hasPointerCapture(e.pointerId)) fromPointer(e);
+      // The finger being down is what makes it a scrub — asking whether the
+      // capture took leaves the chart dead wherever capture is refused.
+      if (downAt) fromPointer(e);
     });
     wrap.addEventListener('pointerup', end);
     wrap.addEventListener('pointercancel', end);
