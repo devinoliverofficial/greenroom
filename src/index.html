@@ -250,6 +250,29 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .note { margin: 10px 2px 0; font-size: 14px; color: var(--ink-2); }
 .tour-title { margin: 2px 0 14px; font-size: 29px; overflow-wrap: anywhere; }
 
+/* Five tabs along the bottom: icon over label, the live one lit. */
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in oklab, var(--bg), transparent 8%);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border-top: 1px solid var(--line);
+}
+.tabbar-b {
+  appearance: none; border: 0; background: none; cursor: pointer;
+  display: grid; justify-items: center; gap: 3px; padding: 6px 2px 4px;
+  color: var(--ink-3); font: inherit;
+}
+.tabbar-b span {
+  font-size: 11px; font-weight: 650; letter-spacing: -.005em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.tabbar-b .ic { opacity: .85; }
+.tabbar-b.on { color: var(--pos); }
+.tabbar-b.on .ic { opacity: 1; }
+.page.has-tabs { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+
 /* The inverted cards: the logo's black fields floating on the green.
    Re-scoping the tokens flips everything inside — ink, lines, chips, charts.
    Red stays red (brightened for the dark ground) so the money story holds. */
@@ -324,18 +347,18 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   font-size: 19px; font-weight: 700; letter-spacing: -.021em; line-height: 1.15;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* The + beside the name does one thing: bring in their logo. */
-.logo-plus {
-  flex: none; appearance: none; border: 0; background: none; cursor: pointer;
-  min-width: 30px; min-height: 44px; padding: 0 2px;
+/* The slot left of the name: a + until a logo lands, then the mark itself. */
+.logo-slot {
+  flex: none; appearance: none; cursor: pointer; padding: 0; overflow: hidden;
+  width: 42px; height: 42px; border-radius: 12px;
+  display: grid; place-items: center;
+  border: 1px dashed var(--line); background: var(--surface-2);
   color: var(--ink-3); font: inherit; font-size: 21px; font-weight: 500; line-height: 1;
 }
-.logo-plus:active { color: var(--pos); }
+.logo-slot.has { border-style: solid; border-color: transparent; background: none; }
+.logo-slot .brand-logo { width: 42px; height: 42px; border-radius: 12px; margin: 0; object-fit: cover; vertical-align: 0; }
+.logo-slot:active { border-color: var(--pos); color: var(--pos); }
 .art-gap { flex: 1; min-width: 8px; }
-.artist-logo.blank {
-  display: grid; place-items: center; background: var(--surface-2);
-  color: var(--ink-3); font-size: 18px; font-weight: 800;
-}
 .row-pill {
   flex: none; appearance: none; border: 0; cursor: pointer;
   padding: 0 17px; min-height: 44px; border-radius: 999px;
