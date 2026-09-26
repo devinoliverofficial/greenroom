@@ -735,8 +735,12 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .crew-invite:active { transform: translateY(1px); }
 .crew-invite .plus { font-size: 14px; line-height: 1; }
 .crew-row .crew-sub { display: block; font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
-.crew-side { display: flex; align-items: center; gap: 8px; flex: none; }
+.crew-side { display: flex; align-items: center; gap: 6px; flex: none; }
+.row.crew-row { gap: 10px; }
 .crew-call.empty { visibility: hidden; }
+/* Just wide enough for TOUR MANAGER (110px); badges hug the left so every
+   role starts at the same point, and the names keep as much room as possible. */
+.role-slot { flex: none; width: 112px; display: flex; justify-content: flex-start; }
 /* The badge labels the person; it does not announce itself over their name. */
 .crew-side .role-tag {
   flex: none; padding: 3px 9px; border-radius: 999px;

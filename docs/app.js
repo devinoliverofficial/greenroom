@@ -3146,8 +3146,11 @@
           h('div', { class: 'row-label' }, title,
             sub.length ? h('span', { class: 'hint crew-sub' }, sub.join(' \u00b7 ')) : null),
           h('div', { class: 'crew-side' },
-            h('span', { class: 'role-tag' + (m.role === 'editor' || m.owner ? ' aa' : '') },
-              m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA')),
+            // Every badge sits in the same-width slot, flush left, so TOUR
+            // MANAGER, ALL ACCESS and GA all start at the same point.
+            h('span', { class: 'role-slot' },
+              h('span', { class: 'role-tag' + (m.role === 'editor' || m.owner ? ' aa' : '') },
+                m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA'))),
             // Fixed slots: a missing phone leaves an empty seat, so every mail
             // icon and every phone icon lines up in its own column.
             m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
