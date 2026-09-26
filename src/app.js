@@ -1439,12 +1439,12 @@
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' }, pill ? h('span', { class: 'pill' }, pill) : null)),
         h('div', { class: 'band-row' },
-          h('h1', { class: 'band-name' }, name),
           canWrite()
             ? h('button', { class: 'add-mini', type: 'button',
                 onclick: function () { startTour(name); } },
                 h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
-            : null)),
+            : null,
+          h('h1', { class: 'band-name right' }, name))),
       dbBanner(),
       entries.length
         ? h('div', { class: 'sec-head' },
@@ -3232,7 +3232,7 @@
       }
     }, icon('copy', 18), 'Copy for the box office') : null;
 
-    var rail = h('div', { class: 'ds-rail' }, shows.map(function (x) {
+    var rail = h('div', { class: 'ds-rail gl-rail' }, shows.map(function (x) {
       var dd = G.parseDay(x.date);
       return h('button', {
         class: 'ds-chip' + (x.id === s.id ? ' on' : '') + (x.date === today ? ' tonight' : ''),
@@ -3242,10 +3242,10 @@
         h('span', { class: 'ds-chip-d num' }, dd ? String(dd.getDate()) : '?'),
         h('span', { class: 'ds-chip-c' }, String(x.city || '').split(',')[0] || 'Show'));
     }));
-    // The night you are on sits centred in the strip, like the day sheet's rail.
+    // The picked night sits dead centre in the wheel — measured, not guessed.
     requestAnimationFrame(function () {
       var sel = rail.querySelector('.ds-chip.on');
-      if (sel && sel.scrollIntoView) sel.scrollIntoView({ inline: 'center', block: 'nearest' });
+      if (sel) rail.scrollLeft = sel.offsetLeft - (rail.clientWidth - sel.offsetWidth) / 2;
     });
 
     return [
@@ -3256,18 +3256,19 @@
         (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
       h('p', { class: 'note', style: 'margin:0 2px 10px;text-align:center;color:var(--pos);font-weight:650' },
         s.date === today ? 'Today\u2019s guest list' : 'Guest list for ' + dayLong(s.date)),
-      rail,
       rowsOut.length
         ? h('div', { class: 'ledger' }, rowsOut)
         : h('div', { style: 'min-height:60px' }),
       copyBtn,
       h('div', { class: 'gl-dock' },
-        h('button', { class: 'add-mini', type: 'button',
-          onclick: function () { openGuestDatePicker(id); } },
-          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
-        h('button', { class: 'add-mini', type: 'button',
-          onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
-          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import a list'))
+        rail,
+        h('div', { class: 'gl-dock-btns' },
+          h('button', { class: 'add-mini', type: 'button',
+            onclick: function () { openGuestDatePicker(id); } },
+            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
+          h('button', { class: 'add-mini', type: 'button',
+            onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
+            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import a list')))
     ];
   }
 
