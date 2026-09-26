@@ -1279,6 +1279,7 @@
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' })),
         h('div', { class: 'band-row' },
+          h('span'),
           canWrite()
             ? h('button', { class: 'add-mini', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
                 h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
@@ -1439,12 +1440,12 @@
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' }, pill ? h('span', { class: 'pill' }, pill) : null)),
         h('div', { class: 'band-row' },
+          h('h1', { class: 'band-name' }, name),
           canWrite()
             ? h('button', { class: 'add-mini', type: 'button',
                 onclick: function () { startTour(name); } },
                 h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
-            : null,
-          h('h1', { class: 'band-name right' }, name))),
+            : null)),
       dbBanner(),
       entries.length
         ? h('div', { class: 'sec-head' },
@@ -1452,8 +1453,8 @@
             h('p', { class: 'sec-sub' }, plural(entries.length, 'run') + ' for ' + name))
         : null,
       entries.length
-        ? h('ul', { class: 'tour-list' }, entries.map(function (e) {
-            var cardEl = tourCard(e[0], e[1]);
+        ? h('ul', { class: 'tour-list' }, entries.map(function (e, i) {
+            var cardEl = tourCard(e[0], e[1], i + 1);
             if (!canWrite()) return h('li', null, cardEl);
             return h('li', null, swipeable(cardEl, function () {
               softDeleteTour(e[0]).then(function () { render(true); });
@@ -1552,10 +1553,12 @@
     toast('Tonight’s show isn’t logged yet — log it and watch the number cross');
   }
 
-  function tourCard(id, t) {
+  function tourCard(id, t, num) {
     return h('button', { class: 'tour-card idle name-card', type: 'button', onclick: function () { openTour(id); } },
       h('div', { class: 'tc-top' },
-        h('div', { class: 'tc-name' }, t.name || 'Untitled tour'), icon('chevron', 20)));
+        num ? h('span', { class: 'tour-num num', 'aria-hidden': 'true' }, String(num)) : null,
+        h('div', { class: 'tc-name' + (num ? ' centered' : '') }, t.name || 'Untitled tour'),
+        icon('chevron', 20)));
   }
 
   /* ============================== Views: setup wizard ============================== */
