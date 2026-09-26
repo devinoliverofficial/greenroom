@@ -663,6 +663,16 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .chat-t { font-size: 11px; color: var(--ink-3); }
 .chat-x { margin-left: auto; }
 .chat-b { margin-top: 3px; font-size: 15px; line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
+/* Ari speaks with the tour's own voice: her card is lit, her name is not a person's. */
+.chat-msg.from-ari { border-color: color-mix(in oklab, var(--pos), transparent 62%); background: var(--pos-soft); }
+.chat-msg.from-ari .chat-b { white-space: pre-wrap; }
+/* The tour's settlement address, long and meant for copying, never for typing. */
+.mailrow { display: flex; align-items: center; gap: 10px; margin: 0 2px; }
+.mailcode {
+  flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); color: var(--pos);
+  font-family: var(--font-num); font-size: 12.5px; overflow-wrap: anywhere;
+}
 .chat-form { display: flex; gap: 8px; margin-top: 16px; }
 .chat-form .input { flex: 1; min-width: 0; }
 

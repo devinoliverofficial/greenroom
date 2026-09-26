@@ -2613,9 +2613,10 @@
         ? dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
         : dayMD(G.ymd(dt));
       var mine = !backend || !myUid || (n.addedBy && n.addedBy === myUid);
-      return h('div', { class: 'chat-msg' },
+      var isAri = String(n.author || '') === 'Ari';
+      return h('div', { class: 'chat-msg' + (isAri ? ' from-ari' : '') },
         h('div', { class: 'chat-top' },
-          h('span', { class: 'chat-a' }, n.author || 'Someone'),
+          h('span', { class: 'chat-a' }, isAri ? 'Ari · tour manager' : (n.author || 'Someone')),
           h('span', { class: 'chat-t' }, when),
           (canWrite() || mine) ? h('button', { class: 'iconbtn sm chat-x', type: 'button',
             'aria-label': 'Delete this message',
@@ -2647,9 +2648,11 @@
         tourTopbar(t, id, 'chat'),
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
       dbBanner(),
-      canWrite() ? h('button', { class: 'btn ghost block', type: 'button',
-        onclick: function () { openAlertSheet(id); } },
-        icon('bell', 18), 'Send alert notification') : null,
+      canWrite() ? h('div', { class: 'stack', style: 'margin-bottom:4px' },
+        h('button', { class: 'btn ghost block', type: 'button',
+          onclick: function () { openAlertSheet(id); } },
+          icon('bell', 18), 'Send alert notification'),
+        askAriControl(id)) : null,
       msgs.length
         ? h('div', { class: 'chat-list' }, msgs)
         : emptyState('Special requests, notes for the team, send here.', null),
@@ -2657,6 +2660,92 @@
         input,
         h('button', { class: 'btn primary', type: 'submit' }, 'Send')),
       tourTabs(id, 'chat'));
+  }
+
+  var ARI_ADDRESS = '30bb39e4368b9e23ff77@cloudmailin.net';
+
+  /* The address this tour's settlements should be mailed to. The +tag is the
+     tour itself, so atVenu can feed twenty runs at once and never cross them. */
+  function settlementAddress(tourId) {
+    var at = ARI_ADDRESS.indexOf('@');
+    return ARI_ADDRESS.slice(0, at) + '+' + tourId + ARI_ADDRESS.slice(at);
+  }
+
+  function ariPrompt(body, isImage) {
+    return [
+      'You are Ari, the tour manager for a touring band. A settlement sheet was just posted',
+      'in the crew group chat' + (isImage ? ' as a photo or PDF.' : '.'),
+      'Explain it to the whole crew — the drummer, the merch kid, the guitar tech.',
+      'Most of them have never read a settlement and will not ask questions if it sounds complicated.',
+      '',
+      'Rules for your message:',
+      '- Under 120 words. Short lines. No greeting, no sign-off, no emoji.',
+      '- Walk the money in order: what came in, what was taken out and why, what the band keeps.',
+      '- Explain every term the moment you use it (a per head is dollars of merch per person in',
+      '  the room; a backend is the cut above the guarantee once the room is full enough).',
+      '- Use only numbers printed on the sheet. Never invent or estimate one.',
+      '- End with one line on whether this looks right, or what to question with the promoter.',
+      isImage ? '' : '\nThe settlement:\n' + String(body).slice(0, 20000)
+    ].join('\n');
+  }
+
+  /* Post a settlement into the chat and let Ari read it out loud. */
+  function askAriControl(tourId) {
+    if (!S.sample) return unavailableBtn('Ask Ari', 'btn ghost block');
+    var busy = false;
+    var control = fileControl({
+      label: 'Post a settlement for Ari', icon: 'flyer', cls: 'btn ghost block',
+      ariaLabel: 'Post a settlement sheet for Ari to explain',
+      accept: 'application/pdf,.pdf,' + imageAccept(), multiple: true,
+      onFiles: async function (files) {
+        if (busy) return;
+        busy = true;
+        var btn = control[0];
+        var was = btn.textContent;
+        btn.textContent = 'Ari is reading\u2026';
+        btn.disabled = true;
+        var road = roadie();
+        road.style.margin = '12px 0 4px';
+        if (btn.parentNode) btn.parentNode.insertBefore(road, btn.nextSibling);
+        try {
+          var pdfFile = files.filter(function (f) { return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); })[0];
+          var images = files.filter(function (f) { return /^image\//i.test(f.type); });
+          var out;
+          if (pdfFile) {
+            var got = await pdfToText(pdfFile);
+            if (got.text.replace(/\s/g, '').length > 60) {
+              out = await S.sample(ariPrompt(got.text, false), { cache: false });
+            } else {
+              var pages = await pdfToImages(got.doc, got.pages);
+              out = await S.sample(ariPrompt('', true), { images: pages, cache: false });
+            }
+          } else if (images.length) {
+            out = await S.sample(ariPrompt('', true), { images: images, cache: false });
+          } else {
+            toast('That file type isn\u2019t supported \u2014 use a photo or a PDF.');
+            return;
+          }
+          var said = String((out && out.text) || '').trim();
+          if (!said) { toast('Ari couldn\u2019t read that sheet. Try a sharper photo.'); return; }
+          await saveNote(tourId, 'chat', { id: newId(),
+            body: myName() + ' posted a settlement sheet.', author: myName() });
+          await saveNote(tourId, 'chat', { id: newId(), body: said.slice(0, 1200), author: 'Ari' });
+          toast('Ari broke it down in the chat');
+          setTimeout(function () { render(true); }, 400);
+        } catch (e) {
+          var code = e && e.code;
+          if (code === 'cancelled') return;
+          if (SAMPLE_GONE.indexOf(code) >= 0) { S.sample = null; toast('Reading isn\u2019t available right now.'); return; }
+          toast(sampleErrorMessage(code, 'statement'));
+        } finally {
+          busy = false;
+          btn.textContent = was;
+          btn.disabled = false;
+          road.remove();
+        }
+      }
+    });
+    return control;
   }
 
   /* The tour manager's siren: a push to every phone on the tour, and the
@@ -2777,6 +2866,24 @@
         h('button', { class: 'linkbtn', type: 'button', onclick: function () { openRehearsalSheet(id); } },
           'Rehearsal days before the tour')) : null,
       canWrite() ? [
+        S.mode === 'db' ? [
+          h('h3', { class: 'sh-h3', style: 'margin-top:26px' },
+            h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }), 'Settlements by email'),
+          h('p', { class: 'note', style: 'margin:2px 2px 10px' },
+            'Send this tour\u2019s atVenu settlements here and they log themselves \u2014 Ari breaks each one down in the chat. ' +
+            'Every tour has its own address, so nothing lands on the wrong run.'),
+          h('div', { class: 'mailrow' },
+            h('code', { class: 'mailcode' }, settlementAddress(id)),
+            h('button', { class: 'btn quiet sm', type: 'button',
+              onclick: async function () {
+                var addr = settlementAddress(id);
+                var ta = h('textarea', { class: 'sr', readonly: true, value: addr });
+                document.body.appendChild(ta);
+                var okc = await copyText(addr, ta);
+                ta.remove();
+                toast(okc ? 'Address copied' : 'Press and hold to copy');
+              } }, icon('copy', 16), 'Copy'))
+        ] : null,
         h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, h('img', { class: 'brand-logo', src: 'logo-mastertour.png', alt: '' }), 'Master Tour'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
           'Print your day sheets or itinerary to PDF in Master Tour (or export CSV) and upload it \u2014 ' +
