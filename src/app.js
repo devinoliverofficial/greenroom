@@ -788,7 +788,7 @@
 
     // The bus rides the line: parked at the head, and out in front of the dot
     // while a finger is on the chart. It never hangs off either edge.
-    var BUS_W = 34;
+    var BUS_W = 42;
     var parkBus = function (el, px, py, up) {
       var lx = Math.max(BUS_W * 0.14, Math.min(px, W - BUS_W * 0.86));
       el.style.left = (lx / W * 100) + '%';
@@ -947,9 +947,27 @@
     var restPctText = pctEl ? pctEl.textContent : '';
     var cur = -1;
 
+    // A small tap each time the scrub lands on a new night. Android and
+    // desktop honour navigator.vibrate; iPhones do not, and the only thing
+    // that buzzes in Safari is a switch-style checkbox being toggled — so we
+    // nudge one. Neither is allowed to interrupt the scrub if it refuses.
+    var buzzer = null;
+    function tick() {
+      try { if (navigator.vibrate) navigator.vibrate(9); } catch (e) { /* no motor */ }
+      try {
+        if (!buzzer) {
+          buzzer = h('input', { type: 'checkbox', class: 'sr', tabindex: '-1', 'aria-hidden': 'true' });
+          buzzer.setAttribute('switch', '');
+          wrap.appendChild(buzzer);
+        }
+        buzzer.click();
+      } catch (e) { /* no haptics here */ }
+    }
+
     function showIndex(i) {
       var p = geo.series[i];
       if (!p) return;
+      if (i !== cur) tick();
       cur = i;
       wrap.classList.add('scrubbing');
       hero.classList.add('scrubbing');
