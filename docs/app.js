@@ -12,6 +12,7 @@
   var VIEW_ONLY = 'You have view-only access, so changes can’t be saved.';
 
   var S = {
+    roles: {}, rolesAsked: {},
     mode: 'loading', loaded: false, tours: new Map(), pending: {},
     role: null, writeRefused: false, dbError: null,
     route: { name: 'home' }, drafts: {}, lastNet: {}, lastState: {},
@@ -1913,7 +1914,7 @@
           hint.text ? h('span', { class: 'hint' + hint.cls }, hint.text) : null),
         h('span', { class: 'amt num' }, amount)
       ];
-      if (!canWrite()) return h('div', { class: 'row' }, inner);
+      if (!canEditTour(id)) return h('div', { class: 'row' }, inner);
       return h('button', {
         class: 'row rowbtn', type: 'button',
         onclick: function () {
@@ -1927,7 +1928,7 @@
       h('span', null, 'What the tour costs'),
       h('strong', { class: 'amt num' }, money(c.fixed + c.commission))));
     var charges = G.rows(t && t.charges);
-    var baselineOffer = (canWrite() && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
+    var baselineOffer = (canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
       ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
           onclick: function () { openBaselinePicker(id); } },
           icon('copy', 18), 'Start from a previous tour’s budget')
@@ -1935,7 +1936,7 @@
     return [
       baselineOffer,
       h('div', { class: 'btnrow' },
-        canWrite() ? fileControl({
+        canEditTour(id) ? fileControl({
           label: 'Import card statement', icon: 'card', cls: 'btn ghost',
           accept: '.csv,.tsv,text/csv,application/pdf,' + imageAccept(), multiple: true,
           onFiles: function (files) { readStatement(id, files); }
@@ -1944,7 +1945,7 @@
           onclick: function () { go({ name: 'tour', id: id, view: 'daybyday' }); } },
           icon('edit', 18), 'Log an expense')),
       h('div', { class: 'ledger' }, rows),
-      canWrite() ? h('p', { class: 'note' }, 'Tap a category to set what you expect it to cost and what you’ve already paid.') : null,
+      canEditTour(id) ? h('p', { class: 'note' }, 'Tap a category to set what you expect it to cost and what you’ve already paid.') : null,
       // Debts logged before Credit card and Loan became plain categories still
       // count, so a tour that has them keeps its ledger; fresh tours never see it.
       G.rows(t && t.debts).length ? [
@@ -2581,8 +2582,12 @@
   ];
 
   function tourTabs(id, current) {
-    return h('nav', { class: 'tabbar', 'aria-label': 'Tour sections' },
-      TOUR_TABS.map(function (t) {
+    var tabs = canSeeMoney(id) ? TOUR_TABS : TOUR_TABS.filter(function (t) {
+      return t.view !== 'money' && t.view !== 'costs';
+    });
+    return h('nav', { class: 'tabbar', 'aria-label': 'Tour sections',
+      style: 'grid-template-columns: repeat(' + tabs.length + ', 1fr)' },
+      tabs.map(function (t) {
         var on = t.view === current;
         return h('button', {
           class: 'tabbar-b' + (on ? ' on' : ''), type: 'button',
@@ -2648,7 +2653,7 @@
         tourTopbar(t, id, 'chat'),
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
       dbBanner(),
-      canWrite() ? h('div', { class: 'stack', style: 'margin-bottom:4px' },
+      canEditTour(id) ? h('div', { class: 'stack', style: 'margin-bottom:4px' },
         h('button', { class: 'btn ghost block', type: 'button',
           onclick: function () { openAlertSheet(id); } },
           icon('bell', 18), 'Send alert notification'),
@@ -2689,6 +2694,19 @@
     ].join('\n');
   }
 
+  /* Ari reads a settlement (text or images) and posts her breakdown to chat. */
+  async function ariExplain(tourId, textBody, images) {
+    try {
+      var out = images
+        ? await S.sample(ariPrompt('', true), { images: images, cache: false })
+        : await S.sample(ariPrompt(textBody, false), { cache: false });
+      var said = String((out && out.text) || '').trim();
+      if (!said) return false;
+      await saveNote(tourId, 'chat', { id: newId(), body: said.slice(0, 1200), author: 'Ari' });
+      return true;
+    } catch (e) { return false; }
+  }
+
   /* Post a settlement into the chat and let Ari read it out loud. */
   function askAriControl(tourId) {
     if (!S.sample) return unavailableBtn('Ask Ari', 'btn ghost block');
@@ -2710,26 +2728,21 @@
         try {
           var pdfFile = files.filter(function (f) { return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); })[0];
           var images = files.filter(function (f) { return /^image\//i.test(f.type); });
-          var out;
+          var body = '', pics = null;
           if (pdfFile) {
             var got = await pdfToText(pdfFile);
-            if (got.text.replace(/\s/g, '').length > 60) {
-              out = await S.sample(ariPrompt(got.text, false), { cache: false });
-            } else {
-              var pages = await pdfToImages(got.doc, got.pages);
-              out = await S.sample(ariPrompt('', true), { images: pages, cache: false });
-            }
+            if (got.text.replace(/\s/g, '').length > 60) body = got.text;
+            else pics = await pdfToImages(got.doc, got.pages);
           } else if (images.length) {
-            out = await S.sample(ariPrompt('', true), { images: images, cache: false });
+            pics = images;
           } else {
             toast('That file type isn\u2019t supported \u2014 use a photo or a PDF.');
             return;
           }
-          var said = String((out && out.text) || '').trim();
-          if (!said) { toast('Ari couldn\u2019t read that sheet. Try a sharper photo.'); return; }
           await saveNote(tourId, 'chat', { id: newId(),
             body: myName() + ' posted a settlement sheet.', author: myName() });
-          await saveNote(tourId, 'chat', { id: newId(), body: said.slice(0, 1200), author: 'Ari' });
+          var okAri = await ariExplain(tourId, body, pics);
+          if (!okAri) { toast('Ari couldn\u2019t read that sheet. Try a sharper photo.'); return; }
           toast('Ari broke it down in the chat');
           setTimeout(function () { render(true); }, 400);
         } catch (e) {
@@ -2780,6 +2793,25 @@
       ];
     }, { label: 'Alert' });
   }
+
+  /* Devin's spec: only the tour manager edits. ALL ACCESS sees everything
+     and changes nothing; GA sees Overview, Day sheet, Guest list and Chat. */
+  function tourRole(id) {
+    if (S.mode !== 'db') return canWrite() ? 'owner' : 'viewer';
+    var B = window.GR_BACKEND;
+    if (B && B.ownsTour && B.ownsTour(id)) return 'owner';
+    if (S.roles[id]) return S.roles[id];
+    if (!S.rolesAsked[id] && B && B.myRole) {
+      S.rolesAsked[id] = true;
+      B.myRole(id).then(function (r) {
+        S.roles[id] = r;
+        if (r !== 'viewer') render(true);
+      }).catch(function () { /* stays viewer */ });
+    }
+    return 'viewer';
+  }
+  function canEditTour(id) { return tourRole(id) === 'owner'; }
+  function canSeeMoney(id) { return tourRole(id) !== 'viewer'; }
 
   function tourBands(t) {
     return Array.isArray(t && t.bands)
@@ -2842,7 +2874,7 @@
     var shows = G.rows(t.shows).sort(G.byDate);
     var today = G.tourToday();
     return [
-      canWrite() ? (S.sample ? fileControl({
+      canEditTour(id) ? (S.sample ? fileControl({
         label: 'Upload flyer', icon: 'flyer', cls: 'btn primary block',
         accept: imageAccept(),
         onFiles: function (files) { readFlyer(id, files[0]); }
@@ -2852,20 +2884,20 @@
            h('ul', { class: 'shows' }, shows.map(function (x) {
              return h('li', null, h('button', {
                class: 'show-row' + (x.date === today ? ' is-today' : ''), type: 'button',
-               onclick: function () { if (canWrite()) openShowSheet(id, x.id); }
-             }, dateBlock(x.date), whereBlock(x), canWrite() ? icon('chevron', 18) : h('span')));
+               onclick: function () { if (canEditTour(id)) openShowSheet(id, x.id); }
+             }, dateBlock(x.date), whereBlock(x), canEditTour(id) ? icon('chevron', 18) : h('span')));
            }))]
-        : emptyState('No shows yet', canWrite()
+        : emptyState('No shows yet', canEditTour(id)
             ? 'Shoot the flyer and the dates fill themselves in.'
             : 'No dates have been added.'),
-      canWrite() ? h('div', { class: 'home-foot', style: 'margin-top:10px' },
+      canEditTour(id) ? h('div', { class: 'home-foot', style: 'margin-top:10px' },
         h('button', { class: 'linkbtn', type: 'button', onclick: function () { openShowSheet(id); } },
           'Type a show in by hand'),
         h('button', { class: 'linkbtn', type: 'button', onclick: function () { openTravelDaysSheet(id); } },
           'Travel days before or after the run'),
         h('button', { class: 'linkbtn', type: 'button', onclick: function () { openRehearsalSheet(id); } },
           'Rehearsal days before the tour')) : null,
-      canWrite() ? [
+      canEditTour(id) ? [
         S.mode === 'db' ? [
           h('h3', { class: 'sh-h3', style: 'margin-top:26px' },
             h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }), 'Settlements by email'),
@@ -2905,6 +2937,9 @@
     }
     if (view === 'addshows') return viewAddShows(id, t);
     if (view === 'menu') view = 'details';
+    if (!canSeeMoney(id) && (view === 'money' || view === 'costs' || view === 'daybyday' || view === 'addshows')) {
+      view = 'details';
+    }
     if (view === 'day' || view === 'details' || view === 'guests') {
       return viewTourDay(id, t, view);
     }
@@ -2936,7 +2971,7 @@
         tourTopbar(t, id, 'money'),
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
       dbBanner(),
-      !t.setupDone && canWrite()
+      !t.setupDone && canEditTour(id)
         ? h('div', { class: 'banner' },
             h('span', null, 'Setup isn’t finished'),
             h('button', {
@@ -2958,7 +2993,7 @@
       (function () {
         var dated = c.allShows.filter(function (x) { return G.parseDay(x.date); });
         var over = dated.length && dated[dated.length - 1].date < G.tourToday();
-        return over && canWrite() ? h('div', { class: 'banner' },
+        return over && canEditTour(id) ? h('div', { class: 'banner' },
           h('span', null, 'The run is over \u2014 wrap it up'),
           h('button', { class: 'btn sm quiet', type: 'button',
             onclick: function () { openCloseout(id); } }, 'Tour closeout')) : null;
@@ -3018,7 +3053,7 @@
       h('div', { class: 'ov-lines' },
         line('Doors', d.doors),
         line('Address', d.venueAddress)),
-      canWrite() ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:16px',
+      canEditTour(id) ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:16px',
         onclick: function () { openTodaySheet(id, next ? next.id : null); } },
         icon('edit', 18), quote || d.presale ? 'Edit today' : 'Add pre-sale and a message') : null,
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
@@ -3214,7 +3249,7 @@
       h('p', { class: 'note', style: 'margin:10px 2px 12px' },
         [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
         (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
-      h('div', { class: 'sec-head', style: 'margin-top:6px' },
+      h('div', { class: 'sec-head', style: 'margin-top:6px;text-align:center' },
         h('h2', { class: 'sec-title' }, 'GUEST LIST')),
       rowsOut.length
         ? h('div', { class: 'ledger' }, rowsOut)
@@ -3329,7 +3364,7 @@
     else right = h('span', { class: 'tag quiet' }, 'Upcoming');
     return h('li', null, h('button', {
       class: 'show-row' + (isToday ? ' is-today' : ''), type: 'button',
-      onclick: function () { openIncome(id, s.id); }
+      onclick: function () { if (canEditTour(id)) openIncome(id, s.id); }
     }, dateBlock(s.date), whereBlock(s), right));
   }
 
@@ -3338,7 +3373,7 @@
     if (s.loggedAt) {
       action = h('button', { class: 'btn ghost sm', type: 'button', onclick: function () { openIncome(id, s.id); } },
         money(G.showIncomeTotal(s)));
-    } else if (canWrite()) {
+    } else if (canEditTour(id)) {
       action = h('button', { class: 'btn primary sm', type: 'button', onclick: function () { openIncome(id, s.id); } },
         'Log income');
     } else {
@@ -3575,7 +3610,7 @@
       if (sel && sel.scrollIntoView) sel.scrollIntoView({ inline: 'center', block: 'nearest' });
     });
 
-    var editRow = canWrite() ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
+    var editRow = canEditTour(id) ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
       s
         ? h('button', { class: 'btn quiet', type: 'button',
             onclick: function () { openDaySheetEditor(id, s.id); } },
@@ -4517,8 +4552,13 @@
       updatePerHead();
       var readerResult = function (r) { /* assigned below */ };
       var reader = settlementReader({
-        show: s, btnCls: 'btn primary block',
-        onResult: function (r) { readerResult(r); }
+        show: s, btnCls: 'btn primary block', autoSave: true, ariTour: id,
+        onResult: async function (r) {
+          readerResult(r);
+          // Everything the sheet paid us logs itself; nothing found means
+          // nothing saved, and the sheet stays open to type by hand.
+          if (r.found) await save({ preventDefault: function () {} });
+        }
       });
       readerResult = (function () { return function (r) {
           Object.keys(r.income).forEach(function (k) {
@@ -4594,8 +4634,8 @@
       var form = h('form', { class: 'sh-form', onsubmit: save, novalidate: true },
         reader ? h('div', { style: 'margin-bottom:14px' }, reader,
           h('p', { class: 'note', style: 'margin-top:6px' },
-            'The promoter’s settlement sheet — photo or PDF. ' +
-            'The numbers fill in for you to check. Merch has its own atVenu bubble below.')) : null,
+            'The settlement sheet — photo or PDF. Every dollar it shows logs itself, ' +
+            'and Ari breaks the sheet down in the chat. Merch has its own atVenu bubble below.')) : null,
         h('div', { class: 'ledger inv-card' }, rows),
         notesHost,
         h('div', { class: 'preview inv-card' },
@@ -4745,7 +4785,7 @@
       groups.get(k).push(x);
     });
     return [
-      canWrite() ? addDailyForm(id) : null,
+      canEditTour(id) ? addDailyForm(id) : null,
       items.length
         ? h('div', { class: 'section-total' },
             h('span', null, 'Day-to-day costs so far'),
@@ -5947,7 +5987,7 @@
   /* Reads the promoter's settlement into the income sheet: numbers into the
      fields (still yours to check before saving), the night's story into notes. */
   function settlementReader(o) {
-    var face = o.btnLabel != null ? o.btnLabel : 'Read the promoter\u2019s settlement';
+    var face = o.btnLabel != null ? o.btnLabel : 'Import Settlement Sheet';
     var cls = o.btnCls || 'btn ghost block';
     var mkPrompt = o.mode === 'atvenu'
       ? function (b, img) { return atvenuPrompt(b, img); }
@@ -5974,15 +6014,19 @@
           var pdfFile = files.filter(function (f) { return /pdf/i.test(f.type) || /\.pdf$/i.test(f.name); })[0];
           var images = files.filter(function (f) { return /^image\//i.test(f.type); });
           var out;
+          var ariBody = '', ariPics = null; // the same sheet, kept for Ari
           if (pdfFile) {
             var got = await pdfToText(pdfFile);
             if (got.text.replace(/\s/g, '').length > 60) {
+              ariBody = got.text;
               out = await S.sample.json(mkPrompt(got.text.slice(0, 40000), false), { cache: false });
             } else {
               var pages = await pdfToImages(got.doc, got.pages);
+              ariPics = pages;
               out = await S.sample.json(mkPrompt('', true), { images: pages, cache: false });
             }
           } else if (images.length) {
+            ariPics = images;
             out = await S.sample.json(mkPrompt('', true), { images: images, cache: false });
           } else {
             toast('That file type isn’t supported — use a photo or a PDF.');
@@ -6000,8 +6044,13 @@
             toast('Couldn’t read that sheet. Try a sharper photo.');
             return;
           }
-          o.onResult(r);
-          if (o.mode === 'atvenu') {
+          await o.onResult(r);
+          // The income sheet logs itself now, and Ari reads the same sheet
+          // to the chat while the numbers land.
+          if (o.ariTour && r.found) ariExplain(o.ariTour, ariBody, ariPics);
+          if (o.autoSave && r.found) {
+            // the save spoke for itself
+          } else if (o.mode === 'atvenu') {
             toast(r.found ? 'Merch filled in from atVenu — check it, then save'
               : 'No merch total found, but the notes came through');
           } else {

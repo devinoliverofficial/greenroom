@@ -298,6 +298,13 @@
       if (q.error) throw mapError(q.error);
       if (q.data && q.data.user && session) session.user = q.data.user;
     },
+    myRole: async function (tourId) {
+      var doc = cache.tours.get(tourId);
+      if (doc && session && doc._ownerId === session.user.id) return 'owner';
+      var q = await sb.from('members').select('role')
+        .eq('tour_id', tourId).eq('user_id', session ? session.user.id : '').maybeSingle();
+      return (q.data && q.data.role) || 'viewer';
+    },
     ownsTour: function (tourId) {
       var doc = cache.tours.get(tourId);
       return !!(doc && session && doc._ownerId === session.user.id);

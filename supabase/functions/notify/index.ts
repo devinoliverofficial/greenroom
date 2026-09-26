@@ -74,11 +74,9 @@ Deno.serve(async (req) => {
   const memberIds = new Set<string>([tour.owner_id, ...(members ?? []).map((m) => m.user_id).filter(Boolean)]);
   if (!memberIds.has(senderId)) return reply(403, { error: "not_on_tour" });
 
-  // Alerts are the tour manager's siren: only the owner or an editor may pull it.
-  if (type === "alert") {
-    const canAlert = senderId === tour.owner_id ||
-      (members ?? []).some((m) => m.user_id === senderId && m.role === "editor");
-    if (!canAlert) return reply(403, { error: "not_manager" });
+  // Alerts are the tour manager's siren: only the owner may pull it.
+  if (type === "alert" && senderId !== tour.owner_id) {
+    return reply(403, { error: "not_manager" });
   }
 
   const tourName = String((tour.doc as Record<string, unknown>)?.name ?? "Greenroom");

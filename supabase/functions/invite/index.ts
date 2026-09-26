@@ -33,14 +33,10 @@ Deno.serve(async (req) => {
   const name = String(body.name ?? "").trim().slice(0, 24);
   if (!tourId || email.indexOf("@") < 1) return reply(400, { error: "invalid" });
 
-  // Only the tour manager's side of the aisle may invite.
+  // Only the tour manager may invite.
   const { data: tour } = await admin.from("tours").select("id, owner_id").eq("id", tourId).single();
   if (!tour) return reply(404, { error: "no_tour" });
-  if (tour.owner_id !== senderId) {
-    const { data: me } = await admin.from("members").select("role")
-      .eq("tour_id", tourId).eq("user_id", senderId).single();
-    if (!me || me.role !== "editor") return reply(403, { error: "not_manager" });
-  }
+  if (tour.owner_id !== senderId) return reply(403, { error: "not_manager" });
 
   // Create the account and send the email in one move. The username they
   // start with is the name the inviter typed; they can change it later.
