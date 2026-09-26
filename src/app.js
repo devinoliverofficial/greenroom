@@ -251,7 +251,7 @@
       snap.docs.forEach(function (d) {
         if (!d.exists) return;
         var v = d.data();
-        if (G.isObj(v) && (G.isObj(v.cats) || v.kind === 'crew' || v.kind === 'artistLogo')) m[d.id] = v;
+        if (G.isObj(v) && (G.isObj(v.cats) || v.kind === 'crew' || v.kind === 'artistLogo' || v.kind === 'artist')) m[d.id] = v;
       });
       S.labels = m;
       if (S.loaded) render();
@@ -291,6 +291,36 @@
   }
   async function rosterRemove(name) {
     var key = G.crewKey(name);
+    delete S.labels[key];
+    if (S.mode === 'db' && store.db) {
+      try { await store.db.doc('labels/' + key).delete(); } catch (e) { /* fine */ }
+    } else saveLocalLabels();
+  }
+
+  /* An artist is a thing in its own right, not just a field on a tour, so a
+     name registered here shows up before their first run exists. */
+  function artistKey(name) {
+    return 'artist:' + String(name || '').trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  }
+  function registeredArtists() {
+    return Object.keys(S.labels)
+      .filter(function (k) { return k.indexOf('artist:') === 0 && S.labels[k] && S.labels[k].kind === 'artist'; })
+      .map(function (k) { return String(S.labels[k].name || ''); })
+      .filter(Boolean);
+  }
+  async function registerArtist(name) {
+    var key = artistKey(name);
+    if (key === 'artist:') return false;
+    var rec = { kind: 'artist', name: String(name).trim() };
+    S.labels[key] = rec;
+    if (S.mode === 'db' && store.db) {
+      try { await store.db.doc('labels/' + key).set(rec); } catch (e) { /* a convenience */ }
+    } else saveLocalLabels();
+    return true;
+  }
+  async function forgetArtist(name) {
+    var key = artistKey(name);
     delete S.labels[key];
     if (S.mode === 'db' && store.db) {
       try { await store.db.doc('labels/' + key).delete(); } catch (e) { /* fine */ }
@@ -462,7 +492,7 @@
     window.scrollTo(0, 0);
     render(true);
   }
-  function clampStep(s) { return Math.min(3, Math.max(2, Number(s) || 2)); }
+  function clampStep(s) { return 2; } // one resume point: the shows
   function openTour(id) {
     var t = getTour(id);
     if (t && !t.setupDone && canWrite()) go({ name: 'wizard', id: id, step: clampStep(t.setupStep) });
@@ -488,6 +518,7 @@
     else if (S.route.name === 'wizard') node = viewWizard();
     else if (S.route.name === 'tour') node = viewTour();
     else if (S.route.name === 'artist') node = viewArtist();
+    else if (S.route.name === 'newartist') node = viewNewArtist();
     else node = viewHome();
     view.replaceChildren(node);
 
@@ -1234,6 +1265,7 @@
       if (!byArtist.has(a)) byArtist.set(a, []);
       byArtist.get(a).push(e);
     });
+    registeredArtists().forEach(function (a) { if (!byArtist.has(a)) byArtist.set(a, []); });
     var pill = homePill();
 
     return h('div', { class: 'page home' },
@@ -1242,7 +1274,7 @@
           h('div', { class: 'topbar-actions' },
             pill ? h('span', { class: 'pill' }, pill) : null, themeBtn())),
         canWrite()
-          ? h('button', { class: 'add-mini', type: 'button', onclick: function () { startTour(''); } },
+          ? h('button', { class: 'add-mini', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
               h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
           : null),
       dbBanner(),
@@ -1259,12 +1291,16 @@
             return h('li', null, swipeable(cardEl, function () {
               confirmSheet({
                 title: 'Delete everything for ' + pair[0] + '?',
-                body: plural(pair[1].length, 'tour') + ' move to Recently deleted for ' + TRASH_DAYS + ' days.',
-                action: 'Delete ' + plural(pair[1].length, 'tour'), danger: true,
+                body: pair[1].length
+                  ? plural(pair[1].length, 'tour') + ' move to Recently deleted for ' + TRASH_DAYS + ' days.'
+                  : 'They have no runs yet, so nothing else goes with them.',
+                action: pair[1].length ? 'Delete ' + plural(pair[1].length, 'tour') : 'Delete ' + pair[0],
+                danger: true,
                 onConfirm: async function () {
                   for (var i = 0; i < pair[1].length; i++) {
                     await api.update(pair[1][i][0], { deletedAt: Date.now() });
                   }
+                  await forgetArtist(pair[0]);
                   toast(pair[0] + ' moved to Recently deleted');
                   return true;
                 }
@@ -1336,6 +1372,37 @@
       h('button', { class: 'art-main', type: 'button', onclick: open },
         h('span', { class: 'tc-name' }, name),
         icon('chevron', 20)));
+  }
+
+  /* Naming an artist: one word, one box, nothing else. */
+  function viewNewArtist() {
+    if (S.drafts.newArtist == null) S.drafts.newArtist = '';
+    var input = h('input', {
+      class: 'input big', type: 'text', id: 'na-name', 'data-k': 'na-name',
+      value: S.drafts.newArtist, maxlength: 60, placeholder: 'In This Moment',
+      autocomplete: 'off', enterkeyhint: 'done', autofocus: true, 'aria-label': 'Artist',
+      oninput: function (e) { S.drafts.newArtist = e.target.value; }
+    });
+    var submit = async function (e) {
+      e.preventDefault();
+      var name = String(S.drafts.newArtist || '').trim();
+      if (!name) { toast('Give the artist a name'); input.focus(); return; }
+      blurActive();
+      if (!(await registerArtist(name))) { toast('Couldn\u2019t save that name'); return; }
+      delete S.drafts.newArtist;
+      go({ name: 'artist', artist: name });
+    };
+    return h('div', { class: 'page home' },
+      h('div', { class: 'headband' },
+        h('header', { class: 'topbar' },
+          h('button', { class: 'iconbtn back', type: 'button',
+            onclick: function () { delete S.drafts.newArtist; go({ name: 'home' }); } },
+            icon('back'), h('span', null, 'Artists')),
+          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('div', { class: 'topbar-actions' }, h('span', { style: 'width:44px' })))),
+      h('form', { class: 'sh-form', onsubmit: submit, novalidate: true, style: 'margin-top:18px' },
+        field('Artist', input),
+        h('button', { class: 'btn primary block', type: 'submit', style: 'margin-top:18px' }, 'Save')));
   }
 
   /* One artist's tours. */
@@ -1484,18 +1551,17 @@
     }
     var exit = function () { return id ? go({ name: 'tour', id: id, view: 'menu' }) : go({ name: 'home' }); };
     var head = h('div', { class: 'wz-head' },
-      h('div', { class: 'wz-bar', 'aria-hidden': 'true' }, [1, 2, 3].map(function (n) {
+      h('div', { class: 'wz-bar', 'aria-hidden': 'true' }, [1, 2].map(function (n) {
         return h('i', { class: n <= step ? 'on' : null });
       })),
       h('div', { class: 'wz-meta' },
-        h('span', null, 'Step ' + step + ' of 3'),
+        h('span', null, 'Step ' + step + ' of 2'),
         h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
         h('button', { class: 'linkbtn', type: 'button', onclick: exit }, id ? 'Finish later' : 'Cancel')));
 
     var body;
-    // What the tour costs is no longer asked here — the Expenses tab owns it.
-    if (step === 2) body = wzShows(id, t);
-    else if (step === 3) body = wzDebt(id, t);
+    // Costs and debts are no longer asked here — the Expenses tab owns both.
+    if (step >= 2) body = wzShows(id, t);
     else body = wzName(id, t);
     return h('div', { class: 'page wizard' }, head, body);
   }
@@ -1557,28 +1623,13 @@
       delete S.drafts.wzArtist;
       go({ name: 'wizard', id: tid, step: 2 });
     };
+    var known = String(S.drafts.wzArtist || '').trim();
     return h('form', { class: 'wz-body', onsubmit: submit, novalidate: true },
-      h('h1', { class: 'wz-title' }, 'Who and what'),
-      h('p', { class: 'wz-sub' }, 'The artist this run belongs to, and whatever you call it on the road.'),
-      field('Artist', artistInput),
-      artistDatalist(),
-      field('Tour name', input),
+      known ? null : [field('Artist', artistInput), artistDatalist()],
+      field('Tour', input),
       wzFoot(null, 'Next'));
   }
 
-
-  function wzDebt(id, t) {
-    var has = G.rows(t.debts).length > 0;
-    return h('div', { class: 'wz-body' },
-      h('h1', { class: 'wz-title' }, 'What do you owe going in?'),
-      h('p', { class: 'wz-sub' }, 'The card balance you’re carrying into the tour, plus any loans or gear payments. Nothing owed? Skip it.'),
-      debtSection(id, t, 'wizard'),
-      wzFoot(function () { go({ name: 'wizard', id: id, step: 2 }); }, has ? 'Finish' : 'Skip', async function () {
-        if (!(await api.update(id, { setupDone: true, setupStep: 5 }))) return;
-        S.lastNet[id] = 0; // count in from zero the first time the hero is seen
-        go({ name: 'tour', id: id, view: 'menu' });
-      }));
-  }
 
   function wzShows(id, t) {
     var shows = G.rows(t.shows).sort(G.byDate);
@@ -1590,7 +1641,7 @@
       S.sample
         ? h('div', { class: 'stack', style: 'margin-top:0;margin-bottom:18px' },
             fileControl({
-              label: 'Upload the flyer', icon: 'flyer', cls: 'btn primary block',
+              label: 'Upload flyer', icon: 'flyer', cls: 'btn primary block',
               accept: imageAccept(),
               onFiles: function (files) { readFlyer(id, files[0]); }
             }),
@@ -1606,8 +1657,11 @@
             }, dateBlock(s.date), whereBlock(s), icon('chevron', 18)));
           }))
         : null,
-      wzFoot(function () { go({ name: 'wizard', id: id, step: 1 }); }, 'Next', async function () {
-        if (await api.update(id, { setupStep: 3 })) go({ name: 'wizard', id: id, step: 3 });
+      wzFoot(function () { go({ name: 'wizard', id: id, step: 1 }); }, 'Finish', function () {
+        blurActive();
+        S.lastNet[id] = 0; // count in from zero the first time the hero is seen
+        go({ name: 'tour', id: id, view: 'details' });
+        api.update(id, { setupDone: true, setupStep: 5 });
       }));
   }
 
@@ -3215,12 +3269,11 @@
           e.preventDefault();
           blurActive();
           var clean = names.map(function (x) { return String(x || '').trim(); }).filter(Boolean);
-          if (!clean.length) { closeSheet(); setTimeout(function () { openTravelDaysSheet(tourId); }, 300); return; }
+          if (!clean.length) { closeSheet(); return; }
           if (await api.update(tourId, { bands: clean })) {
             closeSheet();
             toast(plural(clean.length, 'band') + ' on the bill \u2014 every day sheet starts with them');
             render(true);
-            setTimeout(function () { openTravelDaysSheet(tourId); }, 400);
           }
         };
         return [
@@ -3231,7 +3284,7 @@
             h('div', { class: 'stack' },
               h('button', { class: 'btn primary block', type: 'submit' }, 'Save the bill'),
               h('button', { class: 'btn ghost block', type: 'button',
-                onclick: function () { closeSheet(); setTimeout(function () { openTravelDaysSheet(tourId); }, 300); } },
+                onclick: function () { closeSheet(); } },
                 'Skip for now')))
         ];
       }, { label: 'The bill' });
@@ -3253,16 +3306,17 @@
         h('div', { class: 'stack' },
           h('button', { class: 'btn primary block', type: 'button', onclick: step2 }, 'Next'),
           h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { closeSheet(); setTimeout(function () { openTravelDaysSheet(tourId); }, 300); } },
+            onclick: function () { closeSheet(); } },
             'Skip for now'))
       ];
     }, { label: 'The bill' });
   }
 
-  function openTravelDaysSheet(tourId) {
+  function openTravelDaysSheet(tourId, onDone) {
+    var done = function () { if (onDone) setTimeout(onDone, 300); };
     var t = getTour(tourId);
     var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
-    if (!shows.length) return;
+    if (!shows.length) { done(); return; }
     var first = shows[0].date, last = shows[shows.length - 1].date;
     var before = G.parseDay(t.spanStart) && t.spanStart < first ? G.daysBetween(t.spanStart, first) : 0;
     var after = G.parseDay(t.spanEnd) && t.spanEnd > last ? G.daysBetween(last, t.spanEnd) : 0;
@@ -3303,10 +3357,11 @@
                 closeSheet();
                 toast(before || after ? 'Travel days on the run' : 'No travel days');
                 render(true);
+                done();
               }
             } }, 'Save'),
           h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { closeSheet(); } }, 'Not now'))
+            onclick: function () { closeSheet(); done(); } }, 'Not now'))
       ];
     }, { label: 'Travel days' });
   }
@@ -5072,8 +5127,12 @@
       if (await api.update(tourId, { shows: patch })) {
         closeSheet(); toast(plural(n, 'show') + ' added'); render(true);
         var t0 = getTour(tourId);
-        if (!tourBands(t0).length) setTimeout(function () { openLineupPrompt(tourId); }, 400);
-        else setTimeout(function () { openTravelDaysSheet(tourId); }, 400);
+        setTimeout(function () {
+          openTravelDaysSheet(tourId, function () {
+            var t1 = getTour(tourId);
+            if (t1 && !tourBands(t1).length) openLineupPrompt(tourId);
+          });
+        }, 400);
         lookupVenueInfo(tourId, patch); // fire and forget — a nicety
       }
     }
@@ -5949,7 +6008,7 @@
   function openLabelsSheet() {
     function build() {
       var keys = Object.keys(S.labels).filter(function (k) {
-        return k.indexOf('crew:') !== 0 && k.indexOf('alogo:') !== 0;
+        return k.indexOf('crew:') !== 0 && k.indexOf('alogo:') !== 0 && k.indexOf('artist:') !== 0;
       }).sort(function (a, b) {
         var an = (S.labels[a].merchant || a).toLowerCase();
         var bn = (S.labels[b].merchant || b).toLowerCase();
