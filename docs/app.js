@@ -2772,7 +2772,9 @@
         h('button', { class: 'linkbtn', type: 'button', onclick: function () { openShowSheet(id); } },
           'Type a show in by hand'),
         h('button', { class: 'linkbtn', type: 'button', onclick: function () { openTravelDaysSheet(id); } },
-          'Travel days before or after the run')) : null,
+          'Travel days before or after the run'),
+        h('button', { class: 'linkbtn', type: 'button', onclick: function () { openRehearsalSheet(id); } },
+          'Rehearsal days before the tour')) : null,
       canWrite() ? [
         h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, h('img', { class: 'brand-logo', src: 'logo-mastertour.png', alt: '' }), 'Master Tour'),
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
@@ -3150,12 +3152,14 @@
 
   function offDayRow(t, date, travel) {
     var off = offDayFor(t, date);
+    var reh = isRehearsalDay(t, date);
     return h('li', null, h('div', { class: 'show-row is-off' },
       dateBlock(date),
       h('div', { class: 'where' },
-        h('div', { class: 'city' }, off.city || (travel ? 'Travel day' : 'Day off')),
+        h('div', { class: 'city' }, off.city ||
+          (reh ? 'Rehearsal day' : travel ? 'Travel day' : 'Day off')),
         off.hotel ? h('div', { class: 'venue' }, off.hotel) : null),
-      h('span', { class: 'tag quiet' }, travel ? 'Travel' : 'Off')));
+      h('span', { class: 'tag quiet' }, reh ? 'Rehearsal' : travel ? 'Travel' : 'Off')));
   }
 
   function showRow(id, s, today) {
@@ -3221,6 +3225,7 @@
     var start = shows[0].date, end = shows[shows.length - 1].date;
     if (G.parseDay(t.spanStart) && t.spanStart < start) start = t.spanStart;
     if (G.parseDay(t.spanEnd) && t.spanEnd > end) end = t.spanEnd;
+    if (G.parseDay(t.rehearsalStart) && t.rehearsalStart < start) start = t.rehearsalStart;
     var days = [];
     var d = start, guard = 0;
     while (d <= end && guard < 120) {
@@ -3236,6 +3241,11 @@
     }
     if (idx < 0) idx = days.length - 1;
     return { days: days, index: idx };
+  }
+
+  function isRehearsalDay(t, date) {
+    return !!(t && G.parseDay(t.rehearsalStart) && G.parseDay(t.rehearsalEnd) &&
+      date >= t.rehearsalStart && date <= t.rehearsalEnd);
   }
 
   function offDayFor(t, date) {
@@ -3399,7 +3409,8 @@
         h('span', { class: 'ds-chip-d num' }, dd ? String(dd.getDate()) : '?'),
         h('span', { class: 'ds-chip-c' }, x.show
           ? String(x.show.city || '').split(',')[0]
-          : (String(offDayFor(t, x.date).city || '').split(',')[0] || 'off')));
+          : (String(offDayFor(t, x.date).city || '').split(',')[0] ||
+             (isRehearsalDay(t, x.date) ? 'rehearsal' : 'off'))));
     }));
     requestAnimationFrame(function () {
       var sel = rail.querySelector('.ds-chip.on');
@@ -3649,6 +3660,47 @@
             onclick: function () { closeSheet(); done(); } }, 'Not now'))
       ];
     }, { label: 'Travel days' });
+  }
+
+  /* Rehearsal days before the run: asked after travel days, with real dates,
+     so the schedule shows the whole picture from the first downbeat. */
+  function openRehearsalSheet(tourId, onDone) {
+    var done = function () { if (onDone) setTimeout(onDone, 300); };
+    var t = getTour(tourId);
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    if (!shows.length) { done(); return; }
+    var first = shows[0].date;
+    var f = { start: t.rehearsalStart || '', end: t.rehearsalEnd || '' };
+    openSheet(function () {
+      function dateIn(key, label) {
+        return field(label, h('input', { class: 'input', type: 'date', value: f[key],
+          'aria-label': label, oninput: function (e) { f[key] = e.target.value; } }));
+      }
+      return [
+        h('h2', { class: 'sh-title' }, 'Rehearsal days before the tour?'),
+        h('p', { class: 'sh-sub' }, 'They join the run so day sheets and plans can start before the first show.'),
+        h('form', { class: 'sh-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            if (!G.parseDay(f.start) || !G.parseDay(f.end)) { toast('Pick both dates'); return; }
+            if (f.start > f.end) { toast('The first day has to come before the last'); return; }
+            if (f.end >= first) { toast('Rehearsals wrap before the first show on ' + dayMD(first)); return; }
+            blurActive();
+            if (await api.update(tourId, { rehearsalStart: f.start, rehearsalEnd: f.end })) {
+              closeSheet();
+              toast(plural(G.daysBetween(f.start, f.end) + 1, 'rehearsal day') + ' on the run');
+              render(true);
+              done();
+            }
+          } },
+          dateIn('start', 'First rehearsal'),
+          dateIn('end', 'Last rehearsal'),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { closeSheet(); done(); } }, 'No rehearsals')))
+      ];
+    }, { label: 'Rehearsals' });
   }
 
   /* Guests live in their own table on the real backend (so GA can add names
@@ -5462,8 +5514,10 @@
         var t0 = getTour(tourId);
         setTimeout(function () {
           openTravelDaysSheet(tourId, function () {
-            var t1 = getTour(tourId);
-            if (t1 && !tourBands(t1).length) openLineupPrompt(tourId);
+            openRehearsalSheet(tourId, function () {
+              var t1 = getTour(tourId);
+              if (t1 && !tourBands(t1).length) openLineupPrompt(tourId);
+            });
           });
         }, 400);
         lookupVenueInfo(tourId, patch); // fire and forget — a nicety
