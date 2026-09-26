@@ -4,3 +4,4 @@ tools/bin/
 src/_stub.html
 *.datauri.txt
 .secrets/
+src/_dbstub.html

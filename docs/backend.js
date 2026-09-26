@@ -229,22 +229,34 @@
       var n = m ? String(m.username || '').trim() : '';
       return n || null;
     },
+    tourRoles: TOUR_ROLES,
     myProfile: function () {
       var m = (session && session.user && session.user.user_metadata) || {};
+      var full = String(m.full_name || '').trim();
+      // Accounts from before first/last were asked get split from the full name.
+      var first = String(m.first_name || '').trim() || full.split(/\s+/)[0] || '';
+      var last = String(m.last_name || '').trim() || full.split(/\s+/).slice(1).join(' ');
       return {
-        fullName: String(m.full_name || '').trim(),
+        firstName: first, lastName: last, fullName: full,
         username: String(m.username || '').trim(),
         phone: String(m.phone || '').trim(),
+        tourRole: String(m.tour_role || '').trim(),
         email: session && session.user ? session.user.email : ''
       };
     },
     /* One card, two homes: the account metadata (so it follows you to any
-       phone) and the profiles table (so the rest of the tour can read it). */
+       phone) and the profiles table (so the rest of the tour can read it).
+       The name in chat is simply the person's name. */
     saveProfile: async function (p) {
+      var first = String(p.firstName || '').trim().slice(0, 30);
+      var last = String(p.lastName || '').trim().slice(0, 30);
+      var full = (first + ' ' + last).trim();
       var card = {
-        full_name: String(p.fullName || '').trim().slice(0, 60),
-        username: String(p.username || '').trim().slice(0, 24),
-        phone: String(p.phone || '').trim().slice(0, 30)
+        first_name: first, last_name: last,
+        full_name: full.slice(0, 60),
+        username: full.slice(0, 40),
+        phone: String(p.phone || '').trim().slice(0, 30),
+        tour_role: String(p.tourRole || '').trim().slice(0, 40)
       };
       var q = await sb.auth.updateUser({ data: card });
       if (q.error) throw mapError(q.error);
@@ -265,7 +277,7 @@
       var byId = {};
       if (ids.length) {
         var pq = await sb.from('profiles')
-          .select('user_id, full_name, username, email, phone').in('user_id', ids);
+          .select('user_id, full_name, username, email, phone, tour_role').in('user_id', ids);
         (pq.data || []).forEach(function (x) { byId[x.user_id] = x; });
       }
       var out = [];
@@ -275,7 +287,7 @@
           owner: true, role: 'owner',
           name: op.full_name || '', username: op.username || '',
           email: op.email || (ownerId === (session && session.user && session.user.id) ? session.user.email : ''),
-          phone: op.phone || '', joined: true
+          phone: op.phone || '', tourRole: op.tour_role || '', joined: true
         });
       }
       rows.forEach(function (r) {
@@ -287,6 +299,7 @@
           email: pr.email || r.invited_email,
           invitedEmail: r.invited_email,
           phone: pr.phone || r.phone || '',
+          tourRole: pr.tour_role || '',
           joined: !!r.user_id
         });
       });
@@ -459,6 +472,24 @@
   /* Ordinary accounts: email + password, made right here in the app. No
      sign-in emails — on an iPhone, a home-screen app and Safari are separate
      worlds, so email links sign in the wrong one. Passwords don't care. */
+  /* What someone does on the run. A job title for the crew list — never an
+     access level; GA / ALL ACCESS are the tour manager's to hand out. */
+  var TOUR_ROLES = ['Artist/Owner', 'Band', 'Tour Manager', 'Production Manager',
+    'Stage Manager', 'Merch', 'Guitar Tech', 'Drum Tech', 'Assistant',
+    'FOH Engineer', 'Monitors', 'Friend', 'Family Member', 'Liaison', 'Dancer'];
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function roleSelectHtml(id, current) {
+    return '<select class="input gate-select" id="' + id + '" required aria-label="Your role on the tour">' +
+      '<option value=""' + (current ? '' : ' selected') + ' disabled>Your role on the tour</option>' +
+      TOUR_ROLES.map(function (r) {
+        return '<option' + (r === current ? ' selected' : '') + '>' + esc(r) + '</option>';
+      }).join('') + '</select>';
+  }
+
   function gate() {
     var mode = 'signin';
     var wrap = document.createElement('div');
@@ -472,14 +503,18 @@
         '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
         '<form id="gr-gate-form" novalidate>' +
         (signin ? '' :
-          '<input class="input" type="text" id="gr-gate-full" placeholder="Full name" ' +
-            'maxlength="60" autocomplete="name" aria-label="Full name">' +
-          '<input class="input" type="text" id="gr-gate-name" placeholder="Username \u2014 what the tour sees" ' +
-            'maxlength="24" autocomplete="nickname" aria-label="Username">') +
-        '<input class="input" type="email" id="gr-gate-email" placeholder="you@band.com" autocomplete="email" inputmode="email" aria-label="Email">' +
+          '<div class="gate-pair">' +
+          '<input class="input" type="text" id="gr-gate-first" placeholder="First name" ' +
+            'maxlength="30" autocomplete="given-name" aria-label="First name">' +
+          '<input class="input" type="text" id="gr-gate-last" placeholder="Last name" ' +
+            'maxlength="30" autocomplete="family-name" aria-label="Last name">' +
+          '</div>') +
+        '<input class="input" type="email" id="gr-gate-email" placeholder="' + (signin ? 'you@band.com' : 'Email') +
+          '" autocomplete="email" inputmode="email" aria-label="Email">' +
         (signin ? '' :
           '<input class="input" type="tel" id="gr-gate-phone" placeholder="Phone number" ' +
-            'maxlength="30" autocomplete="tel" inputmode="tel" aria-label="Phone number">') +
+            'maxlength="30" autocomplete="tel" inputmode="tel" aria-label="Phone number">' +
+          roleSelectHtml('gr-gate-role', '')) +
         '<input class="input" type="password" id="gr-gate-pass" placeholder="Password" ' +
           'autocomplete="' + (signin ? 'current-password' : 'new-password') + '" aria-label="Password">' +
         '<div class="gate-err" id="gr-gate-err" role="alert"></div>' +
@@ -502,15 +537,18 @@
         errEl.textContent = '';
         var email = String(emailI.value || '').trim();
         var pass = String(passI.value || '');
-        var nameI = wrap.querySelector('#gr-gate-name');
-        var fullI = wrap.querySelector('#gr-gate-full');
+        var firstI = wrap.querySelector('#gr-gate-first');
+        var lastI = wrap.querySelector('#gr-gate-last');
         var phoneI = wrap.querySelector('#gr-gate-phone');
-        var uname = nameI ? String(nameI.value || '').trim() : '';
-        var full = fullI ? String(fullI.value || '').trim() : '';
+        var roleI = wrap.querySelector('#gr-gate-role');
+        var first = firstI ? String(firstI.value || '').trim() : '';
+        var last = lastI ? String(lastI.value || '').trim() : '';
         var phone = phoneI ? String(phoneI.value || '').trim() : '';
-        if (fullI && full.length < 2) { errEl.textContent = 'Type your full name.'; fullI.focus(); return; }
-        if (nameI && uname.length < 2) { errEl.textContent = 'Pick a username \u2014 it\u2019s what the tour sees in chat.'; nameI.focus(); return; }
+        var tourRole = roleI ? String(roleI.value || '') : '';
+        if (firstI && !first) { errEl.textContent = 'Type your first name.'; firstI.focus(); return; }
+        if (lastI && !last) { errEl.textContent = 'Type your last name.'; lastI.focus(); return; }
         if (phoneI && phone.replace(/\D/g, '').length < 7) { errEl.textContent = 'Type a phone number the tour can reach you on.'; phoneI.focus(); return; }
+        if (roleI && !tourRole) { errEl.textContent = 'Pick your role on the tour.'; roleI.focus(); return; }
         if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email address.'; emailI.focus(); return; }
         if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
         btn.disabled = true;
@@ -518,7 +556,10 @@
           var res = signin
             ? await sb.auth.signInWithPassword({ email: email, password: pass })
             : await sb.auth.signUp({ email: email, password: pass, options: { data: {
-                username: uname.slice(0, 24), full_name: full.slice(0, 60), phone: phone.slice(0, 30) } } });
+                first_name: first.slice(0, 30), last_name: last.slice(0, 30),
+                full_name: (first + ' ' + last).slice(0, 60),
+                username: (first + ' ' + last).slice(0, 40),
+                phone: phone.slice(0, 30), tour_role: tourRole } } });
           if (res.error) throw res.error;
           if (!res.data || !res.data.session) throw new Error('no session');
           // onAuthStateChange finishes the job
@@ -597,17 +638,31 @@
     var wrap = document.createElement('div');
     wrap.id = 'gr-pass-gate';
     wrap.className = 'gr-gate-like';
-    var uname = (session.user.user_metadata && session.user.user_metadata.username) || '';
+    // Invited crew land here instead of on Create account, so they get the
+    // same card: the manager's spelling of their name comes prefilled.
+    var m0 = session.user.user_metadata || {};
+    var typed = String(m0.username || m0.full_name || '').trim();
+    var first0 = String(m0.first_name || typed.split(/\s+/)[0] || '');
+    var last0 = String(m0.last_name || typed.split(/\s+/).slice(1).join(' ') || '');
     wrap.innerHTML =
       '<div class="gate-card">' +
       '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-      '<p class="gate-hi">' + (uname ? 'Welcome, ' + uname + '. ' : '') +
-        'You\u2019re on the tour \u2014 create a password so you can sign in anywhere.</p>' +
+      '<p class="gate-hi">' + (first0 ? 'Welcome, ' + esc(first0) + '. ' : '') +
+        'You\u2019re on the tour \u2014 finish your card and pick a password.</p>' +
       '<form id="gr-pass-form" novalidate>' +
+      '<div class="gate-pair">' +
+      '<input class="input" type="text" id="gr-pass-first" placeholder="First name" value="' + esc(first0) + '" ' +
+        'maxlength="30" autocomplete="given-name" aria-label="First name">' +
+      '<input class="input" type="text" id="gr-pass-last" placeholder="Last name" value="' + esc(last0) + '" ' +
+        'maxlength="30" autocomplete="family-name" aria-label="Last name">' +
+      '</div>' +
+      '<input class="input" type="tel" id="gr-pass-phone" placeholder="Phone number" value="' + esc(m0.phone || '') + '" ' +
+        'maxlength="30" autocomplete="tel" inputmode="tel" aria-label="Phone number">' +
+      roleSelectHtml('gr-pass-role', m0.tour_role || '') +
       '<input class="input" type="password" id="gr-pass-new" placeholder="Create a password" ' +
         'autocomplete="new-password" aria-label="Create a password">' +
       '<div class="gate-err" id="gr-pass-err" role="alert"></div>' +
-      '<button class="btn primary block" type="submit">Save password</button>' +
+      '<button class="btn primary block" type="submit">Save</button>' +
       '</form></div>';
     document.body.appendChild(wrap);
     var form = wrap.querySelector('#gr-pass-form');
@@ -616,13 +671,26 @@
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
       var pass = String(passI.value || '');
+      var fI = wrap.querySelector('#gr-pass-first'), lI = wrap.querySelector('#gr-pass-last');
+      var phI = wrap.querySelector('#gr-pass-phone'), rI = wrap.querySelector('#gr-pass-role');
+      var first = String(fI.value || '').trim(), last = String(lI.value || '').trim();
+      var phone = String(phI.value || '').trim(), tourRole = String(rI.value || '');
+      if (!first) { errEl.textContent = 'Type your first name.'; fI.focus(); return; }
+      if (!last) { errEl.textContent = 'Type your last name.'; lI.focus(); return; }
+      if (phone.replace(/\D/g, '').length < 7) { errEl.textContent = 'Type a phone number the tour can reach you on.'; phI.focus(); return; }
+      if (!tourRole) { errEl.textContent = 'Pick your role on the tour.'; rI.focus(); return; }
       if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
       form.querySelector('button').disabled = true;
       try {
-        var meta = Object.assign({}, session.user.user_metadata || {}, { invited: false });
+        var full = (first + ' ' + last).trim();
+        var meta = Object.assign({}, session.user.user_metadata || {}, {
+          invited: false, first_name: first.slice(0, 30), last_name: last.slice(0, 30),
+          full_name: full.slice(0, 60), username: full.slice(0, 40),
+          phone: phone.slice(0, 30), tour_role: tourRole });
         var q = await sb.auth.updateUser({ password: pass, data: meta });
         if (q.error) throw q.error;
         if (q.data && q.data.user) session.user = q.data.user;
+        pushProfile();
         wrap.querySelector('.gate-card').innerHTML =
           '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
           '<p class="gate-hi">Password saved. Put Greenroom on your home screen:</p>' +
@@ -645,9 +713,12 @@
       await sb.from('profiles').upsert({
         user_id: session.user.id,
         full_name: String(m.full_name || '').slice(0, 60),
-        username: String(m.username || '').slice(0, 24),
+        first_name: String(m.first_name || '').slice(0, 30),
+        last_name: String(m.last_name || '').slice(0, 30),
+        username: String(m.username || '').slice(0, 40),
         email: session.user.email || '',
         phone: String(m.phone || '').slice(0, 30),
+        tour_role: String(m.tour_role || '').slice(0, 40),
         updated_at: new Date().toISOString()
       });
     } catch (e) { /* the phone book can wait for the next sign-in */ }

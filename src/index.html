@@ -736,11 +736,16 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .crew-invite .plus { font-size: 14px; line-height: 1; }
 .crew-row .crew-sub { display: block; font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
 .crew-side { display: flex; align-items: center; gap: 6px; flex: none; }
-.row.crew-row { gap: 10px; }
+.row.crew-row { gap: 6px; }   /* same as .crew-side's gap, so the badge column sits dead centre */
 .crew-call.empty { visibility: hidden; }
-/* Just wide enough for TOUR MANAGER (110px); badges hug the left so every
-   role starts at the same point, and the names keep as much room as possible. */
-.role-slot { flex: none; width: 112px; display: flex; justify-content: flex-start; }
+/* The badge box is just wide enough for TOUR MANAGER (110px); badges hug its
+   left edge so every role starts at the same point. Once the list is measured
+   (.sized), the box floats centred in the gap between names and icons. */
+.role-slot { flex: none; display: flex; justify-content: flex-start; }
+.role-box { width: 112px; display: flex; justify-content: flex-start; }
+.crew-list.sized .crew-row .row-label { flex: 0 0 var(--crew-name-w); }
+.crew-list.sized .crew-side { flex: 1 1 auto; min-width: 0; }
+.crew-list.sized .role-slot { flex: 1 1 auto; justify-content: center; }
 /* The badge labels the person; it does not announce itself over their name. */
 .crew-side .role-tag {
   flex: none; padding: 3px 9px; border-radius: 999px;
@@ -858,6 +863,12 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
           drop-shadow(0 0 18px color-mix(in oklab, var(--pos), transparent var(--glow-fade)));
 }
 .ov-venue { margin-top: 6px; font-size: 16px; font-weight: 500; color: var(--ink-2); overflow-wrap: anywhere; }
+/* The address rides right under the venue, smaller: a quiet link to Maps. */
+.ov-addr { display: inline-block; margin-top: 4px; font-size: 13.5px; font-weight: 500;
+  color: var(--pos); text-decoration: underline; text-underline-offset: 3px;
+  text-decoration-color: color-mix(in oklab, var(--pos), transparent 55%); overflow-wrap: anywhere; }
+/* Guest list: the night, glowing green, over the big header. */
+.gl-when { margin: 0 0 2px; font-size: 15px; font-weight: 700; color: var(--pos); }
 /* Doors and Address read like Pre-sale: the label above, the value centred. */
 .ov-lines { display: grid; gap: 18px; margin-top: 22px; }
 .ov-line { display: flex; flex-direction: column; align-items: center; text-align: center; }
@@ -1129,8 +1140,23 @@ textarea.update {
 /* ============================== Sign-in gate + people ============================== */
 #gr-gate, #gr-pass-gate {
   position: fixed; inset: 0; z-index: 100; background: var(--bg);
-  display: grid; place-items: start center; padding: 16vh 22px 0;
+  display: grid; place-items: start center;
+  /* Create account is a long card now — it scrolls rather than falling off a small phone. */
+  padding: 10vh 22px calc(40px + env(safe-area-inset-bottom, 0px));
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
 }
+/* First and last name share a row. */
+.gate-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+/* The role dropdown wears the input's coat, with its own caret; greyed until picked. */
+/* select.input (older rule) strips images and .sheet .input resets the
+   background shorthand — this selector outranks both. */
+select.input.gate-select {
+  -webkit-appearance: none; appearance: none; padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239AA39C' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 15px center;
+}
+.gate-select:invalid { color: var(--ink-3); font-weight: 500; }
+.gate-select option { color: #111; }
 .gate-hi { font-size: 16px; line-height: 1.5; }
 .gate-card { display: grid; justify-items: center; gap: 10px; max-width: 380px; text-align: center; }
 .gate-card .logo-mark { background-size: contain; background-repeat: no-repeat; background-position: center; }

@@ -1378,7 +1378,8 @@
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       (function () {
         if (S.mode === 'db' && !S.askedUsername && window.GR_BACKEND &&
-            window.GR_BACKEND.saveProfile && window.GR_BACKEND.username && !window.GR_BACKEND.username()) {
+            window.GR_BACKEND.saveProfile && window.GR_BACKEND.myProfile &&
+            !window.GR_BACKEND.myProfile().tourRole) {
           S.askedUsername = true;
           setTimeout(function () { openUsernameSheet(true); }, 700);
         }
@@ -1404,7 +1405,7 @@
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openUsernameSheet(false); } },
             icon('people', 18),
-            (B.username && B.username()) ? 'Your contact card' : 'Add your details') : null,
+            (B.myProfile && B.myProfile().tourRole) ? 'Your contact card' : 'Add your details') : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () {
               confirmSheet({
@@ -3107,18 +3108,22 @@
           h('span', null, dayLong(s ? today : (next ? next.date : today)))),
         h('div', { class: 'ov-city' }, s ? (s.city || 'Show')
           : (off && off.city ? off.city : (next ? next.city : 'Day off'))),
-        next && next.venue ? h('div', { class: 'ov-venue' }, next.venue) : null),
+        next && next.venue ? h('div', { class: 'ov-venue' }, next.venue) : null,
+        // No label needed: it reads as the address, and a tap opens Maps.
+        d.venueAddress ? h('a', { class: 'ov-addr', href: mapsHref(d.venueAddress),
+          target: '_blank', rel: 'noopener' }, d.venueAddress) : null),
       quote
         ? h('div', { class: 'ov-msg' },
-            h('span', { class: 'ov-msg-k' }, 'Message from the tour manager'),
-            h('blockquote', { class: 'ov-quote' }, h('p', null, quote)))
+            h('span', { class: 'ov-msg-k' }, 'Tour Manager says'),
+            // Curly quotes wrap whatever the TM wrote (stripping any they typed).
+            h('blockquote', { class: 'ov-quote' }, h('p', null,
+              '\u201c' + quote.replace(/^["\u201c\u201d']+|["\u201c\u201d']+$/g, '').trim() + '\u201d')))
         : null,
       d.presale ? h('div', { class: 'ov-presale' },
         h('span', { class: 'ov-msg-k' }, 'Pre-sale'),
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       h('div', { class: 'ov-lines' },
-        line('Doors', d.doors),
-        line('Address', d.venueAddress, d.venueAddress ? mapsHref(d.venueAddress) : null)),
+        line('Doors', d.doors)),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
@@ -3128,8 +3133,34 @@
   function crewSection(tourId) {
     var B = window.GR_BACKEND;
     var owns = B.ownsTour && B.ownsTour(tourId);
-    var list = h('div', { class: 'ledger' },
+    var list = h('div', { class: 'ledger crew-list' },
       h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading\u2026')));
+
+    /* The badge column sits centred in the gap between the names and the
+       icons: the name column is sized to the widest name (so the gap is the
+       same in every row), and each badge box is centred in that gap with the
+       badge flush left inside it — straight column, same starting point. */
+    function sizeColumns() {
+      var rowsEl = list.querySelectorAll('.crew-row');
+      if (!rowsEl.length) return;
+      var first = rowsEl[0];
+      var cs = getComputedStyle(first);
+      var content = first.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      var cap = content - 6 - 112 - 84; // row gap, badge box, mail + call with their gaps
+      var widest = 0;
+      Array.prototype.forEach.call(rowsEl, function (r) {
+        var lab = r.querySelector('.row-label');
+        Array.prototype.forEach.call(lab.childNodes, function (n) {
+          var rg = document.createRange();
+          rg.selectNodeContents(n);
+          var w = rg.getBoundingClientRect().width;
+          if (w > widest) widest = w;
+        });
+      });
+      if (!(widest > 0) || !(cap > 40)) return;
+      list.style.setProperty('--crew-name-w', Math.ceil(Math.min(widest + 2, cap)) + 'px');
+      list.classList.add('sized');
+    }
 
     function draw(rows) {
       if (!rows.length) {
@@ -3140,7 +3171,7 @@
       list.replaceChildren.apply(list, rows.map(function (m) {
         var title = m.name || m.username || m.email;
         var sub = [];
-        if (m.username && m.username !== title) sub.push('@' + m.username);
+        if (m.tourRole) sub.push(m.tourRole);
         if (!m.joined) sub.push('invited');
         return h('div', { class: 'row crew-row' },
           h('div', { class: 'row-label' }, title,
@@ -3149,8 +3180,9 @@
             // Every badge sits in the same-width slot, flush left, so TOUR
             // MANAGER, ALL ACCESS and GA all start at the same point.
             h('span', { class: 'role-slot' },
-              h('span', { class: 'role-tag' + (m.role === 'editor' || m.owner ? ' aa' : '') },
-                m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA'))),
+              h('span', { class: 'role-box' },
+                h('span', { class: 'role-tag' + (m.role === 'editor' || m.owner ? ' aa' : '') },
+                  m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA')))),
             // Fixed slots: a missing phone leaves an empty seat, so every mail
             // icon and every phone icon lines up in its own column.
             m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
@@ -3160,6 +3192,7 @@
               'aria-label': 'Call ' + title }, icon('phone', 17))
               : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' })));
       }));
+      requestAnimationFrame(sizeColumns);
     }
     B.crew(tourId).then(draw).catch(function () {
       list.replaceChildren(h('div', { class: 'row' },
@@ -3321,12 +3354,11 @@
 
     return [
       h('div', { class: 'sec-head', style: 'margin-top:8px;text-align:center;margin-bottom:4px' },
+        h('p', { class: 'gl-when glow' }, s.date === today ? 'Today\u2019s' : dayLong(s.date)),
         h('h2', { class: 'sec-title' }, 'GUEST LIST')),
       h('p', { class: 'note', style: 'margin:0 2px 2px;text-align:center' },
         [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
         (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
-      h('p', { class: 'note glow', style: 'margin:0 2px 10px;text-align:center;color:var(--pos);font-weight:650' },
-        s.date === today ? 'Today\u2019s guest list' : 'Guest list for ' + dayLong(s.date)),
       rowsOut.length
         ? h('div', { class: 'ledger' }, rowsOut)
         : h('div', { style: 'min-height:60px' }),
@@ -4082,35 +4114,47 @@
     var B = window.GR_BACKEND;
     if (!B || !B.saveProfile) return;
     var cur = B.myProfile ? B.myProfile() : {};
-    var f = { fullName: cur.fullName || '', username: cur.username || '', phone: cur.phone || '' };
+    var f = { firstName: cur.firstName || '', lastName: cur.lastName || '',
+      phone: cur.phone || '', tourRole: cur.tourRole || '' };
+    var roles = (B.tourRoles || []).slice();
+    // Someone whose saved role isn't on today's list keeps it rather than losing it.
+    if (f.tourRole && roles.indexOf(f.tourRole) < 0) roles.push(f.tourRole);
     openSheet(function () {
       function textIn(key, ph, extra) {
         return h('input', Object.assign({
-          class: 'input', type: 'text', value: f[key], maxlength: 60,
+          class: 'input', type: 'text', value: f[key], maxlength: 30,
           autocomplete: 'off', placeholder: ph,
           oninput: function (e) { f[key] = e.target.value; }
         }, extra || {}));
       }
+      var roleSel = h('select', { class: 'input gate-select', required: true, 'aria-label': 'Your role on the tour',
+        onchange: function (e) { f.tourRole = e.target.value; } });
+      roleSel.append(h('option', { value: '', disabled: true }, 'Your role on the tour'));
+      roles.forEach(function (r) { roleSel.append(h('option', { value: r }, r)); });
+      roleSel.value = f.tourRole || '';
       return [
-        h('h2', { class: 'sh-title' }, f.username ? 'Your contact card' : 'Add your details'),
-        h('p', { class: 'sh-sub' }, 'The username rides everything you write. The rest is how the tour reaches you \u2014 everyone on the run can see it.'),
+        h('h2', { class: 'sh-title' }, cur.tourRole ? 'Your contact card' : 'Add your details'),
+        h('p', { class: 'sh-sub' }, 'Your name rides everything you write. The rest is how the tour reaches you \u2014 everyone on the run can see it.'),
         h('form', { class: 'sh-form', novalidate: true,
           onsubmit: async function (e) {
             e.preventDefault();
-            if (f.fullName.trim().length < 2) { toast('Type your full name'); return; }
-            if (f.username.trim().length < 2) { toast('Pick a username'); return; }
+            if (!f.firstName.trim()) { toast('Type your first name'); return; }
+            if (!f.lastName.trim()) { toast('Type your last name'); return; }
+            if (!f.tourRole) { toast('Pick your role on the tour'); return; }
             blurActive();
             try {
               await B.saveProfile(f);
               closeSheet();
-              toast('You\u2019re ' + f.username.trim() + ' to the tour');
+              toast('Saved \u2014 you\u2019re ' + (f.firstName.trim() + ' ' + f.lastName.trim()) + ', ' + f.tourRole);
               render(true);
             } catch (e2) { toast('Couldn\u2019t save it. Try again.'); }
           } },
-          field('Full name', textIn('fullName', 'Devin Oliver', { autocomplete: 'name' })),
-          field('Username', textIn('username', 'DevinO', { maxlength: 24, autocomplete: 'nickname' })),
+          h('div', { class: 'field-row' },
+            field('First name', textIn('firstName', 'Devin', { autocomplete: 'given-name' })),
+            field('Last name', textIn('lastName', 'Oliver', { autocomplete: 'family-name' }))),
           field('Phone', textIn('phone', '(555) 555-5555',
-            { type: 'tel', inputmode: 'tel', maxlength: 30, autocomplete: 'tel' })),
+            { type: 'tel', inputmode: 'tel', autocomplete: 'tel' })),
+          field('Role on the tour', roleSel),
           cur.email ? h('p', { class: 'note' }, 'Signed in as ' + cur.email) : null,
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
