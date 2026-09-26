@@ -3298,10 +3298,10 @@
     var c = daysUntilOff(t);
     if (!c) return null;
     return h('div', { class: 'off-count', 'aria-label': c.off ? 'Day off today'
-        : c.n + (c.n === 1 ? ' day' : ' days') + ' until day off' },
+        : c.n + (c.n === 1 ? ' show' : ' shows') + ' until day off' },
       c.off ? [h('b', null, 'Day off'), h('span', { class: 'oc-2' }, 'today')]
-        : [h('span', null, h('b', { class: 'num' }, String(c.n)), c.n === 1 ? ' day' : ' days'),
-           h('span', { class: 'oc-2' }, 'until day off')]);
+        : [h('b', { class: 'num' }, String(c.n)),
+           h('span', { class: 'oc-2' }, (c.n === 1 ? 'show' : 'shows') + ' until day off')]);
   }
 
   function viewTourDay(id, t, view) {
@@ -3372,17 +3372,29 @@
           } }, icon('trash', 16)) : null);
     });
 
-    var copyBtn = list.length ? h('button', {
-      class: 'btn ghost block', type: 'button', style: 'margin-top:14px',
-      onclick: async function () {
-        var text = G.guestListText(s, list);
-        var ta = h('textarea', { class: 'sr', readonly: true, value: text });
-        document.body.appendChild(ta);
-        var ok = await copyText(text, ta);
-        ta.remove();
-        toast(ok ? 'Guest list copied for the box office' : 'Press and hold to copy');
-      }
-    }, icon('copy', 18), 'Copy for the box office') : null;
+    // Send the night's list straight to the promoter: Messages or Mail opens
+    // with the whole list already written; the manager picks who it goes to.
+    var copyBtn = null;
+    if (list.length) {
+      var listText = G.guestListText(s, list);
+      var subject = 'Guest list \u00b7 ' + (t.artist || t.name || 'Greenroom') +
+        (s.city ? ' \u00b7 ' + s.city : '') + (G.parseDay(s.date) ? ' \u00b7 ' + dayMD(s.date) : '');
+      var copyOne = h('button', { class: 'btn ghost gl-send', type: 'button',
+        onclick: async function () {
+          var ta = h('textarea', { class: 'sr', readonly: true, value: listText });
+          document.body.appendChild(ta);
+          var ok = await copyText(listText, ta);
+          ta.remove();
+          toast(ok ? 'Guest list copied for the box office' : 'Press and hold to copy');
+        } }, icon('copy', 17), 'Copy');
+      copyBtn = h('div', { class: 'gl-sendrow' + (canEditTour(id) ? '' : ' solo') },
+        canEditTour(id) ? h('a', { class: 'btn ghost gl-send', href: 'sms:?&body=' + encodeURIComponent(listText) },
+          icon('tabchat', 17), 'Text') : null,
+        canEditTour(id) ? h('a', { class: 'btn ghost gl-send',
+          href: 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(listText) },
+          icon('mail', 17), 'Email') : null,
+        copyOne);
+    }
 
     var rail = h('div', { class: 'ds-rail gl-rail' }, shows.map(function (x) {
       var dd = G.parseDay(x.date);
