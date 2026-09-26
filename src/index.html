@@ -657,8 +657,13 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .ds-city { font-size: 19px; font-weight: 650; display: inline-flex; align-items: center; gap: 7px; }
 .ds-tonight { width: 8px; height: 8px; border-radius: 50%; background: var(--pos); display: inline-block; }
 /* Overview: the TM's message wears a small label; pre-sale stands centred. */
-/* The green halo the big number wears, as a coat anything can put on. */
-.glow { filter: drop-shadow(0 0 10px color-mix(in oklab, var(--pos), transparent var(--glow-fade))); }
+/* The halo the big number wears, as a coat anything can put on. Two layers —
+   a tight core and a wide wash — so it reads even on small text; it takes the
+   element's own colour, and --glow-fade at 100% still kills it in light mode. */
+.glow {
+  filter: drop-shadow(0 0 4px color-mix(in oklab, currentColor, transparent 40%))
+          drop-shadow(0 0 14px color-mix(in oklab, currentColor, transparent var(--glow-fade)));
+}
 
 /* The tour manager's pencil, top-right where the black begins. */
 .ov-today { position: relative; }
@@ -674,7 +679,8 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .ov-presale .ov-msg-k { margin: 0 0 4px; }
 .ov-presale-n {
   display: block; font-size: 36px; font-weight: 800; letter-spacing: -.02em; color: var(--pos);
-  filter: drop-shadow(0 0 13px color-mix(in oklab, var(--pos), transparent var(--glow-fade)));
+  filter: drop-shadow(0 0 5px color-mix(in oklab, var(--pos), transparent 40%))
+          drop-shadow(0 0 16px color-mix(in oklab, var(--pos), transparent var(--glow-fade)));
 }
 
 /* Day sheet rows: the labels in white, the information in green. */
@@ -808,7 +814,8 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   font-size: 13px; font-weight: 600; color: var(--ink-3); }
 .ov-city { margin-top: 8px; font-size: clamp(30px, 8.6vw, 38px); font-weight: 700;
   letter-spacing: -.028em; line-height: 1.06; color: var(--pos); overflow-wrap: anywhere;;
-  filter: drop-shadow(0 0 15px color-mix(in oklab, var(--pos), transparent var(--glow-fade)));
+  filter: drop-shadow(0 0 5px color-mix(in oklab, var(--pos), transparent 40%))
+          drop-shadow(0 0 18px color-mix(in oklab, var(--pos), transparent var(--glow-fade)));
 }
 .ov-venue { margin-top: 6px; font-size: 16px; font-weight: 500; color: var(--ink-2); overflow-wrap: anywhere; }
 .ov-lines { display: grid; gap: 1px; }

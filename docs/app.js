@@ -1280,7 +1280,7 @@
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
-              onclick: openSettingsSheet }, icon('gear', 17)))),
+              onclick: openSettingsSheet }, icon('more')))),
         h('div', { class: 'band-row' })),
       dbBanner(),
       h('div', { class: 'sec-head split' },
