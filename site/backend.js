@@ -230,6 +230,7 @@
       return n || null;
     },
     tourRoles: TOUR_ROLES,
+    openRolePicker: openRolePicker,
     myProfile: function () {
       var m = (session && session.user && session.user.user_metadata) || {};
       var full = String(m.full_name || '').trim();
@@ -482,12 +483,43 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-  function roleSelectHtml(id, current) {
-    return '<select class="input gate-select" id="' + id + '" required aria-label="Your role on the tour">' +
-      '<option value=""' + (current ? '' : ' selected') + ' disabled>Your role on the tour</option>' +
-      TOUR_ROLES.map(function (r) {
-        return '<option' + (r === current ? ' selected' : '') + '>' + esc(r) + '</option>';
-      }).join('') + '</select>';
+  /* The role picker is our own list, not the phone's dropdown — iOS's
+     native picker misbehaves inside the scrolling sign-up card. A hidden
+     input holds the value; the button opens a full-screen list. */
+  function rolePickerHtml(id, current) {
+    return '<input type="hidden" id="' + id + '" value="' + esc(current || '') + '">' +
+      '<button type="button" class="input role-pick' + (current ? '' : ' empty') + '" id="' + id +
+      '-btn" aria-haspopup="listbox">' + esc(current || 'Your role on the tour') + '</button>';
+  }
+  function openRolePicker(current, onPick) {
+    var ov = document.createElement('div');
+    ov.className = 'role-picker';
+    ov.setAttribute('role', 'dialog');
+    ov.setAttribute('aria-label', 'Your role on the tour');
+    ov.innerHTML = '<div class="rp-card"><div class="rp-head">Your role on the tour</div>' +
+      '<div class="rp-list" role="listbox">' + TOUR_ROLES.map(function (r) {
+        return '<button type="button" role="option" class="rp-opt' + (r === current ? ' on' : '') +
+          '" data-r="' + esc(r) + '" aria-selected="' + (r === current) + '">' + esc(r) + '</button>';
+      }).join('') + '</div></div>';
+    ov.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('.rp-opt') : null;
+      if (b) { onPick(b.getAttribute('data-r')); ov.remove(); return; }
+      if (e.target === ov) ov.remove();   // tap outside the card to back out
+    });
+    document.body.appendChild(ov);
+    var on = ov.querySelector('.rp-opt.on');
+    if (on && on.scrollIntoView) on.scrollIntoView({ block: 'center' });
+  }
+  function wireRolePicker(root, id) {
+    var hidden = root.querySelector('#' + id), btn = root.querySelector('#' + id + '-btn');
+    if (!hidden || !btn) return;
+    btn.addEventListener('click', function () {
+      openRolePicker(hidden.value, function (role) {
+        hidden.value = role;
+        btn.textContent = role;
+        btn.classList.remove('empty');
+      });
+    });
   }
 
   function gate() {
@@ -514,7 +546,7 @@
         (signin ? '' :
           '<input class="input" type="tel" id="gr-gate-phone" placeholder="Phone number" ' +
             'maxlength="30" autocomplete="tel" inputmode="tel" aria-label="Phone number">' +
-          roleSelectHtml('gr-gate-role', '')) +
+          rolePickerHtml('gr-gate-role', '')) +
         '<input class="input" type="password" id="gr-gate-pass" placeholder="Password" ' +
           'autocomplete="' + (signin ? 'current-password' : 'new-password') + '" aria-label="Password">' +
         '<div class="gate-err" id="gr-gate-err" role="alert"></div>' +
@@ -527,6 +559,7 @@
         '</div>';
 
       var form = wrap.querySelector('#gr-gate-form');
+      wireRolePicker(wrap, 'gr-gate-role');
       var emailI = wrap.querySelector('#gr-gate-email');
       var passI = wrap.querySelector('#gr-gate-pass');
       var errEl = wrap.querySelector('#gr-gate-err');
@@ -548,7 +581,7 @@
         if (firstI && !first) { errEl.textContent = 'Type your first name.'; firstI.focus(); return; }
         if (lastI && !last) { errEl.textContent = 'Type your last name.'; lastI.focus(); return; }
         if (phoneI && phone.replace(/\D/g, '').length < 7) { errEl.textContent = 'Type a phone number the tour can reach you on.'; phoneI.focus(); return; }
-        if (roleI && !tourRole) { errEl.textContent = 'Pick your role on the tour.'; roleI.focus(); return; }
+        if (roleI && !tourRole) { errEl.textContent = 'Pick your role on the tour.'; wrap.querySelector('#gr-gate-role-btn').focus(); return; }
         if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email address.'; emailI.focus(); return; }
         if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
         btn.disabled = true;
@@ -658,7 +691,7 @@
       '</div>' +
       '<input class="input" type="tel" id="gr-pass-phone" placeholder="Phone number" value="' + esc(m0.phone || '') + '" ' +
         'maxlength="30" autocomplete="tel" inputmode="tel" aria-label="Phone number">' +
-      roleSelectHtml('gr-pass-role', m0.tour_role || '') +
+      rolePickerHtml('gr-pass-role', m0.tour_role || '') +
       '<input class="input" type="password" id="gr-pass-new" placeholder="Create a password" ' +
         'autocomplete="new-password" aria-label="Create a password">' +
       '<div class="gate-err" id="gr-pass-err" role="alert"></div>' +
@@ -666,6 +699,7 @@
       '</form></div>';
     document.body.appendChild(wrap);
     var form = wrap.querySelector('#gr-pass-form');
+    wireRolePicker(wrap, 'gr-pass-role');
     var passI = wrap.querySelector('#gr-pass-new');
     var errEl = wrap.querySelector('#gr-pass-err');
     form.addEventListener('submit', async function (e) {
@@ -678,7 +712,7 @@
       if (!first) { errEl.textContent = 'Type your first name.'; fI.focus(); return; }
       if (!last) { errEl.textContent = 'Type your last name.'; lI.focus(); return; }
       if (phone.replace(/\D/g, '').length < 7) { errEl.textContent = 'Type a phone number the tour can reach you on.'; phI.focus(); return; }
-      if (!tourRole) { errEl.textContent = 'Pick your role on the tour.'; rI.focus(); return; }
+      if (!tourRole) { errEl.textContent = 'Pick your role on the tour.'; wrap.querySelector('#gr-pass-role-btn').focus(); return; }
       if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
       form.querySelector('button').disabled = true;
       try {

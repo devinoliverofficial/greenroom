@@ -156,7 +156,7 @@ def build_web():
         "document.documentElement.setAttribute('data-theme', 'light');</script>")
     ch = ch.replace('position: fixed; inset: 0; z-index: 120; background: #CCF80A;',
                     'position: fixed; inset: 0; z-index: 120; background: #000A05;')
-    ch = ch.replace('<img src="logo-full.png" alt="">', '<img src="logo-full-classic.png" alt="">')
+    ch = ch.replace('--sp-ink: #0C0E00; /* splash ink */', '--sp-ink: #A0FBE8; /* splash ink */')
     ch = ch.replace('<script src="core.js"></script>',
                     '<script src="config.js"></script>\n'
                     '<script src="backend.js"></script>\n'

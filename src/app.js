@@ -942,6 +942,27 @@
     var dot = geo.svg.querySelector('.dot');
     var c = hero.__calc;
 
+    // The whole booked run, logged or not, so an unlogged night can still
+    // say where the band is playing — and a day off can say what's next.
+    var schedule = {};
+    if (geo.tourId) {
+      G.rows((getTour(geo.tourId) || {}).shows).forEach(function (sh) {
+        if (G.parseDay(sh.date)) schedule[sh.date] = sh;
+      });
+    }
+    var showDates = Object.keys(schedule).sort();
+    function nightLabel(date, night) {
+      if (night) return night.city || 'Show';
+      var sh = schedule[date];
+      var today = G.tourToday();
+      if (sh) {
+        return (sh.city || 'Show') +
+          (date === today ? ' \u00b7 tonight' : date > today ? ' \u00b7 upcoming' : ' \u00b7 not logged');
+      }
+      var nxt = showDates.filter(function (d) { return d > date; })[0];
+      return nxt ? 'Day off \u00b7 next ' + (String(schedule[nxt].city || 'show').split(',')[0]) : 'Day off';
+    }
+
     var restText = money(c.net, true);
     var restCap = G.caption(c);
     var restPct = hero.__pct;
@@ -1002,7 +1023,7 @@
 
       // Where the comment used to sit: the night itself.
       var noteEl = $('#hero-note', hero);
-      if (noteEl) noteEl.textContent = night ? (night.city || 'Show') : 'No show that night';
+      if (noteEl) noteEl.textContent = nightLabel(p.date, night);
       if (geo.pins) {
         Array.prototype.forEach.call(geo.pins.children, function (pin) {
           pin.classList.toggle('on', Number(pin.getAttribute('data-i')) === i);
@@ -3258,12 +3279,39 @@
   }
 
   /* Day sheet, Overview and Guest list all hang off the same day picker. */
+  /* Shows in a row from today (today included) until the next night off.
+     Only while today is inside the run; a day off says so. */
+  function daysUntilOff(t) {
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); });
+    if (!shows.length) return null;
+    var on = {};
+    shows.forEach(function (x) { on[x.date] = true; });
+    var dates = Object.keys(on).sort();
+    var today = G.tourToday();
+    if (today < dates[0] || today > dates[dates.length - 1]) return null;
+    if (!on[today]) return { off: true };
+    var n = 0, d = today;
+    while (on[d] && n < 400) { n += 1; d = G.addDays(d, 1); }
+    return { n: n };
+  }
+  function offCounter(t) {
+    var c = daysUntilOff(t);
+    if (!c) return null;
+    return h('div', { class: 'off-count', 'aria-label': c.off ? 'Day off today'
+        : c.n + (c.n === 1 ? ' day' : ' days') + ' until day off' },
+      c.off ? [h('b', null, 'Day off'), h('span', { class: 'oc-2' }, 'today')]
+        : [h('span', null, h('b', { class: 'num' }, String(c.n)), c.n === 1 ? ' day' : ' days'),
+           h('span', { class: 'oc-2' }, 'until day off')]);
+  }
+
   function viewTourDay(id, t, view) {
     if (view === 'details') {
       return h('div', { class: 'page tour has-tabs' },
         h('div', { class: 'headband' },
           tourTopbar(t, id, view),
-          h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
+          h('div', { class: 'title-row' },
+            h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+            offCounter(t))),
         dbBanner(),
         overviewBody(id, t),
         tourTabs(id, view));
@@ -4116,9 +4164,6 @@
     var cur = B.myProfile ? B.myProfile() : {};
     var f = { firstName: cur.firstName || '', lastName: cur.lastName || '',
       phone: cur.phone || '', tourRole: cur.tourRole || '' };
-    var roles = (B.tourRoles || []).slice();
-    // Someone whose saved role isn't on today's list keeps it rather than losing it.
-    if (f.tourRole && roles.indexOf(f.tourRole) < 0) roles.push(f.tourRole);
     openSheet(function () {
       function textIn(key, ph, extra) {
         return h('input', Object.assign({
@@ -4127,11 +4172,17 @@
           oninput: function (e) { f[key] = e.target.value; }
         }, extra || {}));
       }
-      var roleSel = h('select', { class: 'input gate-select', required: true, 'aria-label': 'Your role on the tour',
-        onchange: function (e) { f.tourRole = e.target.value; } });
-      roleSel.append(h('option', { value: '', disabled: true }, 'Your role on the tour'));
-      roles.forEach(function (r) { roleSel.append(h('option', { value: r }, r)); });
-      roleSel.value = f.tourRole || '';
+      // Our own list, not the phone's dropdown (which misbehaves in sheets).
+      var roleSel = h('button', { class: 'input role-pick' + (f.tourRole ? '' : ' empty'), type: 'button',
+        'aria-haspopup': 'listbox', 'aria-label': 'Your role on the tour',
+        onclick: function () {
+          if (!B.openRolePicker) return;
+          B.openRolePicker(f.tourRole, function (r) {
+            f.tourRole = r;
+            roleSel.textContent = r;
+            roleSel.classList.remove('empty');
+          });
+        } }, f.tourRole || 'Your role on the tour');
       return [
         h('h2', { class: 'sh-title' }, cur.tourRole ? 'Your contact card' : 'Add your details'),
         h('p', { class: 'sh-sub' }, 'Your name rides everything you write. The rest is how the tour reaches you \u2014 everyone on the run can see it.'),

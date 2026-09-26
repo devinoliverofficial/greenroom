@@ -59,7 +59,20 @@ shim = r"""<script>
       me.full_name = (p.firstName + ' ' + p.lastName).trim(); me.username = me.full_name;
       me.phone = p.phone; me.tour_role = p.tourRole; window.__harness.saved = JSON.parse(JSON.stringify(me));
       return Promise.resolve(); },
-    signOut: function () {}
+    signOut: function () {},
+    // same markup as backend.js's picker, so the contact card can be exercised here
+    openRolePicker: function (current, onPick) {
+      var ov = document.createElement('div'); ov.className = 'role-picker';
+      ov.innerHTML = '<div class="rp-card"><div class="rp-head">Your role on the tour</div><div class="rp-list">' +
+        window.GR_BACKEND.tourRoles.map(function (r) {
+          return '<button type="button" class="rp-opt' + (r === current ? ' on' : '') + '" data-r="' + r + '">' + r + '</button>';
+        }).join('') + '</div></div>';
+      ov.addEventListener('click', function (e) {
+        var b = e.target.closest('.rp-opt');
+        if (b) { onPick(b.getAttribute('data-r')); ov.remove(); } else if (e.target === ov) ov.remove();
+      });
+      document.body.appendChild(ov);
+    }
   };
 })();
 </script>
