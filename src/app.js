@@ -2637,7 +2637,7 @@
         icon('bell', 18), 'Send alert notification') : null,
       msgs.length
         ? h('div', { class: 'chat-list' }, msgs)
-        : emptyState('Nothing said yet', 'Anyone on the tour can talk here \u2014 band, crew, GA, everyone.'),
+        : emptyState('Special requests, notes for the team, send here.', null),
       h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
         input,
         h('button', { class: 'btn primary', type: 'submit' }, 'Send')),
@@ -3033,10 +3033,11 @@
       h('p', { class: 'note', style: 'margin:10px 2px 12px' },
         [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
         (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
+      h('div', { class: 'sec-head', style: 'margin-top:6px' },
+        h('h2', { class: 'sec-title' }, 'GUEST LIST')),
       rowsOut.length
         ? h('div', { class: 'ledger' }, rowsOut)
-        : emptyState('No names yet for this night',
-            'Anyone on the tour can add guests — band, crew, GA, everyone.'),
+        : h('div', { style: 'min-height:90px' }),
       h('div', { class: 'gl-actions', style: 'margin-top:14px' },
         h('button', { class: 'add-mini', type: 'button',
           onclick: function () { openGuestDatePicker(id); } },
@@ -3063,6 +3064,7 @@
           var n = G.guestSummary(guestsFor(t, tourId, x.id)).names;
           return h('button', { class: 'row rowbtn', type: 'button',
             onclick: function () {
+              S.glTour = tourId; S.glShow = x.id; // the page follows the night you picked
               openGuestForm(tourId, x.id, x, backend, function () {
                 closeSheet();
                 setTimeout(function () { render(true); }, backend ? 500 : 150);
@@ -3266,11 +3268,7 @@
 
     var body;
     if (!lines.length) {
-      body = emptyState(s ? 'Nothing posted for this day yet' : 'Nothing planned for this off day',
-        canWrite()
-          ? (s ? 'Fill in the times and the venue details, and the whole tour sees them here.'
-               : 'Add the city, the hotel and any plans, and the whole tour sees them here.')
-          : 'The tour manager hasn\u2019t posted this day yet.');
+      body = emptyState('No day sheet added.', null);
     } else if (s) {
       var rowsOut = [];
       var timeRow = function (label, v) {
