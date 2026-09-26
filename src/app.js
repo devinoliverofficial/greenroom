@@ -599,7 +599,7 @@
           h('button', {
             class: 'btn ghost block', type: 'button', autofocus: true,
             onclick: function () { closeSheet(); }
-          }, 'Cancel'))
+          }, o.cancel || 'Cancel'))
       ];
     }, { label: o.title });
   }
@@ -1334,11 +1334,8 @@
     return h('div', { class: 'tour-card idle name-card art-row' },
       slot,
       h('button', { class: 'art-main', type: 'button', onclick: open },
-        h('span', { class: 'tc-name' }, name)),
-      h('span', { class: 'art-gap' }),
-      h('button', { class: 'row-pill', type: 'button',
-        'aria-label': name + '\u2019s tours',
-        onclick: function (e) { e.stopPropagation(); open(); } }, 'Tours'));
+        h('span', { class: 'tc-name' }, name),
+        icon('chevron', 20)));
   }
 
   /* One artist's tours. */
@@ -2577,13 +2574,11 @@
     var shows = G.rows(t.shows).sort(G.byDate);
     var today = G.tourToday();
     return [
-      canWrite() ? h('div', { class: 'btnrow' },
-        S.sample ? fileControl({
-          label: 'Upload the flyer', icon: 'flyer', cls: 'btn primary',
-          accept: imageAccept(),
-          onFiles: function (files) { readFlyer(id, files[0]); }
-        }) : unavailableBtn('Upload the flyer', 'btn primary'),
-        settlementSourceControl(id)) : null,
+      canWrite() ? (S.sample ? fileControl({
+        label: 'Upload flyer', icon: 'flyer', cls: 'btn primary block',
+        accept: imageAccept(),
+        onFiles: function (files) { readFlyer(id, files[0]); }
+      }) : unavailableBtn('Upload flyer', 'btn primary block')) : null,
       shows.length
         ? [h('p', { class: 'count-line' }, plural(shows.length, 'show') + ' on the run'),
            h('ul', { class: 'shows' }, shows.map(function (x) {
@@ -2693,9 +2688,94 @@
       tourTabs(id, 'money'));
   }
 
+  /* Today, and only today: where you are, who you're playing to, and a line
+     from the tour manager. */
+  function overviewBody(id, t) {
+    var today = G.tourToday();
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    var s = shows.filter(function (x) { return x.date === today; })[0];
+    // Today's show, else the next one, else the last one we played.
+    var next = s || shows.filter(function (x) { return x.date > today; })[0] || shows[shows.length - 1];
+    var off = !s && G.isObj(t.offDays) && G.isObj(t.offDays[today]) ? t.offDays[today] : null;
+    var d = next && G.isObj(next.daySheet) ? next.daySheet : {};
+
+    if (!shows.length) {
+      return emptyState('No dates yet', 'Once shows are on the run, today shows up here.');
+    }
+    var when = s ? 'Tonight' : (next ? 'Next show' : 'Last show');
+    var line = function (label, value) {
+      return value ? h('div', { class: 'ov-line' },
+        h('span', { class: 'ov-k' }, label), h('span', { class: 'ov-v' }, value)) : null;
+    };
+    var quote = String(d.quote || '').trim();
+    return [
+      h('div', { class: 'ov-today' },
+        h('div', { class: 'ov-when' }, dayLong(s ? today : (next ? next.date : today)),
+          h('span', { class: 'vh-when' + (s ? ' vh-tonight' : '') }, when)),
+        h('div', { class: 'ov-city' }, s ? (s.city || 'Show')
+          : (off && off.city ? off.city : (next ? next.city : 'Day off'))),
+        next && next.venue ? h('div', { class: 'ov-venue' }, next.venue) : null),
+      h('div', { class: 'ov-lines' },
+        line('Pre-sale', d.presale),
+        line('Doors', d.doors),
+        line('Address', d.venueAddress)),
+      quote
+        ? h('blockquote', { class: 'ov-quote' }, h('p', null, quote))
+        : null,
+      canWrite() ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:16px',
+        onclick: function () { openTodaySheet(id, next ? next.id : null); } },
+        icon('edit', 18), quote || d.presale ? 'Edit today' : 'Add pre-sale and a quote') : null
+    ];
+  }
+
+  /* Pre-sale and the quote of the day, kept with that night's day sheet. */
+  function openTodaySheet(tourId, showId) {
+    var t = getTour(tourId);
+    var s = showId && G.isObj(t.shows) ? t.shows[showId] : null;
+    if (!s) { toast('Add a show first'); return; }
+    var d0 = G.isObj(s.daySheet) ? s.daySheet : {};
+    var f = { presale: d0.presale || '', quote: d0.quote || '' };
+    openSheet(function () {
+      var submit = async function (e) {
+        e.preventDefault();
+        blurActive();
+        var patch = {};
+        patch[showId] = { daySheet: Object.assign({}, d0, {
+          presale: f.presale.trim(), quote: f.quote.trim() }) };
+        if (await api.update(tourId, { shows: patch })) {
+          closeSheet(); toast('Posted'); render(true);
+        }
+      };
+      return [
+        h('h2', { class: 'sh-title' }, 'Today'),
+        h('p', { class: 'sh-sub' }, 'What the whole tour sees on the Overview.'),
+        h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
+          field('Pre-sale', h('input', { class: 'input', type: 'text', maxlength: 40,
+            value: f.presale, placeholder: '312 of 900', autocomplete: 'off',
+            oninput: function (e) { f.presale = e.target.value; } })),
+          field('Quote of the day', h('textarea', { class: 'gl-paste', maxlength: 180,
+            placeholder: 'Something worth repeating on the bus\u2026',
+            oninput: function (e) { f.quote = e.target.value; } }, f.quote)),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Post it'),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { closeSheet(); } }, 'Cancel')))
+      ];
+    }, { label: 'Today' });
+  }
+
   /* Day sheet, Overview and Guest list all hang off the same day picker. */
   function viewTourDay(id, t, view) {
-    var only = view === 'day' ? 'sheet' : (view === 'guests' ? 'guests' : 'overview');
+    if (view === 'details') {
+      return h('div', { class: 'page tour has-tabs' },
+        h('div', { class: 'headband' },
+          tourTopbar(t, id, view),
+          h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
+        dbBanner(),
+        overviewBody(id, t),
+        tourTabs(id, view));
+    }
+    var only = view === 'day' ? 'sheet' : 'guests';
     return h('div', { class: 'page tour has-tabs' },
       h('div', { class: 'headband' },
         tourTopbar(t, id, view),
@@ -3003,6 +3083,41 @@
     return [hero, rail, editRow, body, guestBtn, copyBtn];
   }
 
+  /* Set times rarely move on a run, so ask once and fill the rest. Only ever
+     fills nights that have none — a night you already wrote is never touched. */
+  function askSetTimesEverywhere(tourId, showId, setTimes) {
+    var t = getTour(tourId);
+    var others = G.rows(t && t.shows).filter(function (x) {
+      if (x.id === showId || !G.parseDay(x.date)) return false;
+      var d = G.isObj(x.daySheet) ? x.daySheet : {};
+      var mine = Array.isArray(d.setTimes) ? d.setTimes : [];
+      return !mine.some(function (r) { return String(r && r.time || '').trim(); });
+    });
+    if (!others.length) return;
+    setTimeout(function () {
+      confirmSheet({
+        title: 'Are these set times the same all tour?',
+        body: 'Say yes and they fill in on ' + plural(others.length, 'other night') +
+          ' that has none yet. Any night you have already written stays as you wrote it.',
+        action: 'Yes, every night',
+        cancel: 'Just this night',
+        onConfirm: async function () {
+          var patch = {};
+          others.forEach(function (x) {
+            var d = G.isObj(x.daySheet) ? x.daySheet : {};
+            patch[x.id] = { daySheet: Object.assign({}, d, {
+              setTimes: setTimes.map(function (r) { return { band: r.band, time: r.time }; }) }) };
+          });
+          if (await api.update(tourId, { shows: patch })) {
+            toast('Set times on ' + plural(others.length, 'night'));
+            render(true);
+          }
+          return true;
+        }
+      });
+    }, 500);
+  }
+
   /* The off-day editor: where you land, where you sleep, what's planned. */
   function openOffDaySheet(tourId, date) {
     var t = getTour(tourId);
@@ -3073,6 +3188,77 @@
   }
 
   /* Travel days stretch the run past the first and last show. */
+  /* Straight after a flyer: who is on this bill, in running order. The list
+     seeds every day sheet on the run, so nobody types it twice. */
+  function openLineupPrompt(tourId) {
+    var count = 3;
+    var names = [];
+    function roleOf(i, n) {
+      if (i === n - 1) return 'Headliner';
+      if (i === 0) return 'Opener';
+      if (i === n - 2) return 'Direct support';
+      return 'Support';
+    }
+    function step2() {
+      names = names.slice(0, count);
+      while (names.length < count) names.push('');
+      openSheet(function () {
+        var rows = names.map(function (_, i) {
+          return field(roleOf(i, count), h('input', {
+            class: 'input', type: 'text', maxlength: 60, value: names[i],
+            placeholder: roleOf(i, count) === 'Headliner' ? 'The act everyone came for' : 'Band name',
+            autocomplete: 'off',
+            oninput: function (e) { names[i] = e.target.value; }
+          }));
+        });
+        var save = async function (e) {
+          e.preventDefault();
+          blurActive();
+          var clean = names.map(function (x) { return String(x || '').trim(); }).filter(Boolean);
+          if (!clean.length) { closeSheet(); setTimeout(function () { openTravelDaysSheet(tourId); }, 300); return; }
+          if (await api.update(tourId, { bands: clean })) {
+            closeSheet();
+            toast(plural(clean.length, 'band') + ' on the bill \u2014 every day sheet starts with them');
+            render(true);
+            setTimeout(function () { openTravelDaysSheet(tourId); }, 400);
+          }
+        };
+        return [
+          h('h2', { class: 'sh-title' }, 'What bands are on this tour?'),
+          h('p', { class: 'sh-sub' }, 'Opener at the top, headliner at the bottom \u2014 the order they play. Every day sheet on this run starts with these, and you can drop anyone from a night.'),
+          h('form', { class: 'sh-form', onsubmit: save, novalidate: true },
+            rows,
+            h('div', { class: 'stack' },
+              h('button', { class: 'btn primary block', type: 'submit' }, 'Save the bill'),
+              h('button', { class: 'btn ghost block', type: 'button',
+                onclick: function () { closeSheet(); setTimeout(function () { openTravelDaysSheet(tourId); }, 300); } },
+                'Skip for now')))
+        ];
+      }, { label: 'The bill' });
+    }
+    openSheet(function () {
+      var picked = h('strong', { class: 'num' }, String(count));
+      function set(v) { count = Math.max(1, Math.min(8, v)); picked.textContent = String(count); }
+      return [
+        h('h2', { class: 'sh-title' }, 'How many bands are on this tour?'),
+        h('p', { class: 'sh-sub' }, 'Counting the headliner. You can change it later.'),
+        h('div', { class: 'ledger' },
+          h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, 'Bands on the bill', h('span', { class: 'hint' }, picked)),
+            h('div', { class: 'seg big' },
+              h('button', { class: 'seg-b', type: 'button', 'aria-label': 'Fewer',
+                onclick: function () { set(count - 1); } }, '\u2212'),
+              h('button', { class: 'seg-b', type: 'button', 'aria-label': 'More',
+                onclick: function () { set(count + 1); } }, '+')))),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: step2 }, 'Next'),
+          h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { closeSheet(); setTimeout(function () { openTravelDaysSheet(tourId); }, 300); } },
+            'Skip for now'))
+      ];
+    }, { label: 'The bill' });
+  }
+
   function openTravelDaysSheet(tourId) {
     var t = getTour(tourId);
     var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
@@ -3605,6 +3791,8 @@
         patch[showId] = { daySheet: sheet };
         if (await api.update(tourId, { shows: patch })) {
           closeSheet(); toast('Day sheet posted'); render(true);
+          // Most runs keep the same set times every night — offer to carry them.
+          if (sheet.setTimes.length) askSetTimesEverywhere(tourId, showId, sheet.setTimes);
         }
       };
       return [
@@ -4883,7 +5071,9 @@
       if (!n) { toast('Each show needs a date and a city'); return; }
       if (await api.update(tourId, { shows: patch })) {
         closeSheet(); toast(plural(n, 'show') + ' added'); render(true);
-        setTimeout(function () { openTravelDaysSheet(tourId); }, 400);
+        var t0 = getTour(tourId);
+        if (!tourBands(t0).length) setTimeout(function () { openLineupPrompt(tourId); }, 400);
+        else setTimeout(function () { openTravelDaysSheet(tourId); }, 400);
         lookupVenueInfo(tourId, patch); // fire and forget — a nicety
       }
     }

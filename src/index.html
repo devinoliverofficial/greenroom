@@ -343,16 +343,17 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   padding: 12px 12px 12px 14px; cursor: default;
 }
 .art-main {
-  flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 12px;
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
   appearance: none; border: 0; background: none; padding: 0; margin: 0;
-  color: inherit; font: inherit; text-align: left; cursor: pointer; min-height: 52px;
+  color: inherit; font: inherit; cursor: pointer; min-height: 52px;
 }
-/* The band name carries the row: white, heavy, tight — the stock-app voice. */
+/* The band name sits centred between the mark and the arrow, in the green. */
 .art-main .tc-name {
-  min-width: 0; color: #FFFFFF;
+  flex: 1; min-width: 0; text-align: center;
   font-size: 19px; font-weight: 700; letter-spacing: -.021em; line-height: 1.15;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.art-main .ic { flex: none; color: var(--ink-3); }
 /* The slot left of the name: a + until a logo lands, then the mark itself. */
 .logo-slot {
   flex: none; appearance: none; cursor: pointer; padding: 0; overflow: hidden;
@@ -364,7 +365,6 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .logo-slot.has { border-style: solid; border-color: transparent; background: none; }
 .logo-slot .brand-logo { width: 42px; height: 42px; border-radius: 12px; margin: 0; object-fit: cover; vertical-align: 0; }
 .logo-slot:active { border-color: var(--pos); color: var(--pos); }
-.art-gap { flex: 1; min-width: 8px; }
 .row-pill {
   flex: none; appearance: none; border: 0; cursor: pointer;
   padding: 0 17px; min-height: 44px; border-radius: 999px;
@@ -670,6 +670,22 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 /* The city: the centerpiece, big and green in the clean font. */
 .vh-city { margin-top: 7px; font-size: clamp(26px, 7.4vw, 32px); font-weight: 700; letter-spacing: -.026em; line-height: 1.08; color: var(--pos); overflow-wrap: anywhere; }
 .vh-venue { margin-top: 5px; font-size: 14px; font-weight: 500; color: var(--ink-3); overflow-wrap: anywhere; }
+
+/* Overview: tonight, in as few marks as possible. */
+.ov-today { text-align: center; padding: 18px 0 20px; }
+.ov-when { display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--ink-3); }
+.ov-city { margin-top: 8px; font-size: clamp(30px, 8.6vw, 38px); font-weight: 700;
+  letter-spacing: -.028em; line-height: 1.06; color: var(--pos); overflow-wrap: anywhere; }
+.ov-venue { margin-top: 6px; font-size: 16px; font-weight: 500; color: var(--ink-2); overflow-wrap: anywhere; }
+.ov-lines { display: grid; gap: 1px; }
+.ov-line { display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  padding: 13px 2px; border-bottom: 1px solid var(--line-2); }
+.ov-line:last-child { border-bottom: 0; }
+.ov-k { font-size: 14px; font-weight: 600; color: var(--ink-3); }
+.ov-v { min-width: 0; text-align: right; font-size: 16px; font-weight: 650; color: var(--ink); overflow-wrap: anywhere; }
+.ov-quote { margin: 20px 0 0; padding: 0 0 0 16px; border-left: 3px solid var(--pos); }
+.ov-quote p { margin: 0; font-size: 17px; font-weight: 500; font-style: italic; line-height: 1.45; color: var(--ink); }
 
 /* The dates rail under it */
 .ds-rail { display: flex; gap: 7px; overflow-x: auto; padding: 4px 2px 2px; scrollbar-width: none; }
