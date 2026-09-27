@@ -665,7 +665,61 @@
     wrap.id = 'gr-gate';
     document.body.appendChild(wrap);
 
+    /* "I have a code": the emails carry a code as well as a button, because
+       an iPhone always opens email links in Safari, never in the home-screen
+       app. Typing the code here signs in without leaving the app. The code
+       could be from an invite, a password reset or a sign-in email, so each
+       kind is tried in turn. */
+    function renderCode() {
+      wrap.innerHTML =
+        '<div class="gate-card">' +
+        '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
+        '<p class="gate-hi">Type the code from your Greenroom email.</p>' +
+        '<form id="gr-code-form" novalidate>' +
+        '<input class="input" type="email" id="gr-gate-email" placeholder="Your email" ' +
+          'autocomplete="email" inputmode="email" aria-label="Email">' +
+        '<input class="input gate-code" type="text" id="gr-gate-code" placeholder="Code" ' +
+          'autocomplete="one-time-code" inputmode="numeric" maxlength="12" aria-label="Code from the email">' +
+        '<div class="gate-err" id="gr-gate-err" role="alert"></div>' +
+        '<button class="btn primary block" type="submit">Continue</button>' +
+        '</form>' +
+        '<button class="linkbtn" id="gr-code-back" type="button">Back to sign in</button>' +
+        '</div>';
+      var form = wrap.querySelector('#gr-code-form');
+      var emailI = wrap.querySelector('#gr-gate-email');
+      var codeI = wrap.querySelector('#gr-gate-code');
+      var errEl = wrap.querySelector('#gr-gate-err');
+      var btn = form.querySelector('button');
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        var email = String(emailI.value || '').trim();
+        var code = String(codeI.value || '').replace(/\D/g, '');
+        if (email.indexOf('@') < 1) { errEl.textContent = 'Type the email the code was sent to.'; emailI.focus(); return; }
+        if (code.length < 6) { errEl.textContent = 'Type the code from the email.'; codeI.focus(); return; }
+        btn.disabled = true;
+        errEl.textContent = 'Checking\u2026';
+        var kinds = ['invite', 'recovery', 'email', 'signup'];
+        var ok = false;
+        for (var i = 0; i < kinds.length && !ok; i++) {
+          // Set before the check: signing in runs the rest of the start-up
+          // straight away, and a reset code should land on "new password".
+          resetting = kinds[i] === 'recovery';
+          try {
+            var r = await sb.auth.verifyOtp({ email: email, token: code, type: kinds[i] });
+            ok = !r.error && !!(r.data && r.data.session);
+          } catch (e2) { ok = false; }
+        }
+        if (ok) return; // signed in: the start-up takes it from here
+        resetting = false;
+        btn.disabled = false;
+        errEl.textContent = 'That code didn\u2019t work. Codes last an hour and work once. Tap \u201cBack to sign in\u201d, then \u201cForgot password?\u201d for a fresh one.';
+      });
+      wrap.querySelector('#gr-code-back').addEventListener('click', function () { mode = 'signin'; render(); });
+      emailI.focus();
+    }
+
     function render() {
+      if (mode === 'code') { renderCode(); return; }
       var signin = mode === 'signin';
       wrap.innerHTML =
         '<div class="gate-card">' +
@@ -690,7 +744,8 @@
         '<button class="btn primary block" type="submit">' +
           (signin ? 'Sign in' : 'Create account') + '</button>' +
         '</form>' +
-        (signin ? '<button class="linkbtn quiet" id="gr-gate-forgot" type="button">Forgot password?</button>' : '') +
+        (signin ? '<button class="linkbtn quiet" id="gr-gate-forgot" type="button">Forgot password?</button>' +
+          '<button class="linkbtn quiet" id="gr-gate-code-link" type="button">I have a code</button>' : '') +
         '<button class="linkbtn" id="gr-gate-flip" type="button">' +
           (signin ? 'New here? Create an account' : 'Already have an account? Sign in') + '</button>' +
         '<button class="linkbtn quiet" id="gr-gate-skip" type="button">Use it on this phone only</button>' +
@@ -712,7 +767,7 @@
         errEl.textContent = 'Sending\u2026';
         try {
           await sendPasswordLink(email);
-          errEl.textContent = 'Check your email for a link from Greenroom. Tap it, pick a password, then sign in here with it.';
+          errEl.textContent = 'Check your email. Tap the button in it, or come back here, tap \u201cI have a code\u201d and type the code from it.';
         } catch (e3) {
           var m3 = String(e3 && e3.message || '');
           errEl.textContent = /rate limit|too many|seconds/i.test(m3)
@@ -722,6 +777,8 @@
       }
       var forgot = wrap.querySelector('#gr-gate-forgot');
       if (forgot) forgot.addEventListener('click', emailLink);
+      var codeLink = wrap.querySelector('#gr-gate-code-link');
+      if (codeLink) codeLink.addEventListener('click', function () { mode = 'code'; render(); });
 
       form.addEventListener('submit', async function (e) {
         e.preventDefault();
@@ -967,8 +1024,11 @@
         'autocomplete="new-password" aria-label="New password">' +
       '<div class="gate-err" id="gr-pass-err" role="alert"></div>' +
       '<button class="btn primary block" type="submit">Save</button>' +
-      '</form></div>';
+      '</form>' +
+      '<button class="linkbtn quiet" id="gr-pass-keep" type="button">Keep my current password</button>' +
+      '</div>';
     document.body.appendChild(wrap);
+    wrap.querySelector('#gr-pass-keep').addEventListener('click', function () { wrap.remove(); });
     var form = wrap.querySelector('#gr-pass-form');
     var passI = wrap.querySelector('#gr-pass-new');
     var errEl = wrap.querySelector('#gr-pass-err');
