@@ -130,6 +130,7 @@
     history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>',
     check: '<path d="M4.5 12.5l5 5 10-11"/>',
     music: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
+    up: '<path d="M12 19V5.5"/><path d="M6 11l6-6 6 6"/>',
     cash: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v.01M18 14.5v.01"/>',
     refresh: '<path d="M20 11a8 8 0 0 0-14.6-4.4L4 8.5"/><path d="M4 3.5v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.4l1.4-1.9"/><path d="M20 20.5v-5h-5"/>'
   };
@@ -2979,11 +2980,18 @@
         h('div', { class: 'chat-b' }, n.body));
     });
 
+    // The typing bar, iMessage size: a thin pill, the send arrow inside its
+    // right end, lit once there's something to send.
     var draftKey = 'chat:' + id;
-    var input = h('input', { class: 'input', type: 'text', maxlength: 300,
-      value: S.drafts[draftKey] || '', placeholder: 'Message the tour\u2026',
+    var sendBtn = h('button', { class: 'chat-send', type: 'submit', 'aria-label': 'Send',
+      disabled: !String(S.drafts[draftKey] || '').trim() }, icon('up', 17));
+    var input = h('input', { class: 'chat-in', type: 'text', maxlength: 300,
+      value: S.drafts[draftKey] || '', placeholder: 'Message',
       autocomplete: 'off', enterkeyhint: 'send', 'aria-label': 'Message',
-      oninput: function (e) { S.drafts[draftKey] = e.target.value; } });
+      oninput: function (e) {
+        S.drafts[draftKey] = e.target.value;
+        sendBtn.disabled = !e.target.value.trim();
+      } });
     var send = async function (e) {
       e.preventDefault();
       var body = String(S.drafts[draftKey] || '').trim();
@@ -3003,8 +3011,7 @@
       alertsBell(id),
       msgs.length ? h('div', { class: 'chat-list' }, msgs) : null,
       h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
-        input,
-        h('button', { class: 'btn primary', type: 'submit' }, 'Send')),
+        h('div', { class: 'chat-field' }, input, sendBtn)),
       tourTabs(id, 'chat'));
   }
 

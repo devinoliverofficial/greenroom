@@ -347,7 +347,7 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .tabbar-b.on .ic { opacity: 1; }
 .page.has-tabs { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
 /* Chat and Guest list dock controls above the tab bar; their pages leave room. */
-.page.chat-page { padding-bottom: calc(170px + env(safe-area-inset-bottom, 0px)); }
+.page.chat-page { padding-bottom: calc(152px + env(safe-area-inset-bottom, 0px)); }
 .page.guest-page { padding-bottom: calc(240px + env(safe-area-inset-bottom, 0px)); }
 /* The home page is a column, so its quiet links can sink to the floor. */
 .page.home { display: flex; flex-direction: column; min-height: 100dvh; }
@@ -974,10 +974,27 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 }
 .chat-form {
   position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-  z-index: 39; display: flex; gap: 8px; margin: 0; padding: 10px 14px;
+  z-index: 39; margin: 0; padding: 7px 12px 8px;
   background: var(--bg); border-top: 1px solid var(--line);
 }
-.chat-form .input { flex: 1; min-width: 0; }
+/* iMessage size: a 36px pill, regular-weight text, the arrow inside it. */
+.chat-field { position: relative; }
+.chat-in {
+  display: block; width: 100%; height: 36px; margin: 0; padding: 0 42px 0 14px;
+  border: 1px solid rgba(241, 244, 227, .2); border-radius: 18px; background: var(--bg);
+  color: var(--ink); font: 400 16px/1.2 var(--font); letter-spacing: -.01em;
+  -webkit-appearance: none; appearance: none;
+}
+.chat-in::placeholder { color: var(--ink-3); }
+.chat-in:focus { outline: none; border-color: rgba(241, 244, 227, .34); }
+.chat-send {
+  position: absolute; right: 3px; top: 3px; width: 30px; height: 30px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%; background: var(--brand); color: var(--on-brand); cursor: pointer;
+  transition: opacity .15s ease, transform .15s ease;
+}
+.chat-send:disabled { opacity: 0; transform: scale(.6); pointer-events: none; }
+.chat-send .ic svg { stroke-width: 2.6; }
 /* Guest list's dock: the dates ride a wheel above the two doors, all of it
    pinned just over the tabs. */
 .gl-dock {
