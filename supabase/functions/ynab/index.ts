@@ -5,9 +5,9 @@
 //
 // Each tour manager connects their own YNAB through YNAB's sign-in page (see
 // ynab-auth); their read-only key sits in ynab_links, which only this server
-// can read, and never leaves it. Devin's first feed ran on a personal token in
-// the secret store (YNAB_TOKEN) until he connects the same way. Nothing here
-// returns a balance, and a feed only ever files onto its own manager's tours.
+// can read, and never leaves it. That is the only way in: there is no
+// hand-saved key to fall back on. Nothing here returns a balance, and a feed
+// only ever files onto its own manager's tours.
 import { createClient } from "npm:@supabase/supabase-js@2";
 // The app's own rules, copied in by build.py so the server sorts charges the
 // same way the statement importer does.
@@ -83,10 +83,6 @@ async function tokenFor(feed: Feed): Promise<string> {
       updated_at: new Date().toISOString(),
     }).eq("owner_id", feed.owner_id);
     return String(j.access_token);
-  }
-  if (feed.personal_token) {
-    const t = Deno.env.get("YNAB_TOKEN");
-    if (t) return t;
   }
   throw new YnabError("not_connected");
 }
@@ -341,21 +337,6 @@ Deno.serve(async (req) => {
   const claims = claimsOf((req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, ""));
   const server = claims.role === "service_role";
   const uid = String(claims.sub ?? "");
-
-  // Connection check: names only. Kept for the server's own diagnostics.
-  if (action === "check") {
-    if (!server) return reply(403, { error: "not_allowed" });
-    try {
-      const t = Deno.env.get("YNAB_TOKEN");
-      if (!t) return reply(200, { ok: false, problem: "no_personal_token" });
-      const data = await ynab("/plans?include_accounts=true", t);
-      return reply(200, { ok: true, plans: ((data.plans ?? []) as Obj[]).map((p) => ({
-        name: p.name,
-        accounts: ((p.accounts as Obj[]) ?? []).filter((a) => !a.deleted)
-          .map((a) => ({ name: a.name, type: a.type, closed: !!a.closed })),
-      })) });
-    } catch (e) { return reply(200, { ok: false, problem: (e as Error).message }); }
-  }
 
   // The sorting run on made-up charges: no YNAB, no database, nothing saved.
   if (action === "selftest") {
