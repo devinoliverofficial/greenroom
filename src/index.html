@@ -923,6 +923,18 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .row.total { background: var(--surface-2); }
 .row.total > span:first-child { flex: 1; font-weight: 700; }
 .row.total .amt { font-size: 19px; }
+/* Expenses: the plan and what's been paid, side by side. */
+.ex-proj, .ex-paid { flex: 0 0 70px; text-align: right; }
+.row.ex-row, .row.ex-head, .row.ex-total { gap: 8px; }
+.ex-row .row-label { overflow-wrap: normal; }
+.ex-chev { flex: 0 0 18px; }
+.row.ex-head { min-height: 0; padding-top: 11px; padding-bottom: 9px;
+  font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.row.ex-head > span:first-child { flex: 1; }
+.ledger .amt.ex-paid { color: var(--ink); }
+.ledger .amt.ex-paid.over { color: var(--neg); }
+.row.ex-total .amt { font-size: 16px; }
+.row.total .hint { font-weight: 450; margin-top: 2px; }
 .row.rowbtn { width: 100%; appearance: none; border: 0; border-bottom: 1px solid var(--line-2); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .row.rowbtn:last-child { border-bottom: 0; }
 .row.rowbtn .ic { color: var(--ink-3); }

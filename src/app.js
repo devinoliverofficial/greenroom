@@ -1982,30 +1982,38 @@
       return money(r.amount) + (r.leftover ? ' left over from ' : ' on ') + r.label;
     }).join(', ') + ' going in';
   }
+  // The two numbers sit in their own columns; this line says how they compare.
   function lineHint(l) {
-    if (l.over > 0) return { text: 'Over by ' + money(l.over) + ' · ' + money(l.paid) + ' paid' + cardBit(l), cls: ' over' };
-    if (l.key === 'commission') {
-      return { text: l.paid > 0 ? money(l.paid) + ' paid so far' : 'Worked out from income as you log shows', cls: '' };
+    if (l.over > 0) return { text: 'Over by ' + money(l.over) + cardBit(l), cls: ' over' };
+    if (l.key === 'commission' && !l.projected && !l.paid) {
+      return { text: 'Worked out from income as you log shows', cls: '' };
     }
-    if (l.projected == null) {
-      return { text: l.paid > 0 ? money(l.paid) + ' so far' + cardBit(l) : '', cls: '' };
-    }
-    if (l.left === 0) return { text: 'All ' + money(l.paid) + ' paid' + cardBit(l), cls: ' done' };
-    return { text: money(l.paid) + ' paid · ' + money(l.left) + ' left to pay' + cardBit(l), cls: '' };
+    if (l.projected == null) return { text: cardBit(l).replace(/^ · /, ''), cls: '' };
+    if (l.left === 0) return { text: 'All paid' + cardBit(l), cls: ' done' };
+    return { text: money(l.left) + ' left to pay' + cardBit(l), cls: '' };
   }
 
+  /* The plan stays put in its column and what's actually been paid sits next
+     to it, so over and under are there to read at a glance. */
   function tabExpenses(id, t, c) {
+    var edit = canEditTour(id);
+    var chev = edit ? h('span', { class: 'ex-chev', 'aria-hidden': 'true' }) : null;
+    var head = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
+      h('span', null, ''), h('span', { class: 'ex-proj' }, 'Projected'), h('span', { class: 'ex-paid' }, 'Paid'),
+      chev ? chev.cloneNode() : null);
     var rows = c.lines.map(function (l) {
       var hint = lineHint(l);
-      var amount = money(l.effective); // what the category actually counts against the tour
       var inner = [
         h('div', { class: 'row-label' }, l.label,
           hint.text ? h('span', { class: 'hint' + hint.cls }, hint.text) : null),
-        h('span', { class: 'amt num glow' }, amount)
+        h('span', { class: 'amt num glow ex-proj', 'aria-label': 'Projected ' + (l.projected == null ? 'not set' : money(l.projected)) },
+          l.projected == null ? '\u2014' : money(l.projected)),
+        h('span', { class: 'amt num ex-paid' + (l.over > 0 ? ' over' : ''), 'aria-label': 'Paid ' + money(l.paid) },
+          money(l.paid))
       ];
-      if (!canEditTour(id)) return h('div', { class: 'row' }, inner);
+      if (!edit) return h('div', { class: 'row ex-row' }, inner);
       return h('button', {
-        class: 'row rowbtn', type: 'button',
+        class: 'row rowbtn ex-row', type: 'button',
         onclick: function () {
           if (l.key === 'crew') openCrewSheet(id);
           else if (l.key === 'commission') openCommissionSheet(id);
@@ -2013,8 +2021,19 @@
         }
       }, inner, icon('chevron', 18));
     });
+    var projTotal = 0, paidTotal = 0;
+    c.lines.forEach(function (l) { projTotal += l.projected || 0; paidTotal += l.paid; });
+    rows.unshift(head);
+    rows.push(h('div', { class: 'row total ex-total' },
+      h('span', null, 'Total'),
+      h('strong', { class: 'amt num glow ex-proj' }, money(projTotal)),
+      h('strong', { class: 'amt num ex-paid' + (paidTotal > projTotal && projTotal > 0 ? ' over' : '') }, money(paidTotal)),
+      chev ? chev.cloneNode() : null));
+    // The bottom line takes each category's projection until what's paid
+    // passes it, then what's paid.
     rows.push(h('div', { class: 'row total' },
-      h('span', null, 'What the tour costs'),
+      h('span', null, 'What the tour costs',
+        h('span', { class: 'hint' }, 'Each category counts its projection, or what\u2019s been paid once that\u2019s more.')),
       h('strong', { class: 'amt num glow' }, money(c.fixed + c.commission))));
     var charges = G.rows(t && t.charges);
     var baselineOffer = (canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
