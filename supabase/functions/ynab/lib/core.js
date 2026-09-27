@@ -230,24 +230,65 @@
      the deposit lands. Shows logged before the Received boxes existed carry
      no flags and read as received, exactly as they always counted. */
   function guaranteeIn(show) { return !show || show.guaranteeReceived !== false; }
+  // What should land in the bank for a night's merch. atVenu Register pays the
+  // card sales less processing fees, two business days after the show; when
+  // the Settlement shows those card figures, that is the deposit to expect.
+  // Without them (typed by hand, or the venue sold), it's the net less the
+  // cash already in hand.
   function merchDue(show) {
+    if (show && show.merchCardDeposit != null && num(show.merchCardDeposit) >= 0) {
+      return round(num(show.merchCardDeposit) * 100) / 100;
+    }
     var inc = show && isObj(show.income) ? show.income : {};
     return Math.max(0, round((num(inc.merch) - num(show && show.merchCash)) * 100) / 100);
   }
-  // 'owed' while a logged guarantee or a merch deposit hasn't landed,
-  // 'settled' once everything logged is in, null for a night not logged yet.
+  // A logged night's money: 'owed' when none of it has landed, 'partial'
+  // when one of the guarantee and the merch deposit has, 'settled' once
+  // everything logged is in, and null for a night not logged yet.
   function showMoneyState(show) {
     if (!show || !show.loggedAt) return null;
     var inc = isObj(show.income) ? show.income : {};
-    var guaranteeOwed = num(inc.guarantee) > 0 && show.guaranteeReceived === false;
-    var merchOwed = merchDue(show) > 0 && show.merchReceived === false;
-    return guaranteeOwed || merchOwed ? 'owed' : 'settled';
+    var parts = [];
+    if (num(inc.guarantee) > 0) parts.push(show.guaranteeReceived !== false);
+    if (merchDue(show) > 0) parts.push(show.merchReceived !== false);
+    var got = parts.filter(Boolean).length;
+    if (got === parts.length) return 'settled';
+    return got === 0 ? 'owed' : 'partial';
   }
 
   /* The merch cash log: what the table took in cash, and where every dollar
      went. An entry filed under a category is a tour cost and counts like a
      card charge; a deposit or a hand-off just moves the cash. */
   var CASH_MOVES = { deposit: 'Deposited in the bank', handoff: 'Handed off (not a tour cost)' };
+  /* Show by show: what each night's table took in cash, what's been logged
+     against it, and what's still to account for. Entries logged without a
+     show (the log's first days) cover the oldest nights first. */
+  function cashByShow(tour) {
+    var nights = rows(tour && tour.shows).filter(function (s) {
+      return s.loggedAt && num(s.merchCash) > 0;
+    }).sort(byDate).map(function (s) {
+      return { show: s, took: round(num(s.merchCash) * 100) / 100, used: 0, entries: [] };
+    });
+    var byId = {};
+    nights.forEach(function (n) { byId[n.show.id] = n; });
+    var loose = [];
+    rows(tour && tour.cashLog).sort(function (a, b) {
+      return String(a.date || '').localeCompare(String(b.date || '')) || (a.createdAt || 0) - (b.createdAt || 0);
+    }).forEach(function (x) {
+      if (x.showId && byId[x.showId]) { byId[x.showId].used += num(x.amount); byId[x.showId].entries.push(x); }
+      else loose.push(x);
+    });
+    var spare = loose.reduce(function (t, x) { return t + num(x.amount); }, 0);
+    nights.forEach(function (n) {
+      var room = Math.max(0, n.took - n.used);
+      var take = Math.min(room, spare);
+      n.used += take; spare -= take;
+      n.left = round((n.took - n.used) * 100) / 100;
+      n.used = round(n.used * 100) / 100;
+    });
+    return { nights: nights, loose: loose };
+  }
+
   function cashSummary(tour) {
     var took = rows(tour && tour.shows).reduce(function (t, s) {
       return s.loggedAt ? t + num(s.merchCash) : t;
@@ -836,7 +877,17 @@
     var cashRaw = src.cash != null ? src.cash : incSrc.cash;
     var cash = cashRaw == null || cashRaw === '' ? null : round(num(cashRaw) * 100) / 100;
     if (cash != null && !(cash >= 0)) cash = null;
-    return { income: income, miscLabel: miscLabel, notes: notes, found: found, cash: cash };
+    // The card side of an atVenu Settlement: card sales and the processing fee.
+    var cards = isObj(src.cards) ? src.cards : {};
+    var receipts = cards.receipts == null || cards.receipts === '' ? null : round(num(cards.receipts) * 100) / 100;
+    var fee = cards.fee == null || cards.fee === '' ? null : round(Math.abs(num(cards.fee)) * 100) / 100;
+    var cardsBy = /venue/i.test(String(src.cardsBy || '')) ? 'venue' : (/artist/i.test(String(src.cardsBy || '')) ? 'artist' : null);
+    var cardDeposit = receipts != null && receipts >= 0 && cardsBy !== 'venue'
+      ? round((receipts - (fee || 0)) * 100) / 100 : null;
+    var type = String(src.reportType || '').toLowerCase();
+    var reportType = /progress|tour/.test(type) ? 'tour_progress' : (/settle/.test(type) ? 'settlement' : (type ? 'other' : null));
+    return { income: income, miscLabel: miscLabel, notes: notes, found: found, cash: cash,
+      cardReceipts: receipts, cardFee: fee, cardDeposit: cardDeposit, cardsBy: cardsBy, reportType: reportType };
   }
 
   /* ---------------- Tour closeout ---------------- */
@@ -993,7 +1044,7 @@
 
     cardDebts: cardDebts, otherDebts: otherDebts, cardSummary: cardSummary,
     guaranteeIn: guaranteeIn, merchDue: merchDue, showMoneyState: showMoneyState,
-    CASH_MOVES: CASH_MOVES, cashSummary: cashSummary,
+    CASH_MOVES: CASH_MOVES, cashSummary: cashSummary, cashByShow: cashByShow,
     cardPaidDetail: cardPaidDetail, preTourCutoff: preTourCutoff,
 
     calc: calc, stateOf: stateOf, caption: caption,

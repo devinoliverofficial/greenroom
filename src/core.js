@@ -230,7 +230,15 @@
      the deposit lands. Shows logged before the Received boxes existed carry
      no flags and read as received, exactly as they always counted. */
   function guaranteeIn(show) { return !show || show.guaranteeReceived !== false; }
+  // What should land in the bank for a night's merch. atVenu Register pays the
+  // card sales less processing fees, two business days after the show; when
+  // the Settlement shows those card figures, that is the deposit to expect.
+  // Without them (typed by hand, or the venue sold), it's the net less the
+  // cash already in hand.
   function merchDue(show) {
+    if (show && show.merchCardDeposit != null && num(show.merchCardDeposit) >= 0) {
+      return round(num(show.merchCardDeposit) * 100) / 100;
+    }
     var inc = show && isObj(show.income) ? show.income : {};
     return Math.max(0, round((num(inc.merch) - num(show && show.merchCash)) * 100) / 100);
   }
@@ -869,7 +877,17 @@
     var cashRaw = src.cash != null ? src.cash : incSrc.cash;
     var cash = cashRaw == null || cashRaw === '' ? null : round(num(cashRaw) * 100) / 100;
     if (cash != null && !(cash >= 0)) cash = null;
-    return { income: income, miscLabel: miscLabel, notes: notes, found: found, cash: cash };
+    // The card side of an atVenu Settlement: card sales and the processing fee.
+    var cards = isObj(src.cards) ? src.cards : {};
+    var receipts = cards.receipts == null || cards.receipts === '' ? null : round(num(cards.receipts) * 100) / 100;
+    var fee = cards.fee == null || cards.fee === '' ? null : round(Math.abs(num(cards.fee)) * 100) / 100;
+    var cardsBy = /venue/i.test(String(src.cardsBy || '')) ? 'venue' : (/artist/i.test(String(src.cardsBy || '')) ? 'artist' : null);
+    var cardDeposit = receipts != null && receipts >= 0 && cardsBy !== 'venue'
+      ? round((receipts - (fee || 0)) * 100) / 100 : null;
+    var type = String(src.reportType || '').toLowerCase();
+    var reportType = /progress|tour/.test(type) ? 'tour_progress' : (/settle/.test(type) ? 'settlement' : (type ? 'other' : null));
+    return { income: income, miscLabel: miscLabel, notes: notes, found: found, cash: cash,
+      cardReceipts: receipts, cardFee: fee, cardDeposit: cardDeposit, cardsBy: cardsBy, reportType: reportType };
   }
 
   /* ---------------- Tour closeout ---------------- */

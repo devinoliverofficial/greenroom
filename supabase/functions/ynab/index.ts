@@ -140,12 +140,26 @@ function merchAccountFor(feed: Feed, accounts: Record<string, Account>): string 
   return hit ? hit[0] : "";
 }
 
-/* A merch payout matched to the show(s) it pays for: one show whose deposit
-   (net minus cash) is the same amount, or a run of back-to-back shows on one
-   tour that add up to it (a weekly payout). Within a dollar, and only shows
-   from the month before the deposit. */
-interface Dep { id: string; date: string; amount: number }
-interface Cand { tourId: string; showId: string; date: string; due: number }
+/* A merch payout matched to the show(s) it pays for.
+   - An atVenu Register payout ("AV..." on the statement) is one show's card
+     sales less fees, sent two business days after that show. It matches the
+     open show 1-7 days before it whose expected payout is nearest, allowing
+     for card tips and late sales the Settlement doesn't show.
+   - Any other deposit (a venue's check or wire) has to match within a
+     dollar: one show, or a run of back-to-back shows on one tour (a weekly
+     payout), from the month before it. */
+interface Dep { id: string; date: string; amount: number; av?: boolean }
+// atVenu pays two business days after the show (weekends skipped).
+function payoutDay(showDate: string): string {
+  let d = showDate, left = 2;
+  while (left > 0) {
+    d = G.addDays(d, 1);
+    const wd = G.parseDay(d).getDay();
+    if (wd !== 0 && wd !== 6) left -= 1;
+  }
+  return d;
+}
+interface Cand { tourId: string; showId: string; date: string; due: number; known?: boolean }
 function matchDeposits(deps: Dep[], cands: Cand[]): { dep: Dep; picks: Cand[] }[] {
   const used = new Set<string>();
   const out: { dep: Dep; picks: Cand[] }[] = [];
@@ -153,6 +167,25 @@ function matchDeposits(deps: Dep[], cands: Cand[]): { dep: Dep; picks: Cand[] }[
     const open = cands.filter((c) => !used.has(c.tourId + "/" + c.showId) && c.date <= d.date &&
       G.daysBetween(c.date, d.date) <= 30).sort((a, b) => a.date.localeCompare(b.date));
     let picks: Cand[] | null = null;
+    if (d.av) {
+      const near = open.filter((c) => {
+        const gap = G.daysBetween(c.date, d.date);
+        if (gap < 1 || gap > 7) return false;
+        // Card figures known: close to them. Not known (logged before the
+        // Settlement's card lines were read): the card payout can't be more
+        // than the night's net, and is rarely under a fifth of it.
+        return c.known === false
+          ? d.amount <= c.due + 5 && d.amount >= c.due * 0.2
+          : d.amount >= c.due * 0.85 - 5 && d.amount <= c.due * 1.35 + 5;
+      }).sort((a, b) =>
+        // The show whose payout day this is, first; then known card figures; then the nearest amount.
+        Math.abs(G.daysBetween(payoutDay(a.date), d.date)) - Math.abs(G.daysBetween(payoutDay(b.date), d.date)) ||
+        (a.known === false ? 1 : 0) - (b.known === false ? 1 : 0) ||
+        Math.abs(a.due - d.amount) - Math.abs(b.due - d.amount));
+      if (near.length) picks = [near[0]];
+      if (picks) { used.add(picks[0].tourId + "/" + picks[0].showId); out.push({ dep: d, picks }); }
+      continue;
+    }
     for (const c of open) {
       if (Math.abs(c.due - d.amount) <= 1 && (!picks || c.date > picks[0].date)) picks = [c];
     }
@@ -217,7 +250,10 @@ function sortTransactions(
     // match against atVenu. Transfers between the band's own accounts aren't payouts.
     if (merchAccount && String(t.account_id) === merchAccount && !t.deleted &&
         !t.transfer_account_id && Number(t.amount) > 0) {
-      deposits.push({ id, date: String(t.date), amount: Math.round(Number(t.amount) / 10) / 100 });
+      // atVenu Register payouts read "AV<account name><id>" on the statement.
+      const raw = String(t.import_payee_name_original ?? t.import_payee_name ?? t.payee_name ?? "").trim();
+      deposits.push({ id, date: String(t.date), amount: Math.round(Number(t.amount) / 10) / 100,
+        av: /^AV[A-Z0-9]/i.test(raw) || /\batvenu\b/i.test(raw) });
     }
     if (known.has(id)) {
       // Deleted or edited in YNAB after we saw it: an unfiled one leaves the
@@ -294,7 +330,7 @@ function sortTransactions(
 // it marked received.
 async function settleMerch(owner: string, tours: Tour[]): Promise<number> {
   const since = G.addDays(G.ymd(new Date()), -60);
-  const { data: open } = await admin.from("merch_deposits").select("id, date, amount")
+  const { data: open } = await admin.from("merch_deposits").select("id, date, amount, atvenu")
     .eq("owner_id", owner).eq("matched", false).gte("date", since);
   if (!open || !open.length) return 0;
   const cands: Cand[] = [];
@@ -302,11 +338,13 @@ async function settleMerch(owner: string, tours: Tour[]): Promise<number> {
     for (const s of G.rows(t.doc.shows) as Obj[]) {
       if (s.merchReceived !== false || !s.loggedAt) continue;
       const due = G.merchDue(s);
-      if (due > 0 && G.parseDay(String(s.date))) cands.push({ tourId: t.id, showId: String(s.id), date: String(s.date), due });
+      if (due > 0 && G.parseDay(String(s.date))) {
+        cands.push({ tourId: t.id, showId: String(s.id), date: String(s.date), due, known: s.merchCardDeposit != null });
+      }
     }
   }
   if (!cands.length) return 0;
-  const hits = matchDeposits(open.map((d) => ({ id: d.id, date: String(d.date), amount: Number(d.amount) })), cands);
+  const hits = matchDeposits(open.map((d) => ({ id: d.id, date: String(d.date), amount: Number(d.amount), av: !!d.atvenu })), cands);
   let n = 0;
   for (const h of hits) {
     for (const p of h.picks) {
@@ -387,7 +425,7 @@ async function syncFeed(feed: Feed, opts: { preview?: boolean } = {}): Promise<O
   // still waiting on its deposit (merch may be logged days after it lands).
   if (deposits.length) {
     await admin.from("merch_deposits").upsert(
-      deposits.map((d) => ({ owner_id: feed.owner_id, id: d.id, date: d.date, amount: d.amount })),
+      deposits.map((d) => ({ owner_id: feed.owner_id, id: d.id, date: d.date, amount: d.amount, atvenu: !!d.av })),
       { onConflict: "owner_id,id", ignoreDuplicates: true });
   }
   const paid = await settleMerch(feed.owner_id, tours);
@@ -482,11 +520,26 @@ Deno.serve(async (req) => {
       { id: "stale", date: "2026-09-28", amount: 777 },      // Tulsa, but two months old
       { id: "stray", date: "2026-09-28", amount: 55 },       // nothing like it
     ];
+    // atVenu payouts: card sales less fees, two business days after each show,
+    // a little over the Settlement when fans tipped.
+    const avCands: Cand[] = [
+      { tourId: "t", showId: "raleigh", date: "2026-09-23", due: 2335.8 },
+      { tourId: "t", showId: "johnson", date: "2026-09-24", due: 1480.1 },
+      { tourId: "t", showId: "tonight", date: "2026-09-29", due: 1900 },
+      { tourId: "t", showId: "oldstyle", date: "2026-09-30", due: 3150, known: false },  // net only
+    ];
+    const avDeps: Dep[] = [
+      { id: "av_raleigh", date: "2026-09-25", amount: 2361.4, av: true },   // + tips
+      { id: "av_johnson", date: "2026-09-28", amount: 1480.1, av: true },   // over a weekend
+      { id: "av_toosoon", date: "2026-09-29", amount: 1900, av: true },     // same day as the show: not yet
+      { id: "av_oldstyle", date: "2026-10-02", amount: 2210, av: true },    // under the net, 2 days on
+    ];
     return reply(200, {
       sorted: Object.fromEntries(r.items.map((i) => [i.id, [i.status, i.why || i.category]])),
       ignored: txs.map((t) => t.id).filter((id) => !r.items.some((i) => i.id === id)),
       merchDepositsSeen: r.deposits.map((d) => d.id),
       matched: Object.fromEntries(matchDeposits(deps, cands).map((m) => [m.dep.id, m.picks.map((p) => p.showId)])),
+      avMatched: Object.fromEntries(matchDeposits(avDeps, avCands).map((m) => [m.dep.id, m.picks.map((p) => p.showId)])),
     });
   }
 

@@ -4819,6 +4819,9 @@
     // Merch cash collected at the table, and whether each payment has landed.
     // A night logged before the Received boxes existed reads as received.
     var merchCash = G.num(s.merchCash);
+    // atVenu's card payout for the night (card sales less fees), when the
+    // Settlement showed it. That is the deposit to watch for.
+    var merchCardDeposit = s.merchCardDeposit != null ? G.num(s.merchCardDeposit) : null;
     var legacy = !!s.loggedAt;
     var recv = {
       guarantee: s.guaranteeReceived === true || (s.guaranteeReceived == null && legacy && draft.guarantee > 0),
@@ -4874,10 +4877,11 @@
         var income = Object.assign({}, draft);
         income.miscLabel = draft.misc > 0 ? miscLabel.trim() : '';
         var patch = {};
-        var due = G.merchDue({ income: draft, merchCash: merchCash });
+        var due = G.merchDue({ income: draft, merchCash: merchCash, merchCardDeposit: merchCardDeposit });
         patch[showId] = { income: income, loggedAt: total > 0 ? Date.now() : null,
           settlementNotes: settNotes.length ? settNotes : null,
           merchCash: draft.merch > 0 && merchCash > 0 ? merchCash : null,
+          merchCardDeposit: draft.merch > 0 && merchCardDeposit != null ? merchCardDeposit : null,
           guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
           // All-cash merch has no deposit to wait for.
           merchReceived: draft.merch > 0 ? (due > 0 ? !!recv.merch : true) : null };
@@ -4911,7 +4915,8 @@
       }
       function currentFlags() {
         return { guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
-          merchReceived: draft.merch > 0 ? !!recv.merch : null, merchCash: merchCash };
+          merchReceived: draft.merch > 0 ? !!recv.merch : null, merchCash: merchCash,
+          merchCardDeposit: merchCardDeposit };
       }
       var perHeadEl = h('span', { class: 'amt num mx-val' }, '');
       function updatePerHead() {
@@ -4935,12 +4940,18 @@
         h('div', { class: 'row-label' }, 'Deposit', depositHint, receivedBox('merch', 'Merch deposit')),
         depositAmt);
       function updateDeposit() {
-        var due = G.merchDue({ income: draft, merchCash: merchCash });
+        var due = G.merchDue({ income: draft, merchCash: merchCash, merchCardDeposit: merchCardDeposit });
         depositRow.hidden = !(draft.merch > 0 && due > 0);
         var landed = recv.merch && s.merchReceivedAt && G.num(s.merchDeposit) > 0;
+        var off = landed && merchCardDeposit != null ? Math.round((G.num(s.merchDeposit) - merchCardDeposit) * 100) / 100 : 0;
         depositHint.textContent = landed
-          ? 'Landed ' + dayMD(s.merchReceivedAt) + ' \u00b7 seen in YNAB'
-          : 'Net minus cash, due in the bank';
+          ? 'Landed ' + dayMD(s.merchReceivedAt) + ' \u00b7 seen in YNAB' +
+            (Math.abs(off) > Math.max(5, merchCardDeposit * 0.03)
+              ? ' \u00b7 ' + money(Math.abs(off)) + (off > 0 ? ' more' : ' less') + ' than the Settlement' + (off > 0 ? ' (card tips?)' : '')
+              : '')
+          : merchCardDeposit != null
+            ? 'atVenu card payout: card sales less fees, 2 business days after'
+            : 'Net minus cash, due in the bank';
         depositAmt.textContent = money(landed ? G.num(s.merchDeposit) : due);
         depositAmt.classList.toggle('known', !!recv.merch);
       }
@@ -4978,6 +4989,10 @@
           if (el) el.value = (Math.round(r.income.merch * 100) / 100)
             .toLocaleString('en-US', { maximumFractionDigits: 2 });
         }
+        // The card payout replaces the net-minus-cash guess; a venue-run card
+        // table means nothing comes from atVenu.
+        if (r.cardDeposit != null) merchCardDeposit = r.cardDeposit;
+        else if (r.cardsBy === 'venue') merchCardDeposit = null;
         if (r.cash != null) {
           merchCash = r.cash;
           var ce = document.getElementById('inc-merch-cash');
@@ -5045,6 +5060,7 @@
               var bits = [r.added ? 'Brought in ' + plural(r.added, 'night') + ' from atVenu' : 'Nothing new from atVenu'];
               if (r.conflicts) bits.push(plural(r.conflicts, 'night') + ' left alone \u2014 a different number is logged');
               if (r.noShow) bits.push(plural(r.noShow, 'report') + ' with no show on this tour');
+              if (r.unclear) bits.push(plural(r.unclear, 'night') + ' skipped \u2014 two different atVenu numbers; upload that night\u2019s Settlement');
               toast(bits.join(' \u00b7 '));
               // Show what came in on this night straight away.
               if (r.added) { closeSheet(); setTimeout(function () { openIncome(id, showId); }, 350); }
@@ -5062,7 +5078,7 @@
             mkInput));
           rows.push(h('div', { class: 'row mx-row' },
             h('label', { class: 'row-label', for: 'inc-merch-cash' }, 'Cash',
-              h('span', { class: 'hint' }, 'Taken at the table')),
+              h('span', { class: 'hint' }, 'Cash from the show, on hand')),
             cashInput));
           rows.push(h('div', { class: 'row mx-row' },
             h('span', { class: 'row-label' }, '$ per head'),
@@ -6651,26 +6667,39 @@
 
   /* atVenu is merch-only: the summary fills merch and the per-head, never the
      guarantee or the promoter's side of the night. */
+  /* How an atVenu Settlement is laid out (per their help center): Credit
+     Card/Cash, Gross Sales (Adjusted Gross = Total Gross less card fees, tax
+     and off-top costs), Settlement (the venue's cut of the Adjusted Gross;
+     Total Due Artist and Total Due Venue), Final Payment (how the venue is
+     paid: cash, check or to follow) and Cash from Show (the cash the band
+     holds at the end of the night). Card money arrives separately: atVenu
+     Register deposits card sales less fees two business days later. */
   function atvenuPrompt(body, isImage) {
     return [
       isImage
-        ? 'The attached image(s) are a merch summary or merch settlement from atVenu (or a similar merch report).'
-        : 'The text below was pulled out of a merch summary or merch settlement from atVenu (or a similar merch report).',
-      'Pull out ONLY the merch story \u2014 nothing about guarantees, back end or the promoter deal.',
+        ? 'The attached image(s) are a merch report from atVenu (or a similar merch report).'
+        : 'The text below was pulled out of a merch report from atVenu (or a similar merch report).',
+      'Pull out ONLY the merch story — nothing about guarantees, back end or the promoter deal.',
       '',
       'Reply with only a JSON object in this exact shape:',
-      '{"income":{"merch":null},"cash":null,"notes":[{"label":"Merch per head","value":"$12.40"}]}',
+      '{"reportType":"settlement","income":{"merch":null},"cash":null,"cards":{"receipts":null,"fee":null},"cardsBy":null,',
+      ' "notes":[{"label":"Merch per head","value":"$12.40"}]}',
       '',
       'Rules:',
-      '- cash: the merch CASH the band collected at the table (cash sales the artist kept), only if',
-      '  the report prints it \u2014 look for "Cash", "Cash Sales", "Cash Collected" or "Cash on Hand". Otherwise null.',
-      '- merch: what the band actually keeps \u2014 the NET. Look for "Net to Artist", "Artist Net",',
-      '  "Due to Artist" or the total after the venue cut and fees. Only if no net line exists anywhere',
-      '  take "Total Gross" instead and add a note "Gross merch" so it is clear no net was shown.',
-      '- Never estimate a number that is not printed on the sheet \u2014 do NOT compute the net yourself.',
-      '- notes may ONLY use these labels, and only when the sheet shows them:',
-      '  "Gross merch", "Venue merch cut", "Card fees", "Merch per head" (dollars per attendee, shown or computable from gross and attendance), "Attendance".',
-      'Keep every value under a dozen words. If the sheet is unreadable, reply {"income":{},"notes":[]}.',
+      '- reportType: "settlement" when this is ONE show’s Settlement (sections like Credit Card/Cash, Gross Sales,',
+      '  Settlement, Final Payment, Cash from Show). "tour_progress" when it covers several shows or the tour so far',
+      '  (Tour Progress, tour-to-date, a summary across dates). Anything else: "other".',
+      '- merch: what the band keeps for the show — "Total Due Artist" (or "Net to Artist" / "Due to Artist").',
+      '  Only if no such line exists take "Total Gross" and add a note "Gross merch". Never compute it yourself.',
+      '- cash: the "Cash from Show" total — the cash the band holds at the end of the night after paying the venue',
+      '  any cash. If the venue collected the cash, 0. If there is no such line, null.',
+      '- cards.receipts: the "Total CC Receipts" (credit card sales). cards.fee: the credit card "Fee ($)" amount.',
+      '- cardsBy: who collected the credit cards ("Credit Cards Collected By"): "artist" or "venue".',
+      '- Never estimate a number that is not printed on the report.',
+      '- notes may ONLY use these labels, and only when the report shows them:',
+      '  "Gross merch" (Total Gross Sales), "Venue merch cut", "Card fees", "Sales tax", "Paid to venue" (amount and how:',
+      '  cash / check / to follow), "Merch per head" (dollars per attendee), "Attendance".',
+      'Keep every value under a dozen words. If the report is unreadable, reply {"income":{},"notes":[]}.',
       isImage ? '' : '\nMerch report text:\n' + body
     ].join('\n');
   }
@@ -6724,12 +6753,16 @@
             return;
           }
           var r = G.normalizeSettlement(out);
+          if (o.mode === 'atvenu' && r.reportType === 'tour_progress') {
+            toast('That\u2019s a Tour Progress report (the tour so far). Upload the night\u2019s Settlement instead.');
+            return;
+          }
           if (o.mode === 'atvenu') {
             var m = r.income.merch;
             r.income = m != null ? { merch: m } : {};
             r.found = m != null ? 1 : 0;
             r.miscLabel = '';
-            r.notes = r.notes.filter(function (n) { return /merch|attendance|per head|fees/i.test(n.label); });
+            r.notes = r.notes.filter(function (n) { return /merch|attendance|per head|fees|tax|paid to venue/i.test(n.label); });
           }
           if (!r.found && !r.notes.length) {
             toast('Couldn’t read that sheet. Try a sharper photo.');

@@ -870,6 +870,18 @@
     eq(c.nights[1].left, 130, 'Austin: 300 - 120 - the 50 the deposit had left');
   });
 
+  test('an atVenu Settlement says what the card deposit will be', function () {
+    var r = G.normalizeSettlement({ reportType: 'settlement', income: { merch: '3,150.00' }, cash: '1,020',
+      cards: { receipts: '2,400.00', fee: '64.20' }, cardsBy: 'Artist', notes: [] });
+    eq(r.reportType, 'settlement', 'kind');
+    eq(r.cardDeposit, 2335.8, 'card sales less fees');
+    var show = { loggedAt: 1, income: { merch: 3150 }, merchCash: 1020, merchCardDeposit: r.cardDeposit };
+    eq(G.merchDue(show), 2335.8, 'the deposit to expect is the card payout, not net minus cash');
+    eq(G.normalizeSettlement({ reportType: 'Tour Progress', income: { merch: 9000 } }).reportType, 'tour_progress', 'a tour-to-date report');
+    eq(G.normalizeSettlement({ income: { merch: 100 }, cards: { receipts: 80, fee: 2 }, cardsBy: 'Venue' }).cardDeposit,
+      null, 'the venue ran the cards: nothing comes from atVenu');
+  });
+
   test('an atVenu report brings its merch cash along', function () {
     var r = G.normalizeSettlement({ income: { merch: '$1,200.00' }, cash: '$300', notes: [] });
     eq(r.income.merch, 1200, 'net');

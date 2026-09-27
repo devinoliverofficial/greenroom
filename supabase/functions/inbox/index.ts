@@ -84,26 +84,39 @@ async function readMail(req: Request): Promise<Mail | null> {
   };
 }
 
+/* How an atVenu Settlement is laid out (per their help center): Credit
+   Card/Cash, Gross Sales (Adjusted Gross = Total Gross less card fees, tax and
+   off-top costs), Settlement (the venue's cut of the Adjusted Gross; Total Due
+   Artist and Total Due Venue), Final Payment (how the venue is paid) and Cash
+   from Show (the cash the band holds at the end of the night). The card money
+   arrives on its own: atVenu Register deposits card sales less fees two
+   business days after the show, one deposit per show, named "AV...". */
 function prompt(kind: "text" | "files", body: string): string {
   return [
     kind === "text"
-      ? "The text below is an email — a merch summary or settlement from atVenu (or a similar merch report)."
-      : "The attached file(s) are a merch summary or settlement from atVenu (or a similar merch report), from an email.",
+      ? "The text below is an email — a merch report from atVenu (or a similar merch report)."
+      : "The attached file(s) are a merch report from atVenu (or a similar merch report), from an email.",
     "Pull out ONLY the merch story and which show it belongs to — nothing about guarantees, back end or the promoter deal.",
     "",
     "Reply with only a JSON object in this exact shape:",
-    '{"show":{"date":"YYYY-MM-DD","venue":"","city":""},"income":{"merch":null},"cash":null,"notes":[{"label":"Merch per head","value":"$12.40"}]}',
+    '{"reportType":"settlement","show":{"date":"YYYY-MM-DD","venue":"","city":""},"income":{"merch":null},"cash":null,',
+    ' "cards":{"receipts":null,"fee":null},"cardsBy":null,"notes":[{"label":"Merch per head","value":"$12.40"}]}',
     "",
     "Rules:",
-    '- cash: the merch CASH the band collected at the table (cash sales the artist kept), only if the report',
-    '  prints it — look for "Cash", "Cash Sales", "Cash Collected" or "Cash on Hand". Otherwise null.',
-    '- merch: what the band actually keeps — the NET. Look for "Net to Artist", "Artist Net",',
-    '  "Due to Artist" or the total after the venue cut and fees. Only if no net line exists anywhere',
-    '  take "Total Gross" instead and add a note "Gross merch" so it is clear no net was shown.',
+    '- reportType: "settlement" when this is ONE show\'s Settlement (sections like Credit Card/Cash, Gross Sales,',
+    '  Settlement, Final Payment, Cash from Show; subjects usually end in "Settlement"). "tour_progress" when it covers',
+    '  several shows or the tour so far (Tour Progress, tour-to-date, a summary across dates). Anything else: "other".',
+    '- merch: what the band keeps for the show — "Total Due Artist" (or "Net to Artist" / "Due to Artist"). Only if no',
+    '  such line exists take "Total Gross" and add a note "Gross merch". Never compute it yourself.',
+    '- cash: the "Cash from Show" total — the cash the band holds at the end of the night after paying the venue any',
+    '  cash. If the venue collected the cash, 0. If there is no such line, null.',
+    '- cards.receipts: the "Total CC Receipts" (credit card sales). cards.fee: the credit card "Fee ($)" amount.',
+    '- cardsBy: who collected the credit cards ("Credit Cards Collected By"): "artist" or "venue".',
     "- show.date: the show's date in YYYY-MM-DD, from the report (not the email's sent date, unless nothing else is given).",
-    "- Never estimate a number that is not printed — do NOT compute the net yourself.",
+    "- Never estimate a number that is not printed.",
     "- notes may ONLY use these labels, and only when shown:",
-    '  "Gross merch", "Venue merch cut", "Card fees", "Merch per head" (dollars per attendee, shown or computable from gross and attendance), "Attendance".',
+    '  "Gross merch" (Total Gross Sales), "Venue merch cut", "Card fees", "Sales tax", "Paid to venue" (amount and how:',
+    '  cash / check / to follow), "Merch per head" (dollars per attendee), "Attendance".',
     'Keep every value under a dozen words. If unreadable, reply {"show":{},"income":{},"notes":[]}.',
     kind === "text" ? "\nEmail text:\n" + body.slice(0, 40_000) : "",
   ].join("\n");
@@ -194,7 +207,21 @@ Deno.serve(async (req) => {
   const merch = Math.round((money(income.merch) || 0) * 100) / 100;
   const cashRead = money(out.cash);
   const cash = cashRead >= 0 ? Math.round(cashRead * 100) / 100 : NaN;
+  const reportType = /progress|tour/i.test(String(out.reportType ?? "")) ? "tour_progress"
+    : /settle/i.test(String(out.reportType ?? "")) ? "settlement" : "unknown";
+  const cardsIn = (out.cards ?? {}) as Record<string, unknown>;
+  const cardReceipts = money(cardsIn.receipts);
+  const cardFee = Math.abs(money(cardsIn.fee));
+  const cardsByVenue = /venue/i.test(String(out.cardsBy ?? ""));
+  // atVenu Register's payout for the night: card sales less fees.
+  const cardDeposit = cardReceipts >= 0 && !cardsByVenue
+    ? Math.round((cardReceipts - (cardFee >= 0 ? cardFee : 0)) * 100) / 100 : NaN;
   const date = String(show.date ?? "");
+  // The tour so far is not one night's merch; filing it on a show would lie.
+  if (reportType === "tour_progress") {
+    await logMail(mail.from, mail.subject, "tour_progress_skipped", "date=" + date);
+    return ok({ status: "tour_progress_skipped" });
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(merch > 0)) {
     await logMail(mail.from, mail.subject, "nothing_found", "date=" + date + " merch=" + merch);
     return ok({ status: "nothing_found" });
@@ -239,6 +266,8 @@ Deno.serve(async (req) => {
       owner_id: reportOwner, tour_tag: tagged || null, date,
       venue: String(show.venue ?? "").slice(0, 120), city: String(show.city ?? "").slice(0, 120),
       merch, cash: cash >= 0 ? cash : null, notes, received_at: new Date().toISOString(),
+      report_type: reportType, card_receipts: cardReceipts >= 0 ? cardReceipts : null,
+      card_fee: cardFee >= 0 ? cardFee : null,
     }, { onConflict: "owner_id,date,merch" });
     if (kept.error) await logMail(mail.from, mail.subject, "report_not_kept", kept.error.message);
   }
@@ -278,7 +307,9 @@ Deno.serve(async (req) => {
     // The cash stays with the band; the rest is a deposit on its way, and the
     // show stays owed (red on the Budget tab) until it lands.
     if (cash >= 0) s.merchCash = Math.min(cash, merch);
-    const due = Math.round((merch - Number(s.merchCash ?? 0)) * 100) / 100;
+    if (cardDeposit >= 0) s.merchCardDeposit = cardDeposit;
+    else if (cardsByVenue) s.merchCardDeposit = null;
+    const due = cardDeposit >= 0 ? cardDeposit : Math.round((merch - Number(s.merchCash ?? 0)) * 100) / 100;
     if (s.merchReceived !== true) s.merchReceived = due > 0 ? false : true;
     const old = (Array.isArray(s.settlementNotes) ? s.settlementNotes : []) as { label: string; value: string }[];
     const seen: Record<string, boolean> = {};

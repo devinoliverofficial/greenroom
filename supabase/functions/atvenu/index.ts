@@ -47,10 +47,25 @@ Deno.serve(async (req) => {
   const doc = (tour.doc ?? {}) as Obj;
   const shows = (doc.shows ?? {}) as Record<string, Obj>;
 
-  // The newest report for each night wins (a corrected re-send replaces the first).
+  // One report per night. A Settlement beats anything else (the newest one,
+  // if atVenu re-sent a corrected copy). Older reports whose kind wasn't
+  // recorded count only when they agree; two different numbers for the same
+  // night (a Tour Progress summary crept in once) are left for a human.
   const { data: reports } = await admin.from("merch_reports").select("*").eq("owner_id", uid).order("received_at");
+  const nights = new Map<string, Obj[]>();
+  for (const r of reports ?? []) {
+    const k = String(r.date);
+    nights.set(k, (nights.get(k) ?? []).concat([r]));
+  }
   const byDate = new Map<string, Obj>();
-  for (const r of reports ?? []) byDate.set(String(r.date), r);
+  let unclear = 0;
+  for (const [date, rs] of nights) {
+    const settled = rs.filter((r) => r.report_type === "settlement");
+    if (settled.length) { byDate.set(date, settled[settled.length - 1]); continue; }
+    const amounts = new Set(rs.map((r) => cents(num(r.merch))));
+    if (amounts.size === 1) byDate.set(date, rs[rs.length - 1]);
+    else unclear += 1;
+  }
 
   let added = 0, same = 0, conflicts = 0, noShow = 0;
   const imports: Obj = {};
@@ -68,11 +83,16 @@ Deno.serve(async (req) => {
     const merch = cents(num(r.merch));
     const had = cents(num(inc.merch));
     const cash = r.cash == null ? null : cents(num(r.cash));
+    // atVenu Register's card payout for the night, when the Settlement showed it.
+    const cardDeposit = r.card_receipts == null ? null : cents(num(r.card_receipts) - num(r.card_fee));
 
     if (had > 0 && Math.abs(had - merch) < 0.01) {
-      // Already in. Fill in the cash if the night is missing it.
-      if (cash != null && s.merchCash == null) {
-        await admin.rpc("merge_show", { t_id: tourId, s_id: showId, patch: { merchCash: Math.min(cash, merch) } });
+      // Already in. Fill in the cash and card payout if the night is missing them.
+      const fill: Obj = {};
+      if (cash != null && s.merchCash == null) fill.merchCash = Math.min(cash, merch);
+      if (cardDeposit != null && s.merchCardDeposit == null) fill.merchCardDeposit = cardDeposit;
+      if (Object.keys(fill).length) {
+        await admin.rpc("merge_show", { t_id: tourId, s_id: showId, patch: fill });
         added += 1;
       } else same += 1;
       continue;
@@ -83,12 +103,13 @@ Deno.serve(async (req) => {
     const seen: Record<string, boolean> = {};
     notes.forEach((n) => { seen[String(n.label).toLowerCase()] = true; });
     const old = (Array.isArray(s.settlementNotes) ? s.settlementNotes : []) as { label: string; value: string }[];
-    const due = cents(merch - (cash ?? 0));
+    const due = cardDeposit != null ? cardDeposit : cents(merch - (cash ?? 0));
     const patch: Obj = {
       income: { ...inc, merch },
       loggedAt: s.loggedAt || Date.now(),
       settlementNotes: old.filter((n) => !seen[String(n.label).toLowerCase()]).concat(notes),
       merchCash: cash != null ? Math.min(cash, merch) : null,
+      merchCardDeposit: cardDeposit,
       merchReceived: s.merchReceived === true ? true : due > 0 ? false : true,
     };
     const up = await admin.rpc("merge_show", { t_id: tourId, s_id: showId, patch });
@@ -100,5 +121,5 @@ Deno.serve(async (req) => {
   if (Object.keys(imports).length) {
     await admin.rpc("file_charges", { t_id: tourId, add: {}, imp: imports });
   }
-  return reply(200, { ok: true, reports: byDate.size, added, same, conflicts, noShow });
+  return reply(200, { ok: true, reports: byDate.size, added, same, conflicts, noShow, unclear });
 });
