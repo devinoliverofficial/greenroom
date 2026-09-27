@@ -3011,6 +3011,8 @@
           h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }),
           h('h1', { class: 'chat-label' }, 'Chat'))),
       dbBanner(),
+      // The bus, barely there behind the conversation.
+      h('div', { class: 'chat-bus', 'aria-hidden': 'true' }),
       alertsBell(id),
       msgs.length ? h('div', { class: 'chat-list' }, msgs) : null,
       h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
@@ -3705,7 +3707,7 @@
             h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
           h('button', { class: 'add-mini', type: 'button',
             onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
-            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import a list')))
+            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import List')))
     ];
   }
 
@@ -4669,7 +4671,7 @@
               h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
             h('button', { class: 'add-mini', type: 'button',
               onclick: function () { openGuestImport(tourId, showId, show, backend, build); } },
-              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import a list')),
+              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import List')),
           rowsOut.length ? guestLedger(rowsOut) : null,
           copyBtn
         ];

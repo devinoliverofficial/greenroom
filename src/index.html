@@ -160,6 +160,15 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 
 /* The full pixel wordmark, centred right under the GR on the Artists page. */
 .band-row.wordmark-row { justify-content: center; }
+/* The inverted bus behind the chat: centred in the space between the header
+   and the typing bar, faint enough to never compete with a message. */
+.chat-bus {
+  position: fixed; left: 50%; top: 52%; transform: translate(-50%, -50%);
+  width: min(78vw, 340px); aspect-ratio: 720 / 339;
+  background: url(bus-faint.jpg) center / contain no-repeat;
+  opacity: .07; pointer-events: none; z-index: 0;
+}
+.chat-page .chat-list, .chat-page .chat-tools { position: relative; z-index: 1; }
 .chat-brand { display: flex; flex-direction: column; align-items: center; gap: 7px; margin: 0 0 12px; }
 .chat-label { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .01em; line-height: 1; color: var(--ink); }
 .wordmark-full {
@@ -350,7 +359,7 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .page.has-tabs { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
 /* Chat and Guest list dock controls above the tab bar; their pages leave room. */
 .page.chat-page { padding-bottom: calc(152px + env(safe-area-inset-bottom, 0px)); }
-.page.guest-page { padding-bottom: calc(240px + env(safe-area-inset-bottom, 0px)); }
+.page.guest-page { padding-bottom: calc(190px + env(safe-area-inset-bottom, 0px)); }
 /* The home page is a column, so its quiet links can sink to the floor. */
 .page.home { display: flex; flex-direction: column; min-height: 100dvh; }
 .page.home > * { flex: none; }
@@ -1008,7 +1017,7 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
    pinned just over the tabs. */
 .gl-dock {
   position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-  z-index: 39; margin: 0; padding: 10px 0 12px;
+  z-index: 39; margin: 0; padding: 6px 0 4px;
   background: var(--bg); border-top: 1px solid var(--line);
 }
 /* Half-viewport gutters let ANY chip scroll to dead centre — the picked
@@ -1016,7 +1025,8 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .ds-rail.gl-rail { padding-left: calc(50% - 28px); padding-right: calc(50% - 28px); }
 .ds-rail.gl-rail > :first-child { margin-left: 0; }
 .ds-rail.gl-rail > :last-child { margin-right: 0; }
-.gl-dock-btns { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px 0; }
+.gl-dock-btns { display: flex; align-items: center; justify-content: space-between; padding: 4px 18px 0; }
+.gl-dock-btns .add-mini { margin: 0; }
 
 .ds-amens { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .ds-amen { padding: 5px 11px; border-radius: 999px; font-size: 13px; font-weight: 600; }
@@ -1114,6 +1124,7 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
   flex: none; display: grid; justify-items: center; gap: 1px; min-width: 46px;
   padding: 6px 8px; border: 1px solid var(--line); border-radius: 11px;
   background: var(--surface); color: var(--ink); font: inherit; cursor: pointer;
+  margin: 0; /* today's chip is also .tonight, whose card margin must not ride along */
 }
 .ds-chip-d { font-size: 15px; font-weight: 700; }
 .ds-chip-c { font-size: 10.5px; max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

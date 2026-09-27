@@ -48,6 +48,7 @@ def build_artifact():
     shutil.copy(SRC / 'logo-full.png', dist / 'logo-full.png')
     shutil.copy(SRC / 'logo-mastertour.png', dist / 'logo-mastertour.png')
     shutil.copy(SRC / 'logo-atvenu.png', dist / 'logo-atvenu.png')
+    shutil.copy(SRC / 'bus-faint.jpg', dist / 'bus-faint.jpg')
     print('dist/  (artifact) %d bytes of page' % len(page))
 
 
@@ -107,6 +108,7 @@ def build_web():
     shutil.copy(SRC / 'logo-full.png', web / 'logo-full.png')
     shutil.copy(SRC / 'logo-mastertour.png', web / 'logo-mastertour.png')
     shutil.copy(SRC / 'logo-atvenu.png', web / 'logo-atvenu.png')
+    shutil.copy(SRC / 'bus-faint.jpg', web / 'bus-faint.jpg')
     shutil.copy(SRC / 'icon-180.png', web / 'icon-180.png')
     shutil.copy(SRC / 'icon-512.png', web / 'icon-512.png')
     shutil.copy(SRC / 'gr-stark-180.png', web / 'gr-stark-180.png')
