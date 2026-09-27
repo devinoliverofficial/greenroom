@@ -5407,7 +5407,7 @@
         var first = form.querySelector('input');
         if (first) first.setAttribute('autofocus', '');
       }
-      return [h('h2', { class: 'sh-title' }, title), h('p', { class: 'sh-sub' }, sub), form];
+      return [h('h2', { class: 'sh-title clean' }, title), h('p', { class: 'sh-sub clean' }, sub), form];
     }, { label: 'Income for ' + title });
   }
 
