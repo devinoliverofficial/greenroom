@@ -1,0 +1,19 @@
+<div style="margin:0;padding:0;background:#000000;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#000000;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;background:#0C0F02;border:1px solid #1F2408;border-radius:18px;">
+<tr><td align="center" style="background:#CCF80A;border-radius:17px 17px 0 0;padding:24px 20px;">
+<img src="https://devinoliverofficial.github.io/greenroom/logo-full.png" width="210" alt="GREENROOM" style="display:block;width:210px;max-width:70%;height:auto;border:0;color:#0C0E00;font:800 24px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;letter-spacing:.08em;">
+</td></tr>
+<tr><td style="padding:30px 26px 6px;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#F1F4E3;">
+<p style="margin:0 0 8px;font-size:22px;font-weight:600;line-height:1.3;color:#F1F4E3;">{{ if .Data.first_name }}{{ .Data.first_name }}, you&rsquo;re{{ else }}You&rsquo;re{{ end }} on {{ if .Data.tour_name }}{{ .Data.tour_name }}{{ else }}the tour{{ end }}.</p>
+{{ if .Data.tour_role }}<p style="margin:0 0 18px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#CCF80A;">{{ .Data.tour_role }}{{ if .Data.access }} &middot; {{ if eq .Data.access "editor" }}ALL ACCESS{{ else }}GA{{ end }}{{ end }}</p>{{ end }}
+<p style="margin:0 0 24px;font-size:15px;line-height:1.55;color:#B9BEA6;">Your tour manager added you to Greenroom, where the run&rsquo;s day sheets, guest lists and chat live. Tap below, pick a username and a password, and you&rsquo;re in. Everything else is already filled in.</p>
+</td></tr>
+<tr><td align="center" style="padding:0 26px 30px;">
+<a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#CCF80A;color:#0C0E00;font:700 16px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;text-decoration:none;padding:15px 30px;border-radius:12px;">Join the tour</a>
+</td></tr>
+<tr><td style="padding:0 26px 28px;font:13px/1.55 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#8F947B;">On an iPhone? Once you&rsquo;re in, tap Share and &ldquo;Add to Home Screen&rdquo; so Greenroom lives next to your apps.<br><br>Didn&rsquo;t expect this? You can ignore it.</td></tr>
+</table>
+<p style="margin:16px 0 0;font:12px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#626750;">Greenroom &middot; the tour, in one place</p>
+</td></tr></table></div>
