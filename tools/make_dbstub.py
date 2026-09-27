@@ -12,6 +12,7 @@ shim = r"""<script>
   var tours = {
     t1: { name: 'Harness run', artist: 'I See Stars', setupDone: true, setupStep: 5, createdAt: 1,
       expenses: {}, commission: {}, crew: {}, debts: {}, extras: {}, charges: {}, imports: {},
+      bands: ['Opener Band', 'I See Stars'],
       shows: { s1: { id: 's1', date: ymd(today), city: 'Austin, TX', venue: 'Mohawk',
         daySheet: { doors: '7:00 PM', venueAddress: '912 Red River St, Austin, TX 78701' } } } }
   };
@@ -127,6 +128,7 @@ shim = r"""<script>
     pushSupported: function () { return window.__harness.pushSupported; },
     pushState: function () { return Promise.resolve({ on: window.__harness.pushOn, prefs: {} }); },
     pushEnable: function (prefs) { window.__harness.pushOn = true; window.__harness.pushPrefs = prefs; return Promise.resolve(); },
+    ariKick: function (tourId) { window.__harness.ariKicks = (window.__harness.ariKicks || 0) + 1; return Promise.resolve(); },
     pushDisable: function () { window.__harness.pushOn = false; return Promise.resolve(); },
     notify: function (tourId, type, data) { window.__harness.notified.push([type, data]); return Promise.resolve(window.__harness.phones); },
     saveNote: function (tourId, day, note) { window.__harness.notes.push(note); return Promise.resolve(); },

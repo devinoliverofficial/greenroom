@@ -3188,6 +3188,52 @@
       ? t.bands.filter(function (b) { return String(b || '').trim(); }) : [];
   }
 
+  // Which band on the bill is the one using the app: whose set time is
+  // "show time" for Ari's SHOW TIME message.
+  function ourBand(t) {
+    var mine = String(t && t.ourBand || '').trim();
+    return mine && tourBands(t).some(function (b) { return b.toLowerCase() === mine.toLowerCase(); }) ? mine : '';
+  }
+  function openOurBandSheet(tourId, then) {
+    var t = getTour(tourId);
+    var bands = tourBands(t);
+    if (!bands.length) { if (then) then(); return; }
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Which band are you?'),
+        h('p', { class: 'sh-sub' }, 'Ari sends SHOW TIME to the band 30 minutes before this band\u2019s set.'),
+        h('div', { class: 'stack band-pick' }, bands.map(function (b) {
+          return h('button', { class: 'btn ' + (ourBand(t) === b ? 'primary' : 'ghost') + ' block', type: 'button',
+            onclick: async function () {
+              if (await api.update(tourId, { ourBand: b })) {
+                closeSheet(); toast(b + ' \u2014 got it'); render(true);
+                if (then) setTimeout(then, 350);
+              }
+            } }, b);
+        })),
+        h('button', { class: 'btn ghost block', type: 'button', style: 'margin-top:10px',
+          onclick: function () { closeSheet(); if (then) setTimeout(then, 350); } }, 'Skip for now')
+      ];
+    }, { label: 'Which band are you?' });
+  }
+  // The lineup and our band, changeable any time (ADD MORE SHOWS menu).
+  function openLineupSheet(tourId) {
+    openSheet(function () {
+      var t = getTour(tourId);
+      var mine = ourBand(t);
+      return [
+        h('h2', { class: 'sh-title' }, 'Lineup & your band'),
+        h('p', { class: 'sh-sub' }, 'Every day sheet starts with these bands. Tap one to take it off.'),
+        lineupEditor(tourId, t),
+        h('div', { class: 'ds-yn', style: 'margin-top:16px;min-height:48px' },
+          h('div', { class: 'row-label', style: 'flex:1' }, 'Your band',
+            h('span', { class: 'hint' }, mine || 'Not picked yet')),
+          tourBands(t).length ? h('button', { class: 'btn quiet', type: 'button',
+            onclick: function () { openOurBandSheet(tourId); } }, mine ? 'Change' : 'Pick') : null)
+      ];
+    }, { label: 'Lineup' });
+  }
+
   function lineupEditor(tourId, t) {
     var bands = tourBands(t);
     var input = h('input', { class: 'input', type: 'text', maxlength: 60,
@@ -3255,7 +3301,9 @@
       h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openTravelDaysSheet(id); } },
         icon('tabmap', 18), 'Add Travel Days'),
       h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openRehearsalSheet(id); } },
-        icon('music', 18), 'Add Rehearsal Days'));
+        icon('music', 18), 'Add Rehearsal Days'),
+      h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLineupSheet(id); } },
+        icon('music', 18), 'Lineup & Your Band'));
   }
   function openAddShowsMenu(id) {
     openSheet(function () {
@@ -3627,6 +3675,15 @@
   }
 
   function viewTourDay(id, t, view) {
+    // A tour with a lineup but no "which band are you" yet asks once, so
+    // Ari knows whose set is SHOW TIME.
+    if (view === 'details' && canEditTour(id) && tourBands(t).length && !ourBand(t)) {
+      S.bandAsked = S.bandAsked || {};
+      if (!S.bandAsked[id]) {
+        S.bandAsked[id] = true;
+        setTimeout(function () { if (!document.querySelector('#sheet-root .sheet')) openOurBandSheet(id); }, 700);
+      }
+    }
     if (view === 'details') {
       return h('div', { class: 'page tour has-tabs' },
         h('div', { class: 'headband' },
@@ -4316,6 +4373,7 @@
             closeSheet();
             toast(plural(clean.length, 'band') + ' on the bill \u2014 every day sheet starts with them');
             render(true);
+            setTimeout(function () { openOurBandSheet(tourId); }, 400);
           }
         };
         return [
@@ -5030,10 +5088,15 @@
           soundchecks: clean(f.soundchecks), setTimes: clean(f.setTimes)
         };
         G.DS_AMENITIES.forEach(function (a) { sheet[a[0]] = f[a[0]] || ''; });
+        // When it went up (Ari's DAY SHEET AVAILABLE waits for show day) and the
+        // poster's time zone (a backup for reading the times, after the city).
+        sheet.postedAt = Date.now();
+        try { sheet.tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e2) { sheet.tz = ''; }
         var patch = {};
         patch[showId] = { daySheet: sheet };
         if (await api.update(tourId, { shows: patch })) {
           closeSheet(); toast('Day sheet posted'); render(true);
+          if (window.GR_BACKEND && window.GR_BACKEND.ariKick) window.GR_BACKEND.ariKick(tourId);
           // Most runs keep the same set times every night — offer to carry them.
           if (sheet.setTimes.length) askSetTimesEverywhere(tourId, showId, sheet.setTimes);
         }
@@ -5229,8 +5292,6 @@
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft, flags: flagsNow } }).net;
         var r = G.round(after);
         if (G.round(before) < 0 && r >= 0) sendNotify(id, 'green', { net: money(r, true) });
-        if (draft.merch > 0) sendNotify(id, 'merch', {
-          amount: money(draft.merch), amountRaw: draft.merch, city: s.city || '' });
         if (G.round(before) < 0 && r >= 0) toast('Income saved. You’re in the green.');
         else if (r < 0) toast('Income saved. ' + money(-r) + ' to break even.');
         else toast('Income saved. ' + money(r) + ' in the green.');
@@ -6284,7 +6345,7 @@
       } else {
         phone = h('button', { class: 'btn ' + (S.pushOn ? 'ghost' : 'quiet glow') + ' block', type: 'button',
           onclick: function () { openNotifications(tourId); } },
-          icon('bell', 18), S.pushOn ? 'Tour alerts are on \u00b7 settings' : 'Get tour alerts on this phone');
+          icon('bell', 18), S.pushOn ? 'Tour notifications are on \u00b7 settings' : 'Get tour notifications on this phone');
       }
       return [
         h('h2', { class: 'sh-title' }, 'Tour alerts'),
@@ -6313,34 +6374,36 @@
     }
     B.pushState().then(function (state) {
       var on = state.on;
+      var saved = state.prefs || {};
+      // One group per phone (what Ari sends it), plus two extras. A phone set
+      // up before the groups counts as ALL, same as the server.
       var prefs = {
-        guest: !!state.prefs.guest,
-        green: !!state.prefs.green,
-        soldout: !!state.prefs.soldout,
-        merch: G.num(state.prefs.merch) || 0
+        group: saved.group === 'crew' || saved.group === 'artist' ? saved.group : 'all',
+        soldout: !!saved.soldout,
+        merchnums: !!saved.merchnums
+      };
+      var GROUPS = ['crew', 'artist', 'all'];
+      var SAYS = {
+        crew: 'LOAD IN 10 minutes before load in, and DAY SHEET AVAILABLE.',
+        artist: 'SHOW TIME 30 minutes before your set, and DAY SHEET AVAILABLE.',
+        all: 'Everything: LOAD IN, SHOW TIME, DAY SHEET AVAILABLE, guest list adds and in-the-green news.'
       };
       openSheet(function () {
+        var groupHint = h('span', { class: 'hint' }, SAYS[prefs.group]);
         function toggleRow(key, label, hint) {
           return h('div', { class: 'ds-yn', style: 'min-height:48px' },
             h('div', { class: 'row-label', style: 'flex:1' }, label,
               hint ? h('span', { class: 'hint' }, hint) : null),
             segmented(['Off', 'On'], prefs[key] ? 1 : 0, function (i) { prefs[key] = i === 1; }, label));
         }
-        var merchIn = moneyInput({ id: 'notif-merch', value: prefs.merch, slim: true,
-          label: 'Merch milestone', placeholder: '\u2014',
-          onValue: function (v) { prefs.merch = v; } });
         var saveBtn = h('button', { class: 'btn primary block', type: 'button',
           onclick: async function () {
             saveBtn.disabled = true;
-            var out = { guest: prefs.guest, green: prefs.green, soldout: prefs.soldout,
-              merch: prefs.merch > 0 ? prefs.merch : false };
             try {
-              // Tour alerts always come through once this phone is signed up,
-              // so saving signs it up even with every extra switched off.
-              await B.pushEnable(out);
+              // Tour alerts always come through once this phone is signed up.
+              await B.pushEnable({ group: prefs.group, soldout: prefs.soldout, merchnums: prefs.merchnums });
               S.pushOn = true;
-              toast('This phone gets tour alerts' +
-                (prefs.guest || prefs.green || prefs.soldout || prefs.merch > 0 ? ', plus what you picked' : ''));
+              toast('This phone gets ' + prefs.group.toUpperCase() + ' notifications');
               closeSheet();
               render(true);
             } catch (e) {
@@ -6357,14 +6420,15 @@
             h('div', { class: 'row-label', style: 'flex:1' }, 'Tour alerts',
               h('span', { class: 'hint' }, 'From the tour manager \u2014 always on')),
             h('span', { class: 'role-tag aa' }, on ? 'ON' : 'ON AFTER SAVE')),
+          h('div', { class: 'notif-group' },
+            h('div', { class: 'row-label' }, 'From Ari', groupHint),
+            segmented(['CREW', 'ARTIST', 'ALL'], GROUPS.indexOf(prefs.group), function (i) {
+              prefs.group = GROUPS[i];
+              groupHint.textContent = SAYS[prefs.group];
+            }, 'Which notifications')),
           h('div', { class: 'ds-yns' },
-            toggleRow('guest', 'Guest list', 'Someone adds a name'),
-            toggleRow('green', 'In the green', 'The tour crosses break even'),
-            toggleRow('soldout', 'Sold out', 'A show gets marked sold out')),
-          h('div', { class: 'ds-yn', style: 'min-height:48px;margin-top:8px' },
-            h('div', { class: 'row-label', style: 'flex:1' }, 'Merch milestone',
-              h('span', { class: 'hint' }, 'A show\u2019s merch hits this number \u2014 blank for off')),
-            merchIn),
+            toggleRow('soldout', 'SOLD OUT', 'A show gets marked sold out'),
+            toggleRow('merchnums', 'MERCH NUMBERS', 'A night\u2019s merch numbers come in')),
           h('div', { class: 'stack' }, saveBtn,
             on ? h('button', { class: 'btn ghost block', type: 'button',
               onclick: async function () {

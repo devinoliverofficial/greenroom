@@ -34,7 +34,7 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
     case "green":
       return { title: tourName, body: `You're in the green — ${d.net ?? ""} and climbing 🎉` };
     case "merch":
-      return { title: tourName, body: `Merch milestone: ${d.amount ?? ""} at ${city || "tonight's show"}` };
+      return { title: tourName, body: `MERCH NUMBERS! ${city || "Tonight"}: ${d.amount ?? ""} in merch.` };
     case "soldout":
       return { title: tourName, body: `${city || "Tonight"} is SOLD OUT` };
     case "alert": {
@@ -97,12 +97,16 @@ Deno.serve(async (req) => {
   const dead: string[] = [];
   for (const sub of subs ?? []) {
     const prefs = (sub.prefs ?? {}) as Record<string, unknown>;
+    // Each phone picks CREW, ARTIST or ALL, plus SOLD OUT and MERCH NUMBERS.
+    // A phone set up before those choices counts as ALL.
+    const group = String(prefs.group ?? "all");
     if (type === "alert") {
       // An alert ignores preferences — that is the point of it.
+    } else if (type === "soldout") {
+      if (prefs.soldout !== true) continue;
     } else if (type === "merch") {
-      const threshold = Number(prefs.merch);
-      if (!threshold || Number(data.amountRaw ?? 0) < threshold) continue;
-    } else if (!prefs[type]) continue;
+      if (prefs.merchnums !== true) continue;
+    } else if (group !== "all") continue;   // guest list, in the green: ALL only
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },

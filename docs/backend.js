@@ -362,6 +362,15 @@
     },
     /* Lay every atVenu report the mailbox has kept back onto a tour. Waits
        for the fresh tour, so the app can show what came in straight away. */
+    // Nudge Ari to look at this tour now (a day sheet was just posted), so
+    // DAY SHEET AVAILABLE doesn't wait for the next minute's check.
+    ariKick: async function (tourId) {
+      try {
+        var tz = '';
+        try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { /* none */ }
+        await callFn('ari', { method: 'POST', body: JSON.stringify({ tourId: tourId, tz: tz }) });
+      } catch (e) { /* the minute clock catches it anyway */ }
+    },
     atvenuRefresh: async function (tourId, showId) {
       var r = await callFn('atvenu', { method: 'POST',
         body: JSON.stringify({ action: 'refresh', tourId: tourId, showId: showId || undefined }) });
