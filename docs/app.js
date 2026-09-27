@@ -5076,14 +5076,17 @@
               var b = e.currentTarget;
               b.disabled = true;
               var r = null;
-              try { r = await BK.atvenuRefresh(id); } catch (e2) { r = null; }
+              try { r = await BK.atvenuRefresh(id, showId); } catch (e2) { r = null; }
               b.disabled = false;
               avMenu.hidden = true;
               if (!r || !r.ok) { toast('Couldn\u2019t reach the atVenu reports. Try again.'); return; }
-              var bits = [r.added ? 'Brought in ' + plural(r.added, 'night') + ' from atVenu' : 'Nothing new from atVenu'];
-              if (r.conflicts) bits.push(plural(r.conflicts, 'night') + ' left alone \u2014 a different number is logged');
-              if (r.noShow) bits.push(plural(r.noShow, 'report') + ' with no show on this tour');
-              if (r.unclear) bits.push(plural(r.unclear, 'night') + ' skipped \u2014 two different atVenu numbers; upload that night\u2019s Settlement');
+              // This night only.
+              var where = s.city || 'this night';
+              var bits = [r.added ? 'Brought in ' + where + '\u2019s atVenu report'
+                : r.same ? where + ' already matches atVenu'
+                : r.conflicts ? 'Left alone \u2014 a different merch number is already logged for ' + where
+                : r.unclear ? 'Two different atVenu numbers for ' + where + '; upload the night\u2019s Settlement'
+                : 'No atVenu report for ' + where + ' yet'];
               toast(bits.join(' \u00b7 '));
               // Show what came in on this night straight away.
               if (r.added) { closeSheet(); setTimeout(function () { openIncome(id, showId); }, 350); }
@@ -5123,7 +5126,7 @@
       syncMisc();
       updateDeposit();
 
-      var form = h('form', { class: 'sh-form', onsubmit: save, novalidate: true },
+      var form = h('form', { class: 'sh-form income-sheet', onsubmit: save, novalidate: true },
         reader ? h('div', { style: 'margin-bottom:14px' }, reader,
           h('p', { class: 'note', style: 'margin-top:6px' },
             'The settlement sheet — photo or PDF. Every dollar it shows logs itself, ' +

@@ -45,13 +45,20 @@ Deno.serve(async (req) => {
   const { data: tour } = await admin.from("tours").select("id, owner_id, doc").eq("id", tourId).maybeSingle();
   if (!tour || tour.owner_id !== uid) return reply(403, { error: "not_manager" });
   const doc = (tour.doc ?? {}) as Obj;
-  const shows = (doc.shows ?? {}) as Record<string, Obj>;
+  const allShows = (doc.shows ?? {}) as Record<string, Obj>;
+  // Refreshing from one night's income sheet looks for that night only.
+  const onlyShow = String(body.showId ?? "");
+  if (onlyShow && !allShows[onlyShow]) return reply(404, { error: "no_show" });
+  const shows: Record<string, Obj> = onlyShow ? { [onlyShow]: allShows[onlyShow] } : allShows;
+  const onlyDate = onlyShow ? String(allShows[onlyShow].date ?? "") : "";
 
   // One report per night. A Settlement beats anything else (the newest one,
   // if atVenu re-sent a corrected copy). Older reports whose kind wasn't
   // recorded count only when they agree; two different numbers for the same
   // night (a Tour Progress summary crept in once) are left for a human.
-  const { data: reports } = await admin.from("merch_reports").select("*").eq("owner_id", uid).order("received_at");
+  let rq = admin.from("merch_reports").select("*").eq("owner_id", uid);
+  if (onlyDate) rq = rq.eq("date", onlyDate);
+  const { data: reports } = await rq.order("received_at");
   const nights = new Map<string, Obj[]>();
   for (const r of reports ?? []) {
     const k = String(r.date);

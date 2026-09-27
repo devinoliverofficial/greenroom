@@ -357,8 +357,9 @@
     },
     /* Lay every atVenu report the mailbox has kept back onto a tour. Waits
        for the fresh tour, so the app can show what came in straight away. */
-    atvenuRefresh: async function (tourId) {
-      var r = await callFn('atvenu', { method: 'POST', body: JSON.stringify({ action: 'refresh', tourId: tourId }) });
+    atvenuRefresh: async function (tourId, showId) {
+      var r = await callFn('atvenu', { method: 'POST',
+        body: JSON.stringify({ action: 'refresh', tourId: tourId, showId: showId || undefined }) });
       var out = {};
       try { out = await r.json(); } catch (e) { out = {}; }
       if (out && out.ok) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
