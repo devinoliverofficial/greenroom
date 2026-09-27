@@ -2072,16 +2072,16 @@
     return [
       baselineOffer,
       feedEntry(id),
-      h('div', { class: 'btnrow' },
+      h('div', { class: 'btnrow tiles' },
         canEditTour(id) ? fileControl({
-          label: 'Import card statement', icon: 'card', cls: 'btn ghost',
+          label: 'Import Card Statements', icon: 'card', cls: 'btn ghost tile',
           accept: '.csv,.tsv,text/csv,application/pdf,' + imageAccept(), multiple: true,
           onFiles: function (files) { readStatement(id, files); }
         }) : null,
-        h('button', { class: 'btn ghost', type: 'button',
+        h('button', { class: 'btn ghost tile', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'daybyday' }); } },
-          icon('edit', 18), 'Log an expense')),
-      cashLogEntry(id, t),
+          icon('edit', 18), 'Log New Expense'),
+        cashLogEntry(id, t)),
       h('div', { class: 'ledger' }, rows),
       canEditTour(id) ? h('p', { class: 'note' }, 'Tap a category to set what you expect it to cost and what you’ve already paid.') : null,
       // Debts logged before Credit card and Loan became plain categories still
@@ -3143,7 +3143,7 @@
       return h('div', { class: 'page tour has-tabs' },
         h('div', { class: 'headband' },
           tourTopbar(t, id, 'cashlog'),
-          h('h1', { class: 'tour-title' }, 'Merch Cash Log')),
+          h('h1', { class: 'tour-title' }, 'MERCH CASH LOG')),
         dbBanner(),
         cashLogBody(id, t),
         tourTabs(id, 'costs'));
@@ -3366,7 +3366,6 @@
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'Invite crew'),
-        h('p', { class: 'sh-sub' }, 'They get an email, pick a password, and this tour is already in their account.'),
         peopleSection(tourId)
       ];
     }, { label: 'Invite crew' });
@@ -5272,11 +5271,11 @@
 
   function cashLogEntry(id, t) {
     var sum = G.cashSummary(t);
-    return h('button', { class: 'btn ghost block cash-entry', type: 'button',
+    return h('button', { class: 'btn ghost tile cash-entry', type: 'button',
       onclick: function () { go({ name: 'tour', id: id, view: 'cashlog' }); } },
-      icon('cash', 18), h('span', { class: 'ce-label' }, 'Merch Cash Log'),
+      icon('cash', 18), h('span', null, 'MERCH CASH LOG'),
       sum.took > 0 ? h('span', { class: 'ce-left num' + (sum.left > 0.004 ? ' neg' : ' pos') },
-        sum.left > 0.004 ? money(sum.left) + ' to account for' : 'All accounted for') : null);
+        sum.left > 0.004 ? money(sum.left) + ' left' : 'All in') : null);
   }
 
   function cashLogBody(id, t) {
@@ -5307,22 +5306,29 @@
       var amountIn = moneyInput({ id: 'cash-amt', value: null, label: 'Amount', placeholder: '0',
         onValue: function (v) { f.amount = v; } });
       var labelIn = h('input', { class: 'input', type: 'text', maxlength: 60, autocomplete: 'off',
-        placeholder: 'Where did it go? e.g. bus driver, per diems', 'aria-label': 'Where the cash went',
+        placeholder: 'A note, if it helps (optional)', 'aria-label': 'Note about where the cash went',
         oninput: function (e) { f.label = e.target.value; } });
-      var catSel = h('select', { class: 'input', 'aria-label': 'What kind of move',
-        onchange: function (e) { f.category = e.target.value; } },
-        h('option', { value: '' }, 'Pick what it was'),
-        h('optgroup', { label: 'Just moving the cash' },
-          Object.keys(G.CASH_MOVES).map(function (k) { return h('option', { value: k }, G.CASH_MOVES[k]); })),
-        h('optgroup', { label: 'Spent on the tour (counts as an expense)' },
-          cats.map(function (c) { return h('option', { value: c.key }, c.label); })));
+      // Tap where the cash went: the same categories as the Expenses tab, so
+      // spending shows up there. A deposit or hand-off just moves the cash.
+      var chipsEl = h('div', { class: 'chips cash-chips', role: 'group', 'aria-label': 'Where the cash went' });
+      function chip(key, label, cls) {
+        return h('button', { type: 'button', class: 'chip' + (cls ? ' ' + cls : ''), 'aria-pressed': 'false',
+          onclick: function () {
+            f.category = key;
+            Array.prototype.forEach.call(chipsEl.children, function (b) {
+              b.setAttribute('aria-pressed', String(b === this));
+            }, this);
+          } }, label);
+      }
+      cats.filter(function (c) { return c.key !== 'commission'; }).forEach(function (c) { chipsEl.append(chip(c.key, c.label)); });
+      chipsEl.append(chip('deposit', 'Deposited in bank', 'move'), chip('handoff', 'Handed off', 'move'));
       var dateIn = h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Date',
         oninput: function (e) { f.date = e.target.value; } });
       form = h('form', { class: 'card addform', novalidate: true, style: 'margin-top:14px',
         onsubmit: async function (e) {
           e.preventDefault();
           if (!(f.amount > 0)) { toast('Enter how much cash'); return; }
-          if (!f.category) { toast('Pick what it was'); return; }
+          if (!f.category) { toast('Tap where the cash went'); return; }
           blurActive();
           var patch = {};
           patch[newId()] = { date: G.parseDay(f.date) ? f.date : G.tourToday(), amount: f.amount,
@@ -5333,9 +5339,10 @@
           }
         } },
         h('div', { class: 'af-row' }, amountIn, dateIn),
+        h('p', { class: 'cash-q' }, 'Where did it go?'),
+        chipsEl,
         labelIn,
-        catSel,
-        h('button', { class: 'btn primary block', type: 'submit', style: 'margin-top:10px' }, 'Log where it went'));
+        h('button', { class: 'btn primary block', type: 'submit', style: 'margin-top:10px' }, 'Log it'));
     }
 
     var shows = G.rows(t.shows).filter(function (x) { return x.loggedAt && G.num(x.merchCash) > 0; }).sort(G.byDate);
@@ -5557,9 +5564,8 @@
       var left = people.filter(function (p) { return !here[p.email] && p.email !== me; });
       if (!left.length) { past.replaceChildren(); return; }
       past.replaceChildren(
-        h('h3', { class: 'sh-h3', style: 'margin-top:22px' }, 'Past crew'),
-        h('p', { class: 'note', style: 'margin-top:0' }, 'People you\u2019ve invited before. Tap Invite to add them to this tour.'),
-        h('div', { class: 'ledger' }, left.map(function (p) {
+        h('h3', { class: 'sh-h3', style: 'margin-top:14px' }, 'Past crew'),
+        h('div', { class: 'ledger', style: 'margin-bottom:22px' }, left.map(function (p) {
           var who = p.name || p.email;
           var addBtn = h('button', { class: 'btn sm primary', type: 'button',
             onclick: async function () {
@@ -5641,11 +5647,7 @@
           h('button', { class: 'btn primary', type: 'submit', style: 'flex:1' }, 'Invite')));
     }
 
-    return h('div', null,
-      h('p', { class: 'sh-p' }, owns
-        ? 'Invite your band, crew or managers by email. GA watches the numbers move live. ALL ACCESS can log shows, costs and statements with you.'
-        : 'You’re on this tour’s guest list. The numbers update live as they’re logged.'),
-      list, past, form);
+    return h('div', null, past, list, form);
   }
 
   function prettyTime(v) {
