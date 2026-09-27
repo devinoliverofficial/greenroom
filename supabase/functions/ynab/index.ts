@@ -259,21 +259,25 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* empty is fine */ }
   const action = String(body.action ?? "");
 
-  // The scheduler: runs every switched-on feed, and can do nothing else.
-  // Inert until a CRON_KEY secret exists and a schedule calls with it.
-  const cronKey = Deno.env.get("CRON_KEY");
-  if (cronKey && req.headers.get("x-cron-key") === cronKey) {
+  // The timer: every switched-on feed, and nothing else. Its key lives in
+  // Vault; the database says whether this knock carries it.
+  const knock = req.headers.get("x-cron-key");
+  if (knock) {
+    const { data: good } = await admin.rpc("cron_key_ok", { k: knock });
+    if (good !== true) return reply(401, { error: "bad_key" });
     const { data: feeds } = await admin.from("feed").select("*").eq("switched_on", true);
-    const out: Obj[] = [];
+    const out: string[] = [];
     for (const f of (feeds ?? []) as Feed[]) {
-      try { out.push(await syncFeed(f)); }
+      // Opening the app may have just done this.
+      if (f.last_run && Date.now() - Date.parse(f.last_run) < 10 * 60_000) { out.push("recent"); continue; }
+      try { out.push(String((await syncFeed(f)).status)); }
       catch (e) {
         const status = e instanceof YnabError ? e.message : "failed";
         await admin.from("feed").update({ last_run: new Date().toISOString(), last_status: status }).eq("owner_id", f.owner_id);
-        out.push({ ok: false, status });
+        out.push(status);
       }
     }
-    return reply(200, { ran: out.length, results: out.map((r) => r.status) });
+    return reply(200, { ran: out.length, results: out });
   }
 
   // Supabase has already verified this token; we only read who it belongs to.
