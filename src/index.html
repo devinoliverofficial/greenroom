@@ -970,6 +970,14 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
   font-size: 10.5px; font-weight: 700; letter-spacing: .05em; white-space: nowrap;
 }
 .crew-side .role-tag.aa { background: var(--pos-soft); color: var(--pos); }
+/* Overview crew, measured: three columns, the outer two the same width, so
+   the role's column is centred on the page and equally far from both sides. */
+.crew-sym.sized .row.crew-row { display: grid; grid-template-columns: var(--crew-side) minmax(0, 1fr) var(--crew-side); column-gap: 8px; }
+.crew-sym.sized .crew-row .row-label { min-width: 0; }
+.crew-sym.sized .crew-side { display: contents; }
+.crew-sym.sized .role-slot { justify-content: center; min-width: 0; }
+.crew-sym .crew-contact { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.crew-sym:not(.sized) .crew-contact { gap: 6px; }
 /* The crew's badge is their role ("Guitar Tech"), words as written, centred
    between the name and the icons in whatever room the names leave. */
 .crew-list .role-slot { min-width: 0; }

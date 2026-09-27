@@ -3502,21 +3502,48 @@
     list.classList.add('sized');
   }
 
+  /* The Overview crew: the side columns (names, icons) share one width, the
+     widest name's or the two icons', whichever is more, capped so the middle
+     keeps room for a role. */
+  function sizeCrewSides(list) {
+    var rowsEl = list.querySelectorAll('.crew-row');
+    if (!rowsEl.length) return;
+    var first = rowsEl[0];
+    var cs = getComputedStyle(first);
+    var content = first.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var gap = 8, icons = 78, roleRoom = 92;
+    var widest = 0;
+    Array.prototype.forEach.call(rowsEl, function (r) {
+      var lab = r.querySelector('.row-label');
+      Array.prototype.forEach.call(lab.childNodes, function (n) {
+        var rg = document.createRange();
+        rg.selectNodeContents(n);
+        var w = rg.getBoundingClientRect().width;
+        if (w > widest) widest = w;
+      });
+    });
+    var cap = Math.floor((content - 2 * gap - roleRoom) / 2);
+    if (!(cap > icons)) return;
+    list.style.setProperty('--crew-side', Math.min(cap, Math.max(icons, Math.ceil(widest + 2))) + 'px');
+    list.classList.add('sized');
+  }
+
   function crewSection(tourId) {
     var B = window.GR_BACKEND;
     var owns = B.ownsTour && B.ownsTour(tourId);
     S.crewCache = S.crewCache || {};
     var cached = S.crewCache[tourId] || null;
-    var list = h('div', { class: 'ledger crew-list' },
+    var list = h('div', { class: 'ledger crew-list crew-sym' },
       cached ? null : h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading\u2026')));
 
     /* The badge column sits centred in the gap between the names and the
        icons: the name column is sized to the widest name (so the gap is the
        same in every row), and each badge box is centred in that gap with the
        badge flush left inside it — straight column, same starting point. */
-    // Names get room first (never wrapping while 92px is left for the role);
-    // the role badge centres in whatever is left before the icons.
-    function sizeColumns() { sizeNameColumn(list, 92); }
+    // Mirror image: the names' column and the icons' column are the same
+    // width, so the role sits dead centre (under "Crew" and "Invite crew")
+    // and just as far from the names as from the mail icon.
+    function sizeColumns() { sizeCrewSides(list); }
 
     function draw(rows) {
       if (!rows.length) {
@@ -3554,12 +3581,13 @@
               m.tourRole ? h('span', { class: 'role-tag aa' }, m.tourRole) : null)),
           // Fixed slots: a missing phone leaves an empty seat, so every mail
           // icon and every phone icon lines up in its own column.
-          !pending && m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
-            'aria-label': 'Email ' + title }, icon('mail', 17))
-            : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }),
-          !pending && m.phone ? h('a', { class: 'crew-call', href: 'tel:' + String(m.phone).replace(/[^0-9+]/g, ''),
-            'aria-label': 'Call ' + title }, icon('phone', 17))
-            : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' })));
+          h('span', { class: 'crew-contact' },
+            !pending && m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
+              'aria-label': 'Email ' + title }, icon('mail', 17))
+              : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }),
+            !pending && m.phone ? h('a', { class: 'crew-call', href: 'tel:' + String(m.phone).replace(/[^0-9+]/g, ''),
+              'aria-label': 'Call ' + title }, icon('phone', 17))
+              : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }))));
     }
     if (cached) draw(cached.rows);
     if (!cached || Date.now() - cached.at > 60e3) {
