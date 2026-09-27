@@ -3568,7 +3568,7 @@
       // they sign up and their own card fills in.
       var pending = !m.joined;
       // Access sits under the name; the role is the green badge in the middle.
-      var access = m.owner ? 'Tour Manager' : (m.role === 'editor' ? 'All Access' : 'GA');
+      var access = m.owner ? 'Creator' : (m.role === 'editor' ? 'All Access' : 'GA');
       return h('div', { class: 'row crew-row' },
         h('div', { class: 'row-label' }, title,
           h('span', { class: 'hint crew-sub' }, access,
@@ -6046,7 +6046,7 @@
     function renderMembers(rows) {
       var kids = [h('div', { class: 'row people-row' },
         h('span', { class: 'who' }, B.email() || 'You'),
-        h('span', { class: 'role-tag' }, owns ? 'Tour manager' : 'You'))];
+        h('span', { class: 'role-tag' }, owns ? 'Creator' : 'You'))];
       rows.forEach(function (m) {
         var shown = String(m.display_name || '').trim();
         kids.push(h('div', { class: 'row people-row' },
