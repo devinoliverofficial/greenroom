@@ -193,6 +193,17 @@ def build_web():
     print('docs/  (real site) build %s' % stamp)
 
 
+def build_functions():
+    # The card feed files charges on the server with the app's own rules, so it
+    # carries a copy of the same two logic files the app runs.
+    lib = ROOT / 'supabase' / 'functions' / 'ynab' / 'lib'
+    lib.mkdir(parents=True, exist_ok=True)
+    for name in ('core.js', 'statements.js'):
+        shutil.copy(SRC / name, lib / name)
+    print('supabase/functions/ynab/lib  (shared logic)')
+
+
 if __name__ == '__main__':
     build_artifact()
     build_web()
+    build_functions()

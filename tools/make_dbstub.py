@@ -44,6 +44,25 @@ shim = r"""<script>
     { owner: false, role: 'editor', name: 'Brent Allen', email: 'brent@example.com', phone: '(313) 555-0142', tourRole: 'Guitar Tech', joined: true },
     { owner: false, role: 'viewer', name: 'Tasha Lane', email: 'tasha@example.com', phone: '', tourRole: 'Production Manager', joined: false }
   ] };
+  var d0 = ymd(today);
+  window.__harness.feed = {
+    row: { switched_on: false, plan_name: 'I SEE STARS', since: null, last_run: null, last_status: '' },
+    accounts: [
+      { id: 'ac1', name: 'Corp Account Bank Of America \u2013 4918', type: 'creditCard', mode: 'log' },
+      { id: 'ac2', name: 'Merch \u2013 1885', type: 'checking', mode: 'ask' },
+      { id: 'ac3', name: 'Business Adv Relationship \u2013 5370', type: 'checking', mode: 'ask' },
+      { id: 'ac4', name: 'Business Gold Card \u2013 1008', type: 'creditCard', mode: 'log' }
+    ],
+    items: [
+      { id: 'y1', tour_id: 't1', date: d0, merchant: 'Buc-Ee\u2019s', amount: 64.12, category: null, account: 'Business Gold Card \u2013 1008', why: 'New merchant' },
+      { id: 'y2', tour_id: null, date: d0, merchant: 'Guitar Center', amount: 89.99, category: null, account: 'Merch \u2013 1885', why: 'From Merch \u2013 1885' },
+      { id: 'y3', tour_id: 't1', date: d0, merchant: 'Hotel Van Zandt', amount: 212.4, category: 'hotels', account: 'Business Gold Card \u2013 1008', why: 'Maybe already in' },
+      { id: 'y4', tour_id: 't1', date: d0, merchant: 'Marriott', amount: -120, category: 'hotels', account: 'Business Gold Card \u2013 1008', why: 'Refund' }
+    ]
+  };
+  window.__harness.calls = []; window.__harness.marked = []; window.__harness.feedFns = [];
+  window.__harness.feedState = function () { var F = window.__harness.feed; return { row: Object.assign({}, F.row), items: F.items.slice() }; };
+  window.__harness.feedPush = function () { var st = window.__harness.feedState(); window.__harness.feedFns.forEach(function (fn) { fn(st); }); };
   window.GR_BACKEND = {
     tourRoles: ['Artist/Owner', 'Band', 'Tour Manager', 'Production Manager', 'Stage Manager', 'Merch',
       'Guitar Tech', 'Drum Tech', 'Assistant', 'FOH Engineer', 'Monitors', 'Friend', 'Family Member', 'Liaison', 'Dancer'],
@@ -60,6 +79,29 @@ shim = r"""<script>
       me.phone = p.phone; me.tour_role = p.tourRole; window.__harness.saved = JSON.parse(JSON.stringify(me));
       return Promise.resolve(); },
     signOut: function () {},
+    // A fake card feed: the pile, the switch and the account choices, all in memory.
+    feedWatch: function (fn) { window.__harness.feedFns.push(fn); setTimeout(function () { fn(window.__harness.feedState()); }, 0); },
+    feedCall: function (action, body) {
+      var F = window.__harness.feed;
+      window.__harness.calls.push([action, JSON.parse(JSON.stringify(body || {}))]);
+      if (action === 'status') return Promise.resolve({ ok: true, plan: F.row.plan_name, switchedOn: F.row.switched_on,
+        since: F.row.since, lastRun: F.row.last_run, lastStatus: 'ok', accounts: JSON.parse(JSON.stringify(F.accounts)) });
+      if (action === 'setup') {
+        Object.keys(body.modes || {}).forEach(function (id) { F.accounts.forEach(function (a) { if (a.id === id) a.mode = body.modes[id]; }); });
+        if (body.on === true) { F.row.switched_on = true; F.row.since = body.since; }
+        if (body.on === false) F.row.switched_on = false;
+      }
+      if (action === 'sync') F.row.last_run = new Date().toISOString();
+      window.__harness.feedPush();
+      return Promise.resolve(action === 'sync' ? { ok: true, status: 'ok', filed: 2, waiting: F.items.length } : { ok: true });
+    },
+    feedMark: function (ids, patch) {
+      var F = window.__harness.feed;
+      window.__harness.marked.push([ids.slice(), patch]);
+      F.items = F.items.filter(function (it) { return ids.indexOf(it.id) < 0; });
+      window.__harness.feedPush();
+      return Promise.resolve();
+    },
     // same markup as backend.js's picker, so the contact card can be exercised here
     openRolePicker: function (current, onPick) {
       var ov = document.createElement('div'); ov.className = 'role-picker';

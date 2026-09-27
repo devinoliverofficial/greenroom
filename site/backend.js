@@ -462,11 +462,60 @@
         }
       } catch (e) { /* already gone */ }
     },
+    /* ---- the card feed (YNAB) ----
+       The feed belongs to one tour manager. Row-level security hands its row
+       and its pile to that person only; for everyone else feedWatch reports
+       nothing and the app never mentions it. */
+    feedWatch: function (fn) {
+      feedListeners.push(fn);
+      loadFeed(true);
+    },
+    feedCall: async function (action, body) {
+      var r = await fetch(cfg.url + '/functions/v1/ynab', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey,
+          Authorization: 'Bearer ' + (session ? session.access_token : cfg.anonKey) },
+        body: JSON.stringify(Object.assign({ action: action }, body || {}))
+      });
+      var out = {};
+      try { out = await r.json(); } catch (e) { out = {}; }
+      if (!r.ok && !out.error) out.error = 'unavailable';
+      if (action !== 'status') loadFeed(false);
+      return out;
+    },
+    feedMark: async function (ids, patch) {
+      if (!ids.length) return;
+      var q = await sb.from('feed_items').update(patch).in('id', ids).select('id');
+      if (q.error) throw mapError(q.error);
+      loadFeed(false);
+    },
     signOut: async function () {
       try { await sb.auth.signOut(); } catch (e) { /* going anyway */ }
       location.reload();
     }
   };
+
+  var feedListeners = [];
+  var feedTimer = 0;
+  async function loadFeed(opening) {
+    try {
+      var f = await sb.from('feed').select('switched_on, plan_name, since, last_run, last_status').maybeSingle();
+      if (f.error || !f.data) { feedListeners.forEach(function (fn) { fn(null); }); return; }
+      var items = await sb.from('feed_items').select('id, tour_id, date, merchant, amount, category, account, why')
+        .eq('status', 'waiting').order('date');
+      var state = { row: f.data, items: items.error ? [] : items.data };
+      feedListeners.forEach(function (fn) { try { fn(state); } catch (e) { /* listener's problem */ } });
+      // Opening the app is the manager's cue that fresh charges matter now.
+      var last = f.data.last_run ? Date.parse(f.data.last_run) : 0;
+      if (opening && f.data.switched_on && Date.now() - last > 15 * 60e3) {
+        window.GR_BACKEND.feedCall('sync').catch(function () { /* next open tries again */ });
+      }
+    } catch (e) { /* the feed is a convenience, never a blocker */ }
+  }
+  function feedChanged() {
+    clearTimeout(feedTimer);
+    feedTimer = setTimeout(function () { loadFeed(false); }, 300);
+  }
 
   /* ---------------- Auth gate ---------------- */
 
@@ -770,6 +819,7 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_items' }, feedChanged)
       .subscribe();
     resolvers.db(db);
     resolvers.user(user);

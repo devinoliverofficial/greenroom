@@ -244,8 +244,16 @@
     if (c && typeof c.use === 'function') {
       try { db = await c.use('db'); } catch (e) { db = null; }
     }
-    if (db) { store.db = db; S.mode = 'db'; subscribe(); subscribeLabels(); }
+    if (db) { store.db = db; S.mode = 'db'; subscribe(); subscribeLabels(); subscribeFeed(); }
     else { S.mode = 'local'; S.role = S.role || 'owner'; loadLocal(); loadLocalLabels(); dataArrived(); }
+  }
+
+  /* The card feed belongs to one tour manager. For everyone else S.feed stays
+     null and the app never mentions it. */
+  function subscribeFeed() {
+    var B = window.GR_BACKEND;
+    if (!B || !B.feedWatch) return;
+    B.feedWatch(function (f) { S.feed = f; if (S.loaded) render(); });
   }
 
   /* Merchant labels are remembered across every tour, and anyone with edit
@@ -1427,6 +1435,9 @@
             onclick: function () { openUsernameSheet(false); } },
             icon('people', 18),
             (B.myProfile && B.myProfile().tourRole) ? 'Your contact card' : 'Add your details') : null,
+          (signedIn && S.feed) ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { openFeedSheet(null); } },
+            icon('card', 18), 'Card feed \u00b7 YNAB') : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () {
               confirmSheet({
@@ -2013,6 +2024,7 @@
       : null;
     return [
       baselineOffer,
+      feedEntry(id),
       h('div', { class: 'btnrow' },
         canEditTour(id) ? fileControl({
           label: 'Import card statement', icon: 'card', cls: 'btn ghost',
@@ -6552,8 +6564,11 @@
     return holder;
   }
 
-  function openImportReview(tourId, rows, source) {
+  function openImportReview(tourId, rows, source, opts) {
     var importId = newId();
+    // From the card feed: charges keep YNAB's id, and whatever is left
+    // unticked is set aside so it never comes back.
+    var feed = !!(opts && opts.feed);
 
     function counts() {
       var n = 0, total = 0;
@@ -6572,7 +6587,8 @@
         return;
       }
       var chosen = rows.filter(function (r) { return r.keep; });
-      if (!chosen.length) { toast('Pick at least one charge'); return; }
+      if (!chosen.length && !feed) { toast('Pick at least one charge'); return; }
+      if (feed) { await saveFeed(chosen); return; }
 
       var patch = {};
       var total = 0;
@@ -6595,12 +6611,45 @@
       render(true);
     }
 
+    async function saveFeed(chosen) {
+      var B = window.GR_BACKEND;
+      var left = rows.filter(function (r) { return !r.keep; });
+      var total = 0;
+      if (chosen.length) {
+        var patch = {};
+        chosen.forEach(function (r, i) {
+          patch['y' + r.feedId] = {
+            date: r.date, merchant: r.merchant, amount: G.num(r.amount),
+            category: r.category, accounted: !!r.accounted,
+            importId: importId, createdAt: Date.now() + i
+          };
+          if (!r.accounted) total += G.num(r.amount);
+        });
+        var imports = {};
+        imports[importId] = { createdAt: Date.now(), count: chosen.length, total: total, source: 'YNAB' };
+        if (!(await api.update(tourId, { charges: patch, imports: imports }))) return;
+        for (var i = 0; i < chosen.length; i++) await writeLabel(chosen[i].merchant, chosen[i].category);
+      }
+      try {
+        await B.feedMark(chosen.map(function (r) { return r.feedId; }), { status: 'filed', tour_id: tourId });
+        await B.feedMark(left.map(function (r) { return r.feedId; }), { status: 'skipped' });
+      } catch (e) {
+        toast('Saved on the tour, but the pile didn\u2019t update. Pull to refresh.');
+      }
+      closeSheet();
+      toast(chosen.length
+        ? plural(chosen.length, 'charge') + ' added, ' + G.moneyCents(total) + (left.length ? ' \u00b7 ' + left.length + ' set aside' : '')
+        : plural(left.length, 'charge') + ' set aside');
+      render(true);
+    }
+
     openSheet(function () {
       var saveBtn = h('button', { class: 'btn primary block', type: 'button', onclick: save }, '');
       function refresh() {
         var c = counts();
-        saveBtn.textContent = c.n ? 'Add ' + plural(c.n, 'charge') + ' · ' + G.moneyCents(c.total) : 'Pick the charges to add';
-        saveBtn.disabled = !c.n;
+        saveBtn.textContent = c.n ? 'Add ' + plural(c.n, 'charge') + ' · ' + G.moneyCents(c.total)
+          : (feed ? 'Set ' + (rows.length === 1 ? 'it' : 'all ' + rows.length) + ' aside' : 'Pick the charges to add');
+        saveBtn.disabled = !c.n && !feed;
       }
 
       function chargeRow(r) {
@@ -6637,6 +6686,7 @@
             h('span', { class: 'rv-name' }, r.merchant),
             h('span', { class: 'amt num' }, G.moneyCents(r.amount))),
           h('div', { class: 'rv-sub' }, dayMD(r.date),
+            r.why ? h('span', { class: 'rv-flag' + (r.why === 'Refund' ? ' learned' : '') }, r.why) : null,
             r.source === 'learned' ? h('span', { class: 'rv-flag learned' }, 'Learned') : null,
             r.source === 'suggested' ? h('span', { class: 'rv-flag' }, 'Suggested') : null),
           sel, already));
@@ -6694,13 +6744,211 @@
       refresh();
 
       return [
-        h('h2', { class: 'sh-title' }, 'Found ' + plural(rows.length, 'charge')),
-        h('p', { class: 'sh-sub' }, 'Tick the ones that belong to this tour. Nothing you leave unticked is saved.'),
+        h('h2', { class: 'sh-title' }, feed
+          ? plural(rows.length, 'card charge') + (rows.length === 1 ? ' needs' : ' need') + ' a look'
+          : 'Found ' + plural(rows.length, 'charge')),
+        h('p', { class: 'sh-sub' }, feed
+          ? 'From YNAB. Tick the ones that belong to this tour. Anything you leave unticked is set aside for good.'
+          : 'Tick the ones that belong to this tour. Nothing you leave unticked is saved.'),
         body,
         h('div', { class: 'stack' }, saveBtn,
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } },
+            feed ? 'Not now' : 'Cancel'))
       ];
     }, { label: 'Review card charges' });
+  }
+
+  /* ---------------- The card feed (YNAB) ----------------
+     Greenroom reads the band's YNAB plan and files what the cards spend on
+     the tour that was running that day. What it can't place with confidence
+     waits here, for the tour manager only. */
+
+  function feedWaiting(tourId) {
+    if (!S.feed) return [];
+    return S.feed.items.filter(function (it) { return !it.tour_id || it.tour_id === tourId; });
+  }
+  function feedAgo(iso) {
+    var ms = Date.now() - Date.parse(iso || '');
+    if (!(ms >= 0)) return 'not yet';
+    var m = Math.round(ms / 60e3);
+    if (m < 2) return 'just now';
+    if (m < 60) return m + ' min ago';
+    var hr = Math.round(m / 60);
+    if (hr < 24) return plural(hr, 'hour') + ' ago';
+    return plural(Math.round(hr / 24), 'day') + ' ago';
+  }
+  function feedProblem(code) {
+    var plan = S.feed && S.feed.row ? S.feed.row.plan_name : 'your plan';
+    return ({
+      token_refused: 'YNAB turned Greenroom\u2019s key down. Make a new token in YNAB and save it in Supabase as YNAB_TOKEN.',
+      no_token: 'The YNAB key isn\u2019t on the server yet.',
+      plan_missing: 'Couldn\u2019t find the YNAB plan \u201c' + plan + '\u201d. If you renamed it, tell Claude the new name.',
+      ynab_busy: 'YNAB asked Greenroom to slow down. It tries again next time you open the app.'
+    })[code] || 'Couldn\u2019t reach YNAB just now. It tries again next time you open the app.';
+  }
+  function feedResult(r) {
+    if (!r || !r.ok) return feedProblem(r && (r.status || r.error));
+    if (r.status === 'recent') return 'Checked a moment ago';
+    var bits = [];
+    if (r.filed) bits.push(plural(r.filed, 'charge') + ' filed');
+    if (r.waiting) bits.push(r.waiting + ' need' + (r.waiting === 1 ? 's' : '') + ' a look');
+    return bits.length ? bits.join(' \u00b7 ') : 'Nothing new on the cards';
+  }
+
+  // Where the feed can start: the tour's first week (the feed files the week
+  // before the first show on that tour too), or today.
+  function feedStarts(tourId) {
+    var today = G.tourToday();
+    var t = tourId ? getTour(tourId) : null;
+    if (!t) {
+      var live = allTourEntries().map(function (e) { return e[1]; }).filter(function (x) {
+        var d = G.rows(x.shows).map(function (s) { return s.date; }).filter(G.parseDay).sort();
+        return d.length && d[d.length - 1] >= today;
+      });
+      t = live[0] || null;
+    }
+    var dates = t ? G.rows(t.shows).map(function (s) { return s.date; }).filter(G.parseDay).sort() : [];
+    var out = [];
+    if (dates.length) {
+      var from = G.addDays(dates[0], -7);
+      if (from < today) out.push({ label: 'Tour start', date: from,
+        note: 'Brings in everything from ' + dayLong(from) + ', the week before ' + (t.name || 'the tour') + '\u2019s first show.' });
+    }
+    out.push({ label: 'Today', date: today, note: 'Only charges from today on. Older ones stay as they are.' });
+    return out;
+  }
+
+  function feedEntry(id) {
+    if (!S.feed || !canEditTour(id)) return null;
+    var row = S.feed.row || {};
+    if (!row.switched_on) {
+      return h('button', { class: 'btn ghost block feed-entry', type: 'button',
+        onclick: function () { openFeedSheet(id); } },
+        icon('card', 18), 'Connect the cards \u00b7 YNAB');
+    }
+    var n = feedWaiting(id).length;
+    if (n) {
+      return h('button', { class: 'btn primary block feed-entry', type: 'button',
+        onclick: function () { openFeedReview(id); } },
+        icon('card', 18), plural(n, 'card charge') + (n === 1 ? ' needs' : ' need') + ' a look');
+    }
+    return h('button', { class: 'feed-quiet', type: 'button', onclick: function () { openFeedSheet(id); } },
+      'Card feed on \u00b7 checked ' + feedAgo(row.last_run));
+  }
+
+  function openFeedReview(tourId) {
+    var valid = {};
+    G.chargeCategoriesFor(getTour(tourId)).forEach(function (c) { valid[c.key] = true; });
+    var rows = feedWaiting(tourId).map(function (it) {
+      var cat = it.category && valid[it.category] ? it.category : '';
+      var amt = G.num(it.amount);
+      return {
+        feedId: it.id, date: it.date, merchant: it.merchant, amount: amt,
+        category: cat, source: cat ? 'learned' : null, why: it.why || '',
+        duplicate: false, preCutoff: false,
+        // Refunds and look-alikes of charges already on the tour start unticked.
+        keep: amt > 0 && it.why !== 'Maybe already in'
+      };
+    });
+    if (!rows.length) { toast('Nothing waiting'); return; }
+    openImportReview(tourId, rows, 'ynab', { feed: true });
+  }
+
+  function openFeedSheet(tourId) {
+    var B = window.GR_BACKEND;
+    var MODES = ['log', 'ask', 'off'];
+    var body = h('div', { class: 'feed-body' }, h('p', { class: 'sh-sub' }, 'Checking YNAB\u2026'));
+    var st = null;
+    var starts = feedStarts(tourId);
+    var startIdx = 0;
+    var busy = false;
+
+    async function load() {
+      try { st = await B.feedCall('status'); } catch (e) { st = { error: 'unavailable' }; }
+      draw();
+    }
+    async function run(label, fn) {
+      if (busy) return;
+      busy = true;
+      body.classList.add('busy');
+      var btns = body.querySelectorAll('button');
+      btns.forEach(function (b) { b.disabled = true; });
+      try { await fn(); } catch (e) { toast(feedProblem('unavailable')); }
+      busy = false;
+      body.classList.remove('busy');
+      await load();
+    }
+
+    function draw() {
+      if (!st || !st.ok) {
+        body.replaceChildren(h('p', { class: 'note' }, feedProblem(st && (st.status || st.error))));
+        return;
+      }
+      var accts = h('div', { class: 'feed-accts' }, st.accounts.map(function (a) {
+        var idx = MODES.indexOf(a.mode);
+        return h('div', { class: 'feed-acct' },
+          h('div', { class: 'fa-name' }, a.name),
+          segmented(['Log', 'Ask me', 'Off'], idx < 0 ? 1 : idx, function (i) {
+            a.mode = MODES[i];
+            var m = {};
+            m[a.id] = a.mode;
+            B.feedCall('setup', { modes: m }).then(function (r) {
+              if (!r || !r.ok) toast('Couldn\u2019t save that. Try again.');
+            });
+          }, 'What the feed does with ' + a.name));
+      }));
+      var parts = [
+        h('h3', { class: 'sh-h3' }, 'Accounts'),
+        accts,
+        h('p', { class: 'note' },
+          'Log: files each charge on the tour by itself once Greenroom knows the merchant, and asks about new ones. ',
+          'Ask me: every charge waits for you first. Off: ignored.')
+      ];
+      if (!st.switchedOn) {
+        var startNote = h('p', { class: 'note' }, starts[startIdx].note);
+        parts.push(
+          h('h3', { class: 'sh-h3' }, 'Start from'),
+          segmented(starts.map(function (x) { return x.label; }), startIdx, function (i) {
+            startIdx = i;
+            startNote.textContent = starts[i].note;
+          }, 'Where the feed starts'),
+          startNote,
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'button', onclick: function () {
+              run('on', async function () {
+                var r = await B.feedCall('setup', { on: true, since: starts[startIdx].date });
+                if (!r || !r.ok) { toast(feedProblem(r && (r.status || r.error))); return; }
+                toast('Card feed on. Reading YNAB\u2026');
+                toast(feedResult(await B.feedCall('sync', { force: true })));
+              });
+            } }, 'Turn on the card feed')));
+      } else {
+        parts.push(
+          h('p', { class: 'sh-sub feed-when' }, 'On since ' + dayLong(st.since) + ' \u00b7 checked ' + feedAgo(st.lastRun)),
+          st.lastStatus && st.lastStatus !== 'ok' ? h('p', { class: 'note' }, feedProblem(st.lastStatus)) : null,
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'button', onclick: function () {
+              run('check', async function () { toast(feedResult(await B.feedCall('sync', { force: true }))); });
+            } }, 'Check now'),
+            h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
+              run('off', async function () {
+                var r = await B.feedCall('setup', { on: false });
+                toast(r && r.ok ? 'Card feed off. Charges already filed stay put.' : feedProblem('unavailable'));
+              });
+            } }, 'Turn the feed off')));
+      }
+      body.replaceChildren(h('div', null, parts));
+    }
+
+    openSheet(function () {
+      load();
+      return [
+        h('h2', { class: 'sh-title' }, 'Card feed'),
+        h('p', { class: 'sh-sub' }, 'Greenroom reads your YNAB plan \u201c' + ((S.feed && S.feed.row.plan_name) || 'your plan') +
+          '\u201d and logs what the cards spend. Money coming in is never logged, and only you see this.'),
+        body
+      ];
+    }, { label: 'Card feed' });
   }
 
   /* ---------------- Card charges, imports and learned labels ---------------- */
