@@ -1455,6 +1455,9 @@
             onclick: function () { openUsernameSheet(false); } },
             icon('people', 18),
             (B.myProfile && B.myProfile().tourRole) ? 'Your contact card' : 'Add your details') : null,
+          signedIn ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { openNotifications(null); } },
+            icon('bell', 18), 'Notifications') : null,
           (signedIn && S.feed && S.feed.row) ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openFeedSheet(null); } },
             icon('card', 18), 'Card feed \u00b7 YNAB') : null,
@@ -2810,7 +2813,8 @@
       canEditTour(id) ? h('button', { class: 'btn ghost block', type: 'button',
         style: 'margin-bottom:4px',
         onclick: function () { openAlertSheet(id); } },
-        icon('bell', 18), 'Send alert notification') : null,
+        icon('bell', 18), 'Send Tour Alert') : null,
+      alertsNudge(id),
       msgs.length
         ? h('div', { class: 'chat-list' }, msgs)
         : emptyState('Special requests, notes for the team, send here.', null),
@@ -2829,30 +2833,40 @@
     return ARI_ADDRESS.slice(0, at) + '+' + tourId + ARI_ADDRESS.slice(at);
   }
 
-  function ariPrompt(body, isImage) {
+  // The same plain voice as Ari's atVenu breakdowns: one short message the
+  // whole crew can follow.
+  function ariPrompt(body, isImage, merchOnly) {
     return [
-      'You are Ari, the tour manager for a touring band. A settlement sheet was just posted',
-      'in the crew group chat' + (isImage ? ' as a photo or PDF.' : '.'),
-      'Explain it to the whole crew — the drummer, the merch kid, the guitar tech.',
+      'You are Ari, the tour manager for a touring band. A ' + (merchOnly ? 'merch summary' : 'settlement sheet') +
+        ' just came in' + (isImage ? ' as a photo or PDF.' : '.'),
+      'Explain it to the whole crew in a group chat \u2014 the drummer, the merch kid, the guitar tech.',
       'Most of them have never read a settlement and will not ask questions if it sounds complicated.',
       '',
       'Rules for your message:',
-      '- Under 120 words. Short lines. No greeting, no sign-off, no emoji.',
-      '- Walk the money in order: what came in, what was taken out and why, what the band keeps.',
-      '- Explain every term the moment you use it (a per head is dollars of merch per person in',
+      '- Under 90 words. Short lines. No greeting, no sign-off, no emoji.',
+      '- Say what came in, what was taken out and why, and what the band actually keeps.',
+      '- Explain any term the moment you use it (a per head is dollars of merch per person in',
       '  the room; a backend is the cut above the guarantee once the room is full enough).',
-      '- Use only numbers printed on the sheet. Never invent or estimate one.',
-      '- End with one line on whether this looks right, or what to question with the promoter.',
-      isImage ? '' : '\nThe settlement:\n' + String(body).slice(0, 20000)
+      '- Use only numbers printed on the sheet. Never invent or estimate one. If something is',
+      '  missing or looks off, say so plainly in one line.',
+      '- Say whether this night was strong, normal or soft, and why, in one line.',
+      isImage ? '' : '\nThe sheet:\n' + String(body).slice(0, 20000)
     ].join('\n');
   }
 
   /* Ari reads a settlement (text or images) and posts her breakdown to chat. */
-  async function ariExplain(tourId, textBody, images) {
+  async function ariExplain(tourId, textBody, images, merchOnly) {
+    var B = window.GR_BACKEND;
+    var prompt = images ? ariPrompt('', true, merchOnly) : ariPrompt(textBody, false, merchOnly);
     try {
+      // Signed in: the server posts Ari's message, so only it can speak as Ari.
+      if (S.mode === 'db' && B && B.ariSay) {
+        var told = await B.ariSay(tourId, prompt, images || null);
+        return !!String(told || '').trim();
+      }
       var out = images
-        ? await S.sample(ariPrompt('', true), { images: images, cache: false })
-        : await S.sample(ariPrompt(textBody, false), { cache: false });
+        ? await S.sample(prompt, { images: images, cache: false })
+        : await S.sample(prompt, { cache: false });
       var said = String((out && out.text) || '').trim();
       if (!said) return false;
       await saveNote(tourId, 'chat', { id: newId(), body: said.slice(0, 1200), author: 'Ari' });
@@ -2892,8 +2906,6 @@
             toast('That file type isn\u2019t supported \u2014 use a photo or a PDF.');
             return;
           }
-          await saveNote(tourId, 'chat', { id: newId(),
-            body: myName() + ' posted a settlement sheet.', author: myName() });
           var okAri = await ariExplain(tourId, body, pics);
           if (!okAri) { toast('Ari couldn\u2019t read that sheet. Try a sharper photo.'); return; }
           toast('Ari broke it down in the chat');
@@ -2920,8 +2932,8 @@
     var f = { message: '' };
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, 'Send an alert'),
-        h('p', { class: 'sh-sub' }, 'A push notification to everyone on this tour, right now. It lands in the chat too.'),
+        h('h2', { class: 'sh-title' }, 'Send Tour Alert'),
+        h('p', { class: 'sh-sub' }, 'Pings the phone of everyone on this tour who has alerts turned on, right now. It lands in the chat too.'),
         h('form', { class: 'sh-form', novalidate: true,
           onsubmit: async function (e) {
             e.preventDefault();
@@ -2931,16 +2943,23 @@
             try {
               await saveNote(tourId, 'chat', { id: newId(), body: '\ud83d\udea8 ' + msg, author: myName() });
             } catch (e2) { toast('Couldn\u2019t post it. Try again.'); return; }
-            sendNotify(tourId, 'alert', { message: msg });
             closeSheet();
-            toast(S.mode === 'db' ? 'Alert on its way to the tour' : 'Posted \u2014 pushes go out on the real app');
+            if (S.mode !== 'db') toast('Posted \u2014 pushes go out on the real app');
+            else {
+              toast('Sending\u2026');
+              sendNotify(tourId, 'alert', { message: msg }).then(function (n) {
+                toast(n == null ? 'Posted in the chat. The ping may not have gone out \u2014 try again.'
+                  : n === 0 ? 'Posted in the chat. Nobody on the tour has alerts on yet.'
+                  : 'Alert sent to ' + plural(n, 'phone'));
+              });
+            }
             setTimeout(function () { render(true); }, 400);
           } },
           field('The alert', h('textarea', { class: 'gl-paste', maxlength: 200,
             placeholder: 'Bus call moved to 11:30\u2026',
             oninput: function (e) { f.message = e.target.value; } })),
           h('div', { class: 'stack' },
-            h('button', { class: 'btn primary block', type: 'submit' }, 'Send it'),
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Send Tour Alert'),
             h('button', { class: 'btn ghost block', type: 'button',
               onclick: function () { closeSheet(); } }, 'Cancel')))
       ];
@@ -3191,10 +3210,6 @@
           ? h('a', { class: 'ov-v ov-link', href: href, target: '_blank', rel: 'noopener' }, value)
           : h('span', { class: 'ov-v' }, value));
     };
-    // Apple Maps on an iPhone; the same link opens a map anywhere else.
-    var mapsHref = function (addr) {
-      return 'https://maps.apple.com/?q=' + encodeURIComponent(String(addr).trim());
-    };
     var quote = String(d.quote || '').trim();
     return [
       h('div', { class: 'ov-today' },
@@ -3229,11 +3244,27 @@
   }
 
   /* The tour's phone book: who is on the run and how to reach them. */
+  // Apple Maps on an iPhone; the same link opens a map anywhere else.
+  function mapsHref(addr) {
+    return 'https://maps.apple.com/?q=' + encodeURIComponent(String(addr).trim());
+  }
+
+  /* The crew list is remembered per tour, so the Overview redraws it
+     straight away instead of flashing "Loading" every time anything else on
+     the screen updates. It's asked for again at most once a minute, and only
+     redrawn when someone actually changed. */
+  function forgetCrew(tourId) {
+    if (!S.crewCache) return;
+    if (tourId) delete S.crewCache[tourId]; else S.crewCache = {};
+  }
+
   function crewSection(tourId) {
     var B = window.GR_BACKEND;
     var owns = B.ownsTour && B.ownsTour(tourId);
+    S.crewCache = S.crewCache || {};
+    var cached = S.crewCache[tourId] || null;
     var list = h('div', { class: 'ledger crew-list' },
-      h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading\u2026')));
+      cached ? null : h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading\u2026')));
 
     /* The badge column sits centred in the gap between the names and the
        icons: the name column is sized to the widest name (so the gap is the
@@ -3293,10 +3324,18 @@
       }));
       requestAnimationFrame(sizeColumns);
     }
-    B.crew(tourId).then(draw).catch(function () {
-      list.replaceChildren(h('div', { class: 'row' },
-        h('span', { class: 'hint' }, 'Couldn\u2019t load the crew.')));
-    });
+    if (cached) draw(cached.rows);
+    if (!cached || Date.now() - cached.at > 60e3) {
+      B.crew(tourId).then(function (rows) {
+        var same = !!cached && JSON.stringify(cached.rows) === JSON.stringify(rows);
+        S.crewCache[tourId] = { rows: rows, at: Date.now() };
+        if (!same) draw(rows);
+      }).catch(function () {
+        if (cached) return; // keep showing what we had
+        list.replaceChildren(h('div', { class: 'row' },
+          h('span', { class: 'hint' }, 'Couldn\u2019t load the crew.')));
+      });
+    }
 
     return [
       h('div', { class: 'sec-head', style: 'margin-top:30px;text-align:center' },
@@ -3749,7 +3788,12 @@
           h('span', { class: 'row-label' }, label),
           h('span', { class: 'ds-time num' }, String(v).trim())));
       };
-      timeRow('Address', d.venueAddress);
+      if (String(d.venueAddress || '').trim()) {
+        rowsOut.push(h('div', { class: 'row ds-row' },
+          h('span', { class: 'row-label' }, 'Address'),
+          h('a', { class: 'ds-val ds-link', href: mapsHref(d.venueAddress), target: '_blank', rel: 'noopener' },
+            String(d.venueAddress).trim())));
+      }
       timeRow('Venue phone', d.venuePhone);
       timeRow('Load in', d.loadIn);
       (Array.isArray(d.soundchecks) ? d.soundchecks : []).forEach(function (r) {
@@ -3790,7 +3834,13 @@
           h('span', { class: 'row-label' }, label),
           h('span', { class: 'ds-val' }, String(v).trim())));
       };
-      offRow('Hotel', off.hotel);
+      if (String(off.hotel || '').trim()) {
+        // The hotel's name and the town are enough for Maps to find it.
+        offRows.push(h('div', { class: 'row ds-row' },
+          h('span', { class: 'row-label' }, 'Hotel'),
+          h('a', { class: 'ds-val ds-link', target: '_blank', rel: 'noopener',
+            href: mapsHref(String(off.hotel).trim() + (off.city ? ', ' + off.city : '')) }, String(off.hotel).trim())));
+      }
       offRow('Wifi', off.wifi);
       offRow('Rooms', off.rooms);
       var planRows = (Array.isArray(off.plans) ? off.plans : []).filter(function (r) {
@@ -4057,6 +4107,10 @@
     var first = shows[0].date, last = shows[shows.length - 1].date;
     var before = G.parseDay(t.spanStart) && t.spanStart < first ? G.daysBetween(t.spanStart, first) : 0;
     var after = G.parseDay(t.spanEnd) && t.spanEnd > last ? G.daysBetween(last, t.spanEnd) : 0;
+    // A second flyer asks again, but travel days already on the run stay
+    // exactly as they are unless the stepper is actually touched.
+    var had = !!(G.parseDay(t.spanStart) || G.parseDay(t.spanEnd));
+    var touched = false;
     openSheet(function () {
       var beforeEl = h('strong', { class: 'num' }, '');
       var afterEl = h('strong', { class: 'num' }, '');
@@ -4068,14 +4122,16 @@
         // Big targets: these were 38x34 and missed a lot of taps.
         return h('div', { class: 'seg big' },
           h('button', { class: 'seg-b', type: 'button', 'aria-label': 'Fewer',
-            onclick: function () { set(Math.max(0, get() - 1)); refresh(); } }, '\u2212'),
+            onclick: function () { touched = true; set(Math.max(0, get() - 1)); refresh(); } }, '\u2212'),
           h('button', { class: 'seg-b', type: 'button', 'aria-label': 'More',
-            onclick: function () { set(Math.min(14, get() + 1)); refresh(); } }, '+'));
+            onclick: function () { touched = true; set(Math.min(14, get() + 1)); refresh(); } }, '+'));
       }
       refresh();
       return [
         h('h2', { class: 'sh-title' }, 'Travel days'),
-        h('p', { class: 'sh-sub' }, 'Days on the road before the first show and after the last one. They join the run as off days you can fill in.'),
+        h('p', { class: 'sh-sub' }, had
+          ? 'The travel days you already set stay on the run. Add more only if these shows stretch the tour.'
+          : 'Days on the road before the first show and after the last one. They join the run as off days you can fill in.'),
         h('div', { class: 'ledger' },
           h('div', { class: 'row' },
             h('div', { class: 'row-label' }, 'Before the tour', h('span', { class: 'hint' }, beforeEl)),
@@ -4086,6 +4142,7 @@
         h('div', { class: 'stack' },
           h('button', { class: 'btn primary block', type: 'button',
             onclick: async function () {
+              if (!touched) { closeSheet(); done(); return; }
               var patch = {
                 spanStart: before ? G.addDays(first, -before) : null,
                 spanEnd: after ? G.addDays(last, after) : null
@@ -4098,7 +4155,7 @@
               }
             } }, 'Save'),
           h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { closeSheet(); done(); } }, 'Not now'))
+            onclick: function () { closeSheet(); done(); } }, had ? 'Keep as is' : 'Not now'))
       ];
     }, { label: 'Travel days' });
   }
@@ -4112,17 +4169,22 @@
     if (!shows.length) { done(); return; }
     var first = shows[0].date;
     var f = { start: t.rehearsalStart || '', end: t.rehearsalEnd || '' };
+    var had = !!(G.parseDay(f.start) && G.parseDay(f.end));
+    var touched = false;
     openSheet(function () {
       function dateIn(key, label) {
         return field(label, h('input', { class: 'input', type: 'date', value: f[key],
-          'aria-label': label, oninput: function (e) { f[key] = e.target.value; } }));
+          'aria-label': label, oninput: function (e) { touched = true; f[key] = e.target.value; } }));
       }
       return [
-        h('h2', { class: 'sh-title' }, 'Rehearsal days before the tour?'),
-        h('p', { class: 'sh-sub' }, 'They join the run so day sheets and plans can start before the first show.'),
+        h('h2', { class: 'sh-title' }, had ? 'Rehearsal days' : 'Rehearsal days before the tour?'),
+        h('p', { class: 'sh-sub' }, had
+          ? 'These are already on the run and stay put. Change the dates only if they moved.'
+          : 'They join the run so day sheets and plans can start before the first show.'),
         h('form', { class: 'sh-form', novalidate: true,
           onsubmit: async function (e) {
             e.preventDefault();
+            if (had && !touched) { closeSheet(); done(); return; }
             if (!G.parseDay(f.start) || !G.parseDay(f.end)) { toast('Pick both dates'); return; }
             if (f.start > f.end) { toast('The first day has to come before the last'); return; }
             if (f.end >= first) { toast('Rehearsals wrap before the first show on ' + dayMD(first)); return; }
@@ -4139,7 +4201,7 @@
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
             h('button', { class: 'btn ghost block', type: 'button',
-              onclick: function () { closeSheet(); done(); } }, 'No rehearsals')))
+              onclick: function () { closeSheet(); done(); } }, had ? 'Keep as is' : 'No rehearsals')))
       ];
     }, { label: 'Rehearsals' });
   }
@@ -4285,6 +4347,7 @@
             blurActive();
             try {
               await B.saveProfile(f);
+              forgetCrew();
               closeSheet();
               toast('Saved \u2014 you\u2019re ' + (f.firstName.trim() + ' ' + f.lastName.trim()) + ', ' + f.tourRole);
               render(true);
@@ -4881,7 +4944,7 @@
             h('div', { class: 'row-label' },
               h('label', { for: 'inc-merch' }, f.label),
               perHeadEl),
-            settlementReader({ show: s, mode: 'atvenu', onResult: atvenuResult,
+            settlementReader({ show: s, mode: 'atvenu', onResult: atvenuResult, ariTour: id,
               btnLabel: '', btnLogo: 'logo-atvenu.png',
               ariaLabel: 'Read the atVenu merch summary', btnCls: 'av-bubble' }),
             mkInput));
@@ -5265,15 +5328,58 @@
           owns ? h('button', {
             class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + m.invited_email,
             onclick: async function () {
-              try { await B.uninvite(tourId, m.invited_email); toast('Removed'); refresh(); }
+              try { await B.uninvite(tourId, m.invited_email); forgetCrew(tourId); toast('Removed'); refresh(); }
               catch (e) { toast('Couldn’t remove them. Try again.'); }
             }
           }, icon('trash', 18)) : null));
       });
       list.replaceChildren.apply(list, kids);
     }
+
+    // Past crew: everyone invited to an earlier tour, one tap from this one.
+    var past = h('div', null);
+    function renderPast(people, onTour) {
+      var me = String(B.email() || '').toLowerCase();
+      var here = {};
+      onTour.forEach(function (m) { here[String(m.invited_email || '').toLowerCase()] = true; });
+      var left = people.filter(function (p) { return !here[p.email] && p.email !== me; });
+      if (!left.length) { past.replaceChildren(); return; }
+      past.replaceChildren(
+        h('h3', { class: 'sh-h3', style: 'margin-top:22px' }, 'Past crew'),
+        h('p', { class: 'note', style: 'margin-top:0' }, 'People you\u2019ve invited before. Tap Invite to add them to this tour.'),
+        h('div', { class: 'ledger' }, left.map(function (p) {
+          var who = p.name || p.email;
+          var addBtn = h('button', { class: 'btn sm primary', type: 'button',
+            onclick: async function () {
+              addBtn.disabled = true;
+              try {
+                var status = await B.invite(tourId, p.email, p.role, p.name, p.phone);
+                forgetCrew(tourId);
+                toast(status === 'existing' ? who + ' is on this tour now' : who + ' is invited');
+                refresh();
+              } catch (e) { addBtn.disabled = false; toast('Couldn\u2019t invite them. Try again.'); }
+            } }, 'Invite');
+          return h('div', { class: 'row people-row past-row' },
+            h('span', { class: 'who' }, who,
+              h('span', { class: 'hint', style: 'display:block' },
+                (p.name ? p.email + ' \u00b7 ' : '') + (p.role === 'editor' ? 'ALL ACCESS' : 'GA'))),
+            addBtn,
+            h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Forget ' + who,
+              onclick: async function () {
+                try { await B.forgetPastCrew(p.email); refresh(); }
+                catch (e) { toast('Couldn\u2019t take them off the list. Try again.'); }
+              } }, icon('close', 16)));
+        })));
+    }
+
     function refresh() {
-      B.members(tourId).then(renderMembers).catch(function () {
+      B.members(tourId).then(function (rows) {
+        renderMembers(rows);
+        if (owns && B.pastCrew) {
+          B.pastCrew().then(function (people) { renderPast(people, rows); })
+            .catch(function () { past.replaceChildren(); });
+        }
+      }).catch(function () {
         list.replaceChildren(h('div', { class: 'row' },
           h('span', { class: 'hint' }, 'Couldn’t load the guest list.')));
       });
@@ -5306,6 +5412,7 @@
           try {
             var status = await B.invite(tourId, email, role, name, String(phoneI.value || '').trim());
             nameI.value = ''; emailI.value = ''; phoneI.value = '';
+            forgetCrew(tourId);
             if (status === 'sent') toast(name + ' is invited — the email is on its way');
             else if (status === 'existing') toast(name + ' already has an account — the tour is in it now');
             else toast(name + ' is on the list — the email service is busy, but signing up with ' + email + ' works');
@@ -5326,7 +5433,7 @@
       h('p', { class: 'sh-p' }, owns
         ? 'Invite your band, crew or managers by email. GA watches the numbers move live. ALL ACCESS can log shows, costs and statements with you.'
         : 'You’re on this tour’s guest list. The numbers update live as they’re logged.'),
-      list, form);
+      list, past, form);
   }
 
   function prettyTime(v) {
@@ -5474,8 +5581,31 @@
 
   function sendNotify(tourId, type, data) {
     if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.notify) {
-      window.GR_BACKEND.notify(tourId, type, data);
+      return window.GR_BACKEND.notify(tourId, type, data);
     }
+    return Promise.resolve(null);
+  }
+
+  /* Everyone on the tour, not just the manager, needs a way to let tour
+     alerts reach their phone. Shown in the chat until this phone is on. */
+  function alertsNudge(tourId) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || !B.pushSupported) return null;
+    if (S.pushOn == null && !S.pushAsked) {
+      S.pushAsked = true;
+      if (B.pushSupported()) {
+        B.pushState().then(function (st) { S.pushOn = !!st.on; render(); })
+          .catch(function () { S.pushOn = false; render(); });
+      } else S.pushOn = false;
+    }
+    if (S.pushOn !== false) return null;
+    if (!B.pushSupported()) {
+      return h('p', { class: 'note alerts-nudge' },
+        'To get tour alerts on this phone, add Greenroom to your Home Screen (Share \u2192 Add to Home Screen) and open it from there.');
+    }
+    return h('button', { class: 'btn quiet block alerts-nudge', type: 'button',
+      onclick: function () { openNotifications(tourId); } },
+      icon('bell', 18), 'Get tour alerts on this phone');
   }
 
   /* Per-device notification choices: what this phone wants to hear about. */
@@ -5517,20 +5647,28 @@
             var out = { guest: prefs.guest, green: prefs.green, soldout: prefs.soldout,
               merch: prefs.merch > 0 ? prefs.merch : false };
             try {
-              var any = prefs.guest || prefs.green || prefs.soldout || prefs.merch > 0;
-              if (any) { await B.pushEnable(out); toast('You\u2019ll hear about it'); }
-              else { await B.pushDisable(); toast('Notifications off'); }
+              // Tour alerts always come through once this phone is signed up,
+              // so saving signs it up even with every extra switched off.
+              await B.pushEnable(out);
+              S.pushOn = true;
+              toast('This phone gets tour alerts' +
+                (prefs.guest || prefs.green || prefs.soldout || prefs.merch > 0 ? ', plus what you picked' : ''));
               closeSheet();
+              render(true);
             } catch (e) {
               saveBtn.disabled = false;
               toast(e && e.code === 'denied'
                 ? 'Your phone said no \u2014 allow notifications for Greenroom in Settings'
                 : 'Couldn\u2019t turn that on. Try again.');
             }
-          } }, 'Save');
+          } }, on ? 'Save' : 'Turn on for this phone');
         return [
           h('h2', { class: 'sh-title' }, 'Notifications'),
           h('p', { class: 'sh-sub' }, 'Your choices, this phone only \u2014 everyone on the tour picks their own.'),
+          h('div', { class: 'ds-yn', style: 'min-height:48px' },
+            h('div', { class: 'row-label', style: 'flex:1' }, 'Tour alerts',
+              h('span', { class: 'hint' }, 'From the tour manager \u2014 always on')),
+            h('span', { class: 'role-tag aa' }, on ? 'ON' : 'ON AFTER SAVE')),
           h('div', { class: 'ds-yns' },
             toggleRow('guest', 'Guest list', 'Someone adds a name'),
             toggleRow('green', 'In the green', 'The tour crosses break even'),
@@ -5541,7 +5679,10 @@
             merchIn),
           h('div', { class: 'stack' }, saveBtn,
             on ? h('button', { class: 'btn ghost block', type: 'button',
-              onclick: async function () { await B.pushDisable(); toast('Notifications off'); closeSheet(); }
+              onclick: async function () {
+                await B.pushDisable(); S.pushOn = false;
+                toast('Notifications off \u2014 tour alerts too'); closeSheet(); render(true);
+              }
             }, 'Turn all of it off') : null)
         ];
       }, { label: 'Notifications' });
@@ -6314,7 +6455,7 @@
           await o.onResult(r);
           // The income sheet logs itself now, and Ari reads the same sheet
           // to the chat while the numbers land.
-          if (o.ariTour && r.found) ariExplain(o.ariTour, ariBody, ariPics);
+          if (o.ariTour && r.found) ariExplain(o.ariTour, ariBody, ariPics, o.mode === 'atvenu');
           if (o.autoSave && r.found) {
             // the save spoke for itself
           } else if (o.mode === 'atvenu') {

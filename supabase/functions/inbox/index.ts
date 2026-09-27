@@ -109,14 +109,17 @@ function prompt(kind: "text" | "files", body: string): string {
 
 /* Ari, the tour manager who reads the paperwork so nobody else has to.
    Plain words, real numbers, no lecture. */
-function ariPrompt(body: string, where: string, merch: number, notes: { label: string; value: string }[]): string {
+function ariPrompt(body: string, where: string, merch: number, notes: { label: string; value: string }[], kept: number): string {
   return [
     "You are Ari, the tour manager for a touring band. A merch settlement just came in for " + where + ".",
     "Explain it to the whole crew in a group chat — the drummer, the merch kid, the guitar tech.",
     "Most of them have never read a settlement and will not ask questions if it sounds complicated.",
     "",
-    "What the app already logged: $" + merch.toLocaleString("en-US") + " merch (the artist's net — what the band keeps)" +
-      (notes.length ? " · " + notes.map((n) => n.label + " " + n.value).join(" · ") : "") + ".",
+    kept > 0
+      ? "The app did NOT change anything: $" + kept.toLocaleString("en-US") + " merch was already logged by hand for this night, " +
+        "and the settlement says $" + merch.toLocaleString("en-US") + ". Say this plainly in one line so the tour manager can check which is right."
+      : "What the app already logged: $" + merch.toLocaleString("en-US") + " merch (the artist's net — what the band keeps)" +
+        (notes.length ? " · " + notes.map((n) => n.label + " " + n.value).join(" · ") : "") + ".",
     "",
     "Rules for your message:",
     "- Under 90 words. Short lines. No greeting, no sign-off, no emoji.",
@@ -246,7 +249,7 @@ Deno.serve(async (req) => {
   const where = String(s.city ?? s.venue ?? date);
   if (had > 0 && had !== merch) {
     // A human already wrote a different number. Humans win; the chat hears about it.
-    note = `\u{1F4EC} atVenu settlement for ${where}: says $${merch.toLocaleString("en-US")} merch, but $${had.toLocaleString("en-US")} is already logged — left as is.`;
+    note = `atVenu settlement for ${where}: says $${merch.toLocaleString("en-US")} merch, but $${had.toLocaleString("en-US")} is already logged. I left it as is. Check which one is right.`;
   } else {
     inc.merch = merch;
     s.income = inc;
@@ -256,8 +259,8 @@ Deno.serve(async (req) => {
     notes.forEach((n) => { seen[n.label.toLowerCase()] = true; });
     s.settlementNotes = old.filter((n) => !seen[String(n.label).toLowerCase()]).concat(notes);
     const ph = notes.filter((n) => /per head/i.test(n.label))[0];
-    note = `\u{1F4EC} atVenu settlement for ${where}: $${merch.toLocaleString("en-US")} merch logged` +
-      (ph ? ` · ${ph.value} per head` : "") + ".";
+    note = `atVenu settlement for ${where}: $${merch.toLocaleString("en-US")} merch logged` +
+      (ph ? `, ${ph.value} per head` : "") + ". That's what the band keeps after the venue's cut.";
   }
   shows[hit.showId] = s;
   doc.shows = shows;
@@ -265,13 +268,19 @@ Deno.serve(async (req) => {
   const up = await admin.from("tours").update({ doc }).eq("id", hit.id);
   if (up.error) { await logMail(mail.from, mail.subject, "save_failed", up.error.message); return ok({ status: "save_failed", detail: up.error.message }); }
 
-  await admin.from("notes").insert({
-    id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-    tour_id: hit.id, day: "chat", body: note, author: "atVenu", added_by: hit.owner,
-  });
   await logMail(mail.from, mail.subject, "logged", hit.id + " $" + merch);
 
-  // Then Ari reads the same paperwork out loud, in the chat, for everyone else.
+  // One message in the chat: Ari reading the paperwork out loud. If Ari
+  // can't speak, the plain filing line goes out under her name instead, so
+  // the chat never stays silent about money that just landed.
+  const kept = had > 0 && had !== merch ? had : 0;
+  const plain = async (why: string) => {
+    await admin.from("notes").insert({
+      id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      tour_id: hit.id, day: "chat", body: note, author: "Ari", added_by: hit.owner,
+    });
+    await logMail(mail.from, mail.subject, "ari_quiet", why);
+  };
   try {
     const source = mail.text && mail.text.replace(/\s/g, "").length > 60
       ? mail.text
@@ -280,7 +289,7 @@ Deno.serve(async (req) => {
       // Opus thinks before it answers and thinking spends this budget too —
       // 400 bought a long think and an empty message.
       model: "claude-opus-5", max_tokens: 4000,
-      messages: [{ role: "user", content: ariPrompt(source, where, merch, notes) }],
+      messages: [{ role: "user", content: ariPrompt(source, where, merch, notes, kept) }],
     });
     const said = ari.content.filter((b) => b.type === "text")
       .map((b) => (b as { text: string }).text).join("").trim();
@@ -293,12 +302,11 @@ Deno.serve(async (req) => {
         })
       : { error: null };
     if (!said || ins.error) {
-      await logMail(mail.from, mail.subject, "ari_quiet",
-        "len=" + said.length + " stop=" + String(ari.stop_reason) + " err=" + (ins.error?.message ?? "none"));
+      await plain("len=" + said.length + " stop=" + String(ari.stop_reason) + " err=" + (ins.error?.message ?? "none"));
     }
   } catch (e) {
     // The money is filed either way, but a mute Ari should never be a mystery.
-    await logMail(mail.from, mail.subject, "ari_failed", String((e as Error)?.message ?? e));
+    await plain("failed: " + String((e as Error)?.message ?? e));
   }
 
   return ok({ status: "logged", tour: hit.id, merch });

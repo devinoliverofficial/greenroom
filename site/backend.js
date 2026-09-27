@@ -198,7 +198,9 @@
         body: JSON.stringify({
           prompt: prompt,
           images: images,
-          tier: o.modelTier === 'quick' ? 'quick' : undefined
+          tier: o.modelTier === 'quick' ? 'quick' : undefined,
+          // The server posts Ari's words to that tour's chat itself.
+          ari: o.ariTour ? { tourId: o.ariTour } : undefined
         })
       });
     } catch (e) {
@@ -346,6 +348,23 @@
       if (q.error) throw mapError(q.error);
       return q.data;
     },
+    /* Ari reads something and says it in the tour's chat. Only the server
+       can post as Ari, and only for the tour manager or ALL ACCESS. */
+    ariSay: async function (tourId, prompt, images) {
+      var out = await callRead(prompt, { images: images || undefined, ariTour: tourId });
+      scheduleRefetch();
+      return out.text;
+    },
+    /* Everyone this tour manager has invited before, on any tour. */
+    pastCrew: async function () {
+      var q = await sb.from('past_crew').select('email, name, phone, role').order('name');
+      if (q.error) throw mapError(q.error);
+      return q.data || [];
+    },
+    forgetPastCrew: async function (email) {
+      var q = await sb.from('past_crew').delete().eq('email', String(email).toLowerCase());
+      if (q.error) throw mapError(q.error);
+    },
     invite: async function (tourId, email, role, name, phone) {
       var addr = String(email).trim().toLowerCase();
       var q = await sb.from('members').upsert({
@@ -356,6 +375,16 @@
         phone: String(phone || '').trim().slice(0, 30)
       });
       if (q.error) throw mapError(q.error);
+      // Remembered for the next tour's invites. A nicety: never blocks the invite.
+      try {
+        await sb.from('past_crew').upsert({
+          owner_id: session.user.id, email: addr,
+          name: String(name || '').trim().slice(0, 60),
+          phone: String(phone || '').trim().slice(0, 30),
+          role: role === 'editor' ? 'editor' : 'viewer',
+          updated_at: new Date().toISOString()
+        });
+      } catch (e) { /* the list can catch up next time */ }
       // The row alone is enough — an account made with this address claims it.
       // The edge function adds the nicety: the account and the invite email.
       try {
@@ -423,12 +452,15 @@
       scheduleRefetch();
     },
     /* ---- notifications ---- */
+    // Resolves with how many phones it reached (null if unknown); never throws,
+    // so callers that don't care can fire and forget.
     notify: function (tourId, type, data) {
-      // fire and forget; the show must go on either way
-      callFn('notify', {
+      return callFn('notify', {
         method: 'POST',
         body: JSON.stringify({ tourId: tourId, type: type, data: data || {} })
-      }).catch(function () {});
+      }).then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (out) { return out && typeof out.sent === 'number' ? out.sent : null; })
+        .catch(function () { return null; });
     },
     pushSupported: function () {
       return !!(navigator.serviceWorker && 'PushManager' in window && 'Notification' in window);

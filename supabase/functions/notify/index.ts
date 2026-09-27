@@ -54,7 +54,10 @@ Deno.serve(async (req) => {
   const jwt = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   let senderId = "";
   try {
-    senderId = JSON.parse(atob(jwt.split(".")[1])).sub ?? "";
+    // The token's middle is base64url: - and _ instead of + and /, and no
+    // padding. Plain atob throws on those, which turned nearly every sender away.
+    const b64 = jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    senderId = JSON.parse(atob(b64 + "===".slice((b64.length + 3) % 4))).sub ?? "";
   } catch { /* fall through */ }
   if (!senderId) return reply(401, { error: "not_signed_in" });
 

@@ -1009,6 +1009,13 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .input::placeholder { color: var(--ink-3); opacity: .85; font-weight: 500; }
 .input.big { height: 58px; font-size: 22px; font-weight: 700; }
 .input.sm { height: 44px; font-size: 16px; padding: 0 11px; border-radius: 11px; }
+/* iPhones draw a date or time near the top of a tall box; centre it like
+   every other field. */
+input[type="date"].input, input[type="time"].input { display: flex; align-items: center; line-height: normal; }
+input[type="date"].input::-webkit-date-and-time-value,
+input[type="time"].input::-webkit-date-and-time-value { text-align: left; margin: 0; }
+/* Day sheet addresses open Maps. */
+.ds-link { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 3px; }
 select.input { appearance: none; -webkit-appearance: none; background-image: none; }
 .card .input, .card .money-in, .sheet .input, .sheet .money-in { background: var(--surface-2); }
 .sheet .input { border-color: var(--line); }
@@ -1131,6 +1138,9 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .feed-privacy { text-align: center; margin-top: 18px; }
 .feed-privacy a { color: var(--ink-2); }
 .feed-plans { margin-top: 12px; }
+.past-row { gap: 8px; }
+.past-row .who { flex: 1; min-width: 0; }
+.alerts-nudge { margin: 6px 0 4px; }
 select.input.slim { width: 148px; height: 42px; }
 
 /* Reading a flyer or a statement takes a moment; this says so without lying about progress. */

@@ -16,6 +16,14 @@ shim = r"""<script>
         daySheet: { doors: '7:00 PM', venueAddress: '912 Red River St, Austin, TX 78701' } } } }
   };
   var subs = [];
+  // Same merge-write as the real backend: nested objects merge.
+  function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+  function deepMerge(t, p) {
+    Object.keys(p).forEach(function (k) {
+      if (isObj(p[k]) && isObj(t[k])) t[k] = deepMerge(t[k], p[k]); else t[k] = p[k];
+    });
+    return t;
+  }
   function snap() {
     return { docs: Object.keys(tours).map(function (id) {
       return { id: id, exists: true, data: function () { return JSON.parse(JSON.stringify(tours[id])); } }; }) };
@@ -31,12 +39,21 @@ shim = r"""<script>
       return {
         get: function () { return Promise.resolve({ exists: !!tours[id], data: function () { return tours[id]; } }); },
         set: function (v) { if (path.indexOf('tours/') === 0) { tours[id] = v; emit(); } return Promise.resolve(); },
-        update: function (v) { if (path.indexOf('tours/') === 0) { tours[id] = Object.assign({}, tours[id], v); emit(); } return Promise.resolve(); },
+        update: function (v) { if (path.indexOf('tours/') === 0) { tours[id] = deepMerge(JSON.parse(JSON.stringify(tours[id])), JSON.parse(JSON.stringify(v))); emit(); } return Promise.resolve(); },
         delete: function () { delete tours[id]; emit(); return Promise.resolve(); }
       };
     }
   };
-  window.claude = { use: function (n) { return Promise.resolve(n === 'db' ? db : null); } };
+  // A fake reader: flyers come from __harness.flyers (one list per read);
+  // anything else reads as nothing.
+  var fakeSample = function () { return Promise.resolve({ text: '' }); };
+  fakeSample.json = function (prompt) {
+    window.__harness.reads = (window.__harness.reads || 0) + 1;
+    if (/concert tour flyer/.test(String(prompt))) return Promise.resolve((window.__harness.flyers || []).shift() || []);
+    return Promise.resolve([]);
+  };
+  fakeSample.limits = function () { return Promise.resolve({ images: { mediaTypes: ['image/png', 'image/jpeg'], maxInputBytes: 5000000 } }); };
+  window.claude = { use: function (n) { return Promise.resolve(n === 'db' ? db : (n === 'sample' ? fakeSample : null)); } };
   var me = { first_name: 'Devin', last_name: 'Oliver', full_name: 'Devin Oliver', username: 'Devin Oliver',
     phone: '555-0100', tour_role: 'Artist/Owner' };
   window.__harness = { me: me, crew: [
@@ -61,6 +78,10 @@ shim = r"""<script>
     ]
   };
   window.__harness.calls = []; window.__harness.marked = []; window.__harness.feedFns = [];
+  window.__harness.members = []; window.__harness.invited = []; window.__harness.notified = []; window.__harness.notes = [];
+  window.__harness.past = [{ email: 'brent@example.com', name: 'Brent Allen', phone: '555-0142', role: 'editor' },
+    { email: 'tasha@example.com', name: 'Tasha Lane', phone: '', role: 'viewer' }];
+  window.__harness.pushSupported = true; window.__harness.pushOn = false; window.__harness.phones = 3;
   window.__harness.feedState = function () { var F = window.__harness.feed; return { row: Object.assign({}, F.row), items: F.items.slice() }; };
   window.__harness.feedPush = function () { var st = window.__harness.feedState(); window.__harness.feedFns.forEach(function (fn) { fn(st); }); };
   window.GR_BACKEND = {
@@ -71,7 +92,7 @@ shim = r"""<script>
     username: function () { return me.username; },
     ownsTour: function () { return true; },
     myRole: function () { return Promise.resolve('owner'); },
-    crew: function () { return Promise.resolve(window.__harness.crew); },
+    crew: function () { window.__harness.crewCalls = (window.__harness.crewCalls || 0) + 1; return Promise.resolve(window.__harness.crew); },
     myProfile: function () { return { firstName: me.first_name, lastName: me.last_name, fullName: me.full_name,
       username: me.username, phone: me.phone, tourRole: me.tour_role, email: 'devin@example.com' }; },
     saveProfile: function (p) { me.first_name = p.firstName; me.last_name = p.lastName;
@@ -79,6 +100,22 @@ shim = r"""<script>
       me.phone = p.phone; me.tour_role = p.tourRole; window.__harness.saved = JSON.parse(JSON.stringify(me));
       return Promise.resolve(); },
     signOut: function () {},
+    members: function () { return Promise.resolve(window.__harness.members); },
+    invite: function (tourId, email, role, name, phone) {
+      window.__harness.invited.push([email, role, name]);
+      window.__harness.members.push({ invited_email: email, role: role, display_name: name, user_id: null });
+      return Promise.resolve('sent');
+    },
+    uninvite: function () { return Promise.resolve(); },
+    pastCrew: function () { return Promise.resolve(window.__harness.past.slice()); },
+    forgetPastCrew: function (email) { window.__harness.past = window.__harness.past.filter(function (p) { return p.email !== email; }); return Promise.resolve(); },
+    pushSupported: function () { return window.__harness.pushSupported; },
+    pushState: function () { return Promise.resolve({ on: window.__harness.pushOn, prefs: {} }); },
+    pushEnable: function (prefs) { window.__harness.pushOn = true; window.__harness.pushPrefs = prefs; return Promise.resolve(); },
+    pushDisable: function () { window.__harness.pushOn = false; return Promise.resolve(); },
+    notify: function (tourId, type, data) { window.__harness.notified.push([type, data]); return Promise.resolve(window.__harness.phones); },
+    saveNote: function (tourId, day, note) { window.__harness.notes.push(note); return Promise.resolve(); },
+    notesFor: function () { return window.__harness.notes; },
     // A fake card feed: the pile, the switch and the account choices, all in memory.
     feedWatch: function (fn) { window.__harness.feedFns.push(fn); setTimeout(function () { fn(window.__harness.feedState()); }, 0); },
     feedCall: function (action, body) {
