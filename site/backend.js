@@ -268,7 +268,7 @@
         firstName: first, lastName: last, fullName: full,
         username: String(m.username || '').trim(),
         phone: String(m.phone || '').trim(),
-        tourRole: String(m.tour_role || '').trim(),
+        tourRole: roleName(m.tour_role),
         email: session && session.user ? session.user.email : ''
       };
     },
@@ -315,7 +315,7 @@
           owner: true, role: 'owner',
           name: op.full_name || '', username: op.username || '',
           email: op.email || (ownerId === (session && session.user && session.user.id) ? session.user.email : ''),
-          phone: op.phone || '', tourRole: op.tour_role || '', joined: true
+          phone: op.phone || '', tourRole: roleName(op.tour_role), joined: true
         });
       }
       rows.forEach(function (r) {
@@ -328,7 +328,7 @@
           invitedEmail: r.invited_email,
           phone: pr.phone || r.phone || '',
           // Their own card once they've signed up; what the invite said until then.
-          tourRole: pr.tour_role || r.tour_role || '',
+          tourRole: roleName(pr.tour_role || r.tour_role),
           joined: !!r.user_id
         });
       });
@@ -387,7 +387,7 @@
     pastCrew: async function () {
       var q = await sb.from('past_crew').select('email, name, phone, role, tour_role').order('name');
       if (q.error) throw mapError(q.error);
-      return (q.data || []).map(function (r) { return Object.assign({}, r, { tourRole: r.tour_role || '' }); });
+      return (q.data || []).map(function (r) { return Object.assign({}, r, { tourRole: roleName(r.tour_role) }); });
     },
     forgetPastCrew: async function (email) {
       var q = await sb.from('past_crew').delete().eq('email', String(email).toLowerCase());
@@ -624,9 +624,14 @@
      worlds, so email links sign in the wrong one. Passwords don't care. */
   /* What someone does on the run. A job title for the crew list — never an
      access level; GA / ALL ACCESS are the tour manager's to hand out. */
-  var TOUR_ROLES = ['Artist/Owner', 'Band', 'Tour Manager', 'Production Manager',
+  var TOUR_ROLES = ['Artist', 'Band', 'Tour Manager', 'Production Manager',
     'Stage Manager', 'Merch', 'Guitar Tech', 'Drum Tech', 'Assistant',
     'FOH Engineer', 'Monitors', 'Friend', 'Family Member', 'Liaison', 'Dancer'];
+  // "Artist/Owner" is just "Artist" now; older cards read the new way.
+  function roleName(r) {
+    var t = String(r || '').trim();
+    return t === 'Artist/Owner' ? 'Artist' : t;
+  }
   function esc(v) {
     return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -1011,7 +1016,7 @@
     var needRole = !m0.tour_role;
     var tourName = String(m0.tour_name || '').trim();
     var access = m0.access === 'editor' ? 'ALL ACCESS' : (m0.access === 'viewer' ? 'GA' : '');
-    var who = [m0.tour_role, access].filter(Boolean).join(' \u00b7 ');
+    var who = [roleName(m0.tour_role), access].filter(Boolean).join(' \u00b7 ');
     wrap.innerHTML =
       '<div class="gate-card">' +
       '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
@@ -1046,7 +1051,7 @@
       var rI = wrap.querySelector('#gr-pass-role');
       var first = fI ? String(fI.value || '').trim() : first0;
       var last = lI ? String(lI.value || '').trim() : last0;
-      var tourRole = rI ? String(rI.value || '') : String(m0.tour_role || '');
+      var tourRole = rI ? String(rI.value || '') : roleName(m0.tour_role);
       var uname = String(userI.value || '').trim();
       var pass = String(passI.value || '');
       if (fI && !first) { errEl.textContent = 'Type your first name.'; fI.focus(); return; }
@@ -1139,7 +1144,7 @@
         username: String(m.username || '').slice(0, 40),
         email: session.user.email || '',
         phone: String(m.phone || '').slice(0, 30),
-        tour_role: String(m.tour_role || '').slice(0, 40),
+        tour_role: roleName(m.tour_role).slice(0, 40),
         updated_at: new Date().toISOString()
       });
     } catch (e) { /* the phone book can wait for the next sign-in */ }
