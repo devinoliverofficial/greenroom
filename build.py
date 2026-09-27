@@ -109,6 +109,7 @@ def build_web():
     shutil.copy(SRC / 'logo-mastertour.png', web / 'logo-mastertour.png')
     shutil.copy(SRC / 'logo-atvenu.png', web / 'logo-atvenu.png')
     shutil.copy(SRC / 'bus-faint.jpg', web / 'bus-faint.jpg')
+    shutil.copy(SRC / 'email-header.jpg', web / 'email-header.jpg')  # the GREENROOM emails' banner
     shutil.copy(SRC / 'icon-180.png', web / 'icon-180.png')
     shutil.copy(SRC / 'icon-512.png', web / 'icon-512.png')
     shutil.copy(SRC / 'gr-stark-180.png', web / 'gr-stark-180.png')

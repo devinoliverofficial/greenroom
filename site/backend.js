@@ -659,8 +659,10 @@
     if (q.error) throw q.error;
   }
 
-  function gate(note) {
-    var mode = 'signin';
+  function gate(note, code) {
+    var mode = code ? 'welcome' : 'signin';
+    var standalone = navigator.standalone === true ||
+      !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
     var wrap = document.createElement('div');
     wrap.id = 'gr-gate';
     document.body.appendChild(wrap);
@@ -670,6 +672,31 @@
        app. Typing the code here signs in without leaving the app. The code
        could be from an invite, a password reset or a sign-in email, so each
        kind is tried in turn. */
+    /* Opened from an email's button, in Safari: an iPhone won't hand links to
+       the home-screen app, so say how to get there, with the code big. */
+    function renderWelcome() {
+      if (standalone) { mode = 'code'; renderCode(); return; }
+      wrap.innerHTML =
+        '<div class="gate-card">' +
+        '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
+        '<p class="gate-hi">Welcome to Greenroom.</p>' +
+        '<ol class="gate-steps">' +
+        '<li>Tap the <b>Share</b> button below, then <b>Add to Home Screen</b>.</li>' +
+        '<li>Open <b>Greenroom</b> from your home screen and tap <b>I have a code</b>.</li>' +
+        '<li>Type this code:</li>' +
+        '</ol>' +
+        '<div class="gate-codebox">' + esc(code) + '</div>' +
+        '<button class="btn ghost block" id="gr-code-copy" type="button">Copy code</button>' +
+        '<button class="linkbtn" id="gr-code-here" type="button">Or finish here in Safari</button>' +
+        '</div>';
+      wrap.querySelector('#gr-code-copy').addEventListener('click', async function (e) {
+        var b = e.currentTarget;
+        try { await navigator.clipboard.writeText(code); b.textContent = 'Copied'; }
+        catch (e2) { b.textContent = 'Press and hold the code to copy it'; }
+      });
+      wrap.querySelector('#gr-code-here').addEventListener('click', function () { mode = 'code'; render(); });
+    }
+
     function renderCode() {
       wrap.innerHTML =
         '<div class="gate-card">' +
@@ -690,6 +717,7 @@
       var codeI = wrap.querySelector('#gr-gate-code');
       var errEl = wrap.querySelector('#gr-gate-err');
       var btn = form.querySelector('button');
+      if (code) codeI.value = code;
       form.addEventListener('submit', async function (e) {
         e.preventDefault();
         var email = String(emailI.value || '').trim();
@@ -719,6 +747,7 @@
     }
 
     function render() {
+      if (mode === 'welcome') { renderWelcome(); return; }
       if (mode === 'code') { renderCode(); return; }
       var signin = mode === 'signin';
       wrap.innerHTML =
@@ -856,6 +885,17 @@
      mode, which left invited crew signed out with no password to sign in
      with. So the app reads them itself, then wipes them from the address. */
   function readEmailLink() {
+    // The GREENROOM emails' button opens the app with the code in the
+    // address (?code=12345678): it doesn't sign in by itself, so the code
+    // still works when typed into the home-screen app.
+    var q = new URLSearchParams(location.search);
+    var code = String(q.get('code') || '').replace(/\D/g, '');
+    if (code) {
+      q.delete('code');
+      var rest = q.toString();
+      try { history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash); } catch (e) { /* cosmetic */ }
+      return { code: code };
+    }
     var raw = String(location.hash || '').replace(/^#/, '');
     if (!/access_token=|error_description=|error_code=/.test(raw)) return {};
     var p = new URLSearchParams(raw);
@@ -889,7 +929,7 @@
     resetting = link.type === 'recovery' && !!session;
 
     if (!session) {
-      var g = gate(note);
+      var g = gate(note, link.code);
       sb.auth.onAuthStateChange(function (_ev, s) {
         if (s && !session) { session = s; g.remove(); online(); }
       });

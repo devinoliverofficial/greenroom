@@ -1,20 +1,22 @@
-<div style="margin:0;padding:0;background:#000000;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#000000;">
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><style>:root{color-scheme:dark;supported-color-schemes:dark;}</style></head><body style="margin:0;padding:0;background:#000000;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#000000" style="background:#000000;">
 <tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;background:#0C0F02;border:1px solid #1F2408;border-radius:18px;">
-<tr><td align="center" style="background:#CCF80A;border-radius:17px 17px 0 0;padding:24px 20px;">
-<img src="https://devinoliverofficial.github.io/greenroom/logo-full.png" width="210" alt="GREENROOM" style="display:block;width:210px;max-width:70%;height:auto;border:0;color:#0C0E00;font:800 24px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;letter-spacing:.08em;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0C0F02" style="max-width:480px;background:#0C0F02;border:1px solid #1F2408;border-radius:18px;">
+<tr><td style="padding:0;border-radius:17px 17px 0 0;">
+<img src="https://devinoliverofficial.github.io/greenroom/email-header.jpg" width="480" alt="GREENROOM" style="display:block;width:100%;max-width:480px;height:auto;border:0;border-radius:17px 17px 0 0;color:#CCF80A;font:800 24px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;letter-spacing:.08em;text-align:center;">
 </td></tr>
-<tr><td style="padding:30px 26px 6px;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#F1F4E3;">
+<tr><td style="padding:30px 26px 4px;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#F1F4E3;">
 <p style="margin:0 0 8px;font-size:22px;font-weight:600;line-height:1.3;color:#F1F4E3;">{{ if .Data.first_name }}{{ .Data.first_name }}, confirm{{ else }}Confirm{{ end }} your email.</p>
 
-<p style="margin:0 0 24px;font-size:15px;line-height:1.55;color:#B9BEA6;">One tap and your Greenroom account is ready. Then sign in with your email and the password you picked.</p>
+<p style="margin:0 0 20px;font-size:15px;line-height:1.55;color:#B9BEA6;">Here&rsquo;s your code to finish setting up your Greenroom account.</p>
 </td></tr>
-<tr><td align="center" style="padding:0 26px 30px;">
-<a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#CCF80A;color:#0C0E00;font:700 16px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;text-decoration:none;padding:15px 30px;border-radius:12px;">Confirm my email</a>
+<tr><td style="padding:0 26px 22px;font:14px/1.55 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#B9BEA6;">In Greenroom, tap <b style="color:#F1F4E3;">I have a code</b> and type:<div style="margin:12px 0 0;padding:12px 0;border:1px solid #2A3305;border-radius:12px;text-align:center;font:700 28px/1.2 'SF Mono',Menlo,Consolas,monospace;letter-spacing:.2em;color:#CCF80A;">{{ .Token }}</div></td></tr>
+<tr><td align="center" style="padding:0 26px 26px;">
+<a href="https://devinoliverofficial.github.io/greenroom/?code={{ .Token }}" style="display:inline-block;background:#0C0E00;border:1.5px solid #CCF80A;color:#CCF80A;font:700 16px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;text-decoration:none;padding:14px 30px;border-radius:12px;">Open Greenroom</a>
+<p style="margin:10px 0 0;font:13px/1.5 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#8F947B;">Don&rsquo;t have it on your home screen yet? The button shows you how.</p>
 </td></tr>
-<tr><td style="padding:0 26px 24px;font:14px/1.55 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#B9BEA6;">Already have Greenroom on your home screen? Open it, tap <b style="color:#F1F4E3;">I have a code</b>, and type this code:<div style="margin:12px 0 0;padding:12px 0;border:1px solid #2A3305;border-radius:12px;text-align:center;font:700 28px/1.2 'SF Mono',Menlo,Consolas,monospace;letter-spacing:.2em;color:#CCF80A;">{{ .Token }}</div></td></tr>
 <tr><td style="padding:0 26px 28px;font:13px/1.55 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#8F947B;">Didn&rsquo;t make an account? Ignore this and nothing happens.</td></tr>
 </table>
 <p style="margin:16px 0 0;font:12px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#626750;">Greenroom &middot; the tour, in one place</p>
-</td></tr></table></div>
+</td></tr></table>
+</body></html>
