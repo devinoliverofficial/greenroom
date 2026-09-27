@@ -556,9 +556,21 @@
       if (q.error) throw mapError(q.error);
       loadFeed(false);
     },
+    /* Straight to the sign-in page. This phone forgets the sign-in at once;
+       telling the server is a courtesy that gets two seconds, never a wait. */
     signOut: async function () {
-      try { await sb.auth.signOut(); } catch (e) { /* going anyway */ }
-      location.reload();
+      try {
+        await Promise.race([
+          sb.auth.signOut({ scope: 'local' }),
+          new Promise(function (r) { setTimeout(r, 2000); })
+        ]);
+      } catch (e) { /* going anyway */ }
+      try {
+        Object.keys(localStorage).forEach(function (k) {
+          if (/^sb-.*-auth-token/.test(k)) localStorage.removeItem(k);
+        });
+      } catch (e) { /* nothing stored */ }
+      location.replace(appUrl());
     }
   };
 
@@ -912,7 +924,11 @@
     sbMod = mod;
     var link = readEmailLink();
     sb = mod.createClient(cfg.url, cfg.anonKey, {
-      auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true }
+      // processLock, not the browser's shared lock: on an iPhone the shared
+      // one can stay held after the app sleeps, and every sign-in call behind
+      // it (signing out, even starting up) waits forever.
+      auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true,
+        lock: mod.processLock || undefined }
     });
     var got = await sb.auth.getSession();
     session = got.data ? got.data.session : null;

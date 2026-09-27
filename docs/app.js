@@ -1604,7 +1604,8 @@
                 body: (who ? 'You\u2019re signed in as ' + who + '. ' : '') +
                   'Your tours stay safe in your account.',
                 action: 'Sign out',
-                onConfirm: function () { B.signOut(); return true; }
+                // Say so at once: the sign-in page follows in a moment.
+                onConfirm: function () { toast('Signing out\u2026'); B.signOut(); return false; }
               });
             } }, icon('back', 18), 'Sign out') : null)
       ];
