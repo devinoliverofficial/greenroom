@@ -1508,7 +1508,7 @@
       dbBanner(),
       h('div', { class: 'sec-head split' },
         h('div', null,
-          h('h2', { class: 'sec-title soft' }, 'Artists'),
+          h('h2', { class: 'sec-title hdr' }, 'Artists'),
           byArtist.size ? h('p', { class: 'sec-sub' }, plural(byArtist.size, 'act') +
             ' \u00b7 ' + plural(entries.filter(function (e) { return artistOf(e[1]); }).length, 'run')) : null),
         canWrite()
@@ -1701,7 +1701,7 @@
       dbBanner(),
       h('div', { class: 'sec-head split' },
         h('div', null,
-          h('h2', { class: 'sec-title soft' }, 'Tours'),
+          h('h2', { class: 'sec-title hdr' }, 'Tours'),
           entries.length ? h('p', { class: 'sec-sub' }, plural(entries.length, 'run') + ' for ' + name) : null),
         canWrite()
           ? h('button', { class: 'add-pill', type: 'button',
@@ -3511,7 +3511,7 @@
 
     return [
       h('div', { class: 'sec-head', style: 'margin-top:30px;text-align:center' },
-        h('h2', { class: 'sec-title' }, 'CREW')),
+        h('h2', { class: 'sec-title hdr' }, 'Crew')),
       list,
       owns ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
         h('button', { class: 'crew-invite', type: 'button',
@@ -3685,7 +3685,7 @@
     return [
       h('div', { class: 'sec-head', style: 'margin-top:8px;text-align:center;margin-bottom:4px' },
         h('p', { class: 'gl-when glow' }, s.date === today ? 'Today\u2019s' : dayLong(s.date)),
-        h('h2', { class: 'sec-title' }, 'GUEST LIST')),
+        h('h2', { class: 'sec-title hdr' }, 'Guest List')),
       h('p', { class: 'note', style: 'margin:0 2px 2px;text-align:center' },
         [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
         (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
@@ -3954,6 +3954,7 @@
     var body;
     if (!lines.length) {
       body = emptyState('No day sheet added.', null);
+      body.classList.add('ds-empty');
     } else if (s) {
       // In sections, in the order the day happens: where you are, the
       // schedule from lobby call to bus call, then the amenities.
