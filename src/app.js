@@ -128,7 +128,8 @@
     tag: '<path d="M3 12.5V4a1 1 0 0 1 1-1h8.5L21 11.5 12.5 20 3 12.5z"/><circle cx="7.5" cy="7.5" r="1.3" fill="currentColor" stroke="none"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
-    history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>'
+    history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>',
+    refresh: '<path d="M20 11a8 8 0 0 0-14.6-4.4L4 8.5"/><path d="M4 3.5v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.4l1.4-1.9"/><path d="M20 20.5v-5h-5"/>'
   };
   function icon(name, size) {
     var s = size || 22;
@@ -7058,18 +7059,48 @@
     }
     var row = S.feed.row || {};
     if (!row.switched_on) {
+      // Connected but not set up yet: the one time the choices are asked.
       return h('button', { class: 'btn ghost block feed-entry', type: 'button',
         onclick: function () { openFeedSheet(id); } },
-        icon('card', 18), 'Connect the cards \u00b7 YNAB');
+        icon('card', 18), 'Set up the card feed \u00b7 YNAB');
     }
+    // Set up: one button does the rest. The gear holds the choices.
     var n = feedWaiting(id).length;
-    if (n) {
-      return h('button', { class: 'btn primary block feed-entry', type: 'button',
+    var label = h('span', null, 'Refresh Card Expenses');
+    var refreshBtn = h('button', { class: 'btn quiet glow feed-refresh', type: 'button',
+      onclick: function () { refreshCards(id, refreshBtn, label); } },
+      icon('refresh', 18), label);
+    return h('div', { class: 'feed-entry' },
+      n ? h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:10px',
         onclick: function () { openFeedReview(id); } },
-        icon('card', 18), plural(n, 'card charge') + (n === 1 ? ' needs' : ' need') + ' a look');
+        icon('card', 18), plural(n, 'card charge') + (n === 1 ? ' needs' : ' need') + ' a look') : null,
+      h('div', { class: 'feed-bar' },
+        refreshBtn,
+        h('button', { class: 'btn quiet glow feed-gear', type: 'button', 'aria-label': 'Card feed settings',
+          onclick: function () { openFeedSheet(id); } }, icon('gear', 20))),
+      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)));
+  }
+
+  /* Refresh: ask YNAB for anything new, then take the next step for the
+     manager: charges that need a look open straight away; otherwise a word
+     on what came in. Anything wrong with the connection opens the settings. */
+  async function refreshCards(id, btn, label) {
+    var B = window.GR_BACKEND;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    label.textContent = 'Checking YNAB\u2026';
+    var r = null;
+    try { r = await B.feedCall('sync', { force: true }); } catch (e) { r = null; }
+    btn.disabled = false;
+    label.textContent = 'Refresh Card Expenses';
+    if (!r || !r.ok) {
+      var code = r && (r.status || r.error);
+      toast(feedProblem(code));
+      if (code === 'token_refused' || code === 'not_connected' || code === 'plan_missing') openFeedSheet(id);
+      return;
     }
-    return h('button', { class: 'feed-quiet', type: 'button', onclick: function () { openFeedSheet(id); } },
-      'Card feed on \u00b7 checked ' + feedAgo(row.last_run));
+    if (feedWaiting(id).length) openFeedReview(id);
+    else toast(feedResult(r));
   }
 
   function openFeedReview(tourId) {
@@ -7093,6 +7124,7 @@
   function openFeedSheet(tourId) {
     var B = window.GR_BACKEND;
     var MODES = ['log', 'ask', 'off'];
+    var settingUp = !(S.feed && S.feed.row && S.feed.row.switched_on);
     var body = h('div', { class: 'feed-body' }, h('p', { class: 'sh-sub' }, 'Checking YNAB\u2026'));
     var st = null;
     var starts = feedStarts(tourId);
@@ -7199,18 +7231,19 @@
               run('on', async function () {
                 var r = await B.feedCall('setup', { on: true, since: starts[startIdx].date });
                 if (!r || !r.ok) { toast(feedProblem(r && (r.status || r.error))); return; }
+                // Asked once: from here on it's the Refresh button.
+                closeSheet();
                 toast('Card feed on. Reading YNAB\u2026');
-                toast(feedResult(await B.feedCall('sync', { force: true })));
+                var got = await B.feedCall('sync', { force: true });
+                if (got && got.ok && tourId && feedWaiting(tourId).length) openFeedReview(tourId);
+                else toast(feedResult(got));
               });
             } }, 'Turn on the card feed')));
       } else {
         parts.push(
-          h('p', { class: 'sh-sub feed-when' }, 'On since ' + dayLong(st.since) + ' \u00b7 checked ' + feedAgo(st.lastRun)),
+          h('p', { class: 'sh-sub feed-when' }, 'On since ' + dayLong(st.since) + ' \u00b7 last checked ' + feedAgo(st.lastRun)),
           st.lastStatus && st.lastStatus !== 'ok' ? h('p', { class: 'note' }, feedProblem(st.lastStatus)) : null,
           h('div', { class: 'stack' },
-            h('button', { class: 'btn primary block', type: 'button', onclick: function () {
-              run('check', async function () { toast(feedResult(await B.feedCall('sync', { force: true }))); });
-            } }, 'Check now'),
             h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
               run('off', async function () {
                 var r = await B.feedCall('setup', { on: false });
@@ -7231,14 +7264,14 @@
     openSheet(function () {
       load();
       return [
-        h('h2', { class: 'sh-title' }, 'Card feed'),
+        h('h2', { class: 'sh-title' }, settingUp ? 'Set up the card feed' : 'Card feed settings'),
         h('p', { class: 'sh-sub' }, ((S.feed && S.feed.row && S.feed.row.plan_name)
           ? 'Greenroom reads your YNAB plan \u201c' + S.feed.row.plan_name + '\u201d'
           : 'Greenroom reads your YNAB') +
           ' and logs what the cards spend. Money coming in is never logged, and only you see this.'),
         body
       ];
-    }, { label: 'Card feed' });
+    }, { label: settingUp ? 'Set up the card feed' : 'Card feed settings' });
   }
 
   /* ---------------- Card charges, imports and learned labels ---------------- */

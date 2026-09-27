@@ -523,7 +523,8 @@
       var out = {};
       try { out = await r.json(); } catch (e) { out = {}; }
       if (!r.ok && !out.error) out.error = 'unavailable';
-      if (action !== 'status') loadFeed(false);
+      // Wait for the fresh pile, so the app can act on what just came in.
+      if (action !== 'status') await loadFeed(false);
       return out;
     },
     feedMark: async function (ids, patch) {
