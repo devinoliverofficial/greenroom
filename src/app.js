@@ -3907,49 +3907,61 @@
     if (!lines.length) {
       body = emptyState('No day sheet added.', null);
     } else if (s) {
-      var rowsOut = [];
-      var timeRow = function (label, v) {
-        if (!String(v || '').trim()) return;
-        rowsOut.push(h('div', { class: 'row ds-row' },
-          h('span', { class: 'row-label' }, label),
-          h('span', { class: 'ds-time num' }, String(v).trim())));
+      // In sections, in the order the day happens: where you are, the
+      // schedule from lobby call to bus call, then the amenities.
+      var dsRow = function (label, val) {
+        return h('div', { class: 'row ds-row' }, h('span', { class: 'row-label' }, label), val);
       };
-      if (String(d.venueAddress || '').trim()) {
-        rowsOut.push(h('div', { class: 'row ds-row' },
-          h('span', { class: 'row-label' }, 'Address'),
-          h('a', { class: 'ds-val ds-link', href: mapsHref(d.venueAddress), target: '_blank', rel: 'noopener' },
-            String(d.venueAddress).trim())));
-      }
-      timeRow('Venue phone', d.venuePhone);
-      timeRow('Load in', G.cleanTime(d.loadIn));
-      (Array.isArray(d.soundchecks) ? d.soundchecks : []).forEach(function (r) {
-        if (r && (r.band || r.time)) timeRow('Soundcheck \u2014 ' + (r.band || 'TBA'), G.cleanTime(r.time) || 'TBA');
-      });
-      timeRow('VIP', d.vip);
-      timeRow('Doors', G.cleanTime(d.doors));
-      (Array.isArray(d.setTimes) ? d.setTimes : []).forEach(function (r) {
-        if (r && (r.band || r.time)) timeRow(r.band || 'TBA', G.cleanTime(r.time) || 'TBA');
-      });
-      timeRow('Lobby call', G.cleanTime(d.lobbyCall));
-      timeRow('Bus call', G.cleanTime(d.busCall));
-      var venueRows = [];
-      if (String(d.wifi || '').trim()) venueRows.push(h('div', { class: 'row ds-row' },
-        h('span', { class: 'row-label' }, 'Wifi'), h('span', { class: 'ds-val' }, d.wifi)));
-      if (String(d.parking || '').trim()) venueRows.push(h('div', { class: 'row ds-row' },
-        h('span', { class: 'row-label' }, 'Parking'), h('span', { class: 'ds-val' }, d.parking)));
-      // Every amenity listed, a plain yes or no beside it.
-      G.DS_AMENITIES.forEach(function (a) {
-        var v = d[a[0]] === 'yes' ? 'Yes' : (d[a[0]] === 'no' ? 'No' : '\u2014');
-        venueRows.push(h('div', { class: 'row ds-row' },
-          h('span', { class: 'row-label' }, a[1]),
-          h('span', { class: 'ds-val' }, v)));
-      });
+      var textRow = function (label, v) {
+        v = String(v || '').trim();
+        return v ? dsRow(label, h('span', { class: 'ds-val' }, v)) : null;
+      };
+      var clockRow = function (label, v) {
+        v = G.cleanTime(v);
+        return v ? dsRow(label, h('span', { class: 'ds-time num' }, v)) : null;
+      };
+      // Soundchecks and set times: a small heading, then one row per band.
+      var bandRows = function (title, list) {
+        var got = (Array.isArray(list) ? list : []).filter(function (r) {
+          return r && (String(r.band || '').trim() || String(r.time || '').trim());
+        });
+        if (!got.length) return [];
+        return [h('div', { class: 'row ds-sub' }, title)].concat(got.map(function (r) {
+          return h('div', { class: 'row ds-row ds-band-row' },
+            h('span', { class: 'row-label' }, String(r.band || '').trim() || 'TBA'),
+            h('span', { class: 'ds-time num' }, G.cleanTime(r.time) || 'TBA'));
+        }));
+      };
+      var section = function (title, rows) {
+        rows = [].concat.apply([], rows).filter(Boolean);
+        return rows.length ? h('section', { class: 'ds-sec' },
+          h('h3', { class: 'ds-sec-h' }, title), h('div', { class: 'ledger' }, rows)) : null;
+      };
+      var address = String(d.venueAddress || '').trim();
       body = [
-        rowsOut.length ? h('div', { class: 'ledger' }, rowsOut) : null,
-        venueRows.length ? h('div', { class: 'ledger', style: 'margin-top:12px' }, venueRows) : null,
-        String(d.driveNext || '').trim() ? h('div', { class: 'ds-drive' },
-          h('span', { class: 'hint' }, 'Drive to next venue'),
-          h('strong', { class: 'num' }, d.driveNext)) : null
+        section('Venue', [
+          address ? dsRow('Address', h('a', { class: 'ds-val ds-link', href: mapsHref(address),
+            target: '_blank', rel: 'noopener' }, address)) : null,
+          textRow('Venue phone', d.venuePhone),
+          textRow('Wifi', d.wifi),
+          textRow('Parking', d.parking)]),
+        section('Schedule', [
+          clockRow('Lobby call', d.lobbyCall),
+          clockRow('Load in', d.loadIn),
+          bandRows('Soundcheck', d.soundchecks),
+          textRow('VIP', d.vip),
+          clockRow('Doors', d.doors),
+          bandRows('Set times', d.setTimes),
+          clockRow('Load out', d.loadOut),
+          clockRow('Bus call', d.busCall),
+          textRow('Drive to next venue', d.driveNext)]),
+        // Every amenity listed, a plain yes or no beside it.
+        section('Amenities', G.DS_AMENITIES.map(function (a) {
+          return dsRow(a[1], h('span', { class: 'ds-val' },
+            d[a[0]] === 'yes' ? 'Yes' : (d[a[0]] === 'no' ? 'No' : '\u2014')));
+        })),
+        String(d.notes || '').trim() ? h('section', { class: 'ds-sec' },
+          h('h3', { class: 'ds-sec-h' }, 'Notes'), h('p', { class: 'ds-notes' }, String(d.notes).trim())) : null
       ];
     } else {
       // An off day: the hotel and the plans.
@@ -4047,12 +4059,41 @@
     // The night's venue, filled in from the show, centred over its day sheet.
     // An off day shows the hotel instead, when there is one.
     var placeName = s ? String(s.venue || '').trim() : String((off && off.hotel) || '').trim();
-    var placeEl = placeName ? h('div', { class: 'ds-venue' }, placeName) : null;
+    // A trash can in the corner clears the sheet to start over, after asking.
+    var trashBtn = canEditTour(id) && lines.length ? h('button', {
+      class: 'iconbtn sm ds-trash', type: 'button', 'aria-label': 'Clear this day sheet',
+      onclick: function () { clearDaySheet(id, s, entry.date, off); } }, icon('trash', 18)) : null;
+    var placeEl = placeName || trashBtn ? h('div', { class: 'ds-venue-row' },
+      placeName ? h('div', { class: 'ds-venue' }, placeName) : null, trashBtn) : null;
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
     if (only === 'sheet') return [rail, editRow, placeEl, body, copyBtn];
     return [hero, rail, editRow, body, guestBtn, copyBtn];
+  }
+
+  function clearDaySheet(tourId, show, date, off) {
+    var where = show ? (show.city || 'this night') : (off.city || 'this day off');
+    confirmSheet({
+      title: 'Clear this day sheet?',
+      body: 'Everything on ' + where + '\u2019s day sheet is erased so you can start over. ' +
+        (show ? 'The show itself, its money and its guest list stay.' : 'The day itself stays on the tour.'),
+      action: 'Clear day sheet', danger: true,
+      onConfirm: async function () {
+        var patch;
+        if (show) {
+          patch = { shows: {} };
+          patch.shows[show.id] = { daySheet: null };
+        } else {
+          // An off day keeps its town, so the day picker still says where you are.
+          patch = { offDays: {} };
+          patch.offDays[date] = String(off.city || '').trim() ? { city: off.city } : null;
+        }
+        var ok = await api.update(tourId, patch);
+        if (ok) toast('Day sheet cleared');
+        return ok;
+      }
+    });
   }
 
   /* Set times rarely move on a run, so ask once and fill the rest. Only ever
@@ -4789,7 +4830,7 @@
     var f = {
       venueAddress: d0.venueAddress || '', venuePhone: d0.venuePhone || '',
       loadIn: d0.loadIn || '', vip: d0.vip || '', doors: d0.doors || '',
-      lobbyCall: d0.lobbyCall || '', busCall: d0.busCall || '',
+      loadOut: d0.loadOut || '', lobbyCall: d0.lobbyCall || '', busCall: d0.busCall || '',
       wifi: d0.wifi || '', parking: d0.parking || '',
       driveNext: d0.driveNext || '', notes: d0.notes || '',
       soundchecks: (Array.isArray(d0.soundchecks) ? d0.soundchecks : []).map(function (r) {
@@ -4879,7 +4920,7 @@
         var sheet = {
           venueAddress: f.venueAddress.trim(), venuePhone: f.venuePhone.trim(),
           loadIn: f.loadIn.trim(), vip: f.vip.trim(), doors: f.doors.trim(),
-          lobbyCall: f.lobbyCall.trim(), busCall: f.busCall.trim(),
+          loadOut: f.loadOut.trim(), lobbyCall: f.lobbyCall.trim(), busCall: f.busCall.trim(),
           wifi: f.wifi.trim(), parking: f.parking.trim(),
           driveNext: f.driveNext.trim(), notes: f.notes.trim(),
           soundchecks: clean(f.soundchecks), setTimes: clean(f.setTimes)
@@ -4897,21 +4938,27 @@
         h('h2', { class: 'sh-title clean' }, 'Day sheet \u2014 ' + (s.city || 'Show')),
         h('p', { class: 'sh-sub clean' }, 'Everything the bus needs for the day. Leave anything blank and it just doesn\u2019t show.'),
         h('form', { class: 'sh-form ds-editor', onsubmit: submit, novalidate: true },
+          h('h3', { class: 'ds-sec-h' }, 'Venue'),
           field('Venue address', textIn('venueAddress', '2115 Woodward Ave')),
           field('Venue phone', textIn('venuePhone', '(313) 961-5451')),
-          h('div', { class: 'field-row' },
-            field('Load in', timeIn('loadIn', '2')),
-            field('Doors', timeIn('doors', '7'))),
-          group('Soundchecks', bandList('soundchecks', '+ Add a band\u2019s soundcheck')),
-          field('VIP', textIn('vip', '6:00 PM meet & greet')),
-          group('Set times', bandList('setTimes', '+ Add a band\u2019s set time')),
-          h('div', { class: 'field-row' },
-            field('Lobby call', timeIn('lobbyCall', '11', 'AM')),
-            field('Bus call', timeIn('busCall', '11:45'))),
           field('Wifi', textIn('wifi', 'Network / password')),
           field('Parking', textIn('parking', 'Load in off 4th St alley, bus on the north lot')),
-          h('div', { class: 'ds-yns' }, G.DS_AMENITIES.map(function (a) { return yesNo(a[0], a[1]); })),
+          // The schedule, in the order the day happens.
+          h('h3', { class: 'ds-sec-h' }, 'Schedule'),
+          h('div', { class: 'field-row' },
+            field('Lobby call', timeIn('lobbyCall', '11', 'AM')),
+            field('Load in', timeIn('loadIn', '2'))),
+          group('Soundchecks', bandList('soundchecks', '+ Add a band\u2019s soundcheck')),
+          field('VIP', textIn('vip', '6:00 PM meet & greet')),
+          h('div', { class: 'field-row' },
+            field('Doors', timeIn('doors', '7')), h('div', null)),
+          group('Set times', bandList('setTimes', '+ Add a band\u2019s set time')),
+          h('div', { class: 'field-row' },
+            field('Load out', timeIn('loadOut', '11:30')),
+            field('Bus call', timeIn('busCall', '1', 'AM'))),
           field('Drive time to next venue', textIn('driveNext', '4h 20m \u2014 285 mi')),
+          h('h3', { class: 'ds-sec-h' }, 'Amenities'),
+          h('div', { class: 'ds-yns' }, G.DS_AMENITIES.map(function (a) { return yesNo(a[0], a[1]); })),
           field('Anything else', textIn('notes', 'Optional')),
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Post day sheet'),
@@ -6660,7 +6707,7 @@
       '{"days":[{"date":"2026-05-01","city":"Detroit, MI","venue":"The Fillmore",',
       '  "loadIn":"2:00 PM","soundchecks":[{"band":"In This Moment","time":"4:00 PM"}],',
       '  "vip":"","doors":"7:00 PM","setTimes":[{"band":"Support","time":"8:00 PM"}],',
-      '  "lobbyCall":"","busCall":"","wifi":"","parking":"",',
+      '  "loadOut":"","lobbyCall":"","busCall":"","wifi":"","parking":"",',
       '  "greenrooms":null,"showers":null,"productionOffice":null,"laundry":null,',
       '  "driveNext":"","notes":""}]}',
       '',

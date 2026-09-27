@@ -628,40 +628,56 @@
   }
   function cleanTime(v) { var p = splitTime(v); return joinTime(p.main, p.ampm); }
 
-  function daySheetLines(show) {
+  /* The day sheet in the order the day happens, in sections: where you are
+     (address, phone, wifi, parking), the schedule from lobby call to bus
+     call, then the amenities and any notes. Only what the tour manager
+     actually filled in; a section with nothing in it isn't there. */
+  function daySheetSections(show) {
     var d = show && isObj(show.daySheet) ? show.daySheet : {};
-    var lines = [];
-    var put = function (label, v) {
+    var out = [];
+    var sec = function (key, title) { var x = { key: key, title: title, lines: [] }; out.push(x); return x; };
+    var put = function (x, label, v) {
       v = String(v == null ? '' : v).trim();
-      if (v) lines.push(label + ': ' + v);
+      if (v) x.lines.push(label + ': ' + v);
     };
-    put('Address', d.venueAddress);
-    put('Venue phone', d.venuePhone);
-    put('Load in', cleanTime(d.loadIn));
+    var venue = sec('venue', 'Venue');
+    put(venue, 'Address', d.venueAddress);
+    put(venue, 'Venue phone', d.venuePhone);
+    put(venue, 'Wifi', d.wifi);
+    put(venue, 'Parking', d.parking);
+    var day = sec('schedule', 'Schedule');
+    put(day, 'Lobby call', cleanTime(d.lobbyCall));
+    put(day, 'Load in', cleanTime(d.loadIn));
     dsList(d.soundchecks).forEach(function (r) {
-      lines.push('Soundcheck — ' + (String(r.band || '').trim() || 'TBA') + ': ' + (cleanTime(r.time) || 'TBA'));
+      day.lines.push('Soundcheck — ' + (String(r.band || '').trim() || 'TBA') + ': ' + (cleanTime(r.time) || 'TBA'));
     });
-    put('VIP', d.vip);
-    put('Doors', cleanTime(d.doors));
+    put(day, 'VIP', d.vip);
+    put(day, 'Doors', cleanTime(d.doors));
     dsList(d.setTimes).forEach(function (r) {
-      lines.push((String(r.band || '').trim() || 'TBA') + ': ' + (cleanTime(r.time) || 'TBA'));
+      day.lines.push((String(r.band || '').trim() || 'TBA') + ': ' + (cleanTime(r.time) || 'TBA'));
     });
-    put('Lobby call', cleanTime(d.lobbyCall));
-    put('Bus call', cleanTime(d.busCall));
-    put('Wifi', d.wifi);
-    put('Parking', d.parking);
+    put(day, 'Load out', cleanTime(d.loadOut));
+    put(day, 'Bus call', cleanTime(d.busCall));
+    put(day, 'Drive to next venue', d.driveNext);
     var amen = [];
     DS_AMENITIES.forEach(function (a) {
       var v = d[a[0]];
       if (v === 'yes') amen.push(a[1] + ' yes');
       else if (v === 'no') amen.push('no ' + a[1].toLowerCase());
     });
-    if (amen.length) lines.push(amen.join(' · '));
-    put('Drive to next venue', d.driveNext);
-    put('Notes', d.notes);
-    return lines;
+    var am = sec('amenities', 'Amenities');
+    if (amen.length) am.lines.push(amen.join(' · '));
+    put(sec('notes', 'Notes'), 'Notes', d.notes);
+    return out.filter(function (x) { return x.lines.length; });
   }
 
+  // The same, as one flat list of lines.
+  function daySheetLines(show) {
+    return daySheetSections(show).reduce(function (all, x) { return all.concat(x.lines); }, []);
+  }
+
+  // Ready for the group chat: the night on top, then each section under its
+  // own heading with a blank line between.
   function daySheetText(show) {
     var head = [];
     if (show) {
@@ -673,7 +689,10 @@
           { weekday: 'short', month: 'short', day: 'numeric' }).format(parseDay(show.date));
       }
     }
-    return head.concat(daySheetLines(show)).join('\n');
+    var parts = daySheetSections(show).map(function (x) {
+      return [x.title.toUpperCase()].concat(x.lines).join('\n');
+    });
+    return head.concat(parts).join('\n\n');
   }
 
   /* ---------------- Reuse across tours ---------------- */
@@ -815,7 +834,7 @@
       if (!parseDay(date)) return;
       var sheet = {
         loadIn: cleanStr(r.loadIn, 40), vip: cleanStr(r.vip, 90), doors: cleanStr(r.doors, 40),
-        lobbyCall: cleanStr(r.lobbyCall, 40), busCall: cleanStr(r.busCall, 40),
+        loadOut: cleanStr(r.loadOut, 40), lobbyCall: cleanStr(r.lobbyCall, 40), busCall: cleanStr(r.busCall, 40),
         wifi: cleanStr(r.wifi, 90), parking: cleanStr(r.parking, 160),
         driveNext: cleanStr(r.driveNext, 60), notes: cleanStr(r.notes, 200),
         soundchecks: cleanPairList(r.soundchecks), setTimes: cleanPairList(r.setTimes)
@@ -833,7 +852,7 @@
   function mergeDaySheet(existing, incoming) {
     var out = {};
     var ex = isObj(existing) ? existing : {};
-    ['loadIn', 'vip', 'doors', 'lobbyCall', 'busCall', 'wifi', 'parking', 'driveNext', 'notes']
+    ['loadIn', 'vip', 'doors', 'loadOut', 'lobbyCall', 'busCall', 'wifi', 'parking', 'driveNext', 'notes']
       .forEach(function (k) { out[k] = incoming[k] || cleanStr(ex[k], 200); });
     out.soundchecks = incoming.soundchecks.length ? incoming.soundchecks : cleanPairList(ex.soundchecks);
     out.setTimes = incoming.setTimes.length ? incoming.setTimes : cleanPairList(ex.setTimes);
@@ -1074,7 +1093,7 @@
     calc: calc, stateOf: stateOf, caption: caption,
     balanceSeries: balanceSeries, latestChange: latestChange,
     normalizeSettlement: normalizeSettlement,
-    DS_AMENITIES: DS_AMENITIES, daySheetLines: daySheetLines, daySheetText: daySheetText,
+    DS_AMENITIES: DS_AMENITIES, daySheetSections: daySheetSections, daySheetLines: daySheetLines, daySheetText: daySheetText,
     splitTime: splitTime, joinTime: joinTime, cleanTime: cleanTime,
     toCSV: toCSV, closeoutCSVs: closeoutCSVs,
     offDayLines: offDayLines, offDayText: offDayText,

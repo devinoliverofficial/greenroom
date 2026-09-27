@@ -480,6 +480,20 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .ds-editor .seg-b { font-size: 14px; font-weight: 600; }
 .ds-editor .btn.quiet { font-size: 15px; font-weight: 600; }
 
+/* MODEL4, the posted day sheet in sections, in the order the day happens. */
+.ds-venue-row { position: relative; display: flex; justify-content: center; align-items: center; min-height: 44px; margin: 18px 0 4px; }
+.ds-venue-row .ds-venue { margin: 0 46px; font-weight: 600; }
+.ds-trash { position: absolute; right: -8px; top: 50%; transform: translateY(-50%); color: var(--ink-3); }
+.ds-trash:active { color: var(--neg); }
+.ds-sec { margin-top: 24px; }
+.ds-sec-h { margin: 0 2px 10px; font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--ink); }
+.ledger .row.ds-sub { min-height: 0; padding: 14px 16px 2px; font-size: 13px; font-weight: 500; color: var(--ink-2); border-bottom: 0; }
+.ds-band-row .row-label { padding-left: 12px; }
+.ds-notes { margin: 0; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  font-size: 15px; line-height: 1.45; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ds-editor .ds-sec-h { margin: 28px 0 14px; }
+.ds-editor .ds-sec-h:first-child { margin-top: 2px; }
+
 /* Hold a band to move it: the held row lifts, the others wiggle and make room. */
 .ds-band { margin-bottom: 8px; position: relative; transition: transform .18s ease; -webkit-touch-callout: none; }
 .ds-bands.reordering { -webkit-user-select: none; user-select: none; }

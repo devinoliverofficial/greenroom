@@ -560,43 +560,63 @@
 
   /* ============ Day sheets ============ */
 
-  test('the day sheet prints only what was filled in, in run order', function () {
+  test('the day sheet prints only what was filled in, in the order the day happens', function () {
     var lines = G.daySheetLines({
       daySheet: {
+        busCall: '1:00 AM',
         loadIn: '2:00 PM',
         soundchecks: [{ band: 'In This Moment', time: '4:00 PM' }, { band: 'Support', time: '5:00 PM' }],
         doors: '7:00 PM',
         setTimes: [{ band: 'Support', time: '8:00 PM' }, { band: 'In This Moment', time: '9:15 PM' }],
-        busCall: '11:45 PM',
+        loadOut: '11:30 PM',
+        lobbyCall: '10 AM',
         wifi: 'Venue5G / password stagepass',
         greenrooms: 'yes', showers: 'no',
-        driveNext: '4h 20m — 285 mi'
+        driveNext: '4h 20m — 285 mi',
+        notes: 'Catering at 5'
       }
     });
-    eq(lines[0], 'Load in: 2:00PM', 'load in first');
-    eq(lines[1], 'Soundcheck — In This Moment: 4:00PM', 'soundcheck per band');
-    eq(lines[3], 'Doors: 7:00PM', 'doors');
-    eq(lines[4], 'Support: 8:00PM', 'set times in order');
-    eq(lines.indexOf('Bus call: 11:45PM') >= 0, true, 'bus call');
-    eq(lines.indexOf('Greenrooms yes · no showers') >= 0, true, 'amenities in one line');
-    eq(lines[lines.length - 1], 'Drive to next venue: 4h 20m — 285 mi', 'drive last');
+    eq(lines[0], 'Wifi: Venue5G / password stagepass', 'venue info first');
+    eq(lines[1], 'Lobby call: 10:00AM', 'lobby call starts the schedule');
+    eq(lines[2], 'Load in: 2:00PM', 'then load in');
+    eq(lines[3], 'Soundcheck — In This Moment: 4:00PM', 'soundcheck per band');
+    eq(lines[5], 'Doors: 7:00PM', 'doors');
+    eq(lines[6], 'Support: 8:00PM', 'set times in order');
+    eq(lines[8], 'Load out: 11:30PM', 'load out after the sets');
+    eq(lines[9], 'Bus call: 1:00AM', 'bus call closes the night');
+    eq(lines[10], 'Drive to next venue: 4h 20m — 285 mi', 'then the drive');
+    eq(lines[11], 'Greenrooms yes · no showers', 'amenities near the bottom, one line');
+    eq(lines[lines.length - 1], 'Notes: Catering at 5', 'notes last');
     // nothing that wasn't filled in
     eq(lines.join('\n').indexOf('VIP'), -1, 'no empty VIP line');
-    eq(lines.join('\n').indexOf('Lobby'), -1, 'no empty lobby line');
+    eq(lines.join('\n').indexOf('Parking'), -1, 'no empty parking line');
+  });
+
+  test('the day sheet comes in sections, empty ones left out', function () {
+    var secs = G.daySheetSections({ daySheet: { venueAddress: '912 Red River St', doors: '7', laundry: 'yes' } });
+    eq(secs.map(function (x) { return x.title; }).join(','), 'Venue,Schedule,Amenities', 'three sections');
+    eq(secs[1].lines[0], 'Doors: 7:00', 'a bare number keeps what was typed');
+    eq(G.daySheetSections({ daySheet: { busCall: '11 PM' } }).length, 1, 'only the schedule');
   });
 
   test('an empty day sheet prints nothing at all', function () {
     eq(G.daySheetLines({ daySheet: {} }).length, 0, 'no lines');
     eq(G.daySheetLines({}).length, 0, 'no sheet');
+    eq(G.daySheetLines({ daySheet: null }).length, 0, 'a cleared sheet');
   });
 
-  test('the copy text leads with the city, venue and date', function () {
+  test('the copy text leads with the night, then each section under a heading', function () {
     var text = G.daySheetText({
       date: '2026-05-01', city: 'Detroit, MI', venue: 'The Fillmore',
-      daySheet: { doors: '7:00 PM' }
+      daySheet: { doors: '7:00 PM', parking: 'North lot' }
     });
-    eq(text.split('\n')[0], 'Detroit, MI — The Fillmore · Fri, May 1', 'header');
-    eq(text.split('\n')[1], 'Doors: 7:00PM', 'body');
+    var t = text.split('\n');
+    eq(t[0], 'Detroit, MI — The Fillmore · Fri, May 1', 'header');
+    eq(t[1], '', 'a gap');
+    eq(t[2], 'VENUE', 'venue heading');
+    eq(t[3], 'Parking: North lot', 'venue line');
+    eq(t[5], 'SCHEDULE', 'schedule heading');
+    eq(t[6], 'Doors: 7:00PM', 'schedule line');
   });
 
   /* ============ Master Tour import ============ */
@@ -616,6 +636,8 @@
     eq(r.days[0].sheet.greenrooms, 'yes', 'yes normalized');
     eq(r.days[0].sheet.showers, '', 'nonsense answer dropped');
     eq(r.days[0].sheet.setTimes[0].band, 'In This Moment', 'set time kept');
+    eq(G.normalizeTourImport({ days: [{ date: '2026-05-01', loadOut: '11:30 PM' }] }).days[0].sheet.loadOut,
+      '11:30 PM', 'load out comes through an import');
   });
 
   test('an import fills gaps but never erases what the manager wrote', function () {
