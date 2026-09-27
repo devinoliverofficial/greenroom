@@ -2089,22 +2089,44 @@
           closeSheet(); toast(cat.label + ' saved'); render(true);
         }
       };
-      var form = h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
-          field('Projected for the whole tour', moneyInput({
-            id: 'cat-proj', value: f.projected, label: cat.label + ' projected cost',
-            placeholder: '—', nextId: 'cat-paid',
-            onValue: function (v) { f.projected = v > 0 ? v : null; refresh(); }
-          }), 'Leave this blank and the category just totals what actually gets spent.'),
-          field('Already paid', moneyInput({
-            id: 'cat-paid', value: f.paid, label: cat.label + ' already paid', last: true,
+      // With the card feed on, what's typed here is the plan and the cards
+      // fill in what's paid. Paying another way still has a place, one tap in.
+      var fed = feedOn();
+      var showPaid = !fed || f.paid > 0;
+      var paidField = field(fed ? 'Paid outside the linked accounts' : 'Already paid', moneyInput({
+            id: 'cat-paid', value: f.paid, label: cat.label + (fed ? ' paid outside the linked accounts' : ' already paid'), last: true,
             onValue: function (v) { f.paid = v; refresh(); }
-          }), [
+          }), fed ? [
+            'Cash, a personal card, or anything paid before ' + feedSince() + '. ',
+            'Don\u2019t type what the cards or bank accounts paid: that comes in from YNAB and counts on its own',
+            charged > 0 ? ' (' + money(charged) + ' so far).' : '.'
+          ].join('') : [
             charged > 0 ? money(charged) + ' of imported charges is counted on top of this. ' : '',
             onCards.map(function (r) {
               return money(r.amount) + (r.leftover ? ' left over from ' : ' on ') + r.label + ' going in. ';
             }).join(''),
             (!charged && !onCards.length) ? 'Deposits or anything settled up front.' : ''
-          ].join('')),
+          ].join(''));
+      var paidWrap = h('div', { hidden: !showPaid }, paidField);
+      var paidOpen = showPaid ? null : h('button', {
+        class: 'linkbtn', type: 'button',
+        onclick: function (e) {
+          paidWrap.hidden = false;
+          e.currentTarget.remove();
+          var inp = document.getElementById('cat-paid');
+          if (inp) inp.focus();
+        }
+      }, 'Paid some of it another way?');
+      var form = h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
+          field('Projected for the whole tour', moneyInput({
+            id: 'cat-proj', value: f.projected, label: cat.label + ' projected cost',
+            placeholder: '—', nextId: showPaid ? 'cat-paid' : null, last: !showPaid,
+            onValue: function (v) { f.projected = v > 0 ? v : null; refresh(); }
+          }), fed
+            ? 'What you expect it to cost. Charges from the cards fill this up; they don\u2019t add on top.'
+            : 'Leave this blank and the category just totals what actually gets spent.'),
+          paidOpen,
+          paidWrap,
           readout,
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
@@ -2219,12 +2241,14 @@
         }, icon('plus', 18), 'Add someone') : null,
         list,
         canWrite() ? h('div', { style: 'margin-top:18px' },
-          field('Already paid to crew',
+          field(feedOn() ? 'Paid to crew outside the linked accounts' : 'Already paid to crew',
             moneyInput({
               id: 'crew-paid', value: paid, label: 'Already paid to crew',
               onValue: function (v) { S.drafts['crewPaid:' + id] = v; }
             }),
-            'Advances or per diems you’ve already handed out.'),
+            feedOn()
+              ? 'Cash per diems, or pay from an account that isn\u2019t linked. Crew pay from the linked bank accounts comes in from YNAB.'
+              : 'Advances or per diems you’ve already handed out.'),
           h('button', {
             class: 'btn ghost block', type: 'button',
             onclick: async function () {
@@ -4983,6 +5007,8 @@
     });
     return [
       canEditTour(id) ? addDailyForm(id) : null,
+      (canEditTour(id) && feedOn()) ? h('p', { class: 'note' },
+        'Card and bank spending comes in from YNAB by itself. Log cash and anything off the linked accounts here.') : null,
       items.length
         ? h('div', { class: 'section-total' },
             h('span', null, 'Day-to-day costs so far'),
@@ -6687,7 +6713,7 @@
             h('span', { class: 'amt num' }, G.moneyCents(r.amount))),
           h('div', { class: 'rv-sub' }, dayMD(r.date),
             r.why ? h('span', { class: 'rv-flag' + (r.why === 'Refund' ? ' learned' : '') }, r.why) : null,
-            r.source === 'learned' ? h('span', { class: 'rv-flag learned' }, 'Learned') : null,
+            (r.source === 'learned' && !r.why) ? h('span', { class: 'rv-flag learned' }, 'Learned') : null,
             r.source === 'suggested' ? h('span', { class: 'rv-flag' }, 'Suggested') : null),
           sel, already));
         return wrap;
@@ -6762,6 +6788,10 @@
      Greenroom reads the band's YNAB plan and files what the cards spend on
      the tour that was running that day. What it can't place with confidence
      waits here, for the tour manager only. */
+
+  // With the feed on, the cards and bank accounts say what's been paid.
+  function feedOn() { return !!(S.feed && S.feed.row && S.feed.row.switched_on); }
+  function feedSince() { return S.feed && S.feed.row && S.feed.row.since ? dayMD(S.feed.row.since) : 'the feed started'; }
 
   function feedWaiting(tourId) {
     if (!S.feed) return [];

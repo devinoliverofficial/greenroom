@@ -159,16 +159,24 @@ function sortTransactions(
     const cutoff = tour ? G.preTourCutoff(tour.doc) : null;
     if (spent > 0 && cutoff && date <= cutoff) { items.push({ ...base, why: "Before the tour", status: "skipped" }); continue; }
 
-    // The same amount a day either side of a charge already on the tour is
-    // probably a statement upload of the same thing.
-    const twin = tour && spent > 0 && G.rows(tour.doc.charges).some((c: Obj) =>
+    // The same amount a day either side of something already on the tour (a
+    // statement upload, or a cost logged by hand) is probably the same money.
+    const twin = tour && spent > 0 && G.rows(tour.doc.charges).concat(G.rows(tour.doc.extras)).some((c: Obj) =>
       G.parseDay(String(c.date)) && Math.abs(G.num(c.amount) - spent) < 0.005 &&
       Math.abs(G.daysBetween(String(c.date), date)) <= 1);
+
+    // A paid amount typed by hand may already include this charge. Only the
+    // manager can say, so it waits rather than counting twice.
+    const typed = category && tour ? G.num((G.normExpenses(tour.doc.expenses)[category] ?? {}).paid) : 0;
+    const catLabel = typed > 0
+      ? String((G.chargeCategoriesFor(tour!.doc).find((c: Obj) => c.key === category) ?? {}).label ?? category)
+      : "";
 
     let why = "";
     if (spent < 0) why = "Refund";
     else if (!tour) why = "No tour that day";
     else if (twin) why = "Maybe already in";
+    else if (typed > 0) why = "Already typed into " + catLabel;
     else if (mode === "ask") why = "From " + (acct?.name ?? "a bank account");
     else if (!category) why = "New merchant";
 
@@ -309,9 +317,11 @@ Deno.serve(async (req) => {
     const doc = {
       shows: { s1: { date: "2026-09-22" }, s2: { date: "2026-10-26" } },
       charges: { c1: { date: "2026-09-24", amount: 212.4, merchant: "Hotel Van Zandt", category: "hotels" } },
+      expenses: { bus: { projected: 35000, paid: 35000 }, gas: { projected: 3000, paid: 0 } },
+      extras: { e1: { date: "2026-09-25", amount: 40, label: "Food" } },
     };
     const tours: Tour[] = [{ id: "t", doc, first: "2026-09-22", last: "2026-10-26", touched: "" }];
-    const labels = { shell: { merchant: "Shell", cats: { gas: 2 } } };
+    const labels = { shell: { merchant: "Shell", cats: { gas: 2 } }, "premier coaches": { merchant: "Premier Coaches", cats: { bus: 1 } } };
     const tx = (id: string, account: string, amount: number, payee: string, date = "2026-09-25", extra: Obj = {}) =>
       ({ id, account_id: account, amount, payee_name: payee, date, deleted: false, transfer_account_id: null, ...extra });
     const txs = [
@@ -329,6 +339,8 @@ Deno.serve(async (req) => {
       tx("ignored", "gone", -10000, "Anything"),
       tx("no_tour", "card", -30000, "Shell", "2026-08-01"),
       tx("deleted", "card", -30000, "Shell", "2026-09-25", { deleted: true }),
+      tx("bus_paid_by_hand", "card", -12000000, "Premier Coaches"),
+      tx("dinner_logged_by_hand", "card", -40000, "Shell", "2026-09-26"),
     ];
     const r = sortTransactions(txs, accounts, tours, labels, new Map(), "o", 1);
     return reply(200, {
