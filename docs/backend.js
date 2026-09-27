@@ -290,7 +290,7 @@
     /* The tour's phone book: everyone invited, plus the manager who owns it. */
     crew: async function (tourId) {
       var mq = await sb.from('members')
-        .select('invited_email, role, user_id, display_name, phone')
+        .select('invited_email, role, user_id, display_name, phone, tour_role')
         .eq('tour_id', tourId).order('created_at');
       if (mq.error) throw mapError(mq.error);
       var rows = mq.data || [];
@@ -323,7 +323,8 @@
           email: pr.email || r.invited_email,
           invitedEmail: r.invited_email,
           phone: pr.phone || r.phone || '',
-          tourRole: pr.tour_role || '',
+          // Their own card once they've signed up; what the invite said until then.
+          tourRole: pr.tour_role || r.tour_role || '',
           joined: !!r.user_id
         });
       });
@@ -391,7 +392,8 @@
         invited_email: addr,
         role: role === 'editor' ? 'editor' : 'viewer',
         display_name: String(name || '').trim().slice(0, 60),
-        phone: String(phone || '').trim().slice(0, 30)
+        phone: String(phone || '').trim().slice(0, 30),
+        tour_role: tourRole
       });
       if (q.error) throw mapError(q.error);
       // Remembered for the next tour's invites. A nicety: never blocks the invite.

@@ -936,6 +936,7 @@ span.avatar { cursor: inherit; }
 .row.crew-row { gap: 6px; }   /* same as .crew-side's gap, so the badge column sits dead centre */
 .crew-call.empty { visibility: hidden; }
 .crew-sub.pending { color: var(--part); font-weight: 600; }
+.crew-sub .pending { color: var(--part); font-weight: 600; }
 /* INVITE SENT: centred, glowing, and gone again in a second and a half. */
 .splash-note { position: fixed; inset: 0; z-index: 58; display: grid; place-items: center; pointer-events: none;
   background: rgba(0, 0, 0, 0); transition: background .25s ease; }
@@ -969,6 +970,13 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
   font-size: 10.5px; font-weight: 700; letter-spacing: .05em; white-space: nowrap;
 }
 .crew-side .role-tag.aa { background: var(--pos-soft); color: var(--pos); }
+/* The crew's badge is their role ("Guitar Tech"), words as written, centred
+   between the name and the icons in whatever room the names leave. */
+.crew-list .role-slot { min-width: 0; }
+.crew-list .role-box { width: auto; min-width: 0; max-width: 100%; justify-content: center; }
+.crew-list .role-tag { max-width: 100%; padding: 3px 9px; border-radius: 10px;
+  white-space: normal; text-align: center; line-height: 1.25;   /* a long role wraps, never cut */
+  font-size: 11px; font-weight: 600; letter-spacing: 0; }
 .crew-call { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 999px;
   border: 1px solid var(--line); color: var(--pos); }
 

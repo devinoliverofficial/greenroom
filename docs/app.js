@@ -3432,13 +3432,13 @@
   /* The name column is sized to the widest name, so the badges stand in one
      straight column, centred in the gap before the contact icons. Shared by
      the Overview crew and the guest lists. */
-  function sizeNameColumn(list) {
+  function sizeNameColumn(list, boxW) {
     var rowsEl = list.querySelectorAll('.crew-row');
     if (!rowsEl.length) return;
     var first = rowsEl[0];
     var cs = getComputedStyle(first);
     var content = first.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-    var cap = content - 6 - 112 - 84; // row gap, badge box, mail + call with their gaps
+    var cap = content - 6 - (boxW || 112) - 84; // row gap, badge box, mail + call with their gaps
     var widest = 0;
     Array.prototype.forEach.call(rowsEl, function (r) {
       var lab = r.querySelector('.row-label');
@@ -3466,7 +3466,9 @@
        icons: the name column is sized to the widest name (so the gap is the
        same in every row), and each badge box is centred in that gap with the
        badge flush left inside it — straight column, same starting point. */
-    function sizeColumns() { sizeNameColumn(list); }
+    // Names get room first (never wrapping while 92px is left for the role);
+    // the role badge centres in whatever is left before the icons.
+    function sizeColumns() { sizeNameColumn(list, 92); }
 
     function draw(rows) {
       if (!rows.length) {
@@ -3490,19 +3492,18 @@
       // Invited but no account yet: "Pending", and no contact buttons until
       // they sign up and their own card fills in.
       var pending = !m.joined;
-      var sub = [];
-      if (!pending && m.tourRole) sub.push(m.tourRole);
+      // Access sits under the name; the role is the green badge in the middle.
+      var access = m.owner ? 'Tour Manager' : (m.role === 'editor' ? 'All Access' : 'GA');
       return h('div', { class: 'row crew-row' },
         h('div', { class: 'row-label' }, title,
-          pending ? h('span', { class: 'hint crew-sub pending' }, 'Pending')
-            : (sub.length ? h('span', { class: 'hint crew-sub' }, sub.join(' \u00b7 ')) : null)),
+          h('span', { class: 'hint crew-sub' }, access,
+            pending ? h('span', { class: 'pending' }, ' \u00b7 Pending') : null)),
         h('div', { class: 'crew-side' },
-          // Every badge sits in the same-width slot, flush left, so TOUR
-          // MANAGER, ALL ACCESS and GA all start at the same point.
+          // Every badge sits in the same-width slot, so the roles line up in
+          // one column; someone without a role just leaves the slot empty.
           h('span', { class: 'role-slot' },
             h('span', { class: 'role-box' },
-              h('span', { class: 'role-tag' + (m.role === 'editor' || m.owner ? ' aa' : '') },
-                m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA')))),
+              m.tourRole ? h('span', { class: 'role-tag aa' }, m.tourRole) : null)),
           // Fixed slots: a missing phone leaves an empty seat, so every mail
           // icon and every phone icon lines up in its own column.
           !pending && m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
