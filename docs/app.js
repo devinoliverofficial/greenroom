@@ -3006,7 +3006,10 @@
     return h('div', { class: 'page tour has-tabs chat-page' },
       h('div', { class: 'headband' },
         tourTopbar(t, id, 'chat'),
-        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
+        // The chat wears the full wordmark, with the page's name small under it.
+        h('div', { class: 'chat-brand' },
+          h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }),
+          h('h1', { class: 'chat-label' }, 'Chat'))),
       dbBanner(),
       alertsBell(id),
       msgs.length ? h('div', { class: 'chat-list' }, msgs) : null,
