@@ -2815,14 +2815,10 @@
         tourTopbar(t, id, 'chat'),
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
       dbBanner(),
-      canEditTour(id) ? h('button', { class: 'btn ghost block', type: 'button',
-        style: 'margin-bottom:4px',
-        onclick: function () { openAlertSheet(id); } },
-        icon('bell', 18), 'Send Tour Alert') : null,
-      alertsNudge(id),
+      alertsBell(id),
       msgs.length
         ? h('div', { class: 'chat-list' }, msgs)
-        : emptyState('Special requests, notes for the team, send here.', null),
+        : emptyState('Radio your team', null),
       h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
         input,
         h('button', { class: 'btn primary', type: 'submit' }, 'Send')),
@@ -5885,24 +5881,50 @@
 
   /* Everyone on the tour, not just the manager, needs a way to let tour
      alerts reach their phone. Shown in the chat until this phone is on. */
-  function alertsNudge(tourId) {
+  /* Tour alerts live behind one glowing bell at the top of the chat: the
+     manager sends from there, and everyone turns alerts on for their phone.
+     A small dot on the bell means this phone isn't getting alerts yet. */
+  function alertsBell(tourId) {
     var B = window.GR_BACKEND;
-    if (S.mode !== 'db' || !B || !B.pushSupported) return null;
-    if (S.pushOn == null && !S.pushAsked) {
+    var db = S.mode === 'db' && B && B.pushSupported;
+    if (db && S.pushOn == null && !S.pushAsked) {
       S.pushAsked = true;
       if (B.pushSupported()) {
         B.pushState().then(function (st) { S.pushOn = !!st.on; render(); })
           .catch(function () { S.pushOn = false; render(); });
       } else S.pushOn = false;
     }
-    if (S.pushOn !== false) return null;
-    if (!B.pushSupported()) {
-      return h('p', { class: 'note alerts-nudge' },
-        'To get tour alerts on this phone, add Greenroom to your Home Screen (Share \u2192 Add to Home Screen) and open it from there.');
-    }
-    return h('button', { class: 'btn quiet block alerts-nudge', type: 'button',
-      onclick: function () { openNotifications(tourId); } },
-      icon('bell', 18), 'Get tour alerts on this phone');
+    if (!db && !canEditTour(tourId)) return null;
+    var off = db && S.pushOn === false;
+    return h('div', { class: 'chat-tools' },
+      h('button', { class: 'iconbtn bell-btn', type: 'button',
+        'aria-label': 'Tour alerts' + (off ? ' (not on for this phone)' : ''),
+        onclick: function () { openAlertsMenu(tourId); } },
+        icon('bell', 24), off ? h('span', { class: 'bell-dot', 'aria-hidden': 'true' }) : null));
+  }
+
+  function openAlertsMenu(tourId) {
+    var B = window.GR_BACKEND;
+    var db = S.mode === 'db' && B && B.pushSupported;
+    openSheet(function () {
+      var phone;
+      if (!db) phone = null;
+      else if (!B.pushSupported()) {
+        phone = h('p', { class: 'note' },
+          'To get tour alerts on this phone, add Greenroom to your Home Screen (Share \u2192 Add to Home Screen) and open it from there.');
+      } else {
+        phone = h('button', { class: 'btn ' + (S.pushOn ? 'ghost' : 'quiet glow') + ' block', type: 'button',
+          onclick: function () { openNotifications(tourId); } },
+          icon('bell', 18), S.pushOn ? 'Tour alerts are on \u00b7 settings' : 'Get tour alerts on this phone');
+      }
+      return [
+        h('h2', { class: 'sh-title' }, 'Tour alerts'),
+        h('div', { class: 'stack' },
+          canEditTour(tourId) ? h('button', { class: 'btn primary block', type: 'button',
+            onclick: function () { openAlertSheet(tourId); } }, icon('bell', 18), 'Send Tour Alert') : null,
+          phone)
+      ];
+    }, { label: 'Tour alerts' });
   }
 
   /* Per-device notification choices: what this phone wants to hear about. */

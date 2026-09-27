@@ -1190,7 +1190,12 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .ce-left.pos { color: var(--pos); }
 .ledger .amt.num.neg { color: var(--neg); }
 .ledger .amt.num.pos { color: var(--pos); }
-.alerts-nudge { margin: 6px 0 4px; }
+/* Chat: the tour-alerts bell, top right of the black, glowing green. */
+.chat-tools { display: flex; justify-content: flex-end; margin: -4px -6px 2px 0; }
+.bell-btn { position: relative; color: var(--pos); }
+.bell-btn svg { filter: drop-shadow(0 0 5px currentColor) drop-shadow(0 0 1px currentColor); }
+.bell-dot { position: absolute; top: 9px; right: 9px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--neg); box-shadow: 0 0 0 2px var(--bg, #000); }
 select.input.slim { width: 148px; height: 42px; }
 
 /* Reading a flyer or a statement takes a moment; this says so without lying about progress. */
