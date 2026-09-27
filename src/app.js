@@ -8,7 +8,6 @@
   var LS_LABELS = 'greenroom:labels';
   // Each skin (the main app and Greenroom Classic) remembers its own choice.
   var LS_THEME = 'greenroom:theme' + (window.GR_SKIN ? ':' + window.GR_SKIN : '');
-  var TABS = [['shows', 'Shows'], ['add', 'Add more shows']];
   var VIEW_ONLY = 'You have view-only access, so changes can’t be saved.';
 
   var S = {
@@ -130,6 +129,7 @@
     moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>',
     check: '<path d="M4.5 12.5l5 5 10-11"/>',
+    music: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
     cash: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v.01M18 14.5v.01"/>',
     refresh: '<path d="M20 11a8 8 0 0 0-14.6-4.4L4 8.5"/><path d="M4 3.5v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.4l1.4-1.9"/><path d="M20 20.5v-5h-5"/>'
   };
@@ -195,6 +195,108 @@
       }, opt));
     });
     return wrap;
+  }
+
+  // AM or PM, two taps side by side. No dropdown: the phone's own picker
+  // popped up wherever it liked inside a scrolling sheet.
+  function ampmSwitch(value, onChange) {
+    var wrap = h('div', { class: 'ampm', role: 'radiogroup', 'aria-label': 'AM or PM' });
+    ['AM', 'PM'].forEach(function (v) {
+      wrap.append(h('button', {
+        type: 'button', class: 'ampm-b', role: 'radio', 'aria-checked': String(v === value),
+        onclick: function () {
+          Array.prototype.forEach.call(wrap.children, function (b) {
+            b.setAttribute('aria-checked', String(b.textContent === v));
+          });
+          onChange(v);
+        }
+      }, v));
+    });
+    return wrap;
+  }
+
+  // Hold a row, then drag it into place, the way apps move on an iPhone.
+  // A quick touch still types or taps as usual; moving before the hold lands
+  // is a scroll. onDrop(from, to) gets the row's old and new spots.
+  function holdToReorder(host, rowSel, onDrop) {
+    var HOLD = 320, SLOP = 8;
+    var st = null;
+    function at(e) {
+      var p = e.touches && e.touches.length ? e.touches[0] : e.changedTouches ? e.changedTouches[0] : e;
+      return { x: p.clientX, y: p.clientY };
+    }
+    function start(e) {
+      if (st || (e.type === 'mousedown' && e.button !== 0)) return;
+      if (e.target.closest('button')) return;
+      var row = e.target.closest(rowSel);
+      if (!row || !host.contains(row) || host.querySelectorAll(rowSel).length < 2) return;
+      var p = at(e);
+      st = { row: row, x0: p.x, y0: p.y, lifted: false, mouse: e.type === 'mousedown' };
+      st.timer = setTimeout(lift, HOLD);
+      if (st.mouse) {
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', end);
+      }
+    }
+    function lift() {
+      if (!st) return;
+      var rows = [].slice.call(host.querySelectorAll(rowSel));
+      var tops = rows.map(function (r) { return r.getBoundingClientRect().top; });
+      st.rows = rows;
+      st.from = st.to = rows.indexOf(st.row);
+      st.step = tops[1] - tops[0];
+      st.lifted = true;
+      blurActive();
+      try { window.getSelection().removeAllRanges(); } catch (e) { /* nothing selected */ }
+      host.classList.add('reordering');
+      st.row.classList.add('lifted');
+      if (navigator.vibrate) navigator.vibrate(12);
+    }
+    function move(e) {
+      if (!st) return;
+      var p = at(e);
+      if (!st.lifted) {
+        if (Math.abs(p.x - st.x0) > SLOP || Math.abs(p.y - st.y0) > SLOP) stop(false);
+        return;
+      }
+      if (e.cancelable) e.preventDefault();
+      var dy = p.y - st.y0, n = st.rows.length;
+      var to = Math.max(0, Math.min(n - 1, st.from + Math.round(dy / st.step)));
+      st.row.style.transform = 'translateY(' + dy + 'px) scale(1.03)';
+      if (to === st.to) return;
+      st.to = to;
+      st.rows.forEach(function (r, i) {
+        if (i === st.from) return;
+        var off = st.from < to && i > st.from && i <= to ? -st.step
+          : st.from > to && i >= to && i < st.from ? st.step : 0;
+        r.style.transform = off ? 'translateY(' + off + 'px)' : '';
+      });
+    }
+    function stop(drop) {
+      var s = st;
+      st = null;
+      clearTimeout(s.timer);
+      if (s.mouse) {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', end);
+      }
+      if (!s.lifted) return;
+      host.classList.remove('reordering');
+      s.rows.forEach(function (r) { r.style.transform = ''; r.classList.remove('lifted'); });
+      if (drop && s.to !== s.from) onDrop(s.from, s.to);
+    }
+    function end(e) {
+      if (!st) return;
+      // After a drag, the lift of the finger is not a tap on whatever is under it.
+      if (st.lifted && e.cancelable) e.preventDefault();
+      stop(true);
+    }
+    host.addEventListener('touchstart', start, { passive: true });
+    host.addEventListener('touchmove', move, { passive: false });
+    host.addEventListener('touchend', end);
+    host.addEventListener('touchcancel', function () { if (st) stop(false); });
+    host.addEventListener('mousedown', start);
+    host.addEventListener('contextmenu', function (e) { if (st) e.preventDefault(); });
   }
 
   function chipRow(options, current, onPick) {
@@ -3083,60 +3185,37 @@
 
   /* Everywhere shows come from, in one place — its own page from the wizard,
      and the Budget tab called "Add more shows". */
-  function addShowsBody(id, t) {
-    var shows = G.rows(t.shows).sort(G.byDate);
-    var today = G.tourToday();
-    return [
-      canEditTour(id) ? (S.sample ? fileControl({
-        label: 'Upload flyer', icon: 'flyer', cls: 'btn primary block',
+  /* Every way dates get onto the tour: the flyer first, then by hand,
+     then the days around the run. */
+  function addShowsOptions(id) {
+    if (!canEditTour(id)) return null;
+    return h('div', { class: 'stack add-shows' },
+      S.sample ? fileControl({
+        label: 'Upload Flyer', icon: 'flyer', cls: 'btn primary block',
         accept: imageAccept(),
         onFiles: function (files) { readFlyer(id, files[0]); }
-      }) : unavailableBtn('Upload flyer', 'btn primary block')) : null,
-      shows.length
-        ? [h('p', { class: 'count-line' }, plural(shows.length, 'show') + ' on the run'),
-           h('ul', { class: 'shows' }, shows.map(function (x) {
-             return h('li', null, h('button', {
-               class: 'show-row' + (x.date === today ? ' is-today' : ''), type: 'button',
-               onclick: function () { if (canEditTour(id)) openShowSheet(id, x.id); }
-             }, dateBlock(x.date), whereBlock(x), canEditTour(id) ? icon('chevron', 18) : h('span')));
-           }))]
-        : emptyState('No shows yet', canEditTour(id)
-            ? 'Shoot the flyer and the dates fill themselves in.'
-            : 'No dates have been added.'),
-      canEditTour(id) ? h('div', { class: 'home-foot', style: 'margin-top:10px' },
-        h('button', { class: 'linkbtn', type: 'button', onclick: function () { openShowSheet(id); } },
-          'Type a show in by hand'),
-        h('button', { class: 'linkbtn', type: 'button', onclick: function () { openTravelDaysSheet(id); } },
-          'Travel days before or after the run'),
-        h('button', { class: 'linkbtn', type: 'button', onclick: function () { openRehearsalSheet(id); } },
-          'Rehearsal days before the tour')) : null,
-      canEditTour(id) ? [
-        S.mode === 'db' ? [
-          h('h3', { class: 'sh-h3', style: 'margin-top:26px' },
-            h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }), 'Settlements by email'),
-          h('p', { class: 'note', style: 'margin:2px 2px 10px' },
-            'Send this tour\u2019s atVenu settlements here and they log themselves \u2014 Ari breaks each one down in the chat. ' +
-            'Every tour has its own address, so nothing lands on the wrong run.'),
-          h('div', { class: 'mailrow' },
-            h('code', { class: 'mailcode' }, settlementAddress(id)),
-            h('button', { class: 'btn quiet sm', type: 'button',
-              onclick: async function () {
-                var addr = settlementAddress(id);
-                var ta = h('textarea', { class: 'sr', readonly: true, value: addr });
-                document.body.appendChild(ta);
-                var okc = await copyText(addr, ta);
-                ta.remove();
-                toast(okc ? 'Address copied' : 'Press and hold to copy');
-              } }, icon('copy', 16), 'Copy'))
-        ] : null,
-        h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, h('img', { class: 'brand-logo', src: 'logo-mastertour.png', alt: '' }), 'Master Tour'),
-        h('p', { class: 'note', style: 'margin:2px 2px 10px' },
-          'Print your day sheets or itinerary to PDF in Master Tour (or export CSV) and upload it \u2014 ' +
-          'schedules fill in across every matching date.'),
-        h('div', { class: 'btnrow' }, tourImportControl(id))
-      ] : null
+      }) : unavailableBtn('Upload Flyer', 'btn primary block'),
+      h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openShowSheet(id); } },
+        icon('edit', 18), 'Add Shows Manually'),
+      h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openTravelDaysSheet(id); } },
+        icon('tabmap', 18), 'Add Travel Days'),
+      h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openRehearsalSheet(id); } },
+        icon('music', 18), 'Add Rehearsal Days'));
+  }
+  function openAddShowsMenu(id) {
+    openSheet(function () {
+      return [h('h2', { class: 'sh-title' }, 'Add more shows'), addShowsOptions(id)];
+    }, { label: 'Add more shows' });
+  }
+  // The stand-alone page a tour with no dates lands on.
+  function addShowsBody(id, t) {
+    return [
+      addShowsOptions(id),
+      G.rows(t.shows).length ? null : emptyState('No shows yet', canEditTour(id)
+        ? 'Shoot the flyer and the dates fill themselves in.' : 'No dates have been added.')
     ];
   }
+
 
   function viewTour() {
     var id = S.route.id;
@@ -3185,8 +3264,7 @@
         cashLogBody(id, t),
         tourTabs(id, 'costs'));
     }
-    if (tab === 'debt' || tab === 'sheet' || tab === 'expenses' || tab === 'days') tab = 'shows';
-    var body = tab === 'add' ? addShowsBody(id, t) : tabShows(id, t, c);
+    var body = tabShows(id, t, c);
 
     return h('div', { class: 'page tour has-tabs' },
       h('div', { class: 'headband' },
@@ -3221,19 +3299,7 @@
             onclick: function () { openCloseout(id); } }, 'Tour closeout')) : null;
       })(),
       heroNode(t, id),
-      h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Tour sections' },
-        TABS.map(function (pair) {
-          return h('button', {
-            class: 'tab', type: 'button', role: 'tab', id: 'tab-' + pair[0],
-            'aria-selected': String(pair[0] === tab), 'aria-controls': 'tabpanel',
-            onclick: function () {
-              if (pair[0] === tab) return;
-              S.route = Object.assign({}, S.route, { tab: pair[0] });
-              render(true);
-            }
-          }, pair[1]);
-        })),
-      h('div', { id: 'tabpanel', role: 'tabpanel', 'aria-labelledby': 'tab-' + tab }, body),
+      h('div', { class: 'shows-panel' }, body),
       tourTabs(id, 'money'));
   }
 
@@ -3669,6 +3735,8 @@
       rowsOut = shows.map(function (s) { return showRow(id, s, today); });
     }
     return [
+      canEditTour(id) ? h('button', { class: 'btn quiet glow block add-more', type: 'button',
+        onclick: function () { openAddShowsMenu(id); } }, icon('plus', 18), 'ADD MORE SHOWS') : null,
       tonight ? tonightCard(id, tonight) : null,
       shows.length
         ? [h('p', { class: 'count-line' }, logged + ' of ' + plural(shows.length, 'show') + ' logged'),
@@ -4757,10 +4825,7 @@
         var num = h('input', { class: 'input time-num', type: 'text', inputmode: 'decimal', value: main,
           maxlength: 12, autocomplete: 'off', placeholder: ph || '6', 'aria-label': 'Time',
           oninput: function (e) { main = e.target.value; push(); } });
-        var ap = h('select', { class: 'input time-ampm', 'aria-label': 'AM or PM',
-          onchange: function (e) { ampm = e.target.value; push(); } },
-          h('option', { value: 'AM' }, 'AM'), h('option', { value: 'PM' }, 'PM'));
-        ap.value = ampm;
+        var ap = ampmSwitch(ampm, function (v) { ampm = v; push(); });
         return h('div', { class: 'time-in' }, num, ap);
       }
       function timeIn(key, ph, defAmpm) {
@@ -4770,7 +4835,7 @@
         var host = h('div', { class: 'ds-bands' });
         function build() {
           var kids = f[key].map(function (r, i) {
-            return h('div', { class: 'af-row', style: 'margin-bottom:8px' },
+            return h('div', { class: 'af-row ds-band' },
               h('input', { class: 'input', type: 'text', value: r.band, maxlength: 60,
                 placeholder: 'Band', autocomplete: 'off',
                 oninput: function (e) { r.band = e.target.value; } }),
@@ -4783,7 +4848,18 @@
           host.replaceChildren.apply(host, kids);
         }
         build();
+        // Hold a band and drag it: the running order is the order they play.
+        holdToReorder(host, '.ds-band', function (from, to) {
+          var moved = f[key].splice(from, 1)[0];
+          f[key].splice(to, 0, moved);
+          build();
+        });
         return host;
+      }
+      // A plain box, not a <label>: a label hands every stray tap to its
+      // first input, so a tap between rows would jump to the top band.
+      function group(label, control) {
+        return h('div', { class: 'field' }, h('span', { class: 'field-label' }, label), control);
       }
       function yesNo(key, label) {
         var idx = f[key] === 'yes' ? 1 : f[key] === 'no' ? 2 : 0;
@@ -4818,17 +4894,17 @@
         }
       };
       return [
-        h('h2', { class: 'sh-title' }, 'Day sheet \u2014 ' + (s.city || 'Show')),
-        h('p', { class: 'sh-sub' }, 'Everything the bus needs for the day. Leave anything blank and it just doesn\u2019t show.'),
-        h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
+        h('h2', { class: 'sh-title clean' }, 'Day sheet \u2014 ' + (s.city || 'Show')),
+        h('p', { class: 'sh-sub clean' }, 'Everything the bus needs for the day. Leave anything blank and it just doesn\u2019t show.'),
+        h('form', { class: 'sh-form ds-editor', onsubmit: submit, novalidate: true },
           field('Venue address', textIn('venueAddress', '2115 Woodward Ave')),
           field('Venue phone', textIn('venuePhone', '(313) 961-5451')),
           h('div', { class: 'field-row' },
             field('Load in', timeIn('loadIn', '2')),
             field('Doors', timeIn('doors', '7'))),
-          field('Soundchecks', bandList('soundchecks', '+ Add a band\u2019s soundcheck')),
+          group('Soundchecks', bandList('soundchecks', '+ Add a band\u2019s soundcheck')),
           field('VIP', textIn('vip', '6:00 PM meet & greet')),
-          field('Set times', bandList('setTimes', '+ Add a band\u2019s set time')),
+          group('Set times', bandList('setTimes', '+ Add a band\u2019s set time')),
           h('div', { class: 'field-row' },
             field('Lobby call', timeIn('lobbyCall', '11', 'AM')),
             field('Bus call', timeIn('busCall', '11:45'))),
@@ -5895,10 +5971,25 @@
         mt,
 
         h('h3', { class: 'sh-h3' }, h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }), 'atVenu'),
+        // The tour's own mailbox: settlements sent here log themselves.
+        S.mode === 'db' ? [
+          h('p', { class: 'note', style: 'margin:2px 2px 10px' },
+            'Send this tour\u2019s atVenu settlements to this address and they log themselves \u2014 Ari breaks each one down in the chat.'),
+          h('div', { class: 'mailrow', style: 'margin-bottom:14px' },
+            h('code', { class: 'mailcode' }, settlementAddress(tourId)),
+            h('button', { class: 'btn quiet sm', type: 'button',
+              onclick: async function () {
+                var addr = settlementAddress(tourId);
+                var ta = h('textarea', { class: 'sr', readonly: true, value: addr });
+                document.body.appendChild(ta);
+                var okc = await copyText(addr, ta);
+                ta.remove();
+                toast(okc ? 'Address copied' : 'Press and hold to copy');
+              } }, icon('copy', 16), 'Copy'))
+        ] : null,
         h('p', { class: 'note', style: 'margin:2px 2px 10px' },
-          'After the show, export the merch settlement from atVenu (or screenshot the register report) ' +
-          'and upload it on the show you’re logging. Net merch lands in income; gross, the venue’s cut ' +
-          'and the per head come through as notes.'),
+          'Or, after the show, upload the Settlement on the show you\u2019re logging. Net merch lands in income; the cash, ' +
+          'the per head and the venue\u2019s cut come through with it.'),
         av,
 
         h('h3', { class: 'sh-h3' }, 'About live sync'),

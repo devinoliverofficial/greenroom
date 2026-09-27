@@ -439,8 +439,9 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 
 /* MODEL4, Log income: the clean text for the income too. */
 .income-sheet .ledger .row { min-height: 60px; padding: 11px 16px; }
-.income-sheet .row-label { font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
-.income-sheet .row-label .hint { margin-top: 2px; font-size: 13px; font-weight: 450; color: var(--ink-2); }
+.income-sheet .row-label { font-size: 16px; font-weight: 500; letter-spacing: -.01em; color: #F1F4E3; } /* white: the card re-scopes --ink to green */
+.income-sheet .row-label label { color: inherit; }
+.income-sheet .row-label .hint { margin-top: 2px; font-size: 13px; font-weight: 450; color: #8F947B; }
 .income-sheet .row.mx-head .row-label { font-weight: 700; }
 .income-sheet .money-in input { font-family: var(--font); font-weight: 600; letter-spacing: -.01em; }
 .income-sheet .money-in .cur { font-weight: 500; }
@@ -448,11 +449,49 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .income-sheet .preview > div { font-weight: 500; }
 .income-sheet .preview strong { font-family: var(--font); font-weight: 600; letter-spacing: -.01em; }
 
-/* Day sheet times: the number, then AM or PM. */
+/* Budget → Shows: one button leads, the four ways to add behind it. */
+.btn.add-more { margin: 4px 0 18px; }
+.shows-panel { margin-top: 18px; }
+
+/* Day sheet times: the number, then AM or PM as two taps. */
 .time-in { display: flex; gap: 6px; min-width: 0; }
 .time-in .time-num { flex: 1; min-width: 0; }
-.time-in .time-ampm { flex: 0 0 74px; padding: 0 10px; text-align: center; }
-.ds-bands .af-row .time-in { flex: 0 0 150px; }
+.ampm {
+  flex: 0 0 80px; display: flex; gap: 2px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 13px;
+}
+.ampm-b {
+  flex: 1; min-width: 0; appearance: none; border: 0; border-radius: 9px; background: transparent;
+  color: var(--ink-3); font: 600 13px/1 var(--font); letter-spacing: .01em; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ampm-b[aria-checked="true"] { background: var(--brand); color: var(--on-brand); }
+.ds-bands .af-row .time-in { flex: 0 0 152px; }
+
+/* MODEL4, the day sheet form: the clean text, lighter weights, more air. */
+.sh-title.clean { font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
+.sh-sub.clean { font-size: 14px; font-weight: 450; line-height: 1.45; margin-bottom: 22px; }
+.ds-editor .field { margin-bottom: 20px; }
+.ds-editor .field-label { margin-bottom: 8px; font-size: 15px; font-weight: 500; letter-spacing: -.01em; color: var(--ink); }
+.ds-editor .input { height: 48px; font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
+.ds-editor .input::placeholder { font-weight: 400; }
+.ds-editor .ampm { height: 48px; }
+.ds-editor .ds-yn .field-label { font-size: 15px; font-weight: 500; }
+.ds-editor .seg-b { font-size: 14px; font-weight: 600; }
+.ds-editor .btn.quiet { font-size: 15px; font-weight: 600; }
+
+/* Hold a band to move it: the held row lifts, the others wiggle and make room. */
+.ds-band { margin-bottom: 8px; position: relative; transition: transform .18s ease; -webkit-touch-callout: none; }
+.ds-bands.reordering { -webkit-user-select: none; user-select: none; }
+.ds-bands.reordering .ds-band { animation: ds-wiggle .26s ease-in-out infinite alternate; }
+.ds-bands.reordering .ds-band:nth-child(even) { animation-delay: -.13s; }
+.ds-bands.reordering input { pointer-events: none; }
+.ds-band.lifted {
+  z-index: 3; transition: none; animation: none; border-radius: 13px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .55), 0 0 0 1px var(--brand);
+}
+@keyframes ds-wiggle { from { rotate: -.5deg; } to { rotate: .5deg; } }
+@media (prefers-reduced-motion: reduce) { .ds-bands.reordering .ds-band { animation: none; } }
 
 /* MODEL4 lists (Artists, Tours): the way a good finance app lists things.
    A round mark, the name in plain white semibold, one grey line under it, a
