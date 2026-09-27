@@ -976,7 +976,9 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .crew-sym.sized .crew-row .row-label { min-width: 0; }
 .crew-sym.sized .crew-side { display: contents; }
 .crew-sym.sized .role-slot { justify-content: center; min-width: 0; }
-.crew-sym .crew-contact { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+/* Mail and phone stay side by side; the pair starts where the mirror puts it,
+   so the role is exactly as far from the mail icon as from the name. */
+.crew-sym .crew-contact { display: flex; align-items: center; justify-content: flex-start; gap: 6px; }
 .crew-sym:not(.sized) .crew-contact { gap: 6px; }
 /* The crew's badge is their role ("Guitar Tech"), words as written, centred
    between the name and the icons in whatever room the names leave. */
