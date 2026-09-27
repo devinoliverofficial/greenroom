@@ -1050,6 +1050,11 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 }
 .swipe-wrap.revealed .swipe-del { opacity: 1; pointer-events: auto; }
 .swipe-card { position: relative; z-index: 1; transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+/* Inside a list (the crew): square corners, the row covers the button. */
+.swipe-wrap.in-list { border-radius: 0; }
+.swipe-wrap.in-list .swipe-del { border-radius: 0; }
+.swipe-wrap.in-list .swipe-card { background: var(--surface); }
+.swipe-wrap.kick .swipe-del { width: 170px; padding-right: 18px; font-size: 14px; }
 
 /* The two-door tour menu */
 .opt-cards { display: grid; gap: 12px; margin-top: 6px; }
@@ -1249,6 +1254,8 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .chip[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 15px; }
 .addform { margin-bottom: 18px; }
+.invite-form { display: grid; gap: 10px; }
+.invite-form .input { margin: 0; }
 .addform .chips { margin: 10px 0 14px; }
 .af-row { display: flex; gap: 10px; align-items: stretch; }
 .af-row .input { flex: 1; min-width: 0; }
@@ -1518,6 +1525,10 @@ button.input.role-pick.empty { color: var(--ink-3); font-weight: 500; }
 .gate-card p { margin: 0 0 8px; color: var(--ink-2); }
 .gate-card form { display: grid; gap: 10px; width: 100%; }
 .gate-card .linkbtn { margin-top: 6px; }
+/* The invited crew's welcome: who the manager said they are, then two boxes. */
+.gate-card .gate-who { margin: -2px 0 6px; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--pos); }
+.gate-card .gate-hi.quiet { font-size: 14px; color: var(--ink-2); }
+.gate-err .linkbtn.inline { display: inline; min-height: 0; margin: 0; font-size: inherit; }
 .gate-card .linkbtn.quiet { color: var(--ink-3); text-decoration: none; min-height: 36px; }
 .gate-err { min-height: 20px; font-size: 14px; color: var(--neg); text-align: left; }
 .people-row { display: flex; align-items: center; gap: 10px; min-height: 52px; }

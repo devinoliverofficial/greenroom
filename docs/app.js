@@ -1421,11 +1421,12 @@
 
   /* Swipe a card left and a delete button rides in under it. Vertical
      scrolling stays untouched; the gesture only engages sideways. */
-  function swipeable(card, onDelete, label) {
-    var OPEN = -92;
-    var wrap = h('div', { class: 'swipe-wrap' },
-      h('button', { class: 'swipe-del', type: 'button', 'aria-label': 'Delete ' + label,
-        onclick: function () { onDelete(); } }, 'Delete'),
+  function swipeable(card, onDelete, label, opts) {
+    var o = opts || {};
+    var OPEN = -(o.open || 92);
+    var wrap = h('div', { class: 'swipe-wrap' + (o.cls ? ' ' + o.cls : '') },
+      h('button', { class: 'swipe-del', type: 'button', 'aria-label': (o.text || 'Delete') + ' ' + label,
+        onclick: function () { onDelete(); } }, o.text || 'Delete'),
       card);
     card.classList.add('swipe-card');
     var startX = 0, startY = 0, base = 0, dragging = false, horizontal = null;
@@ -3473,33 +3474,42 @@
         return;
       }
       list.replaceChildren.apply(list, rows.map(function (m) {
-        var title = m.name || m.username || m.email;
-        // Invited but no account yet: "Pending", and no contact buttons until
-        // they sign up and their own card fills in.
-        var pending = !m.joined;
-        var sub = [];
-        if (!pending && m.tourRole) sub.push(m.tourRole);
-        return h('div', { class: 'row crew-row' },
-          h('div', { class: 'row-label' }, title,
-            pending ? h('span', { class: 'hint crew-sub pending' }, 'Pending')
-              : (sub.length ? h('span', { class: 'hint crew-sub' }, sub.join(' \u00b7 ')) : null)),
-          h('div', { class: 'crew-side' },
-            // Every badge sits in the same-width slot, flush left, so TOUR
-            // MANAGER, ALL ACCESS and GA all start at the same point.
-            h('span', { class: 'role-slot' },
-              h('span', { class: 'role-box' },
-                h('span', { class: 'role-tag' + (m.role === 'editor' || m.owner ? ' aa' : '') },
-                  m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA')))),
-            // Fixed slots: a missing phone leaves an empty seat, so every mail
-            // icon and every phone icon lines up in its own column.
-            !pending && m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
-              'aria-label': 'Email ' + title }, icon('mail', 17))
-              : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }),
-            !pending && m.phone ? h('a', { class: 'crew-call', href: 'tel:' + String(m.phone).replace(/[^0-9+]/g, ''),
-              'aria-label': 'Call ' + title }, icon('phone', 17))
-              : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' })));
+        var row = crewRow(m);
+        // Only the tour manager, and never on their own row: swipe left to
+        // kick someone off the tour.
+        if (!owns || m.owner || !m.invitedEmail) return row;
+        var who = m.name || m.username || m.email;
+        return swipeable(row, function () { kickOff(tourId, m.invitedEmail, who); }, who,
+          { text: 'Kick Off Tour', open: 138, cls: 'in-list kick' });
       }));
       requestAnimationFrame(sizeColumns);
+    }
+    function crewRow(m) {
+      var title = m.name || m.username || m.email;
+      // Invited but no account yet: "Pending", and no contact buttons until
+      // they sign up and their own card fills in.
+      var pending = !m.joined;
+      var sub = [];
+      if (!pending && m.tourRole) sub.push(m.tourRole);
+      return h('div', { class: 'row crew-row' },
+        h('div', { class: 'row-label' }, title,
+          pending ? h('span', { class: 'hint crew-sub pending' }, 'Pending')
+            : (sub.length ? h('span', { class: 'hint crew-sub' }, sub.join(' \u00b7 ')) : null)),
+        h('div', { class: 'crew-side' },
+          // Every badge sits in the same-width slot, flush left, so TOUR
+          // MANAGER, ALL ACCESS and GA all start at the same point.
+          h('span', { class: 'role-slot' },
+            h('span', { class: 'role-box' },
+              h('span', { class: 'role-tag' + (m.role === 'editor' || m.owner ? ' aa' : '') },
+                m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA')))),
+          // Fixed slots: a missing phone leaves an empty seat, so every mail
+          // icon and every phone icon lines up in its own column.
+          !pending && m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
+            'aria-label': 'Email ' + title }, icon('mail', 17))
+            : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }),
+          !pending && m.phone ? h('a', { class: 'crew-call', href: 'tel:' + String(m.phone).replace(/[^0-9+]/g, ''),
+            'aria-label': 'Call ' + title }, icon('phone', 17))
+            : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' })));
     }
     if (cached) draw(cached.rows);
     if (!cached || Date.now() - cached.at > 60e3) {
@@ -3523,6 +3533,23 @@
           onclick: function () { openInviteSheet(tourId); } },
           h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew')) : null
     ];
+  }
+
+  function kickOff(tourId, email, who) {
+    var t = getTour(tourId);
+    confirmSheet({
+      title: 'Kick ' + who + ' off the tour?',
+      body: 'They lose access to ' + ((t && t.name) || 'this tour') + ' right away. You can invite them again any time.',
+      action: 'Kick Off Tour', danger: true,
+      onConfirm: async function () {
+        try {
+          await window.GR_BACKEND.uninvite(tourId, email);
+          forgetCrew(tourId);
+          toast(who + ' is off the tour');
+          return true;
+        } catch (e) { toast('Couldn\u2019t do that. Try again.'); return false; }
+      }
+    });
   }
 
   /* Inviting is its own sheet now — the Overview keeps one small button. */
@@ -5965,7 +5992,8 @@
             onclick: async function () {
               addBtn.disabled = true;
               try {
-                var status = await B.invite(tourId, p.email, p.role, p.name, p.phone);
+                var status = await B.invite(tourId, p.email, p.role, p.name, p.phone,
+                  { tourRole: p.tourRole || '' });
                 afterInvite(tourId, who);
                 if (status === 'existing') setTimeout(function () { toast(who + ' already has an account — the tour is in it now'); }, 1700);
               } catch (e) { addBtn.disabled = false; toast('Couldn\u2019t invite them. Try again.'); }
@@ -5999,39 +6027,51 @@
 
     var form = null;
     if (owns) {
+      // Everything about them is typed here, so their sign-up is just a
+      // username and a password: name, email, their role, and their access.
       var role = 'viewer';
-      var nameI = h('input', {
-        class: 'input', type: 'text', placeholder: 'Their name', maxlength: 24,
-        autocomplete: 'off', 'aria-label': 'Name'
-      });
-      var emailI = h('input', {
-        class: 'input', type: 'email', placeholder: 'their@email.com',
-        autocomplete: 'off', inputmode: 'email', 'aria-label': 'Email to invite'
-      });
-      var phoneI = h('input', {
-        class: 'input', type: 'tel', placeholder: 'Their phone (optional)', maxlength: 30,
-        autocomplete: 'off', inputmode: 'tel', 'aria-label': 'Phone'
-      });
+      var tourRole = '';
+      var inp = function (type, ph, max, extra) {
+        return h('input', Object.assign({ class: 'input', type: type, placeholder: ph, maxlength: max,
+          autocomplete: 'off', 'aria-label': ph }, extra || {}));
+      };
+      var firstI = inp('text', 'First name', 30);
+      var lastI = inp('text', 'Last name', 30);
+      var emailI = inp('email', 'their@email.com', 120, { inputmode: 'email', 'aria-label': 'Email to invite' });
+      var phoneI = inp('tel', 'Their phone (optional)', 30, { inputmode: 'tel', 'aria-label': 'Phone' });
+      var roleBtn = h('button', { class: 'input role-pick empty', type: 'button', 'aria-haspopup': 'listbox',
+        onclick: function () {
+          B.openRolePicker(tourRole, function (r) {
+            tourRole = r; roleBtn.textContent = r; roleBtn.classList.remove('empty');
+          });
+        } }, 'Their role on the tour');
       form = h('form', {
-        class: 'card addform', novalidate: true, style: 'margin-top:14px',
+        class: 'card addform invite-form', novalidate: true, style: 'margin-top:14px',
         onsubmit: async function (e) {
           e.preventDefault();
-          var name = String(nameI.value || '').trim();
+          var first = String(firstI.value || '').trim();
+          var last = String(lastI.value || '').trim();
           var email = String(emailI.value || '').trim();
-          if (!name) { toast('Type their name first'); nameI.focus(); return; }
+          if (!first) { toast('Type their first name'); firstI.focus(); return; }
+          if (!last) { toast('Type their last name'); lastI.focus(); return; }
           if (email.indexOf('@') < 1) { toast('Type their email address'); emailI.focus(); return; }
+          if (!tourRole) { toast('Pick their role on the tour'); roleBtn.focus(); return; }
+          var name = first + ' ' + last;
+          var sendBtn = form.querySelector('button[type=submit]');
+          sendBtn.disabled = true;
           try {
-            var status = await B.invite(tourId, email, role, name, String(phoneI.value || '').trim());
-            nameI.value = ''; emailI.value = ''; phoneI.value = '';
+            var status = await B.invite(tourId, email, role, name, String(phoneI.value || '').trim(),
+              { first: first, last: last, tourRole: tourRole });
             afterInvite(tourId, name);
-            if (status === 'existing') setTimeout(function () { toast(name + ' already has an account — the tour is in it now'); }, 1700);
-            else if (status !== 'sent') setTimeout(function () { toast('The email service is busy, but signing up with ' + email + ' works'); }, 1700);
-          } catch (e2) { toast('Couldn’t send that invite. Try again.'); }
+            if (status === 'existing') setTimeout(function () { toast(first + ' already has an account \u2014 the tour is in it now'); }, 1700);
+            else if (status !== 'sent') setTimeout(function () { toast('The email didn\u2019t go out, but ' + first + ' can still sign up in Greenroom with ' + email); }, 1700);
+          } catch (e2) { sendBtn.disabled = false; toast('Couldn\u2019t send that invite. Try again.'); }
         }
       },
-        nameI,
+        h('div', { class: 'gate-pair' }, firstI, lastI),
         emailI,
         phoneI,
+        roleBtn,
         h('div', { style: 'display:flex;gap:10px;align-items:center;margin-top:10px' },
           segmented(['GA', 'ALL ACCESS'], 0, function (i) { role = i ? 'editor' : 'viewer'; },
             'Invite role'),

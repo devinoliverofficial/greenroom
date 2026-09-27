@@ -63,8 +63,8 @@ shim = r"""<script>
     phone: '555-0100', tour_role: 'Artist/Owner' };
   window.__harness = { me: me, crew: [
     { owner: true, role: 'owner', name: 'Devin Oliver', email: 'devin@example.com', phone: '555-0100', tourRole: 'Artist/Owner', joined: true },
-    { owner: false, role: 'editor', name: 'Brent Allen', email: 'brent@example.com', phone: '(313) 555-0142', tourRole: 'Guitar Tech', joined: true },
-    { owner: false, role: 'viewer', name: 'Tasha Lane', email: 'tasha@example.com', phone: '', tourRole: 'Production Manager', joined: false }
+    { owner: false, role: 'editor', name: 'Brent Allen', email: 'brent@example.com', invitedEmail: 'brent@example.com', phone: '(313) 555-0142', tourRole: 'Guitar Tech', joined: true },
+    { owner: false, role: 'viewer', name: 'Tasha Lane', email: 'tasha@example.com', invitedEmail: 'tasha@example.com', phone: '', tourRole: 'Production Manager', joined: false }
   ] };
   var d0 = ymd(today);
   window.__harness.feed = {
@@ -106,15 +106,20 @@ shim = r"""<script>
       return Promise.resolve(); },
     signOut: function () {},
     members: function () { return Promise.resolve(window.__harness.members); },
-    invite: function (tourId, email, role, name, phone) {
-      window.__harness.invited.push([email, role, name]);
+    invite: function (tourId, email, role, name, phone, extra) {
+      window.__harness.invited.push([email, role, name, (extra || {}).tourRole || '']);
       window.__harness.members.push({ invited_email: email, role: role, display_name: name, user_id: null });
       // Like the real crew list, which reads the same members table.
       window.__harness.crew = window.__harness.crew.concat([{ owner: false, role: role, name: name || '', email: email,
-        invitedEmail: email, phone: phone || '', tourRole: '', joined: false }]);
+        invitedEmail: email, phone: phone || '', tourRole: (extra || {}).tourRole || '', joined: false }]);
       return Promise.resolve('sent');
     },
-    uninvite: function () { return Promise.resolve(); },
+    uninvite: function (tourId, email) {
+      window.__harness.kicked = (window.__harness.kicked || []).concat([email]);
+      window.__harness.members = window.__harness.members.filter(function (m) { return m.invited_email !== email; });
+      window.__harness.crew = window.__harness.crew.filter(function (m) { return m.invitedEmail !== email && m.email !== email; });
+      return Promise.resolve();
+    },
     atvenuRefresh: function (tourId) { window.__harness.refreshed = (window.__harness.refreshed || 0) + 1;
       return Promise.resolve({ ok: true, reports: 4, added: 0, same: 2, conflicts: 1, noShow: 1 }); },
     pastCrew: function () { return Promise.resolve(window.__harness.past.slice()); },

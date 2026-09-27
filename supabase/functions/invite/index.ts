@@ -31,28 +31,44 @@ Deno.serve(async (req) => {
   } catch { /* fall through */ }
   if (!senderId) return reply(401, { error: "not_signed_in" });
 
-  let body: { tourId?: string; email?: string; name?: string };
+  let body: {
+    tourId?: string; email?: string; name?: string; first?: string; last?: string;
+    tourRole?: string; phone?: string; access?: string;
+  };
   try { body = await req.json(); } catch { return reply(400, { error: "invalid" }); }
   const tourId = String(body.tourId ?? "");
   const email = String(body.email ?? "").trim().toLowerCase();
-  const name = String(body.name ?? "").trim().slice(0, 24);
+  const clip = (v: unknown, n: number) => String(v ?? "").trim().slice(0, n);
+  const name = clip(body.name, 60);
+  const first = clip(body.first, 30) || name.split(/\s+/)[0] || "";
+  const last = clip(body.last, 30) || name.split(/\s+/).slice(1).join(" ");
   if (!tourId || email.indexOf("@") < 1) return reply(400, { error: "invalid" });
 
   // Only the tour manager may invite.
-  const { data: tour } = await admin.from("tours").select("id, owner_id").eq("id", tourId).single();
+  const { data: tour } = await admin.from("tours").select("id, owner_id, doc").eq("id", tourId).single();
   if (!tour) return reply(404, { error: "no_tour" });
   if (tour.owner_id !== senderId) return reply(403, { error: "not_manager" });
 
-  // Create the account and send the email in one move. The username they
-  // start with is the name the inviter typed; they can change it later.
+  // Create the account and send the email in one move. Everything the
+  // manager typed rides on the account, so the sign-up page only asks for a
+  // username and a password. The link lands on the app itself.
+  const full = [first, last].filter(Boolean).join(" ");
+  const tourName = clip((tour.doc as Record<string, unknown>)?.name, 80);
   const { error } = await admin.auth.admin.inviteUserByEmail(email, {
-    data: { username: name, invited: true },
+    data: {
+      invited: true, first_name: first, last_name: last, full_name: full, username: full.slice(0, 24),
+      phone: clip(body.phone, 30), tour_role: clip(body.tourRole, 40),
+      access: body.access === "editor" ? "editor" : "viewer", tour_name: tourName,
+    },
+    redirectTo: "https://devinoliverofficial.github.io/greenroom/",
   });
   if (!error) return reply(200, { status: "sent" });
 
   const msg = String(error.message ?? "");
   if (/already.*(registered|exists)/i.test(msg)) {
-    // They have an account: the tour shows up on their next open. No email needed.
+    // They have an account: link the invite to it now, so the crew list
+    // shows them as on the tour rather than Pending. No email needed.
+    await admin.rpc("link_invite", { t_id: tourId, addr: email });
     return reply(200, { status: "existing" });
   }
   if (/rate limit|too many/i.test(msg) || (error as { status?: number }).status === 429) {

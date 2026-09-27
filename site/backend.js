@@ -25,6 +25,8 @@
   }
 
   var sb = null;           // supabase client
+  var sbMod = null;        // the supabase-js module, for one-off clients
+  var resetting = false;   // arrived by a password-reset link
   var session = null;
   var cache = { tours: new Map(), labels: new Map(), guests: [], notes: [] };
   var listeners = { tours: [], labels: [] };
@@ -369,16 +371,21 @@
     },
     /* Everyone this tour manager has invited before, on any tour. */
     pastCrew: async function () {
-      var q = await sb.from('past_crew').select('email, name, phone, role').order('name');
+      var q = await sb.from('past_crew').select('email, name, phone, role, tour_role').order('name');
       if (q.error) throw mapError(q.error);
-      return q.data || [];
+      return (q.data || []).map(function (r) { return Object.assign({}, r, { tourRole: r.tour_role || '' }); });
     },
     forgetPastCrew: async function (email) {
       var q = await sb.from('past_crew').delete().eq('email', String(email).toLowerCase());
       if (q.error) throw mapError(q.error);
     },
-    invite: async function (tourId, email, role, name, phone) {
+    invite: async function (tourId, email, role, name, phone, extra) {
       var addr = String(email).trim().toLowerCase();
+      var x = extra || {};
+      var full = String(name || '').trim();
+      var first = String(x.first || full.split(/\s+/)[0] || '').trim();
+      var last = String(x.last || full.split(/\s+/).slice(1).join(' ') || '').trim();
+      var tourRole = String(x.tourRole || '').trim().slice(0, 40);
       var q = await sb.from('members').upsert({
         tour_id: tourId,
         invited_email: addr,
@@ -394,6 +401,7 @@
           name: String(name || '').trim().slice(0, 60),
           phone: String(phone || '').trim().slice(0, 30),
           role: role === 'editor' ? 'editor' : 'viewer',
+          tour_role: tourRole,
           updated_at: new Date().toISOString()
         });
       } catch (e) { /* the list can catch up next time */ }
@@ -402,7 +410,10 @@
       try {
         var r = await callFn('invite', {
           method: 'POST',
-          body: JSON.stringify({ tourId: tourId, email: addr, name: String(name || '').trim() })
+          // Everything the manager typed rides along, so the invited person's
+          // sign-up is only a username and a password.
+          body: JSON.stringify({ tourId: tourId, email: addr, name: full, first: first, last: last,
+            tourRole: tourRole, phone: String(phone || '').trim(), access: role === 'editor' ? 'editor' : 'viewer' })
         });
         var out = await r.json();
         return out && out.status ? out.status : 'nomail';
@@ -633,7 +644,22 @@
     });
   }
 
-  function gate() {
+  /* Where email links should land: the app's own folder, whatever page. */
+  function appUrl() { return location.origin + location.pathname.replace(/[^/]*$/, ''); }
+
+  /* "Forgot password?" and "set my password": Supabase emails a link. It is
+     sent from a throwaway client in the older link style on purpose: an
+     iPhone keeps the home-screen app and Safari apart, and the newer style
+     only works in the browser that asked for it. This one works anywhere. */
+  async function sendPasswordLink(email) {
+    var c = sbMod.createClient(cfg.url, cfg.anonKey, { auth: {
+      flowType: 'implicit', persistSession: false, autoRefreshToken: false,
+      detectSessionInUrl: false, storageKey: 'gr-password-link' } });
+    var q = await c.auth.resetPasswordForEmail(email, { redirectTo: appUrl() });
+    if (q.error) throw q.error;
+  }
+
+  function gate(note) {
     var mode = 'signin';
     var wrap = document.createElement('div');
     wrap.id = 'gr-gate';
@@ -664,6 +690,7 @@
         '<button class="btn primary block" type="submit">' +
           (signin ? 'Sign in' : 'Create account') + '</button>' +
         '</form>' +
+        (signin ? '<button class="linkbtn quiet" id="gr-gate-forgot" type="button">Forgot password?</button>' : '') +
         '<button class="linkbtn" id="gr-gate-flip" type="button">' +
           (signin ? 'New here? Create an account' : 'Already have an account? Sign in') + '</button>' +
         '<button class="linkbtn quiet" id="gr-gate-skip" type="button">Use it on this phone only</button>' +
@@ -675,6 +702,26 @@
       var passI = wrap.querySelector('#gr-gate-pass');
       var errEl = wrap.querySelector('#gr-gate-err');
       var btn = form.querySelector('button');
+      if (note) { errEl.textContent = note; note = ''; }
+
+      // Email a link to set a password. Works for a forgotten password and for
+      // anyone invited who never got to pick one.
+      async function emailLink() {
+        var email = String(emailI.value || '').trim();
+        if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email above, then tap it again.'; emailI.focus(); return; }
+        errEl.textContent = 'Sending\u2026';
+        try {
+          await sendPasswordLink(email);
+          errEl.textContent = 'Check your email for a link from Greenroom. Tap it, pick a password, then sign in here with it.';
+        } catch (e3) {
+          var m3 = String(e3 && e3.message || '');
+          errEl.textContent = /rate limit|too many|seconds/i.test(m3)
+            ? 'Too many emails went out in the last hour. Try again in a little while.'
+            : 'Couldn\u2019t send the email. Check your connection and try again.';
+        }
+      }
+      var forgot = wrap.querySelector('#gr-gate-forgot');
+      if (forgot) forgot.addEventListener('click', emailLink);
 
       form.addEventListener('submit', async function (e) {
         e.preventDefault();
@@ -710,12 +757,21 @@
         } catch (e2) {
           btn.disabled = false;
           var msg = String(e2 && e2.message || '');
-          if (/already registered/i.test(msg)) {
-            errEl.textContent = 'That email already has an account — sign in instead.';
+          if (/already registered|already exists/i.test(msg)) {
+            // Often someone who was invited: the invite made their account,
+            // but they never got to pick a password. One tap fixes either case.
+            errEl.textContent = 'That email already has an account. If you were invited or don\u2019t know the password, ';
+            var fix = document.createElement('button');
+            fix.type = 'button'; fix.className = 'linkbtn inline';
+            fix.textContent = 'email me a link to set it.';
+            fix.addEventListener('click', emailLink);
+            errEl.appendChild(fix);
           } else if (/invalid login credentials/i.test(msg)) {
             errEl.textContent = signin
-              ? 'Wrong email or password. New here? Tap “Create an account”.'
-              : 'Couldn’t create the account. Try again.';
+              ? 'Wrong email or password. Tap \u201cForgot password?\u201d below to set a new one.'
+              : 'Couldn\u2019t create the account. Try again.';
+          } else if (/not confirmed/i.test(msg)) {
+            errEl.textContent = 'That account isn\u2019t set up yet. Tap \u201cForgot password?\u201d below and we\u2019ll email you a link to finish.';
           } else if (/at least|password/i.test(msg)) {
             errEl.textContent = 'Pick a longer password (6 characters or more).';
           } else {
@@ -737,16 +793,46 @@
     return wrap;
   }
 
+  /* Links in Supabase's emails (Accept invitation, Reset password) come back
+     with the sign-in after a # in the address, the older style. This client
+     runs the newer code flow, and supabase-js turns those links away in that
+     mode, which left invited crew signed out with no password to sign in
+     with. So the app reads them itself, then wipes them from the address. */
+  function readEmailLink() {
+    var raw = String(location.hash || '').replace(/^#/, '');
+    if (!/access_token=|error_description=|error_code=/.test(raw)) return {};
+    var p = new URLSearchParams(raw);
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* cosmetic */ }
+    return {
+      access: p.get('access_token') || '', refresh: p.get('refresh_token') || '',
+      type: p.get('type') || '',
+      error: p.get('error_description') || p.get('error_code') || ''
+    };
+  }
+
   async function boot() {
     var mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+    sbMod = mod;
+    var link = readEmailLink();
     sb = mod.createClient(cfg.url, cfg.anonKey, {
       auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true }
     });
     var got = await sb.auth.getSession();
     session = got.data ? got.data.session : null;
+    var note = '';
+    if (link.access && link.refresh) {
+      var set = await sb.auth.setSession({ access_token: link.access, refresh_token: link.refresh });
+      if (set.data && set.data.session) session = set.data.session;
+      else note = 'That link has expired or was already used. Tap \u201cForgot password?\u201d for a fresh one.';
+    } else if (link.error) {
+      note = /expired|invalid/i.test(link.error)
+        ? 'That link has expired or was already used. Tap \u201cForgot password?\u201d for a fresh one.'
+        : 'That link didn\u2019t work. Tap \u201cForgot password?\u201d for a fresh one.';
+    }
+    resetting = link.type === 'recovery' && !!session;
 
     if (!session) {
-      var g = gate();
+      var g = gate(note);
       sb.auth.onAuthStateChange(function (_ev, s) {
         if (s && !session) { session = s; g.remove(); online(); }
       });
@@ -780,68 +866,80 @@
 
   /* Someone arriving from an invite email is signed in but has no password
      yet. One card: pick the password, then go add it to the home screen. */
+  /* Invited crew land here from the email. The tour manager already typed
+     their name, role and access, so all that's left is a username (what the
+     chat calls them) and a password. Anything the invite didn't carry (an
+     older invite) is asked for here too, so the card is never left short. */
   function passwordGate() {
     if (document.getElementById('gr-pass-gate')) return;
     var wrap = document.createElement('div');
     wrap.id = 'gr-pass-gate';
     wrap.className = 'gr-gate-like';
-    // Invited crew land here instead of on Create account, so they get the
-    // same card: the manager's spelling of their name comes prefilled.
     var m0 = session.user.user_metadata || {};
-    var typed = String(m0.username || m0.full_name || '').trim();
-    var first0 = String(m0.first_name || typed.split(/\s+/)[0] || '');
-    var last0 = String(m0.last_name || typed.split(/\s+/).slice(1).join(' ') || '');
+    var typed = String(m0.full_name || m0.username || '').trim();
+    var first0 = String(m0.first_name || typed.split(/\s+/)[0] || '').trim();
+    var last0 = String(m0.last_name || typed.split(/\s+/).slice(1).join(' ') || '').trim();
+    var needName = !first0 || !last0;
+    var needRole = !m0.tour_role;
+    var tourName = String(m0.tour_name || '').trim();
+    var access = m0.access === 'editor' ? 'ALL ACCESS' : (m0.access === 'viewer' ? 'GA' : '');
+    var who = [m0.tour_role, access].filter(Boolean).join(' \u00b7 ');
     wrap.innerHTML =
       '<div class="gate-card">' +
       '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-      '<p class="gate-hi">' + (first0 ? 'Welcome, ' + esc(first0) + '. ' : '') +
-        'You\u2019re on the tour \u2014 finish your card and pick a password.</p>' +
+      '<p class="gate-hi">' + (first0 ? 'Welcome, ' + esc(first0) + '.' : 'Welcome.') +
+        (tourName ? ' You\u2019re on ' + esc(tourName) + '.' : ' You\u2019re on the tour.') + '</p>' +
+      (who ? '<p class="gate-who">' + esc(who) + '</p>' : '') +
+      '<p class="gate-hi quiet">Make a username and a password and you\u2019re in.</p>' +
       '<form id="gr-pass-form" novalidate>' +
-      '<div class="gate-pair">' +
-      '<input class="input" type="text" id="gr-pass-first" placeholder="First name" value="' + esc(first0) + '" ' +
-        'maxlength="30" autocomplete="given-name" aria-label="First name">' +
-      '<input class="input" type="text" id="gr-pass-last" placeholder="Last name" value="' + esc(last0) + '" ' +
-        'maxlength="30" autocomplete="family-name" aria-label="Last name">' +
-      '</div>' +
-      '<input class="input" type="tel" id="gr-pass-phone" placeholder="Phone number" value="' + esc(m0.phone || '') + '" ' +
-        'maxlength="30" autocomplete="tel" inputmode="tel" aria-label="Phone number">' +
-      rolePickerHtml('gr-pass-role', m0.tour_role || '') +
-      '<input class="input" type="password" id="gr-pass-new" placeholder="Create a password" ' +
-        'autocomplete="new-password" aria-label="Create a password">' +
+      (needName ? '<div class="gate-pair">' +
+        '<input class="input" type="text" id="gr-pass-first" placeholder="First name" value="' + esc(first0) + '" ' +
+          'maxlength="30" autocomplete="given-name" aria-label="First name">' +
+        '<input class="input" type="text" id="gr-pass-last" placeholder="Last name" value="' + esc(last0) + '" ' +
+          'maxlength="30" autocomplete="family-name" aria-label="Last name">' +
+        '</div>' : '') +
+      (needRole ? rolePickerHtml('gr-pass-role', '') : '') +
+      '<input class="input" type="text" id="gr-pass-user" placeholder="Username" ' +
+        'maxlength="24" autocomplete="username" autocapitalize="none" aria-label="Username">' +
+      '<input class="input" type="password" id="gr-pass-new" placeholder="Password" ' +
+        'autocomplete="new-password" aria-label="Password">' +
       '<div class="gate-err" id="gr-pass-err" role="alert"></div>' +
-      '<button class="btn primary block" type="submit">Save</button>' +
+      '<button class="btn primary block" type="submit">Join the tour</button>' +
       '</form></div>';
     document.body.appendChild(wrap);
     var form = wrap.querySelector('#gr-pass-form');
-    wireRolePicker(wrap, 'gr-pass-role');
+    if (needRole) wireRolePicker(wrap, 'gr-pass-role');
+    var userI = wrap.querySelector('#gr-pass-user');
     var passI = wrap.querySelector('#gr-pass-new');
     var errEl = wrap.querySelector('#gr-pass-err');
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
-      var pass = String(passI.value || '');
       var fI = wrap.querySelector('#gr-pass-first'), lI = wrap.querySelector('#gr-pass-last');
-      var phI = wrap.querySelector('#gr-pass-phone'), rI = wrap.querySelector('#gr-pass-role');
-      var first = String(fI.value || '').trim(), last = String(lI.value || '').trim();
-      var phone = String(phI.value || '').trim(), tourRole = String(rI.value || '');
-      if (!first) { errEl.textContent = 'Type your first name.'; fI.focus(); return; }
-      if (!last) { errEl.textContent = 'Type your last name.'; lI.focus(); return; }
-      if (phone.replace(/\D/g, '').length < 7) { errEl.textContent = 'Type a phone number the tour can reach you on.'; phI.focus(); return; }
-      if (!tourRole) { errEl.textContent = 'Pick your role on the tour.'; wrap.querySelector('#gr-pass-role-btn').focus(); return; }
+      var rI = wrap.querySelector('#gr-pass-role');
+      var first = fI ? String(fI.value || '').trim() : first0;
+      var last = lI ? String(lI.value || '').trim() : last0;
+      var tourRole = rI ? String(rI.value || '') : String(m0.tour_role || '');
+      var uname = String(userI.value || '').trim();
+      var pass = String(passI.value || '');
+      if (fI && !first) { errEl.textContent = 'Type your first name.'; fI.focus(); return; }
+      if (lI && !last) { errEl.textContent = 'Type your last name.'; lI.focus(); return; }
+      if (rI && !tourRole) { errEl.textContent = 'Pick your role on the tour.'; wrap.querySelector('#gr-pass-role-btn').focus(); return; }
+      if (!uname) { errEl.textContent = 'Pick a username. It\u2019s what the chat calls you.'; userI.focus(); return; }
       if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
       form.querySelector('button').disabled = true;
       try {
         var full = (first + ' ' + last).trim();
-        var meta = Object.assign({}, session.user.user_metadata || {}, {
+        var meta = Object.assign({}, m0, {
           invited: false, first_name: first.slice(0, 30), last_name: last.slice(0, 30),
-          full_name: full.slice(0, 60), username: full.slice(0, 40),
-          phone: phone.slice(0, 30), tour_role: tourRole });
+          full_name: full.slice(0, 60), username: uname.slice(0, 24),
+          phone: String(m0.phone || '').slice(0, 30), tour_role: tourRole });
         var q = await sb.auth.updateUser({ password: pass, data: meta });
         if (q.error) throw q.error;
         if (q.data && q.data.user) session.user = q.data.user;
         pushProfile();
         wrap.querySelector('.gate-card').innerHTML =
           '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-          '<p class="gate-hi">Password saved. Put Greenroom on your home screen:</p>' +
+          '<p class="gate-hi">You\u2019re in. Put Greenroom on your home screen:</p>' +
           '<p class="gate-hi">Tap the Share button below, then \u201cAdd to Home Screen\u201d. ' +
           'Open it from there and sign in with your email and this password.</p>' +
           '<button class="btn primary block" id="gr-pass-done" type="button">Keep going here</button>';
@@ -849,6 +947,50 @@
       } catch (e2) {
         form.querySelector('button').disabled = false;
         errEl.textContent = 'Couldn\u2019t save it. Try again.';
+      }
+    });
+  }
+
+  /* A reset link: signed in by the link, now pick the new password. */
+  function newPasswordGate() {
+    resetting = false;
+    if (document.getElementById('gr-pass-gate')) return;
+    var wrap = document.createElement('div');
+    wrap.id = 'gr-pass-gate';
+    wrap.className = 'gr-gate-like';
+    wrap.innerHTML =
+      '<div class="gate-card">' +
+      '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
+      '<p class="gate-hi">Pick a new password.</p>' +
+      '<form id="gr-pass-form" novalidate>' +
+      '<input class="input" type="password" id="gr-pass-new" placeholder="New password" ' +
+        'autocomplete="new-password" aria-label="New password">' +
+      '<div class="gate-err" id="gr-pass-err" role="alert"></div>' +
+      '<button class="btn primary block" type="submit">Save</button>' +
+      '</form></div>';
+    document.body.appendChild(wrap);
+    var form = wrap.querySelector('#gr-pass-form');
+    var passI = wrap.querySelector('#gr-pass-new');
+    var errEl = wrap.querySelector('#gr-pass-err');
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var pass = String(passI.value || '');
+      if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
+      form.querySelector('button').disabled = true;
+      try {
+        var q = await sb.auth.updateUser({ password: pass });
+        if (q.error) throw q.error;
+        if (q.data && q.data.user) session.user = q.data.user;
+        wrap.querySelector('.gate-card').innerHTML =
+          '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
+          '<p class="gate-hi">Password saved. If Greenroom is on your home screen, open it from there and sign in with your email and this password.</p>' +
+          '<button class="btn primary block" id="gr-pass-done" type="button">Keep going here</button>';
+        wrap.querySelector('#gr-pass-done').addEventListener('click', function () { wrap.remove(); });
+      } catch (e2) {
+        form.querySelector('button').disabled = false;
+        errEl.textContent = /different from the old/i.test(String(e2 && e2.message || ''))
+          ? 'That\u2019s the password you already had. Pick a new one, or just keep going.'
+          : 'Couldn\u2019t save it. Try again.';
       }
     });
   }
@@ -877,6 +1019,7 @@
     pushProfile();
     if (session && session.user && session.user.user_metadata &&
         session.user.user_metadata.invited === true) passwordGate();
+    else if (resetting) newPasswordGate();
     try { await refetch(); } catch (e) { /* the app shows local mode */ }
     try { await importLocalTours(); } catch (e) { /* local copies stay put */ }
     sb.channel('greenroom')
