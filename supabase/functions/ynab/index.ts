@@ -387,7 +387,8 @@ async function syncFeed(feed: Feed, opts: { preview?: boolean } = {}): Promise<O
   }
 
   const labels: Obj = {};
-  const { data: labelRows } = await admin.from("labels").select("id, doc");
+  // The feed owner's own learned categories (labels are per account).
+  const { data: labelRows } = await admin.from("labels").select("id, doc").eq("owner_id", feed.owner_id);
   for (const l of labelRows ?? []) labels[l.id] = l.doc;
 
   const ids = txs.map((t) => String(t.id));

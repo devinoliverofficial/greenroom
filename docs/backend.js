@@ -110,9 +110,10 @@
       return {
         set: async function (doc) {
           var row = { id: id, doc: stripped(doc), updated_at: new Date().toISOString() };
+          // Labels are each account's own (artist folders, logos, crew, card categories).
           var q = table === 'tours'
             ? await sb.from('tours').insert({ id: id, doc: row.doc })
-            : await sb.from('labels').upsert(row);
+            : await sb.from('labels').upsert(Object.assign({ owner_id: session.user.id }, row), { onConflict: 'owner_id,id' });
           if (q.error) throw mapError(q.error);
           var local = clone(doc);
           if (table === 'tours') local._ownerId = session.user.id;
@@ -123,17 +124,20 @@
           var cur = cache[table].get(id);
           if (!cur) throw err('invalid_argument');
           var next = deepMerge(clone(cur), clone(patch));
-          var q = await sb.from(table)
+          var uq = sb.from(table)
             .update({ doc: stripped(next), updated_at: new Date().toISOString() })
-            .eq('id', id)
-            .select('id');
+            .eq('id', id);
+          if (table === 'labels') uq = uq.eq('owner_id', session.user.id);
+          var q = await uq.select('id');
           if (q.error) throw mapError(q.error);
           if (!q.data || !q.data.length) throw err('permission'); // RLS said no
           cache[table].set(id, next);
           emit(table);
         },
         delete: async function () {
-          var q = await sb.from(table).delete().eq('id', id).select('id');
+          var dq = sb.from(table).delete().eq('id', id);
+          if (table === 'labels') dq = dq.eq('owner_id', session.user.id);
+          var q = await dq.select('id');
           if (q.error) throw mapError(q.error);
           if (!q.data || !q.data.length) throw err('permission');
           cache[table].delete(id);
