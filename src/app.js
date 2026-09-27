@@ -6128,14 +6128,14 @@
       };
       var firstI = inp('text', 'First name', 30);
       var lastI = inp('text', 'Last name', 30);
-      var emailI = inp('email', 'their@email.com', 120, { inputmode: 'email', 'aria-label': 'Email to invite' });
-      var phoneI = inp('tel', 'Their phone (optional)', 30, { inputmode: 'tel', 'aria-label': 'Phone' });
+      var emailI = inp('email', 'Email', 120, { inputmode: 'email', 'aria-label': 'Email to invite' });
+      var phoneI = inp('tel', 'Phone number', 30, { inputmode: 'tel', 'aria-label': 'Phone number' });
       var roleBtn = h('button', { class: 'input role-pick empty', type: 'button', 'aria-haspopup': 'listbox',
         onclick: function () {
           B.openRolePicker(tourRole, function (r) {
             tourRole = r; roleBtn.textContent = r; roleBtn.classList.remove('empty');
           });
-        } }, 'Their role on the tour');
+        } }, 'Role');
       form = h('form', {
         class: 'card addform invite-form', novalidate: true, style: 'margin-top:14px',
         onsubmit: async function (e) {
