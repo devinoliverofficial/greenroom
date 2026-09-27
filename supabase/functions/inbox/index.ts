@@ -226,6 +226,23 @@ Deno.serve(async (req) => {
                   touched: String(t.updated_at ?? "") });
     }
   }
+  // Keep the report itself, matched or not, for its tour manager: Refresh
+  // lays these back onto a tour. The owner is whoever runs the tour it was
+  // sent to (or the one it matched).
+  let reportOwner = hits.length ? hits.sort((a, b) => b.score - a.score)[0].owner : "";
+  if (!reportOwner && tagged) {
+    const { data: tg } = await admin.from("tours").select("owner_id").eq("id", tagged).maybeSingle();
+    reportOwner = tg?.owner_id ?? "";
+  }
+  if (reportOwner) {
+    const kept = await admin.from("merch_reports").upsert({
+      owner_id: reportOwner, tour_tag: tagged || null, date,
+      venue: String(show.venue ?? "").slice(0, 120), city: String(show.city ?? "").slice(0, 120),
+      merch, cash: cash >= 0 ? cash : null, notes, received_at: new Date().toISOString(),
+    }, { onConflict: "owner_id,date,merch" });
+    if (kept.error) await logMail(mail.from, mail.subject, "report_not_kept", kept.error.message);
+  }
+
   if (!hits.length) {
     await logMail(mail.from, mail.subject, "no_matching_show",
       "date=" + date + " venue=" + String(show.venue ?? "") + " merch=" + merch +

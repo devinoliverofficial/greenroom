@@ -107,6 +107,8 @@ shim = r"""<script>
       return Promise.resolve('sent');
     },
     uninvite: function () { return Promise.resolve(); },
+    atvenuRefresh: function (tourId) { window.__harness.refreshed = (window.__harness.refreshed || 0) + 1;
+      return Promise.resolve({ ok: true, reports: 4, added: 0, same: 2, conflicts: 1, noShow: 1 }); },
     pastCrew: function () { return Promise.resolve(window.__harness.past.slice()); },
     forgetPastCrew: function (email) { window.__harness.past = window.__harness.past.filter(function (p) { return p.email !== email; }); return Promise.resolve(); },
     pushSupported: function () { return window.__harness.pushSupported; },

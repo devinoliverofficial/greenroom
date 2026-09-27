@@ -820,13 +820,16 @@
     eq(G.showMoneyState(tourOne().shows.r0), 'settled', 'legacy show reads settled');
   });
 
-  test('a show is owed until the guarantee and the merch deposit are both in', function () {
+  test('a show is owed, then partly in, then settled', function () {
     var s = { loggedAt: 1, income: { guarantee: 5000, merch: 1200 }, merchCash: 300,
       guaranteeReceived: false, merchReceived: false };
     eq(G.merchDue(s), 900, 'deposit expected: net minus cash');
     eq(G.showMoneyState(s), 'owed', 'nothing in');
     s.guaranteeReceived = true;
-    eq(G.showMoneyState(s), 'owed', 'guarantee in, merch not');
+    eq(G.showMoneyState(s), 'partial', 'guarantee in, merch not');
+    s.guaranteeReceived = false; s.merchReceived = true;
+    eq(G.showMoneyState(s), 'partial', 'merch in, guarantee not');
+    s.guaranteeReceived = true;
     s.merchReceived = true;
     eq(G.showMoneyState(s), 'settled', 'both in');
     eq(G.showMoneyState({ income: { guarantee: 1 } }), null, 'a night not logged has no colour');
@@ -849,6 +852,22 @@
     eq(sum.took, 1000, 'cash taken in');
     eq(sum.used, 850, 'cash accounted for');
     eq(sum.left, 150, 'cash still to account for');
+  });
+
+  test('merch cash is caught up show by show, oldest first', function () {
+    var t = { shows: keyed([
+      { date: '2026-09-25', loggedAt: 1, income: { merch: 800 }, merchCash: 200 },   // Dallas, r0
+      { date: '2026-09-27', loggedAt: 1, income: { merch: 1200 }, merchCash: 300 },  // Austin, r1
+      { date: '2026-09-28', loggedAt: 1, income: { merch: 500 } }                    // no cash
+    ]) };
+    t.cashLog = keyed([
+      { date: '2026-09-27', amount: 120, category: 'food', showId: 'r1' },   // Austin's cash
+      { date: '2026-09-26', amount: 250, category: 'deposit' }               // no show: oldest first
+    ]);
+    var c = G.cashByShow(t);
+    eq(c.nights.length, 2, 'only nights with cash');
+    eq(c.nights[0].left, 0, 'Dallas covered by the loose deposit');
+    eq(c.nights[1].left, 130, 'Austin: 300 - 120 - the 50 the deposit had left');
   });
 
   test('an atVenu report brings its merch cash along', function () {

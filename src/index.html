@@ -29,6 +29,7 @@
   --on-brand: #121500;
   --pos: #CCF80A;
   --neg: #FF5F57;
+  --part: #FF9F1C;
   --pos-soft: rgba(204, 248, 10, .12);
   --neg-soft: rgba(255, 95, 87, .11);
   --hero-red: #150908;
@@ -58,6 +59,7 @@
   --on-brand: #00150B;
   --pos: #2BE38C;
   --neg: #FF5F57;
+  --part: #FF9F1C;
   --pos-soft: rgba(43, 227, 140, .11);
   --neg-soft: rgba(255, 95, 87, .11);
   --hero-red: #150908;
@@ -676,10 +678,11 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .tag.attn { background: var(--surface-2); color: var(--ink-2); }
 .tag.quiet { background: none; color: var(--ink-3); font-weight: 500; padding-right: 0; }
 .show-row.is-today .d { color: var(--pos); }
-/* Money still owed on a night: the city goes red. All in: the date glows green. */
+/* Where a night's money stands, read off the city: red, none of it in yet;
+   orange, part of it; green (with the glow), all of it. */
 .show-row.owed .city { color: var(--neg); }
-.show-row.settled .date .d, .show-row.settled .date .m, .show-row.settled .date .w { color: var(--pos); }
-.show-row.settled .date .d { filter: drop-shadow(0 0 5px currentColor) drop-shadow(0 0 1px currentColor); }
+.show-row.partial .city { color: var(--part); }
+.show-row.settled .city { color: var(--pos); filter: drop-shadow(0 0 5px currentColor) drop-shadow(0 0 1px currentColor); }
 /* Travel and off days sit in the schedule but never beg for a tap. */
 .show-row.is-off { cursor: default; opacity: .55; }
 .show-row.is-off .city { font-weight: 500; color: var(--ink-2); }
@@ -1164,6 +1167,25 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .ce-left { font-size: 11px; font-weight: 700; }
 .cash-q { margin: 12px 2px 0; font-size: 14px; font-weight: 700; color: var(--ink-2); }
 .cash-chips .chip.move { border-style: dashed; }
+/* The atVenu bubble's two choices: upload a report, or refresh from email. */
+.av-hidden { display: none !important; }
+.row.av-menu { gap: 10px; min-height: 0; padding-top: 8px; padding-bottom: 12px; }
+.row.av-menu .btn { flex: 1; min-width: 0; }
+/* MERCH CASH LOG: one night at a time, then the whole run show by show. */
+.cash-catch { margin-top: 14px; }
+.cc-step { display: inline-block; margin-bottom: 6px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.cc-city { font-size: 22px; font-weight: 800; line-height: 1.15; color: var(--pos); }
+.cc-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0 2px; }
+.cc-nums > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.cc-nums .amt { font-size: 19px; }
+.cc-nums .amt.neg { color: var(--neg); }
+.cash-done { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 14px 16px; border-radius: 14px;
+  background: var(--pos-soft); color: var(--pos); font-weight: 700; }
+.cash-night { margin-top: 12px; }
+.cn-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 8px; }
+.cn-city { font-weight: 700; }
+.cn-head .amt.neg { color: var(--neg); }
+.cn-head .amt.pos { color: var(--pos); }
 .ce-left.neg { color: var(--neg); }
 .ce-left.pos { color: var(--pos); }
 .ledger .amt.num.neg { color: var(--neg); }

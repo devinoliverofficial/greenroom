@@ -129,6 +129,7 @@
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>',
+    check: '<path d="M4.5 12.5l5 5 10-11"/>',
     cash: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v.01M18 14.5v.01"/>',
     refresh: '<path d="M20 11a8 8 0 0 0-14.6-4.4L4 8.5"/><path d="M4 3.5v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.4l1.4-1.9"/><path d="M20 20.5v-5h-5"/>'
   };
@@ -3656,8 +3657,8 @@
 
   function showRow(id, s, today) {
     var isToday = s.date === today;
-    // Red city: money from this night hasn't landed yet (the guarantee, the
-    // merch deposit, or both). Green date: everything logged is in.
+    // The city says where the night's money stands: red, none of it has
+    // landed; orange, part of it has; green, everything logged is in.
     var money_ = G.showMoneyState(s);
     var right;
     if (s.loggedAt) right = h('span', { class: 'amt num' }, money(G.showIncomeTotal(s)));
@@ -3665,13 +3666,13 @@
     else if (s.date < today) right = h('span', { class: 'tag attn' }, 'Log income');
     else right = h('span', { class: 'tag quiet' }, 'Upcoming');
     var owedWhat = [];
-    if (money_ === 'owed') {
+    if (money_ === 'owed' || money_ === 'partial') {
       if (G.num(s.income && s.income.guarantee) > 0 && s.guaranteeReceived === false) owedWhat.push('guarantee');
       if (G.merchDue(s) > 0 && s.merchReceived === false) owedWhat.push('merch deposit');
     }
     return h('li', null, h('button', {
       class: 'show-row' + (isToday ? ' is-today' : '') + (money_ ? ' ' + money_ : ''), type: 'button',
-      'aria-label': money_ === 'owed' ? (s.city || 'Show') + ': waiting on the ' + owedWhat.join(' and ') : null,
+      'aria-label': owedWhat.length ? (s.city || 'Show') + ': waiting on the ' + owedWhat.join(' and ') : null,
       onclick: function () { if (canEditTour(id)) openIncome(id, s.id); }
     }, dateBlock(s.date), whereBlock(s), right));
   }
@@ -5021,11 +5022,40 @@
             id: 'inc-merch-cash', value: merchCash, label: 'Merch cash',
             onValue: function (v) { merchCash = v; refresh(); updateDeposit(); }
           });
+          // The atVenu bubble opens two choices: upload a report, or refresh
+          // from the atVenu emails the mailbox has kept for this tour.
+          var avReader = settlementReader({ show: s, mode: 'atvenu', onResult: atvenuResult, ariTour: id,
+            btnLabel: '', btnLogo: 'logo-atvenu.png',
+            ariaLabel: 'Read the atVenu merch summary', btnCls: 'av-bubble av-hidden' });
+          var BK = window.GR_BACKEND;
+          var canRefresh = S.mode === 'db' && BK && BK.atvenuRefresh;
+          var avMenu = h('div', { class: 'row av-menu', hidden: true },
+            h('button', { class: 'btn quiet sm', type: 'button', onclick: function () {
+              avMenu.hidden = true;
+              avReader[0].click();
+            } }, icon('flyer', 16), 'Upload'),
+            canRefresh ? h('button', { class: 'btn quiet glow sm', type: 'button', onclick: async function (e) {
+              var b = e.currentTarget;
+              b.disabled = true;
+              var r = null;
+              try { r = await BK.atvenuRefresh(id); } catch (e2) { r = null; }
+              b.disabled = false;
+              avMenu.hidden = true;
+              if (!r || !r.ok) { toast('Couldn\u2019t reach the atVenu reports. Try again.'); return; }
+              var bits = [r.added ? 'Brought in ' + plural(r.added, 'night') + ' from atVenu' : 'Nothing new from atVenu'];
+              if (r.conflicts) bits.push(plural(r.conflicts, 'night') + ' left alone \u2014 a different number is logged');
+              if (r.noShow) bits.push(plural(r.noShow, 'report') + ' with no show on this tour');
+              toast(bits.join(' \u00b7 '));
+              // Show what came in on this night straight away.
+              if (r.added) { closeSheet(); setTimeout(function () { openIncome(id, showId); }, 350); }
+            } }, icon('refresh', 16), 'Refresh') : null);
+          var avBtn = h('button', { class: 'av-bubble', type: 'button', 'aria-label': 'atVenu: upload or refresh',
+            onclick: function () { avMenu.hidden = !avMenu.hidden; } },
+            h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }));
           rows.push(h('div', { class: 'row mx-head' },
             h('span', { class: 'row-label' }, 'Merch'),
-            settlementReader({ show: s, mode: 'atvenu', onResult: atvenuResult, ariTour: id,
-              btnLabel: '', btnLogo: 'logo-atvenu.png',
-              ariaLabel: 'Read the atVenu merch summary', btnCls: 'av-bubble' })));
+            avReader, avBtn));
+          rows.push(avMenu);
           rows.push(h('div', { class: 'row mx-row' },
             h('label', { class: 'row-label', for: 'inc-merch' }, 'Total net',
               h('span', { class: 'hint' }, 'What the band keeps')),
@@ -5280,110 +5310,147 @@
 
   function cashLogBody(id, t) {
     var sum = G.cashSummary(t);
-    var cats = G.chargeCategoriesFor(t);
+    var byShow = G.cashByShow(t);
+    var cats = G.chargeCategoriesFor(t).filter(function (c) { return c.key !== 'commission'; });
     var catLabel = {};
     cats.forEach(function (c) { catLabel[c.key] = c.label; });
     Object.keys(G.CASH_MOVES).forEach(function (k) { catLabel[k] = G.CASH_MOVES[k]; });
+    var edit = canEditTour(id);
 
     var status;
-    if (!(sum.took > 0) && !(sum.used > 0)) status = h('span', { class: 'hint' }, 'No merch cash logged yet');
+    if (!(sum.took > 0) && !(sum.used > 0)) status = h('span', { class: 'hint' }, 'No merch cash yet');
     else if (sum.left > 0.004) status = h('strong', { class: 'amt num neg' }, money(sum.left));
     else if (sum.left < -0.004) status = h('strong', { class: 'amt num neg' }, money(-sum.left) + ' over');
     else status = h('strong', { class: 'amt num pos glow' }, 'All in');
     var summary = h('div', { class: 'ledger' },
       h('div', { class: 'row' }, h('span', { class: 'row-label' }, 'Cash taken in',
-        h('span', { class: 'hint' }, 'From the merch table, show by show')),
+        h('span', { class: 'hint' }, 'From atVenu, show by show')),
         h('span', { class: 'amt num' }, money(sum.took))),
       h('div', { class: 'row' }, h('span', { class: 'row-label' }, 'Accounted for'),
         h('span', { class: 'amt num' }, money(sum.used))),
       h('div', { class: 'row total' }, h('span', null, sum.left < -0.004 ? 'Logged more than came in' : 'Still to account for'),
         status));
 
-    // Where it went: the manager logs each move of the cash.
-    var form = null;
-    if (canEditTour(id)) {
-      var f = { amount: 0, label: '', category: '', date: G.tourToday() };
-      var amountIn = moneyInput({ id: 'cash-amt', value: null, label: 'Amount', placeholder: '0',
-        onValue: function (v) { f.amount = v; } });
-      var labelIn = h('input', { class: 'input', type: 'text', maxlength: 60, autocomplete: 'off',
-        placeholder: 'A note, if it helps (optional)', 'aria-label': 'Note about where the cash went',
-        oninput: function (e) { f.label = e.target.value; } });
-      // Tap where the cash went: the same categories as the Expenses tab, so
-      // spending shows up there. A deposit or hand-off just moves the cash.
-      var chipsEl = h('div', { class: 'chips cash-chips', role: 'group', 'aria-label': 'Where the cash went' });
-      function chip(key, label, cls) {
-        return h('button', { type: 'button', class: 'chip' + (cls ? ' ' + cls : ''), 'aria-pressed': 'false',
-          onclick: function () {
-            f.category = key;
-            Array.prototype.forEach.call(chipsEl.children, function (b) {
-              b.setAttribute('aria-pressed', String(b === this));
-            }, this);
-          } }, label);
+    // Catching up: every visit starts at the oldest night whose cash isn't
+    // all accounted for, and stays on it until it is (or it's skipped).
+    S.cashSkip = S.cashSkip || {};
+    var open = byShow.nights.filter(function (n) { return n.left > 0.004; });
+    var next = open.filter(function (n) { return !S.cashSkip[n.show.id]; })[0] || null;
+    var catchUp = null;
+    if (edit && sum.took > 0) {
+      if (!open.length) {
+        catchUp = h('div', { class: 'cash-done' }, icon('check', 18), 'Every night’s merch cash is accounted for.');
+      } else if (!next) {
+        catchUp = h('div', { class: 'card cash-catch' },
+          h('p', { class: 'note', style: 'margin:0 0 10px' },
+            plural(open.length, 'night') + ' skipped for now still ' + (open.length === 1 ? 'has' : 'have') + ' cash to account for.'),
+          h('button', { class: 'btn primary block', type: 'button',
+            onclick: function () { S.cashSkip = {}; render(true); } }, 'Go through them again'));
+      } else {
+        catchUp = cashCatchUpCard(id, next, open.indexOf(next) + 1, open.length, cats);
       }
-      cats.filter(function (c) { return c.key !== 'commission'; }).forEach(function (c) { chipsEl.append(chip(c.key, c.label)); });
-      chipsEl.append(chip('deposit', 'Deposited in bank', 'move'), chip('handoff', 'Handed off', 'move'));
-      var dateIn = h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Date',
-        oninput: function (e) { f.date = e.target.value; } });
-      form = h('form', { class: 'card addform', novalidate: true, style: 'margin-top:14px',
-        onsubmit: async function (e) {
-          e.preventDefault();
-          if (!(f.amount > 0)) { toast('Enter how much cash'); return; }
-          if (!f.category) { toast('Tap where the cash went'); return; }
-          blurActive();
-          var patch = {};
-          patch[newId()] = { date: G.parseDay(f.date) ? f.date : G.tourToday(), amount: f.amount,
-            label: f.label.trim() || catLabel[f.category] || 'Cash', category: f.category, createdAt: Date.now() };
-          if (await api.update(id, { cashLog: patch })) {
-            toast(money(f.amount) + ' logged');
-            render(true);
-          }
-        } },
-        h('div', { class: 'af-row' }, amountIn, dateIn),
-        h('p', { class: 'cash-q' }, 'Where did it go?'),
-        chipsEl,
-        labelIn,
-        h('button', { class: 'btn primary block', type: 'submit', style: 'margin-top:10px' }, 'Log it'));
     }
 
-    var shows = G.rows(t.shows).filter(function (x) { return x.loggedAt && G.num(x.merchCash) > 0; }).sort(G.byDate);
-    var log = G.rows(t.cashLog).sort(function (a, b) {
-      return String(b.date || '').localeCompare(String(a.date || '')) || (b.createdAt || 0) - (a.createdAt || 0);
+    var nightsList = byShow.nights.map(function (n) {
+      var sh = n.show;
+      return h('section', { class: 'cash-night' },
+        h('div', { class: 'cn-head' },
+          h('div', null, h('div', { class: 'cn-city' }, sh.city || 'Show'),
+            h('div', { class: 'hint' }, dayLong(sh.date) + ' · ' + money(n.took) + ' cash')),
+          h('span', { class: 'amt num ' + (n.left > 0.004 ? 'neg' : 'pos') },
+            n.left > 0.004 ? money(n.left) + ' left' : 'All in')),
+        n.entries.length ? h('div', { class: 'ledger' }, n.entries.map(function (x) { return cashEntryRow(id, x, catLabel, edit); })) : null);
     });
 
     return [
       summary,
-      form,
-      log.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:22px' }, 'Where it went'),
-        h('div', { class: 'ledger' }, log.map(function (x) {
-          var spent = x.category && !G.CASH_MOVES[x.category];
-          return h('div', { class: 'row' },
-            h('div', { class: 'row-label' }, x.label || 'Cash',
-              h('span', { class: 'hint' }, dayMD(x.date) + ' \u00b7 ' + (catLabel[x.category] || 'Other') +
-                (spent ? ' \u00b7 counts as an expense' : ''))),
-            h('span', { class: 'amt num' }, money(G.num(x.amount))),
-            canEditTour(id) ? h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + (x.label || 'entry'),
-              onclick: function () {
-                confirmSheet({
-                  title: 'Remove this entry?',
-                  body: money(G.num(x.amount)) + ' goes back to cash still to account for.',
-                  action: 'Remove', danger: true,
-                  onConfirm: async function () {
-                    var patch = {}; patch[x.id] = null;
-                    var ok = await api.update(id, { cashLog: patch });
-                    if (ok) toast('Removed');
-                    return ok;
-                  }
-                });
-              } }, icon('trash', 18)) : null);
-        }))] : null,
-      shows.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:22px' }, 'Cash taken in'),
-        h('div', { class: 'ledger' }, shows.map(function (x) {
-          return h(canEditTour(id) ? 'button' : 'div', { class: 'row' + (canEditTour(id) ? ' rowbtn' : ''), type: canEditTour(id) ? 'button' : null,
-            onclick: canEditTour(id) ? function () { openIncome(id, x.id); } : null },
-            h('div', { class: 'row-label' }, x.city || 'Show', h('span', { class: 'hint' }, dayLong(x.date))),
-            h('span', { class: 'amt num' }, money(G.num(x.merchCash))));
-        }))] : h('p', { class: 'note' }, 'Cash shows up here as merch gets logged: atVenu fills it in, or type it under Merch \u2192 Cash when you log a show.')
+      catchUp,
+      nightsList.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:24px' }, 'Show by show'), nightsList]
+        : h('p', { class: 'note' }, 'Cash shows up here as atVenu reports come in, or when you type it under Merch → Cash while logging a show.'),
+      byShow.loose.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:22px' }, 'Logged before shows were tracked'),
+        h('div', { class: 'ledger' }, byShow.loose.map(function (x) { return cashEntryRow(id, x, catLabel, edit); }))] : null
     ];
+  }
+
+  // One night, one question: where did this cash go?
+  function cashCatchUpCard(id, n, place, count, cats) {
+    var sh = n.show;
+    var f = { amount: n.left, label: '', category: '', date: sh.date || G.tourToday() };
+    var amountIn = moneyInput({ id: 'cash-amt', value: n.left, label: 'Amount', placeholder: '0',
+      onValue: function (v) { f.amount = v; } });
+    var labelIn = h('input', { class: 'input', type: 'text', maxlength: 60, autocomplete: 'off',
+      placeholder: 'A note, if it helps (optional)', 'aria-label': 'Note about where the cash went',
+      oninput: function (e) { f.label = e.target.value; } });
+    // The same categories as the Expenses tab, so spending shows up there.
+    // A deposit or a hand-off just moves the cash.
+    var chipsEl = h('div', { class: 'chips cash-chips', role: 'group', 'aria-label': 'Where the cash went' });
+    function chip(key, label, cls) {
+      var b = h('button', { type: 'button', class: 'chip' + (cls ? ' ' + cls : ''), 'aria-pressed': 'false',
+        onclick: function () {
+          f.category = key;
+          Array.prototype.forEach.call(chipsEl.children, function (c) { c.setAttribute('aria-pressed', String(c === b)); });
+        } }, label);
+      return b;
+    }
+    cats.forEach(function (c) { chipsEl.append(chip(c.key, c.label)); });
+    chipsEl.append(chip('deposit', 'Deposited in bank', 'move'), chip('handoff', 'Handed off', 'move'));
+    return h('form', { class: 'card addform cash-catch', novalidate: true,
+      onsubmit: async function (e) {
+        e.preventDefault();
+        if (!(f.amount > 0)) { toast('Enter how much cash'); return; }
+        if (!f.category) { toast('Tap where the cash went'); return; }
+        blurActive();
+        var patch = {};
+        patch[newId()] = { date: G.parseDay(f.date) ? f.date : G.tourToday(), amount: f.amount, showId: sh.id,
+          label: f.label.trim() || G.CASH_MOVES[f.category] || (cats.filter(function (c) { return c.key === f.category; })[0] || {}).label || 'Cash',
+          category: f.category, createdAt: Date.now() };
+        if (await api.update(id, { cashLog: patch })) {
+          var leftNow = Math.round((n.left - f.amount) * 100) / 100;
+          toast(leftNow > 0.004 ? money(f.amount) + ' logged · ' + money(leftNow) + ' of ' + (sh.city || 'this night') + ' left'
+            : (sh.city || 'That night') + '’s cash is all accounted for');
+          render(true);
+        }
+      } },
+      h('div', { class: 'cc-top' },
+        h('span', { class: 'cc-step' }, 'Catching up · ' + plural(count, 'night') + ' to go'),
+        h('div', { class: 'cc-city' }, sh.city || 'Show'),
+        h('div', { class: 'hint' }, dayLong(sh.date) + (sh.venue ? ' · ' + sh.venue : ''))),
+      h('div', { class: 'cc-nums' },
+        h('div', null, h('span', { class: 'hint' }, 'Cash taken'), h('strong', { class: 'amt num' }, money(n.took))),
+        h('div', null, h('span', { class: 'hint' }, 'Still to account for'), h('strong', { class: 'amt num neg' }, money(n.left)))),
+      h('p', { class: 'cash-q' }, 'Where did it go?'),
+      chipsEl,
+      h('div', { class: 'af-row' }, amountIn,
+        h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Date',
+          oninput: function (e) { f.date = e.target.value; } })),
+      labelIn,
+      h('div', { class: 'stack', style: 'margin-top:10px' },
+        h('button', { class: 'btn primary block', type: 'submit' }, 'Log it'),
+        h('button', { class: 'btn quiet block', type: 'button',
+          onclick: function () { S.cashSkip[sh.id] = true; render(true); } }, 'Skip this show for now')));
+  }
+
+  function cashEntryRow(id, x, catLabel, edit) {
+    var spent = x.category && !G.CASH_MOVES[x.category];
+    return h('div', { class: 'row' },
+      h('div', { class: 'row-label' }, x.label || 'Cash',
+        h('span', { class: 'hint' }, dayMD(x.date) + ' · ' + (catLabel[x.category] || 'Other') +
+          (spent ? ' · counts as an expense' : ''))),
+      h('span', { class: 'amt num' }, money(G.num(x.amount))),
+      edit ? h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + (x.label || 'entry'),
+        onclick: function () {
+          confirmSheet({
+            title: 'Remove this entry?',
+            body: money(G.num(x.amount)) + ' goes back to cash still to account for.',
+            action: 'Remove', danger: true,
+            onConfirm: async function () {
+              var patch = {}; patch[x.id] = null;
+              var ok = await api.update(id, { cashLog: patch });
+              if (ok) toast('Removed');
+              return ok;
+            }
+          });
+        } }, icon('trash', 18)) : null);
   }
 
   function dayGroup(id, date, xs) {
