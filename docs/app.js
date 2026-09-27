@@ -1379,15 +1379,15 @@
       dbBanner(),
       h('div', { class: 'sec-head split' },
         h('div', null,
-          h('h2', { class: 'sec-title' }, 'ARTISTS'),
+          h('h2', { class: 'sec-title soft' }, 'Artists'),
           byArtist.size ? h('p', { class: 'sec-sub' }, plural(byArtist.size, 'act') +
             ' \u00b7 ' + plural(entries.filter(function (e) { return artistOf(e[1]); }).length, 'run')) : null),
         canWrite()
-          ? h('button', { class: 'add-mini', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
-              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add artist')
+          ? h('button', { class: 'add-pill', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
+              icon('plus', 16), 'Add')
           : null),
       byArtist.size
-        ? h('ul', { class: 'tour-list' }, Array.from(byArtist, function (pair) {
+        ? h('ul', { class: 'tour-list rows' }, Array.from(byArtist, function (pair) {
             var cardEl = artistCard(pair[0], pair[1]);
             if (!canWrite()) return h('li', null, cardEl);
             return h('li', null, swipeable(cardEl, function () {
@@ -1412,7 +1412,7 @@
         : null,
       loose.length
         ? [h('p', { class: 'count-line', style: 'margin-top:22px' }, 'Not filed under an artist yet'),
-           h('ul', { class: 'tour-list' },
+           h('ul', { class: 'tour-list rows' },
              loose.map(function (e) {
                var cardEl = tourCard(e[0], e[1]);
                if (!canWrite()) return h('li', null, cardEl);
@@ -1487,10 +1487,13 @@
     var open = function () { go({ name: 'artist', artist: name }); };
     // The slot left of the name IS the logo: a + until they bring one in,
     // the mark itself after — tap it either way to set or swap it.
+    // Round mark on the left: the logo once there is one, the first letter
+    // until then (tap it to bring the logo in).
+    var initial = String(name || '?').trim().charAt(0).toUpperCase() || '?';
     var slot = canWrite() ? fileControl({
-      label: logo ? null : '+',
+      label: logo ? null : initial,
       logo: logo || undefined,
-      cls: 'logo-slot' + (logo ? ' has' : ''),
+      cls: 'avatar' + (logo ? ' has' : ' letter'),
       accept: imageAccept(),
       ariaLabel: (logo ? 'Change' : 'Import') + ' the logo for ' + name,
       onFiles: function (files) {
@@ -1498,12 +1501,24 @@
           if (await saveArtistLogo(name, dataUrl)) { toast('Logo in'); render(true); }
         });
       }
-    }) : (logo ? h('img', { class: 'artist-logo', src: logo, alt: '' }) : null);
-    return h('div', { class: 'tour-card idle name-card art-row' },
+    }) : h('span', { class: 'avatar' + (logo ? ' has' : ' letter') },
+      logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : initial);
+    var live = entries.some(function (e) { return tourIsLive(e[1]); });
+    return h('div', { class: 'list-row art-row' },
       slot,
-      h('button', { class: 'art-main', type: 'button', onclick: open },
-        h('span', { class: 'tc-name glow' }, name),
-        icon('chevron', 20)));
+      h('button', { class: 'lr-main', type: 'button', onclick: open },
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title' }, name),
+          h('span', { class: 'lr-sub' + (live ? ' live' : '') },
+            entries.length ? plural(entries.length, 'tour') + (live ? ' \u00b7 on the road' : '') : 'No tours yet')),
+        icon('chevron', 18)));
+  }
+
+  // On the road today: today falls between the tour's first and last show.
+  function tourIsLive(t) {
+    var d = G.rows(t && t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+    var today = G.tourToday();
+    return d.length > 0 && today >= d[0] && today <= d[d.length - 1];
   }
 
   /* Naming an artist: one word, one box, nothing else. */
@@ -1557,15 +1572,15 @@
       dbBanner(),
       h('div', { class: 'sec-head split' },
         h('div', null,
-          h('h2', { class: 'sec-title' }, 'TOURS'),
+          h('h2', { class: 'sec-title soft' }, 'Tours'),
           entries.length ? h('p', { class: 'sec-sub' }, plural(entries.length, 'run') + ' for ' + name) : null),
         canWrite()
-          ? h('button', { class: 'add-mini', type: 'button',
+          ? h('button', { class: 'add-pill', type: 'button',
               onclick: function () { startTour(name); } },
-              h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add tour')
+              icon('plus', 16), 'Add')
           : null),
       entries.length
-        ? h('ul', { class: 'tour-list' }, entries.map(function (e, i) {
+        ? h('ul', { class: 'tour-list rows' }, entries.map(function (e, i) {
             var cardEl = tourCard(e[0], e[1], i + 1);
             if (!canWrite()) return h('li', null, cardEl);
             return h('li', null, swipeable(cardEl, function () {
@@ -1665,12 +1680,23 @@
     toast('Tonight’s show isn’t logged yet — log it and watch the number cross');
   }
 
+  /* A tour, the way a good finance app lists things: a round mark, the name
+     in plain white, the dates and show count in grey underneath. */
   function tourCard(id, t, num) {
-    return h('button', { class: 'tour-card idle name-card', type: 'button', onclick: function () { openTour(id); } },
-      h('div', { class: 'tc-top' },
-        num ? h('span', { class: 'tour-num num', 'aria-hidden': 'true' }, String(num)) : null,
-        h('div', { class: 'tc-name glow' + (num ? ' centered' : '') }, t.name || 'Untitled tour'),
-        icon('chevron', 20)));
+    var dates = G.rows(t && t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+    var live = tourIsLive(t);
+    var sub = dates.length
+      ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') +
+        ' \u00b7 ' + plural(dates.length, 'show')
+      : 'No shows yet';
+    var name = t.name || 'Untitled tour';
+    return h('button', { class: 'list-row tour-row', type: 'button', onclick: function () { openTour(id); } },
+      h('span', { class: 'avatar letter', 'aria-hidden': 'true' },
+        num ? String(num) : String(name).trim().charAt(0).toUpperCase()),
+      h('span', { class: 'lr-text' },
+        h('span', { class: 'lr-title' }, name),
+        h('span', { class: 'lr-sub' + (live ? ' live' : '') }, (live ? 'On the road \u00b7 ' : '') + sub)),
+      icon('chevron', 18));
   }
 
   /* ============================== Views: setup wizard ============================== */
