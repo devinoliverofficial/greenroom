@@ -1557,6 +1557,9 @@ button.input.role-pick.empty { color: var(--ink-3); font-weight: 500; }
 .gate-steps b { color: var(--ink); }
 .gate-codebox { width: 100%; padding: 14px 0; border: 1px solid var(--line); border-radius: 14px; background: var(--surface);
   font: 700 30px/1.2 'SF Mono', Menlo, monospace; letter-spacing: .2em; color: var(--pos); -webkit-user-select: all; user-select: all; }
+.gate-codewrap { display: flex; gap: 8px; width: 100%; }
+.gate-codewrap .input.gate-code { flex: 1; min-width: 0; }
+.gate-codewrap .gate-paste { flex: none; min-width: 84px; }
 .gate-card .input.gate-code { text-align: center; font-size: 22px; letter-spacing: .2em; font-variant-numeric: tabular-nums; }
 .gate-card .linkbtn.quiet { color: var(--ink-3); text-decoration: none; min-height: 36px; }
 .gate-err { min-height: 20px; font-size: 14px; color: var(--neg); text-align: left; }

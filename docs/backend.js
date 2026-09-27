@@ -710,8 +710,11 @@
         '<form id="gr-code-form" novalidate>' +
         '<input class="input" type="email" id="gr-gate-email" placeholder="Your email address" ' +
           'autocomplete="email" inputmode="email" aria-label="Email">' +
+        '<div class="gate-codewrap">' +
         '<input class="input gate-code" type="text" id="gr-gate-code" placeholder="Code" ' +
           'autocomplete="one-time-code" inputmode="numeric" maxlength="12" aria-label="Code from the email">' +
+        '<button class="btn quiet gate-paste" id="gr-code-paste" type="button">Paste</button>' +
+        '</div>' +
         '<div class="gate-err" id="gr-gate-err" role="alert"></div>' +
         '<button class="btn primary block" type="submit">Continue</button>' +
         '</form>' +
@@ -723,6 +726,17 @@
       var errEl = wrap.querySelector('#gr-gate-err');
       var btn = form.querySelector('button');
       if (code) codeI.value = code;
+      // Copied the code from the email? One tap puts it in.
+      wrap.querySelector('#gr-code-paste').addEventListener('click', async function () {
+        try {
+          var got = String(await navigator.clipboard.readText() || '').replace(/\D/g, '');
+          if (got.length >= 6) { codeI.value = got; errEl.textContent = ''; return; }
+          errEl.textContent = 'Nothing to paste yet. In the email, press and hold the code and tap Copy.';
+        } catch (e) {
+          codeI.focus();
+          errEl.textContent = 'Press and hold in the code box and tap Paste.';
+        }
+      });
       form.addEventListener('submit', async function (e) {
         e.preventDefault();
         var email = String(emailI.value || '').trim();
