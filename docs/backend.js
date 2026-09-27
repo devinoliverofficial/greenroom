@@ -158,6 +158,28 @@
     });
   }
 
+  /* Server functions want the sign-in pass as it is right now. Supabase
+     renews it every hour; asking for the session returns the renewed one
+     (renewing on the spot if it just ran out), and a pass that still gets
+     turned away is renewed by force and tried once more. */
+  async function freshToken(force) {
+    try {
+      var got = force ? await sb.auth.refreshSession() : await sb.auth.getSession();
+      if (got && got.data && got.data.session) session = got.data.session;
+    } catch (e) { /* keep the one we have */ }
+    return session ? session.access_token : cfg.anonKey;
+  }
+  async function callFn(name, init) {
+    var res = null;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      var headers = { 'Content-Type': 'application/json', apikey: cfg.anonKey,
+        Authorization: 'Bearer ' + await freshToken(attempt > 0) };
+      res = await fetch(cfg.url + '/functions/v1/' + name, Object.assign({}, init, { headers: headers }));
+      if (res.status !== 401) break;
+    }
+    return res;
+  }
+
   async function callRead(prompt, opts) {
     var o = opts || {};
     var images = [];
@@ -170,14 +192,9 @@
     }
     var res;
     try {
-      res = await fetch(cfg.url + '/functions/v1/read', {
+      res = await callFn('read', {
         method: 'POST',
         signal: o.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: cfg.anonKey,
-          Authorization: 'Bearer ' + (session ? session.access_token : cfg.anonKey)
-        },
         body: JSON.stringify({
           prompt: prompt,
           images: images,
@@ -342,10 +359,8 @@
       // The row alone is enough — an account made with this address claims it.
       // The edge function adds the nicety: the account and the invite email.
       try {
-        var r = await fetch(cfg.url + '/functions/v1/invite', {
+        var r = await callFn('invite', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey,
-            Authorization: 'Bearer ' + (session ? session.access_token : cfg.anonKey) },
           body: JSON.stringify({ tourId: tourId, email: addr, name: String(name || '').trim() })
         });
         var out = await r.json();
@@ -410,10 +425,8 @@
     /* ---- notifications ---- */
     notify: function (tourId, type, data) {
       // fire and forget; the show must go on either way
-      fetch(cfg.url + '/functions/v1/notify', {
+      callFn('notify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey,
-          Authorization: 'Bearer ' + (session ? session.access_token : cfg.anonKey) },
         body: JSON.stringify({ tourId: tourId, type: type, data: data || {} })
       }).catch(function () {});
     },
@@ -471,10 +484,8 @@
       loadFeed(true);
     },
     feedCall: async function (action, body) {
-      var r = await fetch(cfg.url + '/functions/v1/ynab', {
+      var r = await callFn('ynab', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: cfg.anonKey,
-          Authorization: 'Bearer ' + (session ? session.access_token : cfg.anonKey) },
         body: JSON.stringify(Object.assign({ action: action }, body || {}))
       });
       var out = {};
@@ -694,9 +705,12 @@
       sb.auth.onAuthStateChange(function (_ev, s) {
         if (s && !session) { session = s; g.remove(); online(); }
       });
-      return;
     }
-    online();
+    // Every hourly renewal of the sign-in pass lands here, so the copy the
+    // server calls use never goes stale. (After the gate's listener, which
+    // needs to see the very first sign-in.)
+    sb.auth.onAuthStateChange(function (_ev, s) { if (s) session = s; });
+    if (session) online();
   }
 
   /* Tours made before signing in (phone-only mode) follow their owner into
