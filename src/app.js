@@ -3934,9 +3934,14 @@
             icon('edit', 18), lines.length ? 'Edit the off day' : 'Fill in the off day'),
       tourImportControl(id)) : null;
 
+    // The night's venue, filled in from the show, centred over its day sheet.
+    // An off day shows the hotel instead, when there is one.
+    var placeName = s ? String(s.venue || '').trim() : String((off && off.hotel) || '').trim();
+    var placeEl = placeName ? h('div', { class: 'ds-venue glow' }, placeName) : null;
+
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
-    if (only === 'sheet') return [rail, editRow, body, copyBtn];
+    if (only === 'sheet') return [rail, editRow, placeEl, body, copyBtn];
     return [hero, rail, editRow, body, guestBtn, copyBtn];
   }
 
