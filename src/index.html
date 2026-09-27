@@ -859,6 +859,21 @@ span.avatar { cursor: inherit; }
 .crew-side { display: flex; align-items: center; gap: 6px; flex: none; }
 .row.crew-row { gap: 6px; }   /* same as .crew-side's gap, so the badge column sits dead centre */
 .crew-call.empty { visibility: hidden; }
+.crew-sub.pending { color: var(--part); font-weight: 600; }
+/* INVITE SENT: centred, glowing, and gone again in a second and a half. */
+.splash-note { position: fixed; inset: 0; z-index: 58; display: grid; place-items: center; pointer-events: none;
+  background: rgba(0, 0, 0, 0); transition: background .25s ease; }
+.splash-note.on { background: rgba(0, 0, 0, .55); }
+.sn-card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 26px 30px;
+  opacity: 0; transform: scale(.82); transition: opacity .25s ease, transform .35s cubic-bezier(.2, 1.4, .4, 1); }
+.splash-note.on .sn-card { opacity: 1; transform: scale(1); }
+.sn-check { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%;
+  background: var(--pos); color: var(--on-brand); box-shadow: 0 0 28px color-mix(in srgb, var(--pos) 60%, transparent); }
+.sn-check svg { stroke-width: 3; }
+.sn-big { font-size: 32px; font-weight: 800; letter-spacing: .06em; color: var(--pos);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--pos) 55%, transparent); }
+.sn-sub { font-size: 16px; font-weight: 600; color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .sn-card { transition: opacity .2s ease; transform: none; } }
 /* Guest rows borrow the crew layout; the name is a quiet button (tap to remove). */
 button.row-label.gl-name { appearance: none; border: 0; background: none; padding: 0; margin: 0;
   color: inherit; font: inherit; font-size: 16px; font-weight: 600; text-align: left; cursor: pointer; }

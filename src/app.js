@@ -1158,6 +1158,22 @@
     if (bar) bar.classList.remove('is-on');
   }
 
+  /* INVITE SENT: a moment on screen, a burst of confetti, then gone. */
+  function inviteSplash(name) {
+    var el = h('div', { class: 'splash-note', role: 'status', 'aria-live': 'polite' },
+      h('div', { class: 'sn-card' },
+        h('span', { class: 'sn-check' }, icon('check', 30)),
+        h('div', { class: 'sn-big' }, 'INVITE SENT'),
+        name ? h('div', { class: 'sn-sub' }, name) : null));
+    document.body.appendChild(el);
+    confetti();
+    requestAnimationFrame(function () { el.classList.add('on'); });
+    setTimeout(function () {
+      el.classList.remove('on');
+      setTimeout(function () { el.remove(); }, 350);
+    }, reduced() ? 1200 : 1500);
+  }
+
   function confetti() {
     if (reduced()) return;
     var cv = $('#confetti');
@@ -3339,12 +3355,15 @@
       }
       list.replaceChildren.apply(list, rows.map(function (m) {
         var title = m.name || m.username || m.email;
+        // Invited but no account yet: "Pending", and no contact buttons until
+        // they sign up and their own card fills in.
+        var pending = !m.joined;
         var sub = [];
-        if (m.tourRole) sub.push(m.tourRole);
-        if (!m.joined) sub.push('invited');
+        if (!pending && m.tourRole) sub.push(m.tourRole);
         return h('div', { class: 'row crew-row' },
           h('div', { class: 'row-label' }, title,
-            sub.length ? h('span', { class: 'hint crew-sub' }, sub.join(' \u00b7 ')) : null),
+            pending ? h('span', { class: 'hint crew-sub pending' }, 'Pending')
+              : (sub.length ? h('span', { class: 'hint crew-sub' }, sub.join(' \u00b7 ')) : null)),
           h('div', { class: 'crew-side' },
             // Every badge sits in the same-width slot, flush left, so TOUR
             // MANAGER, ALL ACCESS and GA all start at the same point.
@@ -3354,10 +3373,10 @@
                   m.owner ? 'TOUR MANAGER' : (m.role === 'editor' ? 'ALL ACCESS' : 'GA')))),
             // Fixed slots: a missing phone leaves an empty seat, so every mail
             // icon and every phone icon lines up in its own column.
-            m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
+            !pending && m.email ? h('a', { class: 'crew-call', href: 'mailto:' + String(m.email).trim(),
               'aria-label': 'Email ' + title }, icon('mail', 17))
               : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }),
-            m.phone ? h('a', { class: 'crew-call', href: 'tel:' + String(m.phone).replace(/[^0-9+]/g, ''),
+            !pending && m.phone ? h('a', { class: 'crew-call', href: 'tel:' + String(m.phone).replace(/[^0-9+]/g, ''),
               'aria-label': 'Call ' + title }, icon('phone', 17))
               : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' })));
       }));
@@ -5650,7 +5669,9 @@
         var shown = String(m.display_name || '').trim();
         kids.push(h('div', { class: 'row people-row' },
           h('span', { class: 'who' }, shown || m.invited_email,
-            shown ? h('span', { class: 'hint', style: 'display:block' }, m.invited_email) : null),
+            h('span', { class: 'hint', style: 'display:block' },
+              shown ? m.invited_email : null,
+              !m.user_id ? h('span', { class: 'crew-sub pending' }, (shown ? ' \u00b7 ' : '') + 'Pending') : null)),
           h('span', { class: 'role-tag' + (m.role === 'editor' ? ' aa' : '') },
             m.role === 'editor' ? 'ALL ACCESS' : 'GA'),
           owns ? h('button', {
@@ -5682,7 +5703,8 @@
               try {
                 var status = await B.invite(tourId, p.email, p.role, p.name, p.phone);
                 forgetCrew(tourId);
-                toast(status === 'existing' ? who + ' is on this tour now' : who + ' is invited');
+                inviteSplash(who);
+                if (status === 'existing') setTimeout(function () { toast(who + ' already has an account — the tour is in it now'); }, 1700);
                 refresh();
               } catch (e) { addBtn.disabled = false; toast('Couldn\u2019t invite them. Try again.'); }
             } }, 'Invite');
@@ -5740,9 +5762,9 @@
             var status = await B.invite(tourId, email, role, name, String(phoneI.value || '').trim());
             nameI.value = ''; emailI.value = ''; phoneI.value = '';
             forgetCrew(tourId);
-            if (status === 'sent') toast(name + ' is invited — the email is on its way');
-            else if (status === 'existing') toast(name + ' already has an account — the tour is in it now');
-            else toast(name + ' is on the list — the email service is busy, but signing up with ' + email + ' works');
+            inviteSplash(name);
+            if (status === 'existing') setTimeout(function () { toast(name + ' already has an account — the tour is in it now'); }, 1700);
+            else if (status !== 'sent') setTimeout(function () { toast('The email service is busy, but signing up with ' + email + ' works'); }, 1700);
             refresh();
           } catch (e2) { toast('Couldn’t send that invite. Try again.'); }
         }
