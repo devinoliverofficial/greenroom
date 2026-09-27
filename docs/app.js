@@ -6472,16 +6472,23 @@
         n += 1;
       });
       if (!n) { toast('Each show needs a date and a city'); return; }
-      if (await api.update(tourId, { shows: patch })) {
+      // Travel and rehearsal days are asked once, with the tour's first
+      // flyer. Later flyers just add their shows (the days can still be
+      // changed from the Overview).
+      var before = getTour(tourId);
+      var firstFlyer = !(before && before.flyerAsked) &&
+        !G.rows(before && before.shows).some(function (x) { return G.parseDay(x.date); });
+      var upd = { shows: patch };
+      if (firstFlyer) upd.flyerAsked = true;
+      if (await api.update(tourId, upd)) {
         closeSheet(); toast(plural(n, 'show') + ' added'); render(true);
-        var t0 = getTour(tourId);
+        var lineupCheck = function () {
+          var t1 = getTour(tourId);
+          if (t1 && !tourBands(t1).length) openLineupPrompt(tourId);
+        };
         setTimeout(function () {
-          openTravelDaysSheet(tourId, function () {
-            openRehearsalSheet(tourId, function () {
-              var t1 = getTour(tourId);
-              if (t1 && !tourBands(t1).length) openLineupPrompt(tourId);
-            });
-          });
+          if (firstFlyer) openTravelDaysSheet(tourId, function () { openRehearsalSheet(tourId, lineupCheck); });
+          else lineupCheck();
         }, 400);
         lookupVenueInfo(tourId, patch); // fire and forget — a nicety
       }
