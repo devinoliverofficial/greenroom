@@ -4882,11 +4882,32 @@
     }
     G.DS_AMENITIES.forEach(function (a) { f[a[0]] = d0[a[0]] || ''; });
 
+    // The venue's address (and phone) fill themselves in: straight from any
+    // day sheet that already has this venue, or else looked up online while
+    // the rest gets filled out. Never over anything typed.
+    var inputs = {};
+    var addrNote = h('span', { class: 'hint ds-found' }, '');
+    var lookUp = false;
+    if (!f.venueAddress.trim() && String(s.venue || '').trim()) {
+      var known = knownVenue(s.venue, s.city, showId);
+      if (known) {
+        f.venueAddress = known.address;
+        if (!f.venuePhone.trim() && known.phone) f.venuePhone = known.phone;
+        addrNote.textContent = known.online ? 'Found online \u2014 worth a quick look' : 'From the last time you played here';
+      } else if (S.sample) {
+        lookUp = true;
+        addrNote.textContent = 'Looking up the address\u2026';
+      }
+    }
+
     openSheet(function () {
       function textIn(key, ph) {
-        return h('input', { class: 'input', type: 'text', value: f[key], maxlength: 80,
+        return inputs[key] = h('input', { class: 'input', type: 'text', value: f[key], maxlength: 80,
           autocomplete: 'off', placeholder: ph || '',
-          oninput: function (e) { f[key] = e.target.value; } });
+          oninput: function (e) {
+            f[key] = e.target.value;
+            if (key === 'venueAddress') addrNote.textContent = '';
+          } });
       }
       // A time: type the number ("6", "630", "6:30"), pick AM or PM, and it
       // posts as 6:00PM. Anything that isn't a time (TBA) is kept as typed.
@@ -4970,7 +4991,9 @@
         h('p', { class: 'sh-sub clean' }, 'Everything the bus needs for the day. Leave anything blank and it just doesn\u2019t show.'),
         h('form', { class: 'sh-form ds-editor', onsubmit: submit, novalidate: true },
           h('h3', { class: 'ds-sec-h' }, 'Venue'),
-          field('Venue address', textIn('venueAddress', '2115 Woodward Ave')),
+          h('div', { class: 'field' },
+            h('label', { class: 'field-label', for: 'ds-addr' }, 'Venue address'),
+            Object.assign(textIn('venueAddress', '2115 Woodward Ave'), { id: 'ds-addr' }), addrNote),
           field('Venue phone', textIn('venuePhone', '(313) 961-5451')),
           field('Wifi', textIn('wifi', 'Network / password')),
           field('Parking', textIn('parking', 'Load in off 4th St alley, bus on the north lot')),
@@ -4997,6 +5020,70 @@
               onclick: function () { closeSheet(); } }, 'Cancel')))
       ];
     }, { label: 'Day sheet' });
+
+    if (!lookUp) return;
+    lookupVenue(s.venue, s.city).then(function (got) {
+      var filled = false;
+      if (got.address && !f.venueAddress.trim()) {
+        f.venueAddress = got.address;
+        if (inputs.venueAddress) inputs.venueAddress.value = got.address;
+        filled = true;
+      }
+      if (got.phone && !f.venuePhone.trim()) {
+        f.venuePhone = got.phone;
+        if (inputs.venuePhone) inputs.venuePhone.value = got.phone;
+      }
+      if (addrNote.textContent.indexOf('Looking') === 0) {
+        addrNote.textContent = filled ? 'Found online \u2014 worth a quick look' : '';
+      }
+    }, function () {
+      if (addrNote.textContent.indexOf('Looking') === 0) addrNote.textContent = '';
+    });
+  }
+
+  // A venue already on a day sheet somewhere (this tour or any other), or
+  // found online earlier this session.
+  function venueKey(venue, city) {
+    return String(venue || '').trim().toLowerCase() + '|' + String(city || '').trim().toLowerCase();
+  }
+  function knownVenue(venue, city, skipShowId) {
+    var key = venueKey(venue, city);
+    var hit = null;
+    S.tours.forEach(function (tour) {
+      G.rows(tour && tour.shows).forEach(function (x) {
+        if (hit || x.id === skipShowId || venueKey(x.venue, x.city) !== key) return;
+        var d = G.isObj(x.daySheet) ? x.daySheet : {};
+        var addr = String(d.venueAddress || '').trim();
+        if (addr) hit = { address: addr, phone: String(d.venuePhone || '').trim() };
+      });
+    });
+    if (hit) return hit;
+    var c = S.venueCache && S.venueCache[key];
+    return c && c.address ? Object.assign({ online: true }, c) : null;
+  }
+  function venueLookupPrompt(venue, city) {
+    return [
+      'Look up this concert venue with web search and give its street address and main phone number.',
+      'Venue: ' + venue + (city ? ' \u2014 ' + city : ''),
+      'Go by the venue\u2019s own website or its official listing. If you cannot confirm a field, use null for it \u2014 never guess.',
+      'Reply with only a JSON object in this exact shape:',
+      '{"address":"2115 Woodward Ave, Detroit, MI 48201","phone":"(313) 961-5451"}'
+    ].join('\n');
+  }
+  async function lookupVenue(venue, city) {
+    var key = venueKey(venue, city);
+    S.venueCache = S.venueCache || {};
+    if (S.venueCache[key]) return S.venueCache[key];
+    var clean = function (v, n) {
+      v = String(v == null ? '' : v).trim();
+      return /^(null|none|n\/a|unknown)$/i.test(v) ? '' : v.slice(0, n);
+    };
+    var out = await S.sample.json(venueLookupPrompt(venue, city),
+      window.GR_BACKEND ? { cache: false, search: true } : { cache: false });
+    if (Array.isArray(out)) out = out[0];
+    var got = { address: G.isObj(out) ? clean(out.address, 120) : '', phone: G.isObj(out) ? clean(out.phone, 40) : '' };
+    if (got.address || got.phone) S.venueCache[key] = got;
+    return got;
   }
 
   /* ============================== Income ============================== */

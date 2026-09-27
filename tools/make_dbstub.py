@@ -50,6 +50,11 @@ shim = r"""<script>
   fakeSample.json = function (prompt) {
     window.__harness.reads = (window.__harness.reads || 0) + 1;
     if (/concert tour flyer/.test(String(prompt))) return Promise.resolve((window.__harness.flyers || []).shift() || []);
+    if (/concert venue with web search/.test(String(prompt))) {
+      window.__harness.venueAsks = (window.__harness.venueAsks || []).concat([{ prompt: String(prompt), opts: arguments[1] || {} }]);
+      var v = window.__harness.venue || { address: null, phone: null };
+      return new Promise(function (res) { setTimeout(function () { res(v); }, 300); });
+    }
     return Promise.resolve([]);
   };
   fakeSample.limits = function () { return Promise.resolve({ images: { mediaTypes: ['image/png', 'image/jpeg'], maxInputBytes: 5000000 } }); };

@@ -199,6 +199,8 @@
           prompt: prompt,
           images: images,
           tier: o.modelTier === 'quick' ? 'quick' : undefined,
+          // Look it up on the web (a venue's address), not from memory.
+          search: o.search ? true : undefined,
           // The server posts Ari's words to that tour's chat itself.
           ari: o.ariTour ? { tourId: o.ariTour } : undefined
         })

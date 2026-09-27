@@ -49,7 +49,7 @@ function reply(status: number, body: unknown): Response {
 }
 
 interface ImageIn { media_type: string; data: string }
-interface ReadRequest { prompt?: string; images?: ImageIn[]; tier?: string; ari?: { tourId?: string } }
+interface ReadRequest { prompt?: string; images?: ImageIn[]; tier?: string; search?: boolean; ari?: { tourId?: string } }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -65,9 +65,13 @@ Deno.serve(async (req) => {
   const prompt = String(body.prompt ?? "").slice(0, 120_000);
   if (!prompt) return reply(400, { error: "invalid_argument" });
 
+  // The app's public key is a valid token too, so "verified" alone is not
+  // enough: only a signed-in person (a token with a user id) spends credits.
+  const uid = senderOf(req);
+  if (!uid) return reply(401, { error: "not_granted" });
+
   // Asked to post Ari's reading to a tour's chat: check before spending a cent.
   const ariTour = String(body.ari?.tourId ?? "");
-  const uid = senderOf(req);
   if (ariTour && !(await mayPostAsAri(ariTour, uid))) return reply(200, { error: "not_granted" });
 
   const images = Array.isArray(body.images) ? body.images.slice(0, 8) : [];
@@ -93,14 +97,37 @@ Deno.serve(async (req) => {
     { type: "text", text: prompt },
   ];
 
+  // A venue's address comes from a real web search, not memory. Search runs
+  // on the capable model only; a search that pauses mid-turn is handed back
+  // to finish, and if search is turned away the question is asked plainly.
+  const search = body.search === true && body.tier !== "quick";
+  const SEARCH_TOOL = [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }] as unknown as Anthropic.Tool[];
+  const ask = async (withSearch: boolean) => {
+    const messages: Anthropic.MessageParam[] = [{ role: "user", content }];
+    const params = { model, max_tokens: 8000, messages, ...(withSearch ? { tools: SEARCH_TOOL } : {}) };
+    let r = await client.messages.create(params);
+    for (let i = 0; i < 3 && r.stop_reason === "pause_turn"; i++) {
+      messages.push({ role: "assistant", content: r.content as unknown as Anthropic.ContentBlockParam[] });
+      r = await client.messages.create(params);
+    }
+    return r;
+  };
+
   try {
-    const response = await client.messages.create({
-      model,
-      max_tokens: 8000,
-      messages: [{ role: "user", content }],
-    });
+    let response;
+    try {
+      response = await ask(search);
+    } catch (e) {
+      if (!search || (e as { status?: number }).status !== 400) throw e;
+      response = await ask(false);
+    }
     if (response.stop_reason === "refusal") return reply(200, { error: "refused" });
-    const text = response.content
+    // After a search, the answer is the text that follows the last result;
+    // anything before it is Claude saying what it is about to look up.
+    let blocks = response.content;
+    const lastTool = blocks.map((b) => b.type).lastIndexOf("web_search_tool_result");
+    if (lastTool >= 0 && blocks.slice(lastTool + 1).some((b) => b.type === "text")) blocks = blocks.slice(lastTool + 1);
+    const text = blocks
       .filter((b) => b.type === "text")
       .map((b) => (b as Anthropic.TextBlock).text)
       .join("");
