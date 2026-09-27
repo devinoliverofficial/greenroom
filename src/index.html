@@ -404,6 +404,45 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   opacity: .1; pointer-events: none; z-index: 0;
 }
 
+/* MODEL4, the Budget tab's show list: the same clean text as the Artists
+   and Tours lists. The city still says where the night's money stands. */
+.shows { border-top: 0; }
+.show-row { gap: 14px; min-height: 70px; padding: 12px 2px; border-bottom: 1px solid var(--line-2); }
+.show-row .date .m { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); }
+.show-row .date .d { margin: 3px 0 2px; font-family: var(--font); font-size: 21px; font-weight: 600; letter-spacing: -.02em; }
+.show-row .date .w { font-size: 11px; font-weight: 500; color: var(--ink-3); }
+.show-row .city { font-size: 17px; font-weight: 600; letter-spacing: -.012em; line-height: 1.25; }
+.show-row .venue { margin-top: 3px; font-size: 14px; font-weight: 450; color: var(--ink-2); }
+.show-row .amt { font-family: var(--font); font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+.show-row .tag.attn { padding: 6px 12px; font-size: 13px; font-weight: 600; color: var(--ink); background: var(--surface-2); }
+.show-row .tag.quiet { font-size: 13px; font-weight: 500; color: var(--ink-3); }
+
+/* MODEL4, the posted day sheet: plain labels, clean times, room between rows. */
+.ledger .row.ds-row { min-height: 58px; padding: 12px 16px; }
+.ds-row .row-label { font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
+.ds-row .ds-time, .ds-row .ds-val, .ds-row .num { font-family: var(--font); font-weight: 600; letter-spacing: -.005em; }
+.ds-row .ds-time { font-size: 16px; }
+.ds-row .ds-val { font-size: 15px; }
+.ds-drive .hint { font-size: 14px; }
+
+/* MODEL4, Expenses: category names in the clean text, more air everywhere. */
+.feed-entry { margin-bottom: 18px; }
+.btnrow.tiles { gap: 10px; margin: 4px 0 24px; }
+.row.ex-row { min-height: 66px; padding: 12px 16px; }
+.ex-row .row-label { font-size: 16px; font-weight: 500; letter-spacing: -.01em; line-height: 1.25; }
+.ex-row .row-label .hint { margin-top: 3px; font-size: 13px; font-weight: 450; color: var(--ink-2); }
+.ex-row .row-label .hint.over { color: var(--neg); font-weight: 600; }
+.ex-row .row-label .hint.done { color: var(--pos); font-weight: 600; }
+.row.ex-head { padding-top: 14px; padding-bottom: 10px; }
+.row.ex-total, .ex-total + .row.total { min-height: 64px; padding: 14px 16px; }
+.row.total .hint { margin-top: 4px; }
+
+/* Day sheet times: the number, then AM or PM. */
+.time-in { display: flex; gap: 6px; min-width: 0; }
+.time-in .time-num { flex: 1; min-width: 0; }
+.time-in .time-ampm { flex: 0 0 74px; padding: 0 10px; text-align: center; }
+.ds-bands .af-row .time-in { flex: 0 0 150px; }
+
 /* MODEL4 lists (Artists, Tours): the way a good finance app lists things.
    A round mark, the name in plain white semibold, one grey line under it, a
    quiet chevron, and room to breathe. No glow, no caps, no cards. */
@@ -724,7 +763,7 @@ span.avatar { cursor: inherit; }
    orange, part of it; green (with the glow), all of it. */
 .show-row.owed .city { color: var(--neg); }
 .show-row.partial .city { color: var(--part); }
-.show-row.settled .city { color: var(--pos); filter: drop-shadow(0 0 5px currentColor) drop-shadow(0 0 1px currentColor); }
+.show-row.settled .city { color: var(--pos); text-shadow: 0 0 12px color-mix(in srgb, var(--pos) 50%, transparent); }
 /* Travel and off days sit in the schedule but never beg for a tap. */
 .show-row.is-off { cursor: default; opacity: .55; }
 .show-row.is-off .city { font-weight: 500; color: var(--ink-2); }
@@ -809,6 +848,10 @@ span.avatar { cursor: inherit; }
 .crew-side { display: flex; align-items: center; gap: 6px; flex: none; }
 .row.crew-row { gap: 6px; }   /* same as .crew-side's gap, so the badge column sits dead centre */
 .crew-call.empty { visibility: hidden; }
+/* Guest rows borrow the crew layout; the name is a quiet button (tap to remove). */
+button.row-label.gl-name { appearance: none; border: 0; background: none; padding: 0; margin: 0;
+  color: inherit; font: inherit; font-size: 16px; font-weight: 600; text-align: left; cursor: pointer; }
+.guest-rows .row.crew-row { min-height: 60px; }
 /* The badge box is just wide enough for TOUR MANAGER (110px); badges hug its
    left edge so every role starts at the same point. Once the list is measured
    (.sized), the box floats centred in the gap between names and icons. */
@@ -1065,7 +1108,7 @@ input[type="date"].input::-webkit-date-and-time-value,
 input[type="time"].input::-webkit-date-and-time-value { text-align: left; margin: 0; }
 /* Day sheet addresses open Maps. */
 /* Day sheet: the night's venue, centred between the buttons and the sheet. */
-.ds-venue { margin: 18px 8px 12px; text-align: center; font-size: 22px; font-weight: 800; line-height: 1.2; color: var(--pos); }
+.ds-venue { margin: 22px 8px 14px; text-align: center; font-size: 21px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; color: var(--ink); }
 .ds-link { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 3px; }
 select.input { appearance: none; -webkit-appearance: none; background-image: none; }
 .card .input, .card .money-in, .sheet .input, .sheet .money-in { background: var(--surface-2); }

@@ -3271,7 +3271,7 @@
         h('span', { class: 'ov-msg-k' }, 'Pre-sale'),
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       h('div', { class: 'ov-lines' },
-        line('Doors', d.doors)),
+        line('Doors', G.cleanTime(d.doors))),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
@@ -3292,6 +3292,31 @@
     if (tourId) delete S.crewCache[tourId]; else S.crewCache = {};
   }
 
+  /* The name column is sized to the widest name, so the badges stand in one
+     straight column, centred in the gap before the contact icons. Shared by
+     the Overview crew and the guest lists. */
+  function sizeNameColumn(list) {
+    var rowsEl = list.querySelectorAll('.crew-row');
+    if (!rowsEl.length) return;
+    var first = rowsEl[0];
+    var cs = getComputedStyle(first);
+    var content = first.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var cap = content - 6 - 112 - 84; // row gap, badge box, mail + call with their gaps
+    var widest = 0;
+    Array.prototype.forEach.call(rowsEl, function (r) {
+      var lab = r.querySelector('.row-label');
+      Array.prototype.forEach.call(lab.childNodes, function (n) {
+        var rg = document.createRange();
+        rg.selectNodeContents(n);
+        var w = rg.getBoundingClientRect().width;
+        if (w > widest) widest = w;
+      });
+    });
+    if (!(widest > 0) || !(cap > 40)) return;
+    list.style.setProperty('--crew-name-w', Math.ceil(Math.min(widest + 2, cap)) + 'px');
+    list.classList.add('sized');
+  }
+
   function crewSection(tourId) {
     var B = window.GR_BACKEND;
     var owns = B.ownsTour && B.ownsTour(tourId);
@@ -3304,27 +3329,7 @@
        icons: the name column is sized to the widest name (so the gap is the
        same in every row), and each badge box is centred in that gap with the
        badge flush left inside it — straight column, same starting point. */
-    function sizeColumns() {
-      var rowsEl = list.querySelectorAll('.crew-row');
-      if (!rowsEl.length) return;
-      var first = rowsEl[0];
-      var cs = getComputedStyle(first);
-      var content = first.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-      var cap = content - 6 - 112 - 84; // row gap, badge box, mail + call with their gaps
-      var widest = 0;
-      Array.prototype.forEach.call(rowsEl, function (r) {
-        var lab = r.querySelector('.row-label');
-        Array.prototype.forEach.call(lab.childNodes, function (n) {
-          var rg = document.createRange();
-          rg.selectNodeContents(n);
-          var w = rg.getBoundingClientRect().width;
-          if (w > widest) widest = w;
-        });
-      });
-      if (!(widest > 0) || !(cap > 40)) return;
-      list.style.setProperty('--crew-name-w', Math.ceil(Math.min(widest + 2, cap)) + 'px');
-      list.classList.add('sized');
-    }
+    function sizeColumns() { sizeNameColumn(list); }
 
     function draw(rows) {
       if (!rows.length) {
@@ -3499,27 +3504,9 @@
       return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
         String(a.firstName || '').localeCompare(String(b.firstName || ''));
     }).map(function (g) {
-      var name = [g.firstName, g.lastName].map(function (x) { return String(x || '').trim(); })
-        .filter(Boolean).join(' ') || 'Guest';
       var mine = !backend || (g.addedBy && g.addedBy === myUid);
-      var canManage = canWrite() || mine;
-      var sub = [String(g.affiliation || '').trim(),
-        [String(g.email || '').trim(), String(g.phone || '').trim()].filter(Boolean).join(' · ')]
-        .filter(Boolean).join(' · ');
-      return h('div', { class: 'row' },
-        h('div', { class: 'row-label' }, name,
-          sub ? h('span', { class: 'hint' }, sub) : null),
-        h('span', { class: 'guest-pass' + (g.passType === 'All Access' ? ' aa' : '') },
-          (function () {
-            var q = Math.max(1, Math.min(20, G.num(g.qty) || 1));
-            return (q > 1 ? '+' + (q - 1) + ' · ' : '') + (g.passType || 'GA');
-          })()),
-        canManage ? h('button', { class: 'iconbtn sm', type: 'button',
-          'aria-label': 'Remove ' + name,
-          onclick: async function () {
-            try { await removeGuest(id, s.id, g.id); toast('Off the list'); refresh(); }
-            catch (e2) { toast('Only the tour manager can remove someone else’s guest.'); }
-          } }, icon('trash', 16)) : null);
+      return guestRow(g, { canManage: canWrite() || mine,
+        onRemove: async function () { await removeGuest(id, s.id, g.id); refresh(); } });
     });
 
     // Send the night's list straight to the promoter: Messages or Mail opens
@@ -3570,14 +3557,15 @@
         [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
         (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
       rowsOut.length
-        ? h('div', { class: 'ledger' }, rowsOut)
+        ? guestLedger(rowsOut)
         : h('div', { style: 'min-height:60px' }),
       copyBtn,
       h('div', { class: 'gl-dock' },
         rail,
         h('div', { class: 'gl-dock-btns' },
+          // The night on screen is the night the guest is for: no picker.
           h('button', { class: 'add-mini', type: 'button',
-            onclick: function () { openGuestDatePicker(id); } },
+            onclick: function () { openGuestForm(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
             h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
           h('button', { class: 'add-mini', type: 'button',
             onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
@@ -3585,35 +3573,44 @@
     ];
   }
 
-  /* Add guest starts with the night: pick the date, then the name. */
-  function openGuestDatePicker(tourId) {
-    var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.guestsFor);
-    var t = getTour(tourId);
-    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
-    if (!shows.length) { toast('Add a show first'); return; }
-    var today = G.tourToday();
-    openSheet(function () {
-      return [
-        h('h2', { class: 'sh-title' }, 'Which night?'),
-        h('p', { class: 'sh-sub' }, 'Pick the date the guest is coming to.'),
-        h('div', { class: 'ledger' }, shows.map(function (x) {
-          var n = G.guestSummary(guestsFor(t, tourId, x.id)).names;
-          return h('button', { class: 'row rowbtn', type: 'button',
-            onclick: function () {
-              S.glTour = tourId; S.glShow = x.id; // the page follows the night you picked
-              openGuestForm(tourId, x.id, x, backend, function () {
-                closeSheet();
-                setTimeout(function () { render(true); }, backend ? 500 : 150);
-              });
-            } },
-            h('div', { class: 'row-label' },
-              dayMD(x.date) + ' · ' + (String(x.city || '').split(',')[0] || 'Show'),
-              h('span', { class: 'hint' }, x.date === today ? 'Tonight'
-                : (n ? plural(n, 'name') + ' so far' : 'No names yet'))),
-            icon('chevron', 18));
-        }))
-      ];
-    }, { label: 'Add a guest' });
+  /* A guest, laid out like the Overview crew: the name on the left, the pass
+     lit up in the middle, then mail and phone. Tap the name to take them off. */
+  function guestRow(g, o) {
+    var name = [g.firstName, g.lastName].map(function (x) { return String(x || '').trim(); })
+      .filter(Boolean).join(' ') || 'Guest';
+    var q = Math.max(1, Math.min(20, G.num(g.qty) || 1));
+    var pass = (q > 1 ? '+' + (q - 1) + ' \u00b7 ' : '') + (g.passType || 'GA');
+    var email = String(g.email || '').trim(), phone = String(g.phone || '').trim();
+    var aff = String(g.affiliation || '').trim();
+    var inner = [name, aff ? h('span', { class: 'hint crew-sub' }, aff) : null];
+    var label = o.canManage
+      ? h('button', { class: 'row-label gl-name', type: 'button', 'aria-label': name + ', ' + pass + '. Tap to remove',
+          onclick: function () {
+            confirmSheet({
+              title: 'Take ' + name + ' off the list?',
+              body: pass + (aff ? ' \u00b7 ' + aff : ''),
+              action: 'Remove', danger: true,
+              onConfirm: async function () {
+                try { await o.onRemove(); toast('Off the list'); return true; }
+                catch (e) { toast('Only the tour manager can remove someone else\u2019s guest.'); return false; }
+              }
+            });
+          } }, inner)
+      : h('div', { class: 'row-label' }, inner);
+    return h('div', { class: 'row crew-row' }, label,
+      h('div', { class: 'crew-side' },
+        h('span', { class: 'role-slot' },
+          h('span', { class: 'role-box' },
+            h('span', { class: 'role-tag' + (g.passType === 'All Access' ? ' aa' : '') }, pass.toUpperCase()))),
+        email ? h('a', { class: 'crew-call', href: 'mailto:' + email, 'aria-label': 'Email ' + name }, icon('mail', 17))
+          : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }),
+        phone ? h('a', { class: 'crew-call', href: 'tel:' + phone.replace(/[^0-9+]/g, ''), 'aria-label': 'Call ' + name }, icon('phone', 17))
+          : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' })));
+  }
+  function guestLedger(rows) {
+    var el = h('div', { class: 'ledger crew-list guest-rows' }, rows);
+    requestAnimationFrame(function () { sizeNameColumn(el); });
+    return el;
   }
 
   function dateBlock(ds) {
@@ -3837,17 +3834,17 @@
             String(d.venueAddress).trim())));
       }
       timeRow('Venue phone', d.venuePhone);
-      timeRow('Load in', d.loadIn);
+      timeRow('Load in', G.cleanTime(d.loadIn));
       (Array.isArray(d.soundchecks) ? d.soundchecks : []).forEach(function (r) {
-        if (r && (r.band || r.time)) timeRow('Soundcheck \u2014 ' + (r.band || 'TBA'), r.time || 'TBA');
+        if (r && (r.band || r.time)) timeRow('Soundcheck \u2014 ' + (r.band || 'TBA'), G.cleanTime(r.time) || 'TBA');
       });
       timeRow('VIP', d.vip);
-      timeRow('Doors', d.doors);
+      timeRow('Doors', G.cleanTime(d.doors));
       (Array.isArray(d.setTimes) ? d.setTimes : []).forEach(function (r) {
-        if (r && (r.band || r.time)) timeRow(r.band || 'TBA', r.time || 'TBA');
+        if (r && (r.band || r.time)) timeRow(r.band || 'TBA', G.cleanTime(r.time) || 'TBA');
       });
-      timeRow('Lobby call', d.lobbyCall);
-      timeRow('Bus call', d.busCall);
+      timeRow('Lobby call', G.cleanTime(d.lobbyCall));
+      timeRow('Bus call', G.cleanTime(d.busCall));
       var venueRows = [];
       if (String(d.wifi || '').trim()) venueRows.push(h('div', { class: 'row ds-row' },
         h('span', { class: 'row-label' }, 'Wifi'), h('span', { class: 'ds-val' }, d.wifi)));
@@ -3963,7 +3960,7 @@
     // The night's venue, filled in from the show, centred over its day sheet.
     // An off day shows the hotel instead, when there is one.
     var placeName = s ? String(s.venue || '').trim() : String((off && off.hotel) || '').trim();
-    var placeEl = placeName ? h('div', { class: 'ds-venue glow' }, placeName) : null;
+    var placeEl = placeName ? h('div', { class: 'ds-venue' }, placeName) : null;
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
@@ -4460,27 +4457,12 @@
         return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
           String(a.firstName || '').localeCompare(String(b.firstName || ''));
       }).map(function (g) {
-        var name = [g.firstName, g.lastName].map(function (x) { return String(x || '').trim(); })
-          .filter(Boolean).join(' ') || 'Guest';
         var mine = !backend || (g.addedBy && g.addedBy === myUid);
-        var canManage = canWrite() || mine;
-        var sub = [String(g.affiliation || '').trim(),
-          [String(g.email || '').trim(), String(g.phone || '').trim()].filter(Boolean).join(' \u00b7 ')]
-          .filter(Boolean).join(' \u00b7 ');
-        return h('div', { class: 'row' },
-          h('div', { class: 'row-label' }, name,
-            sub ? h('span', { class: 'hint' }, sub) : null),
-          h('span', { class: 'guest-pass' + (g.passType === 'All Access' ? ' aa' : '') },
-            (function () {
-              var q = Math.max(1, Math.min(20, G.num(g.qty) || 1));
-              return (q > 1 ? '+' + (q - 1) + ' \u00b7 ' : '') + (g.passType || 'GA');
-            })()),
-          canManage ? h('button', { class: 'iconbtn sm', type: 'button',
-            'aria-label': 'Remove ' + name,
-            onclick: async function () {
-              try { await removeGuest(tourId, showId, g.id); toast('Off the list'); setTimeout(build, backend ? 500 : 150); }
-              catch (e2) { toast('Only the tour manager can remove someone else\u2019s guest.'); }
-            } }, icon('trash', 16)) : null);
+        return guestRow(g, { canManage: canWrite() || mine,
+          onRemove: async function () {
+            await removeGuest(tourId, showId, g.id);
+            setTimeout(function () { openGuestList(tourId, showId); }, backend ? 500 : 150);
+          } });
       });
 
       var copyBtn = list.length ? h('button', {
@@ -4508,7 +4490,7 @@
             h('button', { class: 'add-mini', type: 'button',
               onclick: function () { openGuestImport(tourId, showId, show, backend, build); } },
               h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import a list')),
-          rowsOut.length ? h('div', { class: 'ledger' }, rowsOut) : null,
+          rowsOut.length ? guestLedger(rowsOut) : null,
           copyBtn
         ];
       }, { label: 'Guest list' });
@@ -4747,6 +4729,24 @@
           autocomplete: 'off', placeholder: ph || '',
           oninput: function (e) { f[key] = e.target.value; } });
       }
+      // A time: type the number ("6", "630", "6:30"), pick AM or PM, and it
+      // posts as 6:00PM. Anything that isn't a time (TBA) is kept as typed.
+      function clockIn(get, set, ph, defAmpm) {
+        var p = G.splitTime(get());
+        var main = p.main, ampm = p.ampm || defAmpm || 'PM';
+        var push = function () { set(G.joinTime(main, ampm)); };
+        var num = h('input', { class: 'input time-num', type: 'text', inputmode: 'decimal', value: main,
+          maxlength: 12, autocomplete: 'off', placeholder: ph || '6', 'aria-label': 'Time',
+          oninput: function (e) { main = e.target.value; push(); } });
+        var ap = h('select', { class: 'input time-ampm', 'aria-label': 'AM or PM',
+          onchange: function (e) { ampm = e.target.value; push(); } },
+          h('option', { value: 'AM' }, 'AM'), h('option', { value: 'PM' }, 'PM'));
+        ap.value = ampm;
+        return h('div', { class: 'time-in' }, num, ap);
+      }
+      function timeIn(key, ph, defAmpm) {
+        return clockIn(function () { return f[key]; }, function (v) { f[key] = v; }, ph, defAmpm);
+      }
       function bandList(key, addLabel) {
         var host = h('div', { class: 'ds-bands' });
         function build() {
@@ -4755,9 +4755,7 @@
               h('input', { class: 'input', type: 'text', value: r.band, maxlength: 60,
                 placeholder: 'Band', autocomplete: 'off',
                 oninput: function (e) { r.band = e.target.value; } }),
-              h('input', { class: 'input', type: 'text', value: r.time, maxlength: 20,
-                placeholder: 'Time', autocomplete: 'off', style: 'flex:0 0 110px',
-                oninput: function (e) { r.time = e.target.value; } }),
+              clockIn(function () { return r.time; }, function (v) { r.time = v; }, 'Time'),
               h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove',
                 onclick: function () { f[key].splice(i, 1); build(); } }, icon('trash', 16)));
           });
@@ -4807,14 +4805,14 @@
           field('Venue address', textIn('venueAddress', '2115 Woodward Ave')),
           field('Venue phone', textIn('venuePhone', '(313) 961-5451')),
           h('div', { class: 'field-row' },
-            field('Load in', textIn('loadIn', '2:00 PM')),
-            field('Doors', textIn('doors', '7:00 PM'))),
+            field('Load in', timeIn('loadIn', '2')),
+            field('Doors', timeIn('doors', '7'))),
           field('Soundchecks', bandList('soundchecks', '+ Add a band\u2019s soundcheck')),
           field('VIP', textIn('vip', '6:00 PM meet & greet')),
           field('Set times', bandList('setTimes', '+ Add a band\u2019s set time')),
           h('div', { class: 'field-row' },
-            field('Lobby call', textIn('lobbyCall', '11:00 AM')),
-            field('Bus call', textIn('busCall', '11:45 PM'))),
+            field('Lobby call', timeIn('lobbyCall', '11', 'AM')),
+            field('Bus call', timeIn('busCall', '11:45'))),
           field('Wifi', textIn('wifi', 'Network / password')),
           field('Parking', textIn('parking', 'Load in off 4th St alley, bus on the north lot')),
           h('div', { class: 'ds-yns' }, G.DS_AMENITIES.map(function (a) { return yesNo(a[0], a[1]); })),

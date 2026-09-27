@@ -604,6 +604,30 @@
 
   // The day sheet as lines of text, ready for the group chat. Only what the
   // tour manager actually filled in — no empty labels, no placeholders.
+  /* Day sheet times, one look everywhere: "6:00PM". Typing "6", "630",
+     "6:30" or "6.30" and picking AM or PM gets there; older entries like
+     "7 pm", "7:00 PM" or "19:00" read the same way. Anything that isn't a
+     time (TBA, "after the set") is left exactly as written. */
+  function splitTime(v) {
+    var t = String(v == null ? '' : v).trim();
+    if (!t) return { main: '', ampm: '' };
+    var m = /^(\d{1,2})(?:[:.]?(\d{2}))?\s*(?:([ap])\.?\s*m?\.?)?$/i.exec(t);
+    if (!m) return { main: t, ampm: '' };
+    var hr = +m[1], mins = m[2] || '00', ap = m[3] ? m[3].toUpperCase() + 'M' : '';
+    if (+mins > 59 || hr > 23) return { main: t, ampm: '' };
+    if (!ap && hr > 12) { ap = 'PM'; hr -= 12; }            // 19:00
+    else if (!ap && hr === 0) { ap = 'AM'; hr = 12; }       // 0:30
+    if (hr === 0) hr = 12;
+    return { main: hr + ':' + mins, ampm: ap };
+  }
+  function joinTime(main, ampm) {
+    var p = splitTime(main);
+    if (!p.main) return '';
+    if (!/^\d{1,2}:\d{2}$/.test(p.main)) return p.main;     // not a time: as written
+    return p.main + (p.ampm || String(ampm || '').toUpperCase());
+  }
+  function cleanTime(v) { var p = splitTime(v); return joinTime(p.main, p.ampm); }
+
   function daySheetLines(show) {
     var d = show && isObj(show.daySheet) ? show.daySheet : {};
     var lines = [];
@@ -613,17 +637,17 @@
     };
     put('Address', d.venueAddress);
     put('Venue phone', d.venuePhone);
-    put('Load in', d.loadIn);
+    put('Load in', cleanTime(d.loadIn));
     dsList(d.soundchecks).forEach(function (r) {
-      lines.push('Soundcheck — ' + (String(r.band || '').trim() || 'TBA') + ': ' + (String(r.time || '').trim() || 'TBA'));
+      lines.push('Soundcheck — ' + (String(r.band || '').trim() || 'TBA') + ': ' + (cleanTime(r.time) || 'TBA'));
     });
     put('VIP', d.vip);
-    put('Doors', d.doors);
+    put('Doors', cleanTime(d.doors));
     dsList(d.setTimes).forEach(function (r) {
-      lines.push((String(r.band || '').trim() || 'TBA') + ': ' + (String(r.time || '').trim() || 'TBA'));
+      lines.push((String(r.band || '').trim() || 'TBA') + ': ' + (cleanTime(r.time) || 'TBA'));
     });
-    put('Lobby call', d.lobbyCall);
-    put('Bus call', d.busCall);
+    put('Lobby call', cleanTime(d.lobbyCall));
+    put('Bus call', cleanTime(d.busCall));
     put('Wifi', d.wifi);
     put('Parking', d.parking);
     var amen = [];
@@ -1051,6 +1075,7 @@
     balanceSeries: balanceSeries, latestChange: latestChange,
     normalizeSettlement: normalizeSettlement,
     DS_AMENITIES: DS_AMENITIES, daySheetLines: daySheetLines, daySheetText: daySheetText,
+    splitTime: splitTime, joinTime: joinTime, cleanTime: cleanTime,
     toCSV: toCSV, closeoutCSVs: closeoutCSVs,
     offDayLines: offDayLines, offDayText: offDayText,
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,

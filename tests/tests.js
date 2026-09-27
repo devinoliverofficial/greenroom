@@ -573,11 +573,11 @@
         driveNext: '4h 20m — 285 mi'
       }
     });
-    eq(lines[0], 'Load in: 2:00 PM', 'load in first');
-    eq(lines[1], 'Soundcheck — In This Moment: 4:00 PM', 'soundcheck per band');
-    eq(lines[3], 'Doors: 7:00 PM', 'doors');
-    eq(lines[4], 'Support: 8:00 PM', 'set times in order');
-    eq(lines.indexOf('Bus call: 11:45 PM') >= 0, true, 'bus call');
+    eq(lines[0], 'Load in: 2:00PM', 'load in first');
+    eq(lines[1], 'Soundcheck — In This Moment: 4:00PM', 'soundcheck per band');
+    eq(lines[3], 'Doors: 7:00PM', 'doors');
+    eq(lines[4], 'Support: 8:00PM', 'set times in order');
+    eq(lines.indexOf('Bus call: 11:45PM') >= 0, true, 'bus call');
     eq(lines.indexOf('Greenrooms yes · no showers') >= 0, true, 'amenities in one line');
     eq(lines[lines.length - 1], 'Drive to next venue: 4h 20m — 285 mi', 'drive last');
     // nothing that wasn't filled in
@@ -596,7 +596,7 @@
       daySheet: { doors: '7:00 PM' }
     });
     eq(text.split('\n')[0], 'Detroit, MI — The Fillmore · Fri, May 1', 'header');
-    eq(text.split('\n')[1], 'Doors: 7:00 PM', 'body');
+    eq(text.split('\n')[1], 'Doors: 7:00PM', 'body');
   });
 
   /* ============ Master Tour import ============ */
@@ -887,6 +887,19 @@
     eq(r.income.merch, 1200, 'net');
     eq(r.cash, 300, 'cash');
     eq(G.normalizeSettlement({ income: { merch: 50 } }).cash, null, 'no cash printed');
+  });
+
+  test('day sheet times read one way: 6:00PM', function () {
+    eq(G.joinTime('6', 'PM'), '6:00PM', 'a bare hour');
+    eq(G.joinTime('630', 'PM'), '6:30PM', 'no colon');
+    eq(G.joinTime('6.30', 'AM'), '6:30AM', 'a dot');
+    eq(G.joinTime('11:45', 'PM'), '11:45PM', 'with a colon');
+    eq(G.cleanTime('7:00 PM'), '7:00PM', 'an older entry');
+    eq(G.cleanTime('7pm'), '7:00PM', 'shorthand');
+    eq(G.cleanTime('19:00'), '7:00PM', '24-hour');
+    eq(G.cleanTime('TBA'), 'TBA', 'not a time, left alone');
+    eq(G.joinTime('', 'PM'), '', 'blank stays blank');
+    eq(G.splitTime('11:00 AM').ampm, 'AM', 'the AM/PM comes back out for editing');
   });
 
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };
