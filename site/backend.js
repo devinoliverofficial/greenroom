@@ -707,9 +707,8 @@
       wrap.innerHTML =
         '<div class="gate-card">' +
         '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-        '<p class="gate-hi">' + (code ? 'Type your email and tap Continue.' : 'Type your email and the code from your Greenroom email.') + '</p>' +
         '<form id="gr-code-form" novalidate>' +
-        '<input class="input" type="email" id="gr-gate-email" placeholder="Your email" ' +
+        '<input class="input" type="email" id="gr-gate-email" placeholder="Your email address" ' +
           'autocomplete="email" inputmode="email" aria-label="Email">' +
         '<input class="input gate-code" type="text" id="gr-gate-code" placeholder="Code" ' +
           'autocomplete="one-time-code" inputmode="numeric" maxlength="12" aria-label="Code from the email">' +
@@ -728,7 +727,15 @@
         e.preventDefault();
         var email = String(emailI.value || '').trim();
         var code = String(codeI.value || '').replace(/\D/g, '');
-        if (email.indexOf('@') < 1) { errEl.textContent = 'Type the email the code was sent to.'; emailI.focus(); return; }
+        // The code typed into the email box: move it where it goes, ask for the email.
+        if (email.indexOf('@') < 0 && /^[\d\s]{6,}$/.test(email)) {
+          if (!code) codeI.value = email.replace(/\D/g, '');
+          emailI.value = '';
+          errEl.textContent = 'That\u2019s the code \u2014 it\u2019s in the second box now. Type your email address in the first box.';
+          emailI.focus();
+          return;
+        }
+        if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email address in the first box.'; emailI.focus(); return; }
         if (code.length < 6) { errEl.textContent = 'Type the code from the email.'; codeI.focus(); return; }
         btn.disabled = true;
         errEl.textContent = 'Checking\u2026';
