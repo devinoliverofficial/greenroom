@@ -2816,9 +2816,7 @@
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
       dbBanner(),
       alertsBell(id),
-      msgs.length
-        ? h('div', { class: 'chat-list' }, msgs)
-        : emptyState('Radio your team', null),
+      msgs.length ? h('div', { class: 'chat-list' }, msgs) : null,
       h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
         input,
         h('button', { class: 'btn primary', type: 'submit' }, 'Send')),
