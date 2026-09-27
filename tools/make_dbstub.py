@@ -109,6 +109,9 @@ shim = r"""<script>
     invite: function (tourId, email, role, name, phone) {
       window.__harness.invited.push([email, role, name]);
       window.__harness.members.push({ invited_email: email, role: role, display_name: name, user_id: null });
+      // Like the real crew list, which reads the same members table.
+      window.__harness.crew = window.__harness.crew.concat([{ owner: false, role: role, name: name || '', email: email,
+        invitedEmail: email, phone: phone || '', tourRole: '', joined: false }]);
       return Promise.resolve('sent');
     },
     uninvite: function () { return Promise.resolve(); },

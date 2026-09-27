@@ -1260,6 +1260,16 @@
     if (bar) bar.classList.remove('is-on');
   }
 
+  /* After an invite: the splash, and behind it the app goes back to the
+     Overview, where the crew list (asked for fresh) shows them as Pending
+     until they make an account. */
+  function afterInvite(tourId, who) {
+    forgetCrew(tourId);
+    inviteSplash(who);
+    closeSheet(true);
+    go({ name: 'tour', id: tourId, view: 'details' });
+  }
+
   /* INVITE SENT: a moment on screen, a burst of confetti, then gone. */
   function inviteSplash(name) {
     var el = h('div', { class: 'splash-note', role: 'status', 'aria-live': 'polite' },
@@ -5943,10 +5953,8 @@
               addBtn.disabled = true;
               try {
                 var status = await B.invite(tourId, p.email, p.role, p.name, p.phone);
-                forgetCrew(tourId);
-                inviteSplash(who);
+                afterInvite(tourId, who);
                 if (status === 'existing') setTimeout(function () { toast(who + ' already has an account — the tour is in it now'); }, 1700);
-                refresh();
               } catch (e) { addBtn.disabled = false; toast('Couldn\u2019t invite them. Try again.'); }
             } }, 'Invite');
           return h('div', { class: 'row people-row past-row' },
@@ -6002,11 +6010,9 @@
           try {
             var status = await B.invite(tourId, email, role, name, String(phoneI.value || '').trim());
             nameI.value = ''; emailI.value = ''; phoneI.value = '';
-            forgetCrew(tourId);
-            inviteSplash(name);
+            afterInvite(tourId, name);
             if (status === 'existing') setTimeout(function () { toast(name + ' already has an account — the tour is in it now'); }, 1700);
             else if (status !== 'sent') setTimeout(function () { toast('The email service is busy, but signing up with ' + email + ' works'); }, 1700);
-            refresh();
           } catch (e2) { toast('Couldn’t send that invite. Try again.'); }
         }
       },
