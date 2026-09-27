@@ -45,6 +45,7 @@ interface Feed {
   accounts: Record<string, Account>; switched_on: boolean;
   since: string | null; knowledge: number | null; last_run: string | null; last_status: string;
   personal_token: boolean;
+  merch_account: string | null;
 }
 
 function claimsOf(jwt: string): Obj {
@@ -130,6 +131,52 @@ async function refreshPlan(feed: Feed, token: string): Promise<{ planId: string;
   return { planId: String(plan.id), accounts };
 }
 
+// Where merch payouts land: the manager's pick, or on first look a bank
+// account with "merch" in its name.
+function merchAccountFor(feed: Feed, accounts: Record<string, Account>): string {
+  if (feed.merch_account != null) return feed.merch_account;
+  const hit = Object.entries(accounts).find(([, a]) =>
+    (a.type === "checking" || a.type === "savings") && !a.closed && /merch/i.test(a.name));
+  return hit ? hit[0] : "";
+}
+
+/* A merch payout matched to the show(s) it pays for: one show whose deposit
+   (net minus cash) is the same amount, or a run of back-to-back shows on one
+   tour that add up to it (a weekly payout). Within a dollar, and only shows
+   from the month before the deposit. */
+interface Dep { id: string; date: string; amount: number }
+interface Cand { tourId: string; showId: string; date: string; due: number }
+function matchDeposits(deps: Dep[], cands: Cand[]): { dep: Dep; picks: Cand[] }[] {
+  const used = new Set<string>();
+  const out: { dep: Dep; picks: Cand[] }[] = [];
+  for (const d of [...deps].sort((a, b) => a.date.localeCompare(b.date))) {
+    const open = cands.filter((c) => !used.has(c.tourId + "/" + c.showId) && c.date <= d.date &&
+      G.daysBetween(c.date, d.date) <= 30).sort((a, b) => a.date.localeCompare(b.date));
+    let picks: Cand[] | null = null;
+    for (const c of open) {
+      if (Math.abs(c.due - d.amount) <= 1 && (!picks || c.date > picks[0].date)) picks = [c];
+    }
+    if (!picks) {
+      search: for (let i = 0; i < open.length; i++) {
+        let sum = 0;
+        const run: Cand[] = [];
+        for (let j = i; j < open.length && run.length < 7; j++) {
+          if (open[j].tourId !== open[i].tourId) break;
+          sum += open[j].due;
+          run.push(open[j]);
+          if (run.length > 1 && Math.abs(sum - d.amount) <= 1) { picks = run.slice(); break search; }
+          if (sum > d.amount + 1) break;
+        }
+      }
+    }
+    if (picks) {
+      picks.forEach((p) => used.add(p.tourId + "/" + p.showId));
+      out.push({ dep: d, picks });
+    }
+  }
+  return out;
+}
+
 // Paying off a card, moving money between accounts, YNAB's own bookkeeping.
 // None of it is spending.
 const NOT_SPENDING = [
@@ -157,14 +204,21 @@ function tourFor(tours: Tour[], date: string): Tour | null {
 interface Bucket { tour: Tour; charges: Obj; total: number; n: number }
 function sortTransactions(
   txs: Obj[], accounts: Record<string, Account>, tours: Tour[], labels: Obj,
-  known: Map<string, string>, owner: string, now: number,
-): { items: Obj[]; toFile: Map<string, Bucket>; dropped: string[] } {
+  known: Map<string, string>, owner: string, now: number, merchAccount = "",
+): { items: Obj[]; toFile: Map<string, Bucket>; dropped: string[]; deposits: Dep[] } {
   const items: Obj[] = [];
+  const deposits: Dep[] = [];
   const toFile = new Map<string, Bucket>();
   const dropped: string[] = [];
 
   for (const t of txs) {
     const id = String(t.id);
+    // Money into the merch account: kept only as a date and an amount, to
+    // match against atVenu. Transfers between the band's own accounts aren't payouts.
+    if (merchAccount && String(t.account_id) === merchAccount && !t.deleted &&
+        !t.transfer_account_id && Number(t.amount) > 0) {
+      deposits.push({ id, date: String(t.date), amount: Math.round(Number(t.amount) / 10) / 100 });
+    }
     if (known.has(id)) {
       // Deleted or edited in YNAB after we saw it: an unfiled one leaves the
       // pile; a filed one stays, since the manager already said yes to it.
@@ -233,7 +287,37 @@ function sortTransactions(
     items.push({ ...base, why: "", status: "filed" });
   }
 
-  return { items, toFile, dropped };
+  return { items, toFile, dropped, deposits };
+}
+
+// Open deposits against shows still waiting on merch. Returns how many shows
+// it marked received.
+async function settleMerch(owner: string, tours: Tour[]): Promise<number> {
+  const since = G.addDays(G.ymd(new Date()), -60);
+  const { data: open } = await admin.from("merch_deposits").select("id, date, amount")
+    .eq("owner_id", owner).eq("matched", false).gte("date", since);
+  if (!open || !open.length) return 0;
+  const cands: Cand[] = [];
+  for (const t of tours) {
+    for (const s of G.rows(t.doc.shows) as Obj[]) {
+      if (s.merchReceived !== false || !s.loggedAt) continue;
+      const due = G.merchDue(s);
+      if (due > 0 && G.parseDay(String(s.date))) cands.push({ tourId: t.id, showId: String(s.id), date: String(s.date), due });
+    }
+  }
+  if (!cands.length) return 0;
+  const hits = matchDeposits(open.map((d) => ({ id: d.id, date: String(d.date), amount: Number(d.amount) })), cands);
+  let n = 0;
+  for (const h of hits) {
+    for (const p of h.picks) {
+      const r = await admin.rpc("merge_show", { t_id: p.tourId, s_id: p.showId,
+        patch: { merchReceived: true, merchReceivedAt: h.dep.date, merchDeposit: h.picks.length === 1 ? h.dep.amount : p.due } });
+      if (!r.error) n += 1;
+    }
+    await admin.from("merch_deposits").update({ matched: true, tour_id: h.picks[0].tourId,
+      show_ids: h.picks.map((p) => p.showId) }).eq("owner_id", owner).eq("id", h.dep.id);
+  }
+  return n;
 }
 
 async function syncFeed(feed: Feed, opts: { preview?: boolean } = {}): Promise<Obj> {
@@ -277,7 +361,9 @@ async function syncFeed(feed: Feed, opts: { preview?: boolean } = {}): Promise<O
   }
 
   const now = Date.now();
-  const { items, toFile, dropped } = sortTransactions(txs, plan.accounts, tours, labels, known, feed.owner_id, now);
+  const merchAccount = merchAccountFor(feed, plan.accounts);
+  const { items, toFile, dropped, deposits } =
+    sortTransactions(txs, plan.accounts, tours, labels, known, feed.owner_id, now, merchAccount);
 
   const filed = items.filter((i) => i.status === "filed").length;
   const waiting = items.filter((i) => i.status === "waiting").length;
@@ -297,11 +383,20 @@ async function syncFeed(feed: Feed, opts: { preview?: boolean } = {}): Promise<O
     await admin.from("feed_items").delete().eq("owner_id", feed.owner_id).in("id", dropped).eq("status", "waiting");
   }
 
+  // Merch payouts: keep new ones, then try every open one against every show
+  // still waiting on its deposit (merch may be logged days after it lands).
+  if (deposits.length) {
+    await admin.from("merch_deposits").upsert(
+      deposits.map((d) => ({ owner_id: feed.owner_id, id: d.id, date: d.date, amount: d.amount })),
+      { onConflict: "owner_id,id", ignoreDuplicates: true });
+  }
+  const paid = await settleMerch(feed.owner_id, tours);
+
   await admin.from("feed").update({
     plan_id: plan.planId, accounts: plan.accounts, knowledge: Number(data.server_knowledge) || feed.knowledge,
-    last_run: new Date().toISOString(), last_status: "ok",
+    merch_account: merchAccount, last_run: new Date().toISOString(), last_status: "ok",
   }).eq("owner_id", feed.owner_id);
-  return { ok: true, status: "ok", filed, waiting };
+  return { ok: true, status: "ok", filed, waiting, merchPaid: paid };
 }
 
 Deno.serve(async (req) => {
@@ -374,10 +469,24 @@ Deno.serve(async (req) => {
       tx("bus_paid_by_hand", "card", -12000000, "Premier Coaches"),
       tx("dinner_logged_by_hand", "card", -40000, "Shell", "2026-09-26"),
     ];
-    const r = sortTransactions(txs, accounts, tours, labels, new Map(), "o", 1);
+    const r = sortTransactions(txs, accounts, tours, labels, new Map(), "o", 1, "bank");
+    const cands: Cand[] = [
+      { tourId: "t", showId: "austin", date: "2026-09-22", due: 900 },
+      { tourId: "t", showId: "dallas", date: "2026-09-23", due: 1250.5 },
+      { tourId: "t", showId: "houston", date: "2026-09-24", due: 610 },
+      { tourId: "t", showId: "tulsa", date: "2026-08-01", due: 777 },
+    ];
+    const deps: Dep[] = [
+      { id: "one", date: "2026-09-25", amount: 900.4 },      // Austin alone
+      { id: "week", date: "2026-09-28", amount: 1860.5 },    // Dallas + Houston together
+      { id: "stale", date: "2026-09-28", amount: 777 },      // Tulsa, but two months old
+      { id: "stray", date: "2026-09-28", amount: 55 },       // nothing like it
+    ];
     return reply(200, {
       sorted: Object.fromEntries(r.items.map((i) => [i.id, [i.status, i.why || i.category]])),
       ignored: txs.map((t) => t.id).filter((id) => !r.items.some((i) => i.id === id)),
+      merchDepositsSeen: r.deposits.map((d) => d.id),
+      matched: Object.fromEntries(matchDeposits(deps, cands).map((m) => [m.dep.id, m.picks.map((p) => p.showId)])),
     });
   }
 
@@ -448,6 +557,7 @@ Deno.serve(async (req) => {
         lastRun: feed.last_run, lastStatus: feed.last_status,
         accounts: Object.entries(plan.accounts).filter(([, a]) => !a.closed)
           .map(([id, a]) => ({ id, name: a.name, type: a.type, mode: a.mode })),
+        merchAccount: merchAccountFor(feed, plan.accounts),
       });
     }
 
@@ -461,6 +571,11 @@ Deno.serve(async (req) => {
         if (accounts[id] && (m === "log" || m === "ask" || m === "off")) accounts[id] = { ...accounts[id], mode: m };
       }
       const patch: Obj = { accounts };
+      if (typeof body.merchAccount === "string") {
+        // '' means none; otherwise it has to be one of this plan's accounts.
+        if (body.merchAccount && !accounts[body.merchAccount]) return reply(400, { error: "no_such_account" });
+        patch.merch_account = body.merchAccount;
+      }
       if (typeof body.plan === "string" && body.plan) {
         // A different plan starts clean: its own accounts, off until switched on.
         const plans = await listPlans(await tokenFor(feed));
@@ -468,7 +583,7 @@ Deno.serve(async (req) => {
         if (!pick) return reply(400, { error: "no_such_plan" });
         Object.assign(patch, {
           plan_id: String(pick.id), plan_name: String(pick.name ?? ""), accounts: {},
-          switched_on: false, since: null, knowledge: null, last_status: "",
+          switched_on: false, since: null, knowledge: null, last_status: "", merch_account: null,
         });
         await admin.from("feed").update(patch).eq("owner_id", owner);
         return reply(200, { ok: true });

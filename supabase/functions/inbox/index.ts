@@ -92,9 +92,11 @@ function prompt(kind: "text" | "files", body: string): string {
     "Pull out ONLY the merch story and which show it belongs to — nothing about guarantees, back end or the promoter deal.",
     "",
     "Reply with only a JSON object in this exact shape:",
-    '{"show":{"date":"YYYY-MM-DD","venue":"","city":""},"income":{"merch":null},"notes":[{"label":"Merch per head","value":"$12.40"}]}',
+    '{"show":{"date":"YYYY-MM-DD","venue":"","city":""},"income":{"merch":null},"cash":null,"notes":[{"label":"Merch per head","value":"$12.40"}]}',
     "",
     "Rules:",
+    '- cash: the merch CASH the band collected at the table (cash sales the artist kept), only if the report',
+    '  prints it — look for "Cash", "Cash Sales", "Cash Collected" or "Cash on Hand". Otherwise null.',
     '- merch: what the band actually keeps — the NET. Look for "Net to Artist", "Artist Net",',
     '  "Due to Artist" or the total after the venue cut and fees. Only if no net line exists anywhere',
     '  take "Total Gross" instead and add a note "Gross merch" so it is clear no net was shown.',
@@ -190,6 +192,8 @@ Deno.serve(async (req) => {
   const show = (out.show ?? {}) as Record<string, unknown>;
   const income = (out.income ?? {}) as Record<string, unknown>;
   const merch = Math.round((money(income.merch) || 0) * 100) / 100;
+  const cashRead = money(out.cash);
+  const cash = cashRead >= 0 ? Math.round(cashRead * 100) / 100 : NaN;
   const date = String(show.date ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(merch > 0)) {
     await logMail(mail.from, mail.subject, "nothing_found", "date=" + date + " merch=" + merch);
@@ -254,6 +258,11 @@ Deno.serve(async (req) => {
     inc.merch = merch;
     s.income = inc;
     if (!s.loggedAt) s.loggedAt = Date.now();
+    // The cash stays with the band; the rest is a deposit on its way, and the
+    // show stays owed (red on the Budget tab) until it lands.
+    if (cash >= 0) s.merchCash = Math.min(cash, merch);
+    const due = Math.round((merch - Number(s.merchCash ?? 0)) * 100) / 100;
+    if (s.merchReceived !== true) s.merchReceived = due > 0 ? false : true;
     const old = (Array.isArray(s.settlementNotes) ? s.settlementNotes : []) as { label: string; value: string }[];
     const seen: Record<string, boolean> = {};
     notes.forEach((n) => { seen[n.label.toLowerCase()] = true; });

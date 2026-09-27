@@ -676,6 +676,10 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .tag.attn { background: var(--surface-2); color: var(--ink-2); }
 .tag.quiet { background: none; color: var(--ink-3); font-weight: 500; padding-right: 0; }
 .show-row.is-today .d { color: var(--pos); }
+/* Money still owed on a night: the city goes red. All in: the date glows green. */
+.show-row.owed .city { color: var(--neg); }
+.show-row.settled .date .d, .show-row.settled .date .m, .show-row.settled .date .w { color: var(--pos); }
+.show-row.settled .date .d { filter: drop-shadow(0 0 5px currentColor) drop-shadow(0 0 1px currentColor); }
 /* Travel and off days sit in the schedule but never beg for a tap. */
 .show-row.is-off { cursor: default; opacity: .55; }
 .show-row.is-off .city { font-weight: 500; color: var(--ink-2); }
@@ -1144,6 +1148,23 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .feed-plans { margin-top: 12px; }
 .past-row { gap: 8px; }
 .past-row .who { flex: 1; min-width: 0; }
+/* Log income: the merch block and the Received boxes. */
+.row.mx-head { min-height: 52px; }
+.row.mx-head .row-label { font-weight: 800; }
+.row.mx-row { padding-left: 28px; }
+.mx-val { margin-left: auto; font-size: 17px; color: var(--ink-3); }
+.mx-val.known { color: var(--pos); }
+.rcv { display: flex; align-items: center; gap: 7px; margin-top: 5px; width: max-content; font-size: 13px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.rcv:has(.rcv-check:checked) { color: var(--pos); }
+.rcv-check { width: 20px; height: 20px; accent-color: var(--pos); margin: 0; }
+/* Expenses → Merch Cash Log. */
+.cash-entry { margin-top: 10px; }
+.cash-entry .ce-label { flex: 1; text-align: left; }
+.ce-left { font-size: 13px; font-weight: 700; }
+.ce-left.neg { color: var(--neg); }
+.ce-left.pos { color: var(--pos); }
+.ledger .amt.num.neg { color: var(--neg); }
+.ledger .amt.num.pos { color: var(--pos); }
 .alerts-nudge { margin: 6px 0 4px; }
 select.input.slim { width: 148px; height: 42px; }
 

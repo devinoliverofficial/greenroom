@@ -127,7 +127,8 @@ shim = r"""<script>
         plans: [{ id: 'p1', name: 'I SEE STARS' }, { id: 'p2', name: 'Personal Plan' }] });
       if (action === 'status') return Promise.resolve({ ok: true, plan: F.row.plan_name, switchedOn: F.row.switched_on,
         since: F.row.since, lastRun: F.row.last_run, lastStatus: 'ok', viaButton: !!F.viaButton,
-        accounts: JSON.parse(JSON.stringify(F.accounts)) });
+        accounts: JSON.parse(JSON.stringify(F.accounts)), merchAccount: F.merchAccount == null ? 'ac2' : F.merchAccount });
+      if (action === 'setup' && typeof body.merchAccount === 'string') F.merchAccount = body.merchAccount;
       if (action === 'setup' && body.plan) { F.row.plan_name = body.plan === 'p1' ? 'I SEE STARS' : 'Personal Plan'; }
       if (action === 'setup') {
         Object.keys(body.modes || {}).forEach(function (id) { F.accounts.forEach(function (a) { if (a.id === id) a.mode = body.modes[id]; }); });

@@ -224,6 +224,39 @@
     return INCOME_FIELDS.reduce(function (t, f) { return t + num(inc[f.key]); }, 0);
   }
 
+  /* Money in hand, show by show. A guarantee only counts toward the budget
+     once it's ticked Received. Merch counts as soon as it's logged (the cash
+     is in hand and the rest is on its way) but the show isn't settled until
+     the deposit lands. Shows logged before the Received boxes existed carry
+     no flags and read as received, exactly as they always counted. */
+  function guaranteeIn(show) { return !show || show.guaranteeReceived !== false; }
+  function merchDue(show) {
+    var inc = show && isObj(show.income) ? show.income : {};
+    return Math.max(0, round((num(inc.merch) - num(show && show.merchCash)) * 100) / 100);
+  }
+  // 'owed' while a logged guarantee or a merch deposit hasn't landed,
+  // 'settled' once everything logged is in, null for a night not logged yet.
+  function showMoneyState(show) {
+    if (!show || !show.loggedAt) return null;
+    var inc = isObj(show.income) ? show.income : {};
+    var guaranteeOwed = num(inc.guarantee) > 0 && show.guaranteeReceived === false;
+    var merchOwed = merchDue(show) > 0 && show.merchReceived === false;
+    return guaranteeOwed || merchOwed ? 'owed' : 'settled';
+  }
+
+  /* The merch cash log: what the table took in cash, and where every dollar
+     went. An entry filed under a category is a tour cost and counts like a
+     card charge; a deposit or a hand-off just moves the cash. */
+  var CASH_MOVES = { deposit: 'Deposited in the bank', handoff: 'Handed off (not a tour cost)' };
+  function cashSummary(tour) {
+    var took = rows(tour && tour.shows).reduce(function (t, s) {
+      return s.loggedAt ? t + num(s.merchCash) : t;
+    }, 0);
+    var used = rows(tour && tour.cashLog).reduce(function (t, x) { return t + num(x.amount); }, 0);
+    return { took: round(took * 100) / 100, used: round(used * 100) / 100,
+      left: round((took - used) * 100) / 100 };
+  }
+
   function crewProjection(tour) {
     return rows(tour && tour.crew).reduce(function (t, p) { return t + num(p.pay); }, 0);
   }
@@ -330,7 +363,9 @@
     var override = o.override || null;
 
     var allShows = rows(tour && tour.shows).map(function (s) {
-      if (override && override.showId === s.id) return Object.assign({}, s, { income: override.income });
+      if (override && override.showId === s.id) {
+        return Object.assign({}, s, { income: override.income }, override.flags || {});
+      }
       return s;
     }).sort(byDate);
 
@@ -341,7 +376,11 @@
     INCOME_FIELDS.forEach(function (f) { incomeBy[f.key] = 0; });
     shows.forEach(function (s) {
       var inc = isObj(s.income) ? s.income : {};
-      INCOME_FIELDS.forEach(function (f) { incomeBy[f.key] += num(inc[f.key]); });
+      INCOME_FIELDS.forEach(function (f) {
+        // A guarantee not received yet isn't money the tour has.
+        if (f.key === 'guarantee' && !guaranteeIn(s)) return;
+        incomeBy[f.key] += num(inc[f.key]);
+      });
     });
     income = INCOME_FIELDS.reduce(function (t, f) { return t + incomeBy[f.key]; }, 0);
     guarantees = incomeBy.guarantee;
@@ -357,6 +396,13 @@
       var k = ch.category || null;
       if (!k) return;
       chargedTo[k] = (chargedTo[k] || 0) + num(ch.amount);
+    });
+    // Merch cash spent on the tour counts where it was spent.
+    rows(tour && tour.cashLog).forEach(function (x) {
+      var k = x.category || null;
+      if (!k || CASH_MOVES[k]) return;
+      if (upTo && !(x.date && x.date <= upTo)) return;
+      chargedTo[k] = (chargedTo[k] || 0) + num(x.amount);
     });
 
     // Pre-tour card money lands here as already-paid, category by category.
@@ -435,10 +481,12 @@
     var dated = c.allShows.filter(function (s) { return parseDay(s.date); });
     var extras = rows(tour && tour.extras).filter(function (x) { return parseDay(x.date); });
     var charges = rows(tour && tour.charges).filter(function (x) { return parseDay(x.date); });
+    var cash = rows(tour && tour.cashLog).filter(function (x) { return parseDay(x.date); });
 
     var days = dated.map(function (s) { return s.date; })
       .concat(extras.map(function (x) { return x.date; }))
-      .concat(charges.map(function (x) { return x.date; }));
+      .concat(charges.map(function (x) { return x.date; }))
+      .concat(cash.map(function (x) { return x.date; }));
     if (!days.length) return [];
 
     days.sort();
@@ -784,7 +832,11 @@
       var value = String(n.value == null ? '' : n.value).trim().slice(0, 120);
       if (label && value) notes.push({ label: label, value: value });
     });
-    return { income: income, miscLabel: miscLabel, notes: notes, found: found };
+    // Merch cash the table collected, when a merch report shows it.
+    var cashRaw = src.cash != null ? src.cash : incSrc.cash;
+    var cash = cashRaw == null || cashRaw === '' ? null : round(num(cashRaw) * 100) / 100;
+    if (cash != null && !(cash >= 0)) cash = null;
+    return { income: income, miscLabel: miscLabel, notes: notes, found: found, cash: cash };
   }
 
   /* ---------------- Tour closeout ---------------- */
@@ -940,6 +992,8 @@
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 
     cardDebts: cardDebts, otherDebts: otherDebts, cardSummary: cardSummary,
+    guaranteeIn: guaranteeIn, merchDue: merchDue, showMoneyState: showMoneyState,
+    CASH_MOVES: CASH_MOVES, cashSummary: cashSummary,
     cardPaidDetail: cardPaidDetail, preTourCutoff: preTourCutoff,
 
     calc: calc, stateOf: stateOf, caption: caption,

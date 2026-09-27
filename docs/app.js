@@ -129,6 +129,7 @@
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>',
+    cash: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v.01M18 14.5v.01"/>',
     refresh: '<path d="M20 11a8 8 0 0 0-14.6-4.4L4 8.5"/><path d="M4 3.5v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.4l1.4-1.9"/><path d="M20 20.5v-5h-5"/>'
   };
   function icon(name, size) {
@@ -2080,6 +2081,7 @@
         h('button', { class: 'btn ghost', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'daybyday' }); } },
           icon('edit', 18), 'Log an expense')),
+      cashLogEntry(id, t),
       h('div', { class: 'ledger' }, rows),
       canEditTour(id) ? h('p', { class: 'note' }, 'Tap a category to set what you expect it to cost and what you’ve already paid.') : null,
       // Debts logged before Credit card and Loan became plain categories still
@@ -2712,12 +2714,13 @@
   function tourTopbar(t, id, view) {
     // Inside a tour the tabs do the moving, so back always leaves it —
     // except the subpages, which step back to the tab they hang off.
-    var back = view === 'addshows' || view === 'daybyday'
+    var sub = view === 'daybyday' || view === 'cashlog';
+    var back = view === 'addshows' || sub
       ? h('button', { class: 'iconbtn back', type: 'button',
           onclick: function () {
-            go({ name: 'tour', id: id, view: view === 'daybyday' ? 'costs' : 'details' });
+            go({ name: 'tour', id: id, view: sub ? 'costs' : 'details' });
           } },
-          icon('back'), h('span', null, view === 'daybyday' ? 'Expenses' : 'Tour'))
+          icon('back'), h('span', null, sub ? 'Expenses' : 'Tour'))
       : backBtn(t);
     return h('header', { class: 'topbar' }, back,
       h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
@@ -3110,7 +3113,7 @@
     }
     if (view === 'addshows') return viewAddShows(id, t);
     if (view === 'menu') view = 'details';
-    if (!canSeeMoney(id) && (view === 'money' || view === 'costs' || view === 'daybyday' || view === 'addshows')) {
+    if (!canSeeMoney(id) && (view === 'money' || view === 'costs' || view === 'daybyday' || view === 'cashlog' || view === 'addshows')) {
       view = 'details';
     }
     if (view === 'day' || view === 'details' || view === 'guests') {
@@ -3134,6 +3137,15 @@
           h('h1', { class: 'tour-title' }, 'Day by day')),
         dbBanner(),
         tabDays(id, t, c),
+        tourTabs(id, 'costs'));
+    }
+    if (view === 'cashlog') {
+      return h('div', { class: 'page tour has-tabs' },
+        h('div', { class: 'headband' },
+          tourTopbar(t, id, 'cashlog'),
+          h('h1', { class: 'tour-title' }, 'Merch Cash Log')),
+        dbBanner(),
+        cashLogBody(id, t),
         tourTabs(id, 'costs'));
     }
     if (tab === 'debt' || tab === 'sheet' || tab === 'expenses' || tab === 'days') tab = 'shows';
@@ -3645,13 +3657,22 @@
 
   function showRow(id, s, today) {
     var isToday = s.date === today;
+    // Red city: money from this night hasn't landed yet (the guarantee, the
+    // merch deposit, or both). Green date: everything logged is in.
+    var money_ = G.showMoneyState(s);
     var right;
     if (s.loggedAt) right = h('span', { class: 'amt num' }, money(G.showIncomeTotal(s)));
     else if (isToday) right = h('span', { class: 'tag attn' }, 'Tonight');
     else if (s.date < today) right = h('span', { class: 'tag attn' }, 'Log income');
     else right = h('span', { class: 'tag quiet' }, 'Upcoming');
+    var owedWhat = [];
+    if (money_ === 'owed') {
+      if (G.num(s.income && s.income.guarantee) > 0 && s.guaranteeReceived === false) owedWhat.push('guarantee');
+      if (G.merchDue(s) > 0 && s.merchReceived === false) owedWhat.push('merch deposit');
+    }
     return h('li', null, h('button', {
-      class: 'show-row' + (isToday ? ' is-today' : ''), type: 'button',
+      class: 'show-row' + (isToday ? ' is-today' : '') + (money_ ? ' ' + money_ : ''), type: 'button',
+      'aria-label': money_ === 'owed' ? (s.city || 'Show') + ': waiting on the ' + owedWhat.join(' and ') : null,
       onclick: function () { if (canEditTour(id)) openIncome(id, s.id); }
     }, dateBlock(s.date), whereBlock(s), right));
   }
@@ -4795,6 +4816,14 @@
     var miscLabel = String((G.isObj(s.income) && s.income.miscLabel) || '');
     var settNotes = Array.isArray(s.settlementNotes)
       ? JSON.parse(JSON.stringify(s.settlementNotes)) : [];
+    // Merch cash collected at the table, and whether each payment has landed.
+    // A night logged before the Received boxes existed reads as received.
+    var merchCash = G.num(s.merchCash);
+    var legacy = !!s.loggedAt;
+    var recv = {
+      guarantee: s.guaranteeReceived === true || (s.guaranteeReceived == null && legacy && draft.guarantee > 0),
+      merch: s.merchReceived === true || (s.merchReceived == null && legacy && draft.merch > 0)
+    };
     var title = s.city || 'Show';
     var sub = [dayLong(s.date), s.venue].filter(Boolean).join(' · ');
 
@@ -4832,7 +4861,7 @@
       function refresh() {
         var cur = getTour(id) || t;
         showEl.textContent = money(G.showIncomeTotal({ income: draft }));
-        var c2 = G.calc(cur, { override: { showId: showId, income: draft } });
+        var c2 = G.calc(cur, { override: { showId: showId, income: draft, flags: currentFlags() } });
         afterEl.textContent = money(c2.net, true);
         afterEl.className = 'num ' + (G.round(c2.net) < 0 ? 'neg' : 'pos');
       }
@@ -4841,14 +4870,24 @@
         blurActive();
         var total = G.showIncomeTotal({ income: draft });
         var before = G.calc(getTour(id) || t).net;
+        var flagsNow = currentFlags();
         var income = Object.assign({}, draft);
         income.miscLabel = draft.misc > 0 ? miscLabel.trim() : '';
         var patch = {};
+        var due = G.merchDue({ income: draft, merchCash: merchCash });
         patch[showId] = { income: income, loggedAt: total > 0 ? Date.now() : null,
-          settlementNotes: settNotes.length ? settNotes : null };
+          settlementNotes: settNotes.length ? settNotes : null,
+          merchCash: draft.merch > 0 && merchCash > 0 ? merchCash : null,
+          guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
+          // All-cash merch has no deposit to wait for.
+          merchReceived: draft.merch > 0 ? (due > 0 ? !!recv.merch : true) : null };
+        if (!(draft.merch > 0 && due > 0 && recv.merch)) {
+          patch[showId].merchReceivedAt = null;
+          patch[showId].merchDeposit = null;
+        }
         if (!(await api.update(id, { shows: patch }))) return;
         closeSheet();
-        var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft } }).net;
+        var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft, flags: flagsNow } }).net;
         var r = G.round(after);
         if (G.round(before) < 0 && r >= 0) sendNotify(id, 'green', { net: money(r, true) });
         if (draft.merch > 0) sendNotify(id, 'merch', {
@@ -4870,13 +4909,41 @@
               h('span', { class: 'sn-val' }, n.value));
           })));
       }
-      var perHeadEl = h('span', { class: 'hint ph-hint' }, '');
+      function currentFlags() {
+        return { guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
+          merchReceived: draft.merch > 0 ? !!recv.merch : null, merchCash: merchCash };
+      }
+      var perHeadEl = h('span', { class: 'amt num mx-val' }, '');
       function updatePerHead() {
         var hit = (settNotes || []).filter(function (x) { return /per head/i.test(x.label); })[0];
-        perHeadEl.textContent = hit ? hit.value + ' per head' : 'atVenu net $ per head';
+        perHeadEl.textContent = hit ? hit.value : '\u2014';
         perHeadEl.classList.toggle('known', !!hit);
       }
       updatePerHead();
+      // "Received" beside a payment: ticked means the money is in hand.
+      function receivedBox(key, what) {
+        var cb = h('input', { type: 'checkbox', class: 'rcv-check', id: 'rcv-' + key,
+          'aria-label': what + ' received' });
+        cb.checked = !!recv[key];
+        cb.addEventListener('change', function () { recv[key] = cb.checked; refresh(); updateDeposit(); });
+        return h('label', { class: 'rcv', for: 'rcv-' + key }, cb, h('span', null, 'Received'));
+      }
+      // What should land in the bank: the net, less the cash already in hand.
+      var depositHint = h('span', { class: 'hint' }, '');
+      var depositAmt = h('span', { class: 'amt num mx-val' }, '');
+      var depositRow = h('div', { class: 'row mx-row' },
+        h('div', { class: 'row-label' }, 'Deposit', depositHint, receivedBox('merch', 'Merch deposit')),
+        depositAmt);
+      function updateDeposit() {
+        var due = G.merchDue({ income: draft, merchCash: merchCash });
+        depositRow.hidden = !(draft.merch > 0 && due > 0);
+        var landed = recv.merch && s.merchReceivedAt && G.num(s.merchDeposit) > 0;
+        depositHint.textContent = landed
+          ? 'Landed ' + dayMD(s.merchReceivedAt) + ' \u00b7 seen in YNAB'
+          : 'Net minus cash, due in the bank';
+        depositAmt.textContent = money(landed ? G.num(s.merchDeposit) : due);
+        depositAmt.classList.toggle('known', !!recv.merch);
+      }
       var readerResult = function (r) { /* assigned below */ };
       var reader = settlementReader({
         show: s, btnCls: 'btn primary block', autoSave: true, ariTour: id,
@@ -4911,6 +4978,13 @@
           if (el) el.value = (Math.round(r.income.merch * 100) / 100)
             .toLocaleString('en-US', { maximumFractionDigits: 2 });
         }
+        if (r.cash != null) {
+          merchCash = r.cash;
+          var ce = document.getElementById('inc-merch-cash');
+          if (ce) ce.value = r.cash ? (Math.round(r.cash * 100) / 100)
+            .toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
+        }
+        updateDeposit();
         if (r.notes.length) {
           var seen = {};
           r.notes.forEach(function (n) { seen[n.label.toLowerCase()] = true; });
@@ -4938,16 +5012,38 @@
           nextId: f.key === 'misc' ? 'inc-misc-label'
             : (i < fields.length - 1 ? 'inc-' + fields[i + 1].key : null),
           last: i === fields.length - 1,
-          onValue: function (v) { draft[f.key] = v; syncMisc(); refresh(); }
+          onValue: function (v) { draft[f.key] = v; syncMisc(); refresh(); if (f.key === 'merch') updateDeposit(); }
         });
         if (f.key === 'merch') {
-          rows.push(h('div', { class: 'row' },
-            h('div', { class: 'row-label' },
-              h('label', { for: 'inc-merch' }, f.label),
-              perHeadEl),
+          // Merch gets room of its own: the net atVenu reports, the cash the
+          // table kept, the per head, and whether the deposit has landed.
+          // Every dollar sits on the right.
+          var cashInput = moneyInput({
+            id: 'inc-merch-cash', value: merchCash, label: 'Merch cash',
+            onValue: function (v) { merchCash = v; refresh(); updateDeposit(); }
+          });
+          rows.push(h('div', { class: 'row mx-head' },
+            h('span', { class: 'row-label' }, 'Merch'),
             settlementReader({ show: s, mode: 'atvenu', onResult: atvenuResult, ariTour: id,
               btnLabel: '', btnLogo: 'logo-atvenu.png',
-              ariaLabel: 'Read the atVenu merch summary', btnCls: 'av-bubble' }),
+              ariaLabel: 'Read the atVenu merch summary', btnCls: 'av-bubble' })));
+          rows.push(h('div', { class: 'row mx-row' },
+            h('label', { class: 'row-label', for: 'inc-merch' }, 'Total net',
+              h('span', { class: 'hint' }, 'What the band keeps')),
+            mkInput));
+          rows.push(h('div', { class: 'row mx-row' },
+            h('label', { class: 'row-label', for: 'inc-merch-cash' }, 'Cash',
+              h('span', { class: 'hint' }, 'Taken at the table')),
+            cashInput));
+          rows.push(h('div', { class: 'row mx-row' },
+            h('span', { class: 'row-label' }, '$ per head'),
+            perHeadEl));
+          rows.push(depositRow);
+        } else if (f.key === 'guarantee') {
+          rows.push(h('div', { class: 'row' },
+            h('div', { class: 'row-label' },
+              h('label', { for: 'inc-guarantee' }, f.label),
+              receivedBox('guarantee', 'Guarantee')),
             mkInput));
         } else {
           rows.push(h('div', { class: 'row' },
@@ -4957,6 +5053,7 @@
         if (f.key === 'misc') rows.push(miscRow);
       });
       syncMisc();
+      updateDeposit();
 
       var form = h('form', { class: 'sh-form', onsubmit: save, novalidate: true },
         reader ? h('div', { style: 'margin-bottom:14px' }, reader,
@@ -5166,6 +5263,120 @@
       labelInput,
       chips,
       h('button', { class: 'btn quiet block', type: 'submit' }, 'Add cost'));
+  }
+
+  /* ============================== Merch cash log ==============================
+     Cash the merch table took in, and where every dollar of it went, so all
+     of it is accounted for. Spending filed under a category counts toward the
+     budget like any charge; a deposit or a hand-off just moves the cash. */
+
+  function cashLogEntry(id, t) {
+    var sum = G.cashSummary(t);
+    return h('button', { class: 'btn ghost block cash-entry', type: 'button',
+      onclick: function () { go({ name: 'tour', id: id, view: 'cashlog' }); } },
+      icon('cash', 18), h('span', { class: 'ce-label' }, 'Merch Cash Log'),
+      sum.took > 0 ? h('span', { class: 'ce-left num' + (sum.left > 0.004 ? ' neg' : ' pos') },
+        sum.left > 0.004 ? money(sum.left) + ' to account for' : 'All accounted for') : null);
+  }
+
+  function cashLogBody(id, t) {
+    var sum = G.cashSummary(t);
+    var cats = G.chargeCategoriesFor(t);
+    var catLabel = {};
+    cats.forEach(function (c) { catLabel[c.key] = c.label; });
+    Object.keys(G.CASH_MOVES).forEach(function (k) { catLabel[k] = G.CASH_MOVES[k]; });
+
+    var status;
+    if (!(sum.took > 0) && !(sum.used > 0)) status = h('span', { class: 'hint' }, 'No merch cash logged yet');
+    else if (sum.left > 0.004) status = h('strong', { class: 'amt num neg' }, money(sum.left));
+    else if (sum.left < -0.004) status = h('strong', { class: 'amt num neg' }, money(-sum.left) + ' over');
+    else status = h('strong', { class: 'amt num pos glow' }, 'All in');
+    var summary = h('div', { class: 'ledger' },
+      h('div', { class: 'row' }, h('span', { class: 'row-label' }, 'Cash taken in',
+        h('span', { class: 'hint' }, 'From the merch table, show by show')),
+        h('span', { class: 'amt num' }, money(sum.took))),
+      h('div', { class: 'row' }, h('span', { class: 'row-label' }, 'Accounted for'),
+        h('span', { class: 'amt num' }, money(sum.used))),
+      h('div', { class: 'row total' }, h('span', null, sum.left < -0.004 ? 'Logged more than came in' : 'Still to account for'),
+        status));
+
+    // Where it went: the manager logs each move of the cash.
+    var form = null;
+    if (canEditTour(id)) {
+      var f = { amount: 0, label: '', category: '', date: G.tourToday() };
+      var amountIn = moneyInput({ id: 'cash-amt', value: null, label: 'Amount', placeholder: '0',
+        onValue: function (v) { f.amount = v; } });
+      var labelIn = h('input', { class: 'input', type: 'text', maxlength: 60, autocomplete: 'off',
+        placeholder: 'Where did it go? e.g. bus driver, per diems', 'aria-label': 'Where the cash went',
+        oninput: function (e) { f.label = e.target.value; } });
+      var catSel = h('select', { class: 'input', 'aria-label': 'What kind of move',
+        onchange: function (e) { f.category = e.target.value; } },
+        h('option', { value: '' }, 'Pick what it was'),
+        h('optgroup', { label: 'Just moving the cash' },
+          Object.keys(G.CASH_MOVES).map(function (k) { return h('option', { value: k }, G.CASH_MOVES[k]); })),
+        h('optgroup', { label: 'Spent on the tour (counts as an expense)' },
+          cats.map(function (c) { return h('option', { value: c.key }, c.label); })));
+      var dateIn = h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Date',
+        oninput: function (e) { f.date = e.target.value; } });
+      form = h('form', { class: 'card addform', novalidate: true, style: 'margin-top:14px',
+        onsubmit: async function (e) {
+          e.preventDefault();
+          if (!(f.amount > 0)) { toast('Enter how much cash'); return; }
+          if (!f.category) { toast('Pick what it was'); return; }
+          blurActive();
+          var patch = {};
+          patch[newId()] = { date: G.parseDay(f.date) ? f.date : G.tourToday(), amount: f.amount,
+            label: f.label.trim() || catLabel[f.category] || 'Cash', category: f.category, createdAt: Date.now() };
+          if (await api.update(id, { cashLog: patch })) {
+            toast(money(f.amount) + ' logged');
+            render(true);
+          }
+        } },
+        h('div', { class: 'af-row' }, amountIn, dateIn),
+        labelIn,
+        catSel,
+        h('button', { class: 'btn primary block', type: 'submit', style: 'margin-top:10px' }, 'Log where it went'));
+    }
+
+    var shows = G.rows(t.shows).filter(function (x) { return x.loggedAt && G.num(x.merchCash) > 0; }).sort(G.byDate);
+    var log = G.rows(t.cashLog).sort(function (a, b) {
+      return String(b.date || '').localeCompare(String(a.date || '')) || (b.createdAt || 0) - (a.createdAt || 0);
+    });
+
+    return [
+      summary,
+      form,
+      log.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:22px' }, 'Where it went'),
+        h('div', { class: 'ledger' }, log.map(function (x) {
+          var spent = x.category && !G.CASH_MOVES[x.category];
+          return h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, x.label || 'Cash',
+              h('span', { class: 'hint' }, dayMD(x.date) + ' \u00b7 ' + (catLabel[x.category] || 'Other') +
+                (spent ? ' \u00b7 counts as an expense' : ''))),
+            h('span', { class: 'amt num' }, money(G.num(x.amount))),
+            canEditTour(id) ? h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + (x.label || 'entry'),
+              onclick: function () {
+                confirmSheet({
+                  title: 'Remove this entry?',
+                  body: money(G.num(x.amount)) + ' goes back to cash still to account for.',
+                  action: 'Remove', danger: true,
+                  onConfirm: async function () {
+                    var patch = {}; patch[x.id] = null;
+                    var ok = await api.update(id, { cashLog: patch });
+                    if (ok) toast('Removed');
+                    return ok;
+                  }
+                });
+              } }, icon('trash', 18)) : null);
+        }))] : null,
+      shows.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:22px' }, 'Cash taken in'),
+        h('div', { class: 'ledger' }, shows.map(function (x) {
+          return h(canEditTour(id) ? 'button' : 'div', { class: 'row' + (canEditTour(id) ? ' rowbtn' : ''), type: canEditTour(id) ? 'button' : null,
+            onclick: canEditTour(id) ? function () { openIncome(id, x.id); } : null },
+            h('div', { class: 'row-label' }, x.city || 'Show', h('span', { class: 'hint' }, dayLong(x.date))),
+            h('span', { class: 'amt num' }, money(G.num(x.merchCash))));
+        }))] : h('p', { class: 'note' }, 'Cash shows up here as merch gets logged: atVenu fills it in, or type it under Merch \u2192 Cash when you log a show.')
+    ];
   }
 
   function dayGroup(id, date, xs) {
@@ -6379,9 +6590,11 @@
       'Pull out ONLY the merch story \u2014 nothing about guarantees, back end or the promoter deal.',
       '',
       'Reply with only a JSON object in this exact shape:',
-      '{"income":{"merch":null},"notes":[{"label":"Merch per head","value":"$12.40"}]}',
+      '{"income":{"merch":null},"cash":null,"notes":[{"label":"Merch per head","value":"$12.40"}]}',
       '',
       'Rules:',
+      '- cash: the merch CASH the band collected at the table (cash sales the artist kept), only if',
+      '  the report prints it \u2014 look for "Cash", "Cash Sales", "Cash Collected" or "Cash on Hand". Otherwise null.',
       '- merch: what the band actually keeps \u2014 the NET. Look for "Net to Artist", "Artist Net",',
       '  "Due to Artist" or the total after the venue cut and fees. Only if no net line exists anywhere',
       '  take "Total Gross" instead and add a note "Gross merch" so it is clear no net was shown.',
@@ -7020,6 +7233,7 @@
     if (!r || !r.ok) return feedProblem(r && (r.status || r.error));
     if (r.status === 'recent') return 'Checked a moment ago';
     var bits = [];
+    if (r.merchPaid) bits.push('merch payout landed for ' + plural(r.merchPaid, 'show'));
     if (r.filed) bits.push(plural(r.filed, 'charge') + ' filed');
     if (r.waiting) bits.push(r.waiting + ' need' + (r.waiting === 1 ? 's' : '') + ' a look');
     return bits.length ? bits.join(' \u00b7 ') : 'Nothing new on the cards';
@@ -7217,6 +7431,26 @@
           'Log: files each charge on the tour by itself once Greenroom knows the merchant, and asks about new ones. ',
           'Ask me: every charge waits for you first. Off: ignored.')
       ];
+      // Where atVenu's merch payouts land, so a matching deposit settles the show.
+      var banks = st.accounts.filter(function (a) { return a.type !== 'creditCard' && a.type !== 'lineOfCredit'; });
+      if (banks.length) {
+        var msel = h('select', { class: 'input', 'aria-label': 'Account merch payouts land in',
+          onchange: function (e) {
+            B.feedCall('setup', { merchAccount: e.target.value }).then(function (r) {
+              toast(r && r.ok ? (e.target.value ? 'Merch payouts watched' : 'Merch payouts not watched')
+                : 'Couldn\u2019t save that. Try again.');
+            });
+          } },
+          h('option', { value: '' }, 'None \u2014 I\u2019ll tick merch received myself'),
+          banks.map(function (a) { return h('option', { value: a.id }, a.name); }));
+        msel.value = st.merchAccount || '';
+        parts.push(
+          h('h3', { class: 'sh-h3' }, 'Merch payouts land in'),
+          msel,
+          h('p', { class: 'note' }, 'When a deposit here matches what atVenu says should land (the net, less the cash ' +
+            'the table kept), that show\u2019s merch is marked received and its city stops being red. ' +
+            'Only the date and amount of these deposits are kept.'));
+      }
       if (!st.switchedOn) {
         var startNote = h('p', { class: 'note' }, starts[startIdx].note);
         parts.push(

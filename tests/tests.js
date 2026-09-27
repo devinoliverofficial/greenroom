@@ -804,5 +804,59 @@
     if (text.indexOf('Next: ') < 0) throw new Error('missing next show: ' + text);
   });
 
+  /* ============ Money received ============ */
+
+  test('a guarantee not received yet stays out of the budget', function () {
+    var t = tourOne();
+    var ids = Object.keys(t.shows);
+    t.shows[ids[1]].guaranteeReceived = false;           // Chicago's 60,000 is still owed
+    eq(G.calc(t).income, 13500, 'income without Chicago');
+    t.shows[ids[1]].guaranteeReceived = true;
+    eq(G.calc(t).income, 73500, 'income once it lands');
+  });
+
+  test('shows logged before the Received box keep counting', function () {
+    eq(G.calc(tourOne()).income, 73500, 'legacy income');
+    eq(G.showMoneyState(tourOne().shows.r0), 'settled', 'legacy show reads settled');
+  });
+
+  test('a show is owed until the guarantee and the merch deposit are both in', function () {
+    var s = { loggedAt: 1, income: { guarantee: 5000, merch: 1200 }, merchCash: 300,
+      guaranteeReceived: false, merchReceived: false };
+    eq(G.merchDue(s), 900, 'deposit expected: net minus cash');
+    eq(G.showMoneyState(s), 'owed', 'nothing in');
+    s.guaranteeReceived = true;
+    eq(G.showMoneyState(s), 'owed', 'guarantee in, merch not');
+    s.merchReceived = true;
+    eq(G.showMoneyState(s), 'settled', 'both in');
+    eq(G.showMoneyState({ income: { guarantee: 1 } }), null, 'a night not logged has no colour');
+    eq(G.showMoneyState({ loggedAt: 1, income: { merch: 400 }, merchCash: 400, merchReceived: false }),
+      'settled', 'all-cash merch has no deposit to wait for');
+  });
+
+  test('merch cash spent on the tour counts; deposits and hand-offs do not', function () {
+    var t = tourOne();
+    t.shows.r0.merchCash = 1000;
+    t.cashLog = keyed([
+      { date: '2026-03-02', amount: 150, category: 'gas', label: 'Fuel' },
+      { date: '2026-03-02', amount: 600, category: 'deposit', label: 'Bank' },
+      { date: '2026-03-02', amount: 100, category: 'handoff', label: 'Per diems float' }
+    ]);
+    var c = G.calc(t);
+    var gas = c.lines.filter(function (l) { return l.key === 'gas'; })[0];
+    near(gas.paid, 150, 'gas paid from cash');
+    var sum = G.cashSummary(t);
+    eq(sum.took, 1000, 'cash taken in');
+    eq(sum.used, 850, 'cash accounted for');
+    eq(sum.left, 150, 'cash still to account for');
+  });
+
+  test('an atVenu report brings its merch cash along', function () {
+    var r = G.normalizeSettlement({ income: { merch: '$1,200.00' }, cash: '$300', notes: [] });
+    eq(r.income.merch, 1200, 'net');
+    eq(r.cash, 300, 'cash');
+    eq(G.normalizeSettlement({ income: { merch: 50 } }).cash, null, 'no cash printed');
+  });
+
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };
 })();
