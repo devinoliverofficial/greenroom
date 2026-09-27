@@ -500,7 +500,13 @@
   async function loadFeed(opening) {
     try {
       var f = await sb.from('feed').select('switched_on, plan_name, since, last_run, last_status').maybeSingle();
-      if (f.error || !f.data) { feedListeners.forEach(function (fn) { fn(null); }); return; }
+      if (f.error || !f.data) {
+        // No feed yet: only accounts on the approved list get a Connect button.
+        var ok = await sb.from('ynab_allowed').select('owner_id').maybeSingle();
+        var none = (ok.error || !ok.data) ? null : { row: null, items: [], connectOnly: true };
+        feedListeners.forEach(function (fn) { fn(none); });
+        return;
+      }
       var items = await sb.from('feed_items').select('id, tour_id, date, merchant, amount, category, account, why')
         .eq('status', 'waiting').order('date');
       var state = { row: f.data, items: items.error ? [] : items.data };

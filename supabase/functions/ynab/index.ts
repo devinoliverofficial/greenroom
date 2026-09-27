@@ -407,7 +407,9 @@ Deno.serve(async (req) => {
     if (server || !uid) return reply(401, { error: "not_signed_in" });
     const clientId = Deno.env.get("YNAB_CLIENT_ID");
     if (!clientId || !Deno.env.get("YNAB_CLIENT_SECRET")) return reply(200, { ok: false, status: "not_set_up" });
-    // The card feed is for tour managers: someone who runs at least one tour.
+    // Only accounts on the approved list, and only someone who runs a tour.
+    const { data: ok } = await admin.from("ynab_allowed").select("owner_id").eq("owner_id", uid).maybeSingle();
+    if (!ok) return reply(403, { error: "not_allowed" });
     const { data: owns } = await admin.from("tours").select("id").eq("owner_id", uid).limit(1);
     if (!owns || !owns.length) return reply(403, { error: "not_manager" });
     const rand = (n: number) => {

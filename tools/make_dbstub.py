@@ -85,7 +85,7 @@ shim = r"""<script>
       var F = window.__harness.feed;
       window.__harness.calls.push([action, JSON.parse(JSON.stringify(body || {}))]);
       if (action === 'connect') return Promise.resolve({ ok: false, status: 'not_set_up' });
-      if (action === 'disconnect') { window.__harness.feedFns.forEach(function (fn) { fn(null); }); return Promise.resolve({ ok: true }); }
+      if (action === 'disconnect') { window.__harness.feedFns.forEach(function (fn) { fn({ row: null, items: [], connectOnly: true }); }); return Promise.resolve({ ok: true }); }
       if (action === 'status' && !F.row.plan_name) return Promise.resolve({ ok: true, needsPlan: true, missing: false, plan: '',
         plans: [{ id: 'p1', name: 'I SEE STARS' }, { id: 'p2', name: 'Personal Plan' }] });
       if (action === 'status') return Promise.resolve({ ok: true, plan: F.row.plan_name, switchedOn: F.row.switched_on,

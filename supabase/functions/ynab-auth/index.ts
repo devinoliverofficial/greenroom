@@ -30,6 +30,10 @@ Deno.serve(async (req) => {
   if (!ticket || Date.now() - Date.parse(ticket.created_at) > 15 * 60_000) return land(HOME, "failed");
   const back = String(ticket.back || HOME);
 
+  // Checked again here, in case the list changed while they were at YNAB.
+  const { data: allowed } = await admin.from("ynab_allowed").select("owner_id").eq("owner_id", ticket.owner_id).maybeSingle();
+  if (!allowed) return land(back, "failed");
+
   const code = url.searchParams.get("code");
   if (url.searchParams.get("error") || !code) return land(back, "cancelled");
 

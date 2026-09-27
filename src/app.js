@@ -264,7 +264,7 @@
       if (!ynabBack) return;
       var r = ynabBack;
       ynabBack = null;
-      if (r === 'connected' && f) {
+      if (r === 'connected' && f && f.row) {
         toast('YNAB connected');
         whenLoaded(function () { openFeedSheet(null); });
       } else if (r === 'cancelled') toast('YNAB wasn\u2019t connected');
@@ -1455,10 +1455,10 @@
             onclick: function () { openUsernameSheet(false); } },
             icon('people', 18),
             (B.myProfile && B.myProfile().tourRole) ? 'Your contact card' : 'Add your details') : null,
-          (signedIn && S.feed) ? h('button', { class: 'btn ghost block', type: 'button',
+          (signedIn && S.feed && S.feed.row) ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openFeedSheet(null); } },
             icon('card', 18), 'Card feed \u00b7 YNAB') : null,
-          (signedIn && !S.feed && B.feedCall && runsATour()) ? h('button', { class: 'btn ghost block', type: 'button',
+          (signedIn && S.feed && S.feed.connectOnly && runsATour()) ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { connectYnab(); } },
             icon('card', 18), 'Connect YNAB') : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
@@ -6908,8 +6908,9 @@
 
   function feedEntry(id) {
     var B = window.GR_BACKEND;
-    if (!canEditTour(id)) return null;
-    if (!S.feed) {
+    if (!canEditTour(id) || !S.feed) return null;
+    // Only accounts on the approved list ever get this far without a feed.
+    if (S.feed.connectOnly) {
       if (S.mode !== 'db' || !B || !B.feedCall) return null;
       return h('button', { class: 'btn ghost block feed-entry', type: 'button', onclick: connectYnab },
         icon('card', 18), 'Connect the cards \u00b7 YNAB');
@@ -7090,7 +7091,7 @@
       load();
       return [
         h('h2', { class: 'sh-title' }, 'Card feed'),
-        h('p', { class: 'sh-sub' }, ((S.feed && S.feed.row.plan_name)
+        h('p', { class: 'sh-sub' }, ((S.feed && S.feed.row && S.feed.row.plan_name)
           ? 'Greenroom reads your YNAB plan \u201c' + S.feed.row.plan_name + '\u201d'
           : 'Greenroom reads your YNAB') +
           ' and logs what the cards spend. Money coming in is never logged, and only you see this.'),
