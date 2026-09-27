@@ -248,12 +248,32 @@
     else { S.mode = 'local'; S.role = S.role || 'owner'; loadLocal(); loadLocalLabels(); dataArrived(); }
   }
 
-  /* The card feed belongs to one tour manager. For everyone else S.feed stays
-     null and the app never mentions it. */
+  /* The card feed belongs to the tour manager who connected it. For everyone
+     else S.feed stays null and they only ever see a Connect button on tours
+     they run. YNAB's sign-in page sends people back with ?ynab=<result>. */
+  var ynabBack = (/[?&]ynab=(connected|cancelled|failed)/.exec(location.search) || [])[1] || null;
+  if (ynabBack) {
+    try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* cosmetic */ }
+  }
   function subscribeFeed() {
     var B = window.GR_BACKEND;
     if (!B || !B.feedWatch) return;
-    B.feedWatch(function (f) { S.feed = f; if (S.loaded) render(); });
+    B.feedWatch(function (f) {
+      S.feed = f;
+      if (S.loaded) render();
+      if (!ynabBack) return;
+      var r = ynabBack;
+      ynabBack = null;
+      if (r === 'connected' && f) {
+        toast('YNAB connected');
+        whenLoaded(function () { openFeedSheet(null); });
+      } else if (r === 'cancelled') toast('YNAB wasn\u2019t connected');
+      else toast('Couldn\u2019t connect YNAB. Try again.');
+    });
+  }
+  function whenLoaded(fn, tries) {
+    if (S.loaded || (tries || 0) > 40) { fn(); return; }
+    setTimeout(function () { whenLoaded(fn, (tries || 0) + 1); }, 150);
   }
 
   /* Merchant labels are remembered across every tour, and anyone with edit
@@ -1438,6 +1458,9 @@
           (signedIn && S.feed) ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openFeedSheet(null); } },
             icon('card', 18), 'Card feed \u00b7 YNAB') : null,
+          (signedIn && !S.feed && B.feedCall && runsATour()) ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { connectYnab(); } },
+            icon('card', 18), 'Connect YNAB') : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () {
               confirmSheet({
@@ -6826,11 +6849,27 @@
     if (hr < 24) return plural(hr, 'hour') + ' ago';
     return plural(Math.round(hr / 24), 'day') + ' ago';
   }
+  function runsATour() {
+    return allTourEntries().some(function (e) { return tourRole(e[0]) === 'owner'; });
+  }
+  // Off to YNAB's own sign-in page; it sends the manager straight back here.
+  async function connectYnab() {
+    var B = window.GR_BACKEND;
+    var r;
+    try { r = await B.feedCall('connect', { back: location.origin + location.pathname }); }
+    catch (e) { r = null; }
+    if (r && r.ok && r.url) { location.href = r.url; return; }
+    toast(r && r.status === 'not_set_up'
+      ? 'Greenroom isn\u2019t registered with YNAB yet.'
+      : 'Couldn\u2019t reach YNAB just now. Try again.');
+  }
+
   function feedProblem(code) {
     var plan = S.feed && S.feed.row ? S.feed.row.plan_name : 'your plan';
     return ({
-      token_refused: 'YNAB turned Greenroom\u2019s key down. Make a new token in YNAB and save it in Supabase as YNAB_TOKEN.',
-      no_token: 'The YNAB key isn\u2019t on the server yet.',
+      token_refused: 'YNAB stopped accepting Greenroom\u2019s key, usually because it was disconnected inside YNAB. Reconnect below.',
+      not_connected: 'Greenroom isn\u2019t connected to your YNAB. Reconnect below.',
+      not_set_up: 'Greenroom isn\u2019t registered with YNAB yet.',
       plan_missing: 'Couldn\u2019t find the YNAB plan \u201c' + plan + '\u201d. If you renamed it, tell Claude the new name.',
       ynab_busy: 'YNAB asked Greenroom to slow down. It tries again next time you open the app.'
     })[code] || 'Couldn\u2019t reach YNAB just now. It tries again next time you open the app.';
@@ -6868,7 +6907,13 @@
   }
 
   function feedEntry(id) {
-    if (!S.feed || !canEditTour(id)) return null;
+    var B = window.GR_BACKEND;
+    if (!canEditTour(id)) return null;
+    if (!S.feed) {
+      if (S.mode !== 'db' || !B || !B.feedCall) return null;
+      return h('button', { class: 'btn ghost block feed-entry', type: 'button', onclick: connectYnab },
+        icon('card', 18), 'Connect the cards \u00b7 YNAB');
+    }
     var row = S.feed.row || {};
     if (!row.switched_on) {
       return h('button', { class: 'btn ghost block feed-entry', type: 'button',
@@ -6928,9 +6973,54 @@
       await load();
     }
 
+    function reconnectBtn(label) {
+      return h('button', { class: 'btn primary block', type: 'button', onclick: connectYnab }, label || 'Reconnect YNAB');
+    }
+    function disconnectBtn() {
+      return h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
+        confirmSheet({
+          title: 'Disconnect YNAB?',
+          body: 'Greenroom deletes its YNAB key right away, along with the charges waiting for a look. ' +
+            'Charges already on your tours stay. You can connect again anytime.',
+          action: 'Disconnect',
+          onConfirm: async function () {
+            var r = await B.feedCall('disconnect');
+            toast(r && r.ok ? 'YNAB disconnected' : feedProblem('unavailable'));
+            return true;
+          }
+        });
+      } }, 'Disconnect YNAB');
+    }
+    var privacy = h('p', { class: 'note feed-privacy' },
+      h('a', { href: 'privacy.html', target: '_blank', rel: 'noopener' }, 'How Greenroom handles your YNAB data'));
+
     function draw() {
+      var code = st && (st.status || st.error);
       if (!st || !st.ok) {
-        body.replaceChildren(h('p', { class: 'note' }, feedProblem(st && (st.status || st.error))));
+        var gone = code === 'token_refused' || code === 'not_connected';
+        body.replaceChildren(h('div', null,
+          h('p', { class: 'note' }, feedProblem(code)),
+          gone ? h('div', { class: 'stack' }, reconnectBtn(), disconnectBtn()) : null,
+          privacy));
+        return;
+      }
+      if (st.needsPlan) {
+        body.replaceChildren(h('div', null,
+          h('h3', { class: 'sh-h3' }, st.missing
+            ? 'Couldn\u2019t find \u201c' + st.plan + '\u201d in YNAB anymore. Which plan is the band\u2019s?'
+            : 'Which YNAB plan is the band\u2019s?'),
+          h('p', { class: 'note' }, 'Greenroom only ever reads the one you pick.'),
+          h('div', { class: 'stack feed-plans' }, st.plans.map(function (pl) {
+            return h('button', { class: 'btn ghost block', type: 'button', onclick: function () {
+              run('plan', async function () {
+                var r = await B.feedCall('setup', { plan: pl.id });
+                if (!r || !r.ok) toast(feedProblem(r && (r.status || r.error)));
+              });
+            } }, pl.name);
+          })),
+          st.plans.length ? null : h('p', { class: 'note' }, 'Your YNAB has no plans yet.'),
+          h('div', { class: 'stack', style: 'margin-top:18px' }, disconnectBtn()),
+          privacy));
         return;
       }
       var accts = h('div', { class: 'feed-accts' }, st.accounts.map(function (a) {
@@ -6986,6 +7076,13 @@
               });
             } }, 'Turn the feed off')));
       }
+      // Still on the key saved by hand: the button gives a read-only one.
+      if (st.viaButton === false) {
+        parts.push(h('p', { class: 'note', style: 'margin-top:22px' },
+          'Connected with the YNAB key you saved by hand. Switch to YNAB\u2019s sign-in for a key that can only read.'),
+          h('div', { class: 'stack' }, reconnectBtn('Switch to YNAB sign-in')));
+      }
+      parts.push(h('div', { class: 'stack', style: 'margin-top:14px' }, disconnectBtn()), privacy);
       body.replaceChildren(h('div', null, parts));
     }
 
@@ -6993,8 +7090,10 @@
       load();
       return [
         h('h2', { class: 'sh-title' }, 'Card feed'),
-        h('p', { class: 'sh-sub' }, 'Greenroom reads your YNAB plan \u201c' + ((S.feed && S.feed.row.plan_name) || 'your plan') +
-          '\u201d and logs what the cards spend. Money coming in is never logged, and only you see this.'),
+        h('p', { class: 'sh-sub' }, ((S.feed && S.feed.row.plan_name)
+          ? 'Greenroom reads your YNAB plan \u201c' + S.feed.row.plan_name + '\u201d'
+          : 'Greenroom reads your YNAB') +
+          ' and logs what the cards spend. Money coming in is never logged, and only you see this.'),
         body
       ];
     }, { label: 'Card feed' });

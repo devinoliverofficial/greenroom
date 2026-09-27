@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Greenroom for YNAB · Privacy</title>
+<style>
+  :root { color-scheme: dark; --bg: #0b0c08; --ink: #f2f4ea; --ink-2: #b9bdaa; --line: #2a2d22; --pos: #ccf80a; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 40px 20px 64px; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 32px 0 8px; color: var(--pos); }
+  p, li { color: var(--ink-2); }
+  strong { color: var(--ink); }
+  ul { padding-left: 20px; }
+  li { margin: 6px 0; }
+  .date { font-size: 14px; margin: 0 0 24px; }
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 14px; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Greenroom for YNAB: privacy</h1>
+  <p class="date">Last updated: September 27, 2026</p>
+
+  <p>Greenroom is a budget app for touring bands. A tour manager can connect their YNAB account so the
+  charges on their cards file themselves onto their tour. This page explains what that connection reads,
+  what Greenroom keeps, and what it never touches.</p>
+
+  <h2>What Greenroom reads from YNAB</h2>
+  <ul>
+    <li><strong>Only the one YNAB plan you pick.</strong></li>
+    <li>The names and types of the accounts in that plan (for example “Business Gold Card”), so you can
+      choose which accounts feed your tour.</li>
+    <li>The plan’s transactions: date, amount and payee name. Accounts you switch off are skipped.</li>
+  </ul>
+  <p>Greenroom asks YNAB for <strong>read-only</strong> access. It cannot change anything in your YNAB, and it
+  cannot move money.</p>
+
+  <h2>What Greenroom never reads or keeps</h2>
+  <ul>
+    <li>Your YNAB password. You sign in on YNAB’s own website, never inside Greenroom.</li>
+    <li>Bank logins, card numbers, account numbers or routing numbers.</li>
+    <li>Account balances.</li>
+    <li>Money coming into your bank accounts, such as deposits and payouts. Those transactions are skipped
+      and never stored.</li>
+  </ul>
+
+  <h2>What Greenroom keeps</h2>
+  <ul>
+    <li><strong>The key YNAB issues for your connection.</strong> It is stored on Greenroom’s server, where
+      only the server can read it. It is never sent to your phone or anyone else’s.</li>
+    <li><strong>Spending it looks at:</strong> the date, amount, a cleaned-up payee name, the account’s name
+      and a category. Charges Greenroom isn’t sure about wait in your private pile until you add them to a
+      tour or set them aside. Refunds on a card are shown to you in the same pile.</li>
+    <li><strong>Charges on your tours:</strong> once added, a charge is part of that tour’s budget.</li>
+  </ul>
+  <p>Everything is stored with Greenroom’s hosting provider, Supabase, which encrypts stored data.</p>
+
+  <h2>Who can see it</h2>
+  <ul>
+    <li>Your pile of charges waiting for a look: <strong>only you</strong>.</li>
+    <li>Charges on a tour: you, and the people you invite to that tour with ALL ACCESS. People you invite
+      as GA don’t see money.</li>
+    <li>Greenroom never sells your data or shares it with advertisers or anyone else. It is used only to
+      show your tours’ budgets.</li>
+  </ul>
+
+  <h2>How long it’s kept</h2>
+  <ul>
+    <li>The YNAB key: until you disconnect.</li>
+    <li>Your pile, and the record of what’s already been brought in (so nothing comes in twice): until you
+      disconnect.</li>
+    <li>Charges on a tour: as long as the tour exists. A deleted tour waits in Recently deleted for 30 days,
+      then is removed with its charges.</li>
+  </ul>
+
+  <h2>Deleting your data</h2>
+  <ul>
+    <li><strong>Disconnect in Greenroom:</strong> Card feed → Disconnect YNAB. Greenroom deletes its YNAB key and
+      your pile immediately.</li>
+    <li><strong>Or from YNAB:</strong> remove Greenroom from the connected apps in your YNAB account settings.
+      Greenroom stops being able to read anything right away.</li>
+    <li><strong>Delete a tour</strong> to remove the charges on it.</li>
+  </ul>
+
+  <footer>Greenroom is an independent app. It is not made, endorsed or supported by YNAB.</footer>
+</main>
+</body>
+</html>

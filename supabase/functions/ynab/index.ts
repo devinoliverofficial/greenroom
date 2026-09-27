@@ -3,9 +3,11 @@
 // has already learned about each merchant. Anything it isn't sure of waits in
 // the tour manager's private pile instead. Money coming in is never logged.
 //
-// The YNAB token lives only in this server's secret store (YNAB_TOKEN) and
-// never leaves it. Nothing here returns a balance, and the feed belongs to
-// exactly one Greenroom account: the row in `feed` names it.
+// Each tour manager connects their own YNAB through YNAB's sign-in page (see
+// ynab-auth); their read-only key sits in ynab_links, which only this server
+// can read, and never leaves it. Devin's first feed ran on a personal token in
+// the secret store (YNAB_TOKEN) until he connects the same way. Nothing here
+// returns a balance, and a feed only ever files onto its own manager's tours.
 import { createClient } from "npm:@supabase/supabase-js@2";
 // The app's own rules, copied in by build.py so the server sorts charges the
 // same way the statement importer does.
@@ -31,12 +33,18 @@ const admin = createClient(
 );
 
 type Obj = Record<string, unknown>;
+
+// Where YNAB sends people back to, and where they may land afterwards.
+const REDIRECT = Deno.env.get("SUPABASE_URL") + "/functions/v1/ynab-auth";
+const HOME = "https://devinoliverofficial.github.io/greenroom/";
+const SITE = /^https:\/\/devinoliverofficial\.github\.io\/greenroom\//;
 type Mode = "log" | "ask" | "off";
 interface Account { name: string; type: string; mode: Mode; closed?: boolean }
 interface Feed {
   owner_id: string; plan_name: string; plan_id: string;
   accounts: Record<string, Account>; switched_on: boolean;
   since: string | null; knowledge: number | null; last_run: string | null; last_status: string;
+  personal_token: boolean;
 }
 
 function claimsOf(jwt: string): Obj {
@@ -47,9 +55,43 @@ function claimsOf(jwt: string): Obj {
 }
 
 class YnabError extends Error {}
-async function ynab(path: string): Promise<Obj> {
-  const token = Deno.env.get("YNAB_TOKEN");
-  if (!token) throw new YnabError("no_token");
+
+/* The key for one manager's YNAB. A key from the Connect button lasts two
+   hours and is renewed here, quietly, a couple of minutes before it runs out. */
+async function tokenFor(feed: Feed): Promise<string> {
+  const { data: link } = await admin.from("ynab_links").select("*").eq("owner_id", feed.owner_id).maybeSingle();
+  if (link) {
+    if (Date.parse(link.expires_at) - Date.now() > 120_000) return link.access_token;
+    const r = await fetch("https://app.ynab.com/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: Deno.env.get("YNAB_CLIENT_ID") ?? "",
+        client_secret: Deno.env.get("YNAB_CLIENT_SECRET") ?? "",
+        grant_type: "refresh_token",
+        refresh_token: link.refresh_token,
+      }),
+    });
+    // Turned down: the manager disconnected Greenroom inside YNAB.
+    if (r.status === 400 || r.status === 401) throw new YnabError("token_refused");
+    if (!r.ok) throw new YnabError("ynab_" + r.status);
+    const j = await r.json() as Obj;
+    await admin.from("ynab_links").update({
+      access_token: String(j.access_token),
+      refresh_token: String(j.refresh_token ?? link.refresh_token),
+      expires_at: new Date(Date.now() + Number(j.expires_in ?? 7200) * 1000).toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq("owner_id", feed.owner_id);
+    return String(j.access_token);
+  }
+  if (feed.personal_token) {
+    const t = Deno.env.get("YNAB_TOKEN");
+    if (t) return t;
+  }
+  throw new YnabError("not_connected");
+}
+
+async function ynab(path: string, token: string): Promise<Obj> {
   const r = await fetch("https://api.ynab.com/v1" + path, { headers: { Authorization: "Bearer " + token } });
   if (r.status === 401) throw new YnabError("token_refused");
   if (r.status === 429) throw new YnabError("ynab_busy");
@@ -69,11 +111,14 @@ function defaultMode(type: string): Mode {
 
 /* Find the plan and bring the account list up to date. New accounts join
    with their default; a mode the manager picked is never overwritten. */
-async function refreshPlan(feed: Feed): Promise<{ planId: string; accounts: Record<string, Account> } | null> {
-  const data = await ynab("/plans?include_accounts=true");
-  const plans = (data.plans ?? []) as Obj[];
-  const plan = plans.find((p) => p.id === feed.plan_id) ??
-    plans.find((p) => norm(p.name) === norm(feed.plan_name));
+async function listPlans(token: string): Promise<Obj[]> {
+  const data = await ynab("/plans?include_accounts=true", token);
+  return (data.plans ?? []) as Obj[];
+}
+async function refreshPlan(feed: Feed, token: string): Promise<{ planId: string; accounts: Record<string, Account> } | null> {
+  const plans = await listPlans(token);
+  const plan = plans.find((p) => feed.plan_id && p.id === feed.plan_id) ??
+    plans.find((p) => feed.plan_name && norm(p.name) === norm(feed.plan_name));
   if (!plan) return null;
   const accounts: Record<string, Account> = {};
   for (const a of (plan.accounts ?? []) as Obj[]) {
@@ -196,7 +241,8 @@ function sortTransactions(
 }
 
 async function syncFeed(feed: Feed, opts: { preview?: boolean } = {}): Promise<Obj> {
-  const plan = await refreshPlan(feed);
+  const token = await tokenFor(feed);
+  const plan = await refreshPlan(feed, token);
   if (!plan) {
     await admin.from("feed").update({ last_run: new Date().toISOString(), last_status: "plan_missing" })
       .eq("owner_id", feed.owner_id);
@@ -209,7 +255,7 @@ async function syncFeed(feed: Feed, opts: { preview?: boolean } = {}): Promise<O
   }
 
   const q = "since_date=" + feed.since + (feed.knowledge ? "&last_knowledge_of_server=" + feed.knowledge : "");
-  const data = await ynab("/plans/" + plan.planId + "/transactions?" + q);
+  const data = await ynab("/plans/" + plan.planId + "/transactions?" + q, token);
   const txs = (data.transactions ?? []) as Obj[];
 
   // This manager's live tours, with their date spans.
@@ -229,7 +275,8 @@ async function syncFeed(feed: Feed, opts: { preview?: boolean } = {}): Promise<O
   const ids = txs.map((t) => String(t.id));
   const known = new Map<string, string>();
   for (let i = 0; i < ids.length; i += 200) {
-    const { data: seen } = await admin.from("feed_items").select("id, status").in("id", ids.slice(i, i + 200));
+    const { data: seen } = await admin.from("feed_items").select("id, status")
+      .eq("owner_id", feed.owner_id).in("id", ids.slice(i, i + 200));
     for (const s of seen ?? []) known.set(s.id, s.status);
   }
 
@@ -250,7 +297,9 @@ async function syncFeed(feed: Feed, opts: { preview?: boolean } = {}): Promise<O
     const r = await admin.from("feed_items").upsert(items.slice(i, i + 200));
     if (r.error) return { ok: false, status: "save_failed", detail: r.error.message };
   }
-  if (dropped.length) await admin.from("feed_items").delete().in("id", dropped).eq("status", "waiting");
+  if (dropped.length) {
+    await admin.from("feed_items").delete().eq("owner_id", feed.owner_id).in("id", dropped).eq("status", "waiting");
+  }
 
   await admin.from("feed").update({
     plan_id: plan.planId, accounts: plan.accounts, knowledge: Number(data.server_knowledge) || feed.knowledge,
@@ -297,7 +346,9 @@ Deno.serve(async (req) => {
   if (action === "check") {
     if (!server) return reply(403, { error: "not_allowed" });
     try {
-      const data = await ynab("/plans?include_accounts=true");
+      const t = Deno.env.get("YNAB_TOKEN");
+      if (!t) return reply(200, { ok: false, problem: "no_personal_token" });
+      const data = await ynab("/plans?include_accounts=true", t);
       return reply(200, { ok: true, plans: ((data.plans ?? []) as Obj[]).map((p) => ({
         name: p.name,
         accounts: ((p.accounts as Obj[]) ?? []).filter((a) => !a.deleted)
@@ -349,6 +400,34 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Connect YNAB: hand back the address of YNAB's own sign-in page. The trip
+  // carries a one-time ticket (state) and a PKCE proof, both checked by
+  // ynab-auth when YNAB sends the manager back.
+  if (action === "connect") {
+    if (server || !uid) return reply(401, { error: "not_signed_in" });
+    const clientId = Deno.env.get("YNAB_CLIENT_ID");
+    if (!clientId || !Deno.env.get("YNAB_CLIENT_SECRET")) return reply(200, { ok: false, status: "not_set_up" });
+    // The card feed is for tour managers: someone who runs at least one tour.
+    const { data: owns } = await admin.from("tours").select("id").eq("owner_id", uid).limit(1);
+    if (!owns || !owns.length) return reply(403, { error: "not_manager" });
+    const rand = (n: number) => {
+      const b = crypto.getRandomValues(new Uint8Array(n));
+      return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    };
+    const state = rand(24);
+    const verifier = rand(48);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+    const challenge = btoa(String.fromCharCode(...digest)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const back = String(body.back ?? "");
+    await admin.from("ynab_states").delete().lt("created_at", new Date(Date.now() - 3600_000).toISOString());
+    await admin.from("ynab_states").insert({ state, owner_id: uid, verifier, back: SITE.test(back) ? back : HOME });
+    const q = new URLSearchParams({
+      client_id: clientId, redirect_uri: REDIRECT, response_type: "code", scope: "read-only",
+      state, code_challenge: challenge, code_challenge_method: "S256",
+    });
+    return reply(200, { ok: true, url: "https://app.ynab.com/oauth/authorize?" + q.toString() });
+  }
+
   // Everything else acts on one manager's feed: their own, or (for the server)
   // one named by owner. Anyone without a feed row gets nothing.
   const owner = server ? String(body.owner ?? "") : uid;
@@ -357,13 +436,32 @@ Deno.serve(async (req) => {
   if (!row) return reply(403, { error: "no_feed" });
   const feed = row as Feed;
 
+  // Disconnect: the key is deleted on the spot, along with the pile.
+  // Charges already filed on a tour stay; they belong to the tour now.
+  if (action === "disconnect") {
+    if (server) return reply(403, { error: "manager_only" });
+    await admin.from("ynab_links").delete().eq("owner_id", owner);
+    await admin.from("feed_items").delete().eq("owner_id", owner);
+    await admin.from("feed").delete().eq("owner_id", owner);
+    return reply(200, { ok: true });
+  }
+
   try {
     if (action === "status") {
-      const plan = await refreshPlan(feed);
-      if (!plan) return reply(200, { ok: false, status: "plan_missing", plan: feed.plan_name });
+      const token = await tokenFor(feed);
+      const plan = (feed.plan_id || feed.plan_name) ? await refreshPlan(feed, token) : null;
+      if (!plan) {
+        // Not picked yet, or renamed or deleted in YNAB: offer the list.
+        const plans = await listPlans(token);
+        return reply(200, {
+          ok: true, needsPlan: true, missing: !!(feed.plan_id || feed.plan_name), plan: feed.plan_name,
+          plans: plans.filter((p) => !p.deleted).map((p) => ({ id: p.id, name: p.name })),
+        });
+      }
       await admin.from("feed").update({ plan_id: plan.planId, accounts: plan.accounts }).eq("owner_id", owner);
       return reply(200, {
         ok: true, plan: feed.plan_name, switchedOn: feed.switched_on, since: feed.since,
+        viaButton: !feed.personal_token,
         lastRun: feed.last_run, lastStatus: feed.last_status,
         accounts: Object.entries(plan.accounts).filter(([, a]) => !a.closed)
           .map(([id, a]) => ({ id, name: a.name, type: a.type, mode: a.mode })),
@@ -380,6 +478,18 @@ Deno.serve(async (req) => {
         if (accounts[id] && (m === "log" || m === "ask" || m === "off")) accounts[id] = { ...accounts[id], mode: m };
       }
       const patch: Obj = { accounts };
+      if (typeof body.plan === "string" && body.plan) {
+        // A different plan starts clean: its own accounts, off until switched on.
+        const plans = await listPlans(await tokenFor(feed));
+        const pick = plans.find((p) => p.id === body.plan);
+        if (!pick) return reply(400, { error: "no_such_plan" });
+        Object.assign(patch, {
+          plan_id: String(pick.id), plan_name: String(pick.name ?? ""), accounts: {},
+          switched_on: false, since: null, knowledge: null, last_status: "",
+        });
+        await admin.from("feed").update(patch).eq("owner_id", owner);
+        return reply(200, { ok: true });
+      }
       if (body.on === true && !feed.switched_on) {
         const since = String(body.since ?? "");
         if (!G.parseDay(since)) return reply(400, { error: "bad_since" });

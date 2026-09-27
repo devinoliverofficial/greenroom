@@ -1128,6 +1128,9 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .fa-name { font-weight: 600; margin: 0 2px 6px; }
 .feed-body.busy { opacity: .6; }
 .feed-when { margin-top: 18px; }
+.feed-privacy { text-align: center; margin-top: 18px; }
+.feed-privacy a { color: var(--ink-2); }
+.feed-plans { margin-top: 12px; }
 select.input.slim { width: 148px; height: 42px; }
 
 /* Reading a flyer or a statement takes a moment; this says so without lying about progress. */
@@ -1345,7 +1348,8 @@ button.input.role-pick.empty { color: var(--ink-3); font-weight: 500; }
     var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
     if (nav && nav.type) how = nav.type;
   } catch (e) { /* older browsers: treat as a fresh launch */ }
-  if (how !== 'navigate') { s.remove(); return; }
+  // Coming back from YNAB's sign-in page is not a launch either.
+  if (how !== 'navigate' || /[?&]ynab=/.test(location.search)) { s.remove(); return; }
   var word = s.querySelector('.sp-word'), bus = s.querySelector('.sp-bus'), stage = s.querySelector('.sp-stage');
   var finished = false;
   function done(wait) {

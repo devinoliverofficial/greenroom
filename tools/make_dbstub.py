@@ -84,8 +84,14 @@ shim = r"""<script>
     feedCall: function (action, body) {
       var F = window.__harness.feed;
       window.__harness.calls.push([action, JSON.parse(JSON.stringify(body || {}))]);
+      if (action === 'connect') return Promise.resolve({ ok: false, status: 'not_set_up' });
+      if (action === 'disconnect') { window.__harness.feedFns.forEach(function (fn) { fn(null); }); return Promise.resolve({ ok: true }); }
+      if (action === 'status' && !F.row.plan_name) return Promise.resolve({ ok: true, needsPlan: true, missing: false, plan: '',
+        plans: [{ id: 'p1', name: 'I SEE STARS' }, { id: 'p2', name: 'Personal Plan' }] });
       if (action === 'status') return Promise.resolve({ ok: true, plan: F.row.plan_name, switchedOn: F.row.switched_on,
-        since: F.row.since, lastRun: F.row.last_run, lastStatus: 'ok', accounts: JSON.parse(JSON.stringify(F.accounts)) });
+        since: F.row.since, lastRun: F.row.last_run, lastStatus: 'ok', viaButton: !!F.viaButton,
+        accounts: JSON.parse(JSON.stringify(F.accounts)) });
+      if (action === 'setup' && body.plan) { F.row.plan_name = body.plan === 'p1' ? 'I SEE STARS' : 'Personal Plan'; }
       if (action === 'setup') {
         Object.keys(body.modes || {}).forEach(function (id) { F.accounts.forEach(function (a) { if (a.id === id) a.mode = body.modes[id]; }); });
         if (body.on === true) { F.row.switched_on = true; F.row.since = body.since; }

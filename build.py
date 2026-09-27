@@ -100,6 +100,7 @@ def build_web():
         shutil.copy(SRC / name, web / name)
     shutil.copy(SITE / 'config.js', web / 'config.js')
     shutil.copy(SITE / 'backend.js', web / 'backend.js')
+    shutil.copy(SITE / 'privacy.html', web / 'privacy.html')
     html = None  # guard against accidental reuse below
     for path in sorted((SRC / 'vendor').glob('*.mjs')):
         shutil.copy(path, web / 'vendor' / path.name)
