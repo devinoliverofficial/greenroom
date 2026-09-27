@@ -692,9 +692,8 @@
   }
 
   function gate(note, code) {
-    var mode = code ? 'welcome' : 'signin';
-    var standalone = navigator.standalone === true ||
-      !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    // From an email's button: straight to the code, already filled in.
+    var mode = code ? 'code' : 'signin';
     var wrap = document.createElement('div');
     wrap.id = 'gr-gate';
     document.body.appendChild(wrap);
@@ -704,36 +703,11 @@
        app. Typing the code here signs in without leaving the app. The code
        could be from an invite, a password reset or a sign-in email, so each
        kind is tried in turn. */
-    /* Opened from an email's button, in Safari: an iPhone won't hand links to
-       the home-screen app, so say how to get there, with the code big. */
-    function renderWelcome() {
-      if (standalone) { mode = 'code'; renderCode(); return; }
-      wrap.innerHTML =
-        '<div class="gate-card">' +
-        '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-        '<p class="gate-hi">Welcome to Greenroom.</p>' +
-        '<ol class="gate-steps">' +
-        '<li>Tap the <b>Share</b> button below, then <b>Add to Home Screen</b>.</li>' +
-        '<li>Open <b>Greenroom</b> from your home screen and tap <b>I have a code</b>.</li>' +
-        '<li>Type this code:</li>' +
-        '</ol>' +
-        '<div class="gate-codebox">' + esc(code) + '</div>' +
-        '<button class="btn ghost block" id="gr-code-copy" type="button">Copy code</button>' +
-        '<button class="linkbtn" id="gr-code-here" type="button">Or finish here in Safari</button>' +
-        '</div>';
-      wrap.querySelector('#gr-code-copy').addEventListener('click', async function (e) {
-        var b = e.currentTarget;
-        try { await navigator.clipboard.writeText(code); b.textContent = 'Copied'; }
-        catch (e2) { b.textContent = 'Press and hold the code to copy it'; }
-      });
-      wrap.querySelector('#gr-code-here').addEventListener('click', function () { mode = 'code'; render(); });
-    }
-
     function renderCode() {
       wrap.innerHTML =
         '<div class="gate-card">' +
         '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-        '<p class="gate-hi">Type the code from your Greenroom email.</p>' +
+        '<p class="gate-hi">' + (code ? 'Type your email and tap Continue.' : 'Type your email and the code from your Greenroom email.') + '</p>' +
         '<form id="gr-code-form" novalidate>' +
         '<input class="input" type="email" id="gr-gate-email" placeholder="Your email" ' +
           'autocomplete="email" inputmode="email" aria-label="Email">' +
@@ -779,7 +753,6 @@
     }
 
     function render() {
-      if (mode === 'welcome') { renderWelcome(); return; }
       if (mode === 'code') { renderCode(); return; }
       var signin = mode === 'signin';
       wrap.innerHTML =
@@ -998,7 +971,7 @@
   }
 
   /* Someone arriving from an invite email is signed in but has no password
-     yet. One card: pick the password, then go add it to the home screen. */
+     yet. One card: pick the password and go. */
   /* Invited crew land here from the email. The tour manager already typed
      their name, role and access, so all that's left is a username (what the
      chat calls them) and a password. Anything the invite didn't carry (an
@@ -1072,10 +1045,8 @@
         pushProfile();
         wrap.querySelector('.gate-card').innerHTML =
           '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-          '<p class="gate-hi">You\u2019re in. Put Greenroom on your home screen:</p>' +
-          '<p class="gate-hi">Tap the Share button below, then \u201cAdd to Home Screen\u201d. ' +
-          'Open it from there and sign in with your email and this password.</p>' +
-          '<button class="btn primary block" id="gr-pass-done" type="button">Keep going here</button>';
+          '<p class="gate-hi">You\u2019re in.</p>' +
+          '<button class="btn primary block" id="gr-pass-done" type="button">Let\u2019s go</button>';
         wrap.querySelector('#gr-pass-done').addEventListener('click', function () { wrap.remove(); });
       } catch (e2) {
         form.querySelector('button').disabled = false;
@@ -1119,8 +1090,8 @@
         if (q.data && q.data.user) session.user = q.data.user;
         wrap.querySelector('.gate-card').innerHTML =
           '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-          '<p class="gate-hi">Password saved. If Greenroom is on your home screen, open it from there and sign in with your email and this password.</p>' +
-          '<button class="btn primary block" id="gr-pass-done" type="button">Keep going here</button>';
+          '<p class="gate-hi">Password saved.</p>' +
+          '<button class="btn primary block" id="gr-pass-done" type="button">Keep going</button>';
         wrap.querySelector('#gr-pass-done').addEventListener('click', function () { wrap.remove(); });
       } catch (e2) {
         form.querySelector('button').disabled = false;

@@ -10,10 +10,10 @@
 {{ if .Data.tour_role }}<p style="margin:0 0 18px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#CCF80A;">{{ .Data.tour_role }}{{ if .Data.access }} &middot; {{ if eq .Data.access "editor" }}ALL ACCESS{{ else }}GA{{ end }}{{ end }}</p>{{ end }}
 <p style="margin:0 0 20px;font-size:15px;line-height:1.55;color:#B9BEA6;">Your tour manager added you to Greenroom, where the run&rsquo;s day sheets, guest lists and chat live. Everything&rsquo;s filled in already; you&rsquo;ll just pick a username and a password.</p>
 </td></tr>
-<tr><td style="padding:0 26px 22px;font:14px/1.55 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#B9BEA6;">In Greenroom, tap <b style="color:#F1F4E3;">I have a code</b> and type:<div style="margin:12px 0 0;padding:12px 0;border:1px solid #2A3305;border-radius:12px;text-align:center;font:700 28px/1.2 'SF Mono',Menlo,Consolas,monospace;letter-spacing:.2em;color:#CCF80A;">{{ .Token }}</div></td></tr>
+<tr><td style="padding:0 26px 22px;font:14px/1.55 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#B9BEA6;">Your code:<div style="margin:12px 0 0;padding:12px 0;border:1px solid #2A3305;border-radius:12px;text-align:center;font:700 28px/1.2 'SF Mono',Menlo,Consolas,monospace;letter-spacing:.2em;color:#CCF80A;">{{ .Token }}</div></td></tr>
 <tr><td align="center" style="padding:0 26px 26px;">
 <a href="https://devinoliverofficial.github.io/greenroom/?code={{ .Token }}" style="display:inline-block;background:#0C0E00;border:1.5px solid #CCF80A;color:#CCF80A;font:700 16px -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;text-decoration:none;padding:14px 30px;border-radius:12px;">Open Greenroom</a>
-<p style="margin:10px 0 0;font:13px/1.5 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#8F947B;">Don&rsquo;t have it on your home screen yet? The button shows you how.</p>
+<p style="margin:10px 0 0;font:13px/1.5 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#8F947B;">Tap <b style="color:#F1F4E3;">Open Greenroom</b>, type your email, and you&rsquo;re in. Already in the app? Tap <b style="color:#F1F4E3;">I have a code</b> and type the code above.</p>
 </td></tr>
 <tr><td style="padding:0 26px 28px;font:13px/1.55 -apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif;color:#8F947B;">The code works once and expires in an hour. Didn&rsquo;t expect this? You can ignore it.</td></tr>
 </table>
