@@ -210,13 +210,37 @@
   function normCommission(c) {
     var out = emptyCommission();
     var src = isObj(c) ? c : {};
-    COMMISSION_LINES.forEach(function (line) {
-      var r = isObj(src[line.key]) ? src[line.key] : {};
+    var rule = function (line, r) {
       var base = defaultCommissionBase(line);
       if (isObj(r.base)) INCOME_FIELDS.forEach(function (f) { base[f.key] = !!r.base[f.key]; });
-      out[line.key] = { mode: r.mode === 'pct' ? 'pct' : 'flat', value: num(r.value), base: base };
+      return { mode: r.mode === 'pct' ? 'pct' : 'flat', value: num(r.value), base: base };
+    };
+    COMMISSION_LINES.forEach(function (line) {
+      out[line.key] = rule(line, isObj(src[line.key]) ? src[line.key] : {});
+    });
+    // Anyone else on the team rides along under an x- key with their name.
+    // A removed one is stored as null so the save clears it.
+    Object.keys(src).forEach(function (k) {
+      if (k.indexOf('x-') !== 0 || !isObj(src[k])) return;
+      var r = src[k];
+      var label = String(r.label == null ? '' : r.label).trim().slice(0, 40);
+      if (!label) return;
+      var x = rule({ basis: 'income' }, r);
+      x.label = label;
+      x.at = num(r.at);
+      out[k] = x;
     });
     return out;
+  }
+
+  // Every commissioned line on a tour: the three standing ones, then anyone
+  // added to the team, oldest first.
+  function commissionLines(c) {
+    var n = normCommission(c);
+    var extra = Object.keys(n).filter(function (k) { return k.indexOf('x-') === 0; })
+      .sort(function (a, b) { return n[a].at - n[b].at || (a < b ? -1 : 1); })
+      .map(function (k) { return { key: k, label: n[k].label, basis: 'income', custom: true }; });
+    return COMMISSION_LINES.concat(extra);
   }
 
   function showIncomeTotal(show) {
@@ -333,7 +357,7 @@
 
   function commissionTotal(commission, income, guarantees, incomeBy) {
     var c = normCommission(commission);
-    return COMMISSION_LINES.reduce(function (t, line) {
+    return commissionLines(c).reduce(function (t, line) {
       return t + commissionLine(line, c[line.key], income, guarantees, incomeBy);
     }, 0);
   }
@@ -710,7 +734,7 @@
     });
     var comm = normCommission(tour && tour.commission);
     var commBits = [];
-    COMMISSION_LINES.forEach(function (line) {
+    commissionLines(comm).forEach(function (line) {
       var r = comm[line.key];
       if (r.mode === 'pct' && r.value > 0) commBits.push(line.label + ' ' + r.value + '%');
       else if (r.mode === 'flat' && r.value > 0) commBits.push(line.label + ' ' + money(r.value));
@@ -999,7 +1023,7 @@
 
     var comm = normCommission(tour && tour.commission);
     var commRows = [['Line', 'Deal', 'Base', 'Amount']];
-    COMMISSION_LINES.forEach(function (line) {
+    commissionLines(comm).forEach(function (line) {
       var r = comm[line.key];
       commRows.push([line.label,
         r.mode === 'pct' ? r.value + '%' : 'Flat ' + money(r.value),
@@ -1063,7 +1087,7 @@
   root.GR = {
     CATEGORIES: CATEGORIES,
     TYPED_CATEGORIES: TYPED_CATEGORIES,
-    COMMISSION_LINES: COMMISSION_LINES,
+    COMMISSION_LINES: COMMISSION_LINES, commissionLines: commissionLines,
     INCOME_FIELDS: INCOME_FIELDS,
     CHARGE_CATEGORIES: CHARGE_CATEGORIES,
     extraCategories: extraCategories, typedCategoriesFor: typedCategoriesFor,

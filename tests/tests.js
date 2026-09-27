@@ -558,6 +558,25 @@
     near(c.commission, 2250, 'agent untouched by back end');
   });
 
+  test('anyone added to the team takes their cut alongside the standing three', function () {
+    var comm = {
+      management: { mode: 'pct', value: 15 },
+      'x-b': { label: 'Tour accountant', mode: 'flat', value: 500, at: 2 },
+      'x-a': { label: 'Business manager', mode: 'pct', value: 5, at: 1 },
+      'x-gone': null,
+      'x-blank': { label: '  ', mode: 'flat', value: 99 }
+    };
+    var lines = G.commissionLines(comm);
+    eq(lines.map(function (l) { return l.label; }).join(','),
+      'Management,Booking agent,Lawyer,Business manager,Tour accountant', 'standing three, then the team in order added');
+    eq(lines[3].custom, true, 'marked as added');
+    var inc = { guarantee: 10000 };
+    // 15% + 5% of 10,000 plus a flat 500
+    eq(G.commissionTotal(comm, 10000, 10000, inc), 2500, 'every cut counts');
+    eq(G.normCommission(comm)['x-gone'], undefined, 'a removed member is gone');
+    eq(G.normCommission(comm)['x-blank'], undefined, 'a nameless member is dropped');
+  });
+
   /* ============ Day sheets ============ */
 
   test('the day sheet prints only what was filled in, in the order the day happens', function () {

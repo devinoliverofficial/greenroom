@@ -2032,7 +2032,7 @@
     function refresh() {
       var total = draftTotal();
       totalEl.textContent = money(total);
-      var anyPct = G.COMMISSION_LINES.some(function (l) {
+      var anyPct = G.commissionLines(d.commission).some(function (l) {
         return d.commission[l.key].mode === 'pct' && G.num(d.commission[l.key].value) > 0;
       });
       note.textContent = anyPct ? 'Percentage commissions are worked out from income as you log each show.' : '';
@@ -2057,7 +2057,7 @@
     });
 
     rows.push(h('div', { class: 'row head' }, h('span', null, 'Commission')));
-    G.COMMISSION_LINES.forEach(function (line) { rows.push(commissionRow(d, line, changed)); });
+    G.commissionLines(d.commission).forEach(function (line) { rows.push(commissionRow(d, line, changed)); });
     rows.push(h('div', { class: 'row total' },
       h('span', null, 'What the tour costs'), totalEl));
 
@@ -2071,7 +2071,7 @@
     }, 0);
   }
 
-  function commissionRow(d, line, changed) {
+  function commissionRow(d, line, changed, onRemove) {
     var r = d.commission[line.key];
     var holder = h('div', null);
     var hint = h('span', { class: 'hint' }, '');
@@ -2116,7 +2116,9 @@
       h('div', { class: 'row-label' },
         h('label', { for: 'comm-' + line.key }, line.label),
         h('div', { class: 'comm-sub' }, seg, hint)),
-      holder), chipRow];
+      holder,
+      onRemove ? h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + line.label,
+        onclick: onRemove }, icon('trash', 16)) : null), chipRow];
   }
 
   function crewRow(id, t) {
@@ -2158,9 +2160,7 @@
   // The two numbers sit in their own columns; this line says how they compare.
   function lineHint(l) {
     if (l.over > 0) return { text: 'Over by ' + money(l.over) + cardBit(l), cls: ' over' };
-    if (l.key === 'commission' && !l.projected && !l.paid) {
-      return { text: 'Worked out from income as you log shows', cls: '' };
-    }
+    if (l.key === 'commission') return { text: '', cls: '' };
     if (l.projected == null) return { text: cardBit(l).replace(/^ · /, ''), cls: '' };
     if (l.left === 0) return { text: 'All paid' + cardBit(l), cls: ' done' };
     return { text: money(l.left) + ' left to pay' + cardBit(l), cls: '' };
@@ -2174,13 +2174,18 @@
     var head = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
       h('span', null, ''), h('span', { class: 'ex-proj' }, 'Projected'), h('span', { class: 'ex-paid' }, 'Paid'),
       chev ? chev.cloneNode() : null);
+    // Commission reads like every other category, a plain line, until a
+    // deal is actually filled in.
+    var comm = G.normCommission(t && t.commission);
+    var commSet = G.commissionLines(comm).some(function (cl) { return G.num(comm[cl.key].value) > 0; });
     var rows = c.lines.map(function (l) {
       var hint = lineHint(l);
+      var unset = l.projected == null || (l.key === 'commission' && !l.projected && !commSet);
       var inner = [
         h('div', { class: 'row-label' }, l.label,
           hint.text ? h('span', { class: 'hint' + hint.cls }, hint.text) : null),
-        h('span', { class: 'amt num glow ex-proj', 'aria-label': 'Projected ' + (l.projected == null ? 'not set' : money(l.projected)) },
-          l.projected == null ? '\u2014' : money(l.projected)),
+        h('span', { class: 'amt num glow ex-proj', 'aria-label': 'Projected ' + (unset ? 'not set' : money(l.projected)) },
+          unset ? '\u2014' : money(l.projected)),
         h('span', { class: 'amt num ex-paid' + (l.over > 0 ? ' over' : ''), 'aria-label': 'Paid ' + money(l.paid) },
           money(l.paid))
       ];
@@ -2202,12 +2207,6 @@
       h('strong', { class: 'amt num glow ex-proj' }, money(projTotal)),
       h('strong', { class: 'amt num ex-paid' + (paidTotal > projTotal && projTotal > 0 ? ' over' : '') }, money(paidTotal)),
       chev ? chev.cloneNode() : null));
-    // The bottom line takes each category's projection until what's paid
-    // passes it, then what's paid.
-    rows.push(h('div', { class: 'row total' },
-      h('span', null, 'What the tour costs',
-        h('span', { class: 'hint' }, 'Each category counts its projection, or what\u2019s been paid once that\u2019s more.')),
-      h('strong', { class: 'amt num glow' }, money(c.fixed + c.commission))));
     var charges = G.rows(t && t.charges);
     var baselineOffer = (canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
       ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
@@ -2340,7 +2339,7 @@
     openSheet(function () {
       var readout = h('div', { class: 'preview' });
       function refresh() {
-        var kids = G.COMMISSION_LINES.map(function (line) {
+        var kids = G.commissionLines(d.commission).map(function (line) {
           var v = G.commissionLine(line, d.commission[line.key], base.income, base.guarantees, base.incomeBy);
           return h('div', null, h('span', null, line.label), h('strong', { class: 'num' }, money(v)));
         });
@@ -2348,9 +2347,41 @@
           h('strong', { class: 'num' }, money(G.commissionTotal(d.commission, base.income, base.guarantees, base.incomeBy)))));
         readout.replaceChildren.apply(readout, kids);
       }
-      var rows = G.COMMISSION_LINES.map(function (line) {
-        return commissionRow(d, line, refresh);
-      });
+      var ledger = h('div', { class: 'ledger' });
+      function buildRows() {
+        var kids = [];
+        G.commissionLines(d.commission).forEach(function (line) {
+          kids = kids.concat(commissionRow(d, line, refresh, line.custom ? function () {
+            // Stored as null so the save clears them from the tour.
+            d.commission[line.key] = null;
+            buildRows(); refresh();
+          } : null));
+        });
+        ledger.replaceChildren.apply(ledger, kids);
+      }
+      // Anyone else who takes a cut: a name, then the same $ or % deal.
+      var adder = h('div', { class: 'comm-add' });
+      function showAddButton() {
+        adder.replaceChildren(h('button', { class: 'btn quiet block', type: 'button',
+          onclick: showAddForm }, icon('plus', 18), 'Add Team'));
+      }
+      function showAddForm() {
+        var name = h('input', { class: 'input', type: 'text', maxlength: 40, autocomplete: 'off',
+          placeholder: 'Who? e.g. Business manager', 'aria-label': 'Team member',
+          onkeydown: function (e) { if (e.key === 'Enter') { e.preventDefault(); add(); } } });
+        function add() {
+          var label = name.value.trim();
+          if (!label) { name.focus(); return; }
+          var key = 'x-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          var all = {};
+          G.INCOME_FIELDS.forEach(function (f) { all[f.key] = true; });
+          d.commission[key] = { label: label, mode: 'flat', value: 0, base: all, at: Date.now() };
+          buildRows(); refresh(); showAddButton();
+        }
+        adder.replaceChildren(h('div', { class: 'af-row' }, name,
+          h('button', { class: 'btn primary', type: 'button', onclick: add }, 'Add')));
+        name.focus();
+      }
       var submit = async function (e) {
         e.preventDefault();
         blurActive();
@@ -2359,12 +2390,12 @@
           closeSheet(); toast('Commission saved'); render(true);
         }
       };
-      refresh();
+      buildRows(); showAddButton(); refresh();
       return [
         h('h2', { class: 'sh-title' }, 'Commission'),
-        h('p', { class: 'sh-sub' }, 'Every team\u2019s deal is different \u2014 set the cut, then check which pieces of the income it comes out of.'),
         h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
-          h('div', { class: 'ledger' }, rows),
+          ledger,
+          adder,
           readout,
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save commission'),
@@ -6300,7 +6331,7 @@
 
     var commTable = h('table', { class: 'rp-table' },
       h('thead', null, repRow(['Line', 'Deal', 'Base', 'Amount'])),
-      h('tbody', null, G.COMMISSION_LINES.map(function (line) {
+      h('tbody', null, G.commissionLines(comm).map(function (line) {
         var r = comm[line.key];
         return repRow([line.label,
           r.mode === 'pct' ? r.value + '%' : 'Flat',
