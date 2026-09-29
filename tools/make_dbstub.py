@@ -69,7 +69,8 @@ shim = r"""<script>
   ] };
   var d0 = ymd(today);
   window.__harness.feed = {
-    row: { switched_on: false, plan_name: 'I SEE STARS', since: null, last_run: null, last_status: '' },
+    row: { switched_on: false, plan_name: '', since: null, last_run: null, last_status: '', source: 'plaid' },
+    banks: [{ id: 'b1', name: 'Bank of America', status: 'ok' }, { id: 'b2', name: 'American Express', status: 'ITEM_LOGIN_REQUIRED' }],
     accounts: [
       { id: 'ac1', name: 'Corp Account Bank Of America \u2013 4918', type: 'creditCard', mode: 'log' },
       { id: 'ac2', name: 'Merch \u2013 1885', type: 'checking', mode: 'ask' },
@@ -138,12 +139,17 @@ shim = r"""<script>
     feedCall: function (action, body) {
       var F = window.__harness.feed;
       window.__harness.calls.push([action, JSON.parse(JSON.stringify(body || {}))]);
-      if (action === 'connect') return Promise.resolve({ ok: false, status: 'not_set_up' });
+      // Plaid's shape: banks, accounts, test mode.
+      if (action === 'link') return Promise.resolve({ ok: true, linkToken: 'link-sandbox-harness', test: true });
+      if (action === 'connect') return Promise.resolve({ ok: true, institution: 'First Platypus Bank', test: true });
+      if (action === 'disconnect' && body && body.itemId) {
+        F.banks = F.banks.filter(function (b) { return b.id !== body.itemId; });
+        return Promise.resolve({ ok: true, left: F.banks.length });
+      }
       if (action === 'disconnect') { window.__harness.feedFns.forEach(function (fn) { fn({ row: null, items: [], connectOnly: true }); }); return Promise.resolve({ ok: true }); }
-      if (action === 'status' && !F.row.plan_name) return Promise.resolve({ ok: true, needsPlan: true, missing: false, plan: '',
-        plans: [{ id: 'p1', name: 'I SEE STARS' }, { id: 'p2', name: 'Personal Plan' }] });
-      if (action === 'status') return Promise.resolve({ ok: true, plan: F.row.plan_name, switchedOn: F.row.switched_on,
-        since: F.row.since, lastRun: F.row.last_run, lastStatus: 'ok', viaButton: !!F.viaButton,
+      if (action === 'status') return Promise.resolve({ ok: true, source: 'plaid', test: true, switchedOn: F.row.switched_on,
+        since: F.row.since, lastRun: F.row.last_run, lastStatus: 'ok', banks: JSON.parse(JSON.stringify(F.banks)),
+        needsConnect: !F.banks.length,
         accounts: JSON.parse(JSON.stringify(F.accounts)), merchAccount: F.merchAccount == null ? 'ac2' : F.merchAccount });
       if (action === 'setup' && typeof body.merchAccount === 'string') F.merchAccount = body.merchAccount;
       if (action === 'setup' && body.plan) { F.row.plan_name = body.plan === 'p1' ? 'I SEE STARS' : 'Personal Plan'; }
@@ -154,7 +160,7 @@ shim = r"""<script>
       }
       if (action === 'sync') F.row.last_run = new Date().toISOString();
       window.__harness.feedPush();
-      return Promise.resolve(action === 'sync' ? { ok: true, status: 'ok', filed: 2, waiting: F.items.length } : { ok: true });
+      return Promise.resolve(action === 'sync' ? { ok: true, status: 'ok', test: true, seen: 16, filed: 3, waiting: 10 } : { ok: true });
     },
     feedMark: function (ids, patch) {
       var F = window.__harness.feed;

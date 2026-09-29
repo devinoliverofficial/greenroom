@@ -200,11 +200,12 @@ def build_web():
 def build_functions():
     # The card feed files charges on the server with the app's own rules, so it
     # carries a copy of the same two logic files the app runs.
-    lib = ROOT / 'supabase' / 'functions' / 'ynab' / 'lib'
-    lib.mkdir(parents=True, exist_ok=True)
-    for name in ('core.js', 'statements.js'):
-        shutil.copy(SRC / name, lib / name)
-    print('supabase/functions/ynab/lib  (shared logic)')
+    for fn in ('ynab', 'plaid'):
+        lib = ROOT / 'supabase' / 'functions' / fn / 'lib'
+        lib.mkdir(parents=True, exist_ok=True)
+        for name in ('core.js', 'statements.js'):
+            shutil.copy(SRC / name, lib / name)
+        print('supabase/functions/' + fn + '/lib  (shared logic)')
 
 
 if __name__ == '__main__':

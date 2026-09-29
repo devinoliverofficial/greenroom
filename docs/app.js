@@ -361,12 +361,21 @@
   if (ynabBack) {
     try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* cosmetic */ }
   }
+  var plaidBack = /[?&]oauth_state_id=/.test(location.search) ? location.href : null;
+  if (plaidBack) {
+    try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* cosmetic */ }
+  }
   function subscribeFeed() {
     var B = window.GR_BACKEND;
     if (!B || !B.feedWatch) return;
     B.feedWatch(function (f) {
       S.feed = f;
       if (S.loaded) render();
+      if (plaidBack) {
+        var back = plaidBack;
+        plaidBack = null;
+        whenLoaded(function () { resumePlaid(back); });
+      }
       if (!ynabBack) return;
       var r = ynabBack;
       ynabBack = null;
@@ -1593,10 +1602,10 @@
             icon('bell', 18), 'Notifications') : null,
           (signedIn && S.feed && S.feed.row) ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openFeedSheet(null); } },
-            icon('card', 18), 'Card feed \u00b7 YNAB') : null,
+            icon('card', 18), 'Card feed') : null,
           (signedIn && S.feed && S.feed.connectOnly && runsATour()) ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { connectYnab(); } },
-            icon('card', 18), 'Connect YNAB') : null,
+            onclick: function () { closeSheet(); connectCards(null); } },
+            icon('card', 18), 'Connect the cards') : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () {
               confirmSheet({
@@ -2303,7 +2312,7 @@
             onValue: function (v) { f.paid = v; refresh(); }
           }), fed ? [
             'Cash, a personal card, or anything paid before ' + feedSince() + '. ',
-            'Don\u2019t type what the cards or bank accounts paid: that comes in from YNAB and counts on its own',
+            'Don\u2019t type what the cards or bank accounts paid: that comes in from the card feed and counts on its own',
             charged > 0 ? ' (' + money(charged) + ' so far).' : '.'
           ].join('') : [
             charged > 0 ? money(charged) + ' of imported charges is counted on top of this. ' : '',
@@ -2484,7 +2493,7 @@
               onValue: function (v) { S.drafts['crewPaid:' + id] = v; }
             }),
             feedOn()
-              ? 'Cash per diems, or pay from an account that isn\u2019t linked. Crew pay from the linked bank accounts comes in from YNAB.'
+              ? 'Cash per diems, or pay from an account that isn\u2019t linked. Crew pay from the linked bank accounts comes in from the card feed.'
               : 'Advances or per diems you’ve already handed out.'),
           h('button', {
             class: 'btn ghost block', type: 'button',
@@ -5369,7 +5378,7 @@
         var landed = recv.merch && s.merchReceivedAt && G.num(s.merchDeposit) > 0;
         var off = landed && merchCardDeposit != null ? Math.round((G.num(s.merchDeposit) - merchCardDeposit) * 100) / 100 : 0;
         depositHint.textContent = landed
-          ? 'Landed ' + dayMD(s.merchReceivedAt) + ' \u00b7 seen in YNAB' +
+          ? 'Landed ' + dayMD(s.merchReceivedAt) + ' \u00b7 seen in the bank' +
             (Math.abs(off) > Math.max(5, merchCardDeposit * 0.03)
               ? ' \u00b7 ' + money(Math.abs(off)) + (off > 0 ? ' more' : ' less') + ' than the Settlement' + (off > 0 ? ' (card tips?)' : '')
               : '')
@@ -5683,7 +5692,7 @@
     return [
       canEditTour(id) ? addDailyForm(id) : null,
       (canEditTour(id) && feedOn()) ? h('p', { class: 'note' },
-        'Card and bank spending comes in from YNAB by itself. Log cash and anything off the linked accounts here.') : null,
+        'Card and bank spending comes in from the card feed by itself. Log cash and anything off the linked accounts here.') : null,
       items.length
         ? h('div', { class: 'section-total' },
             h('span', null, 'Day-to-day costs so far'),
@@ -7581,7 +7590,7 @@
 
   function openImportReview(tourId, rows, source, opts) {
     var importId = newId();
-    // From the card feed: charges keep YNAB's id, and whatever is left
+    // From the card feed: charges keep the feed's id, and whatever is left
     // unticked is set aside so it never comes back.
     var feed = !!(opts && opts.feed);
 
@@ -7633,7 +7642,7 @@
       if (chosen.length) {
         var patch = {};
         chosen.forEach(function (r, i) {
-          patch['y' + r.feedId] = {
+          patch[(S.feed && S.feed.row && S.feed.row.source === 'plaid' ? 'p' : 'y') + r.feedId] = {
             date: r.date, merchant: r.merchant, amount: G.num(r.amount),
             category: r.category, accounted: !!r.accounted,
             importId: importId, createdAt: Date.now() + i
@@ -7641,7 +7650,7 @@
           if (!r.accounted) total += G.num(r.amount);
         });
         var imports = {};
-        imports[importId] = { createdAt: Date.now(), count: chosen.length, total: total, source: 'YNAB' };
+        imports[importId] = { createdAt: Date.now(), count: chosen.length, total: total, source: 'Card feed' };
         if (!(await api.update(tourId, { charges: patch, imports: imports }))) return;
         for (var i = 0; i < chosen.length; i++) await writeLabel(chosen[i].merchant, chosen[i].category);
       }
@@ -7763,7 +7772,7 @@
           ? plural(rows.length, 'card charge') + (rows.length === 1 ? ' needs' : ' need') + ' a look'
           : 'Found ' + plural(rows.length, 'charge')),
         h('p', { class: 'sh-sub' }, feed
-          ? 'From YNAB. Tick the ones that belong to this tour. Anything you leave unticked is set aside for good.'
+          ? 'From the card feed. Tick the ones that belong to this tour. Anything you leave unticked is set aside for good.'
           : 'Tick the ones that belong to this tour. Nothing you leave unticked is saved.'),
         body,
         h('div', { class: 'stack' }, saveBtn,
@@ -7773,10 +7782,12 @@
     }, { label: 'Review card charges' });
   }
 
-  /* ---------------- The card feed (YNAB) ----------------
-     Greenroom reads the band's YNAB plan and files what the cards spend on
-     the tour that was running that day. What it can't place with confidence
-     waits here, for the tour manager only. */
+  /* ---------------- The card feed (Plaid) ----------------
+     Greenroom reads what the tour manager's cards and bank accounts spend,
+     through Plaid, read-only, and files it on the tour that was running that
+     day. What it can't place with confidence waits here, for the manager
+     only. A feed set up through YNAB before MODEL5 keeps running until a bank
+     is connected through Plaid. */
 
   // With the feed on, the cards and bank accounts say what's been paid.
   function feedOn() { return !!(S.feed && S.feed.row && S.feed.row.switched_on); }
@@ -7799,31 +7810,106 @@
   function runsATour() {
     return allTourEntries().some(function (e) { return tourRole(e[0]) === 'owner'; });
   }
-  // Off to YNAB's own sign-in page; it sends the manager straight back here.
-  async function connectYnab() {
+
+  /* Plaid's own connect window. The bank sign-in happens there (or on the
+     bank's own page for Chase, Amex and the like), never in Greenroom. */
+  var plaidReady = null;
+  function loadPlaid() {
+    if (window.Plaid) return Promise.resolve(window.Plaid);
+    if (plaidReady) return plaidReady;
+    plaidReady = new Promise(function (res, rej) {
+      var sc = document.createElement('script');
+      sc.src = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
+      sc.onload = function () { res(window.Plaid); };
+      sc.onerror = function () { plaidReady = null; rej(new Error('plaid_load')); };
+      document.head.appendChild(sc);
+    });
+    return plaidReady;
+  }
+  function forgetPlaidTrip() { try { localStorage.removeItem('gr-plaid'); } catch (e) { /* nothing kept */ } }
+  function openPlaid(token, o) {
     var B = window.GR_BACKEND;
-    var r;
-    try { r = await B.feedCall('connect', { back: location.origin + location.pathname }); }
-    catch (e) { r = null; }
-    if (r && r.ok && r.url) { location.href = r.url; return; }
-    toast(r && r.status === 'not_set_up'
-      ? 'Greenroom isn\u2019t registered with YNAB yet.'
-      : 'Couldn\u2019t reach YNAB just now. Try again.');
+    return loadPlaid().then(function (Plaid) {
+      Plaid.create(Object.assign({
+        token: token,
+        onSuccess: async function (publicToken, meta) {
+          forgetPlaidTrip();
+          if (o.itemId) {
+            toast('Reconnected');
+            B.feedCall('sync', { force: true }).catch(function () { /* the Refresh button tries again */ });
+            return;
+          }
+          toast('Saving the connection\u2026');
+          var r = null;
+          try {
+            r = await B.feedCall('connect', { publicToken: publicToken,
+              institution: meta && meta.institution ? meta.institution.name : '' });
+          } catch (e) { r = null; }
+          if (r && r.ok) {
+            toast((r.institution || 'Bank') + ' connected' + (r.test ? ' (test bank)' : ''));
+            whenLoaded(function () { openFeedSheet(o.tourId || null); });
+          } else toast(feedProblem(r && (r.status || r.error)));
+        },
+        onExit: function (err) {
+          forgetPlaidTrip();
+          if (err) toast('Plaid closed before the bank was connected. Try again when you\u2019re ready.');
+        }
+      }, o.redirect ? { receivedRedirectUri: o.redirect } : {})).open();
+    });
+  }
+  // Connect a bank (or, with itemId, sign back in to one that asked).
+  async function connectCards(tourId, itemId) {
+    var B = window.GR_BACKEND;
+    var r = null;
+    try { r = await B.feedCall('link', itemId ? { itemId: itemId } : {}); } catch (e) { r = null; }
+    if (!r || !r.ok || !r.linkToken) { toast(feedProblem(r && (r.status || r.error))); return; }
+    // A bank that signs in on its own page sends the phone back to Greenroom
+    // mid-way; this is what's needed to pick up where it left off.
+    try {
+      localStorage.setItem('gr-plaid', JSON.stringify({ token: r.linkToken, tourId: tourId || null,
+        itemId: itemId || null, at: Date.now() }));
+    } catch (e) { /* the popup path doesn't need it */ }
+    try { await openPlaid(r.linkToken, { tourId: tourId, itemId: itemId }); }
+    catch (e) { toast('Couldn\u2019t open Plaid. Check your connection and try again.'); }
+  }
+  // Back from a bank's own sign-in page (?oauth_state_id=...): finish in Plaid.
+  function resumePlaid(back) {
+    var saved = null;
+    try { saved = JSON.parse(localStorage.getItem('gr-plaid') || 'null'); } catch (e) { saved = null; }
+    if (!saved || !saved.token || Date.now() - saved.at > 30 * 60e3) {
+      toast('That bank sign-in took too long. Tap Connect again.');
+      return;
+    }
+    openPlaid(saved.token, { tourId: saved.tourId, itemId: saved.itemId, redirect: back })
+      .catch(function () { toast('Couldn\u2019t open Plaid. Try again.'); });
   }
 
   function feedProblem(code) {
-    var plan = S.feed && S.feed.row ? S.feed.row.plan_name : 'your plan';
     return ({
-      token_refused: 'YNAB stopped accepting Greenroom\u2019s key, usually because it was disconnected inside YNAB. Reconnect below.',
-      not_connected: 'Greenroom isn\u2019t connected to your YNAB. Reconnect below.',
-      not_set_up: 'Greenroom isn\u2019t registered with YNAB yet.',
-      plan_missing: 'Couldn\u2019t find the YNAB plan \u201c' + plan + '\u201d. If you renamed it, tell Claude the new name.',
+      ITEM_LOGIN_REQUIRED: 'A bank needs you to sign in again. Open Card feed settings and tap Reconnect next to it.',
+      PENDING_EXPIRATION: 'A bank connection is about to expire. Open Card feed settings and tap Reconnect next to it.',
+      not_connected: 'No bank is connected yet. Open Card feed settings to connect one.',
+      not_set_up: 'The Plaid keys aren\u2019t in place yet.',
+      not_allowed: 'This account can\u2019t connect cards.',
+      lock_changed: 'The lock password in Supabase changed, so Greenroom can\u2019t open the bank connections. Put the old one back, or disconnect and reconnect the banks.',
+      PRODUCT_NOT_READY: 'The bank is still sending its history. Try again in a few minutes.',
+      RATE_LIMIT_EXCEEDED: 'Plaid asked Greenroom to slow down. Try again in a minute.',
+      INSTITUTION_DOWN: 'The bank isn\u2019t answering right now. Try again later.',
+      INSTITUTION_NOT_RESPONDING: 'The bank isn\u2019t answering right now. Try again later.',
+      save_failed: 'Couldn\u2019t save what came in. Try again.',
+      // An older YNAB feed, until it's switched over
+      token_refused: 'YNAB stopped accepting Greenroom\u2019s key. Connect your cards through Plaid in Card feed settings.',
+      plan_missing: 'Couldn\u2019t find the YNAB plan. Connect your cards through Plaid in Card feed settings.',
       ynab_busy: 'YNAB asked Greenroom to slow down. It tries again next time you open the app.'
-    })[code] || 'Couldn\u2019t reach YNAB just now. It tries again next time you open the app.';
+    })[code] || 'Couldn\u2019t reach the cards just now. Try again in a moment.';
   }
   function feedResult(r) {
     if (!r || !r.ok) return feedProblem(r && (r.status || r.error));
     if (r.status === 'recent') return 'Checked a moment ago';
+    if (r.test) {
+      return 'Test mode \u00b7 ' + plural(r.seen || 0, 'charge') + ' seen \u00b7 ' + (r.filed || 0) + ' would file \u00b7 ' +
+        (r.waiting || 0) + ' would ask \u00b7 nothing saved';
+    }
     var bits = [];
     if (r.merchPaid) bits.push('merch payout landed for ' + plural(r.merchPaid, 'show'));
     if (r.filed) bits.push(plural(r.filed, 'charge') + ' filed');
@@ -7860,15 +7946,16 @@
     // Only accounts on the approved list ever get this far without a feed.
     if (S.feed.connectOnly) {
       if (S.mode !== 'db' || !B || !B.feedCall) return null;
-      return h('button', { class: 'btn ghost block feed-entry', type: 'button', onclick: connectYnab },
-        icon('card', 18), 'Connect the cards \u00b7 YNAB');
+      return h('button', { class: 'btn ghost block feed-entry', type: 'button',
+        onclick: function () { connectCards(id); } },
+        icon('card', 18), 'Connect the cards');
     }
     var row = S.feed.row || {};
     if (!row.switched_on) {
       // Connected but not set up yet: the one time the choices are asked.
       return h('button', { class: 'btn ghost block feed-entry', type: 'button',
         onclick: function () { openFeedSheet(id); } },
-        icon('card', 18), 'Set up the card feed \u00b7 YNAB');
+        icon('card', 18), 'Set up the card feed');
     }
     // Set up: one button does the rest. The gear holds the choices.
     var n = feedWaiting(id).length;
@@ -7887,14 +7974,14 @@
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)));
   }
 
-  /* Refresh: ask YNAB for anything new, then take the next step for the
-     manager: charges that need a look open straight away; otherwise a word
-     on what came in. Anything wrong with the connection opens the settings. */
+  /* Refresh: ask the bank to check now, read anything new, then take the next
+     step: charges that need a look open straight away; otherwise a word on
+     what came in. A bank that wants a sign-in opens the settings. */
   async function refreshCards(id, btn, label) {
     var B = window.GR_BACKEND;
     if (btn.disabled) return;
     btn.disabled = true;
-    label.textContent = 'Checking YNAB\u2026';
+    label.textContent = 'Checking the cards\u2026';
     var r = null;
     try { r = await B.feedCall('sync', { force: true }); } catch (e) { r = null; }
     btn.disabled = false;
@@ -7902,7 +7989,8 @@
     if (!r || !r.ok) {
       var code = r && (r.status || r.error);
       toast(feedProblem(code));
-      if (code === 'token_refused' || code === 'not_connected' || code === 'plan_missing') openFeedSheet(id);
+      if (code === 'ITEM_LOGIN_REQUIRED' || code === 'PENDING_EXPIRATION' || code === 'not_connected' ||
+          code === 'token_refused' || code === 'plan_missing') openFeedSheet(id);
       return;
     }
     if (feedWaiting(id).length) openFeedReview(id);
@@ -7924,14 +8012,14 @@
       };
     });
     if (!rows.length) { toast('Nothing waiting'); return; }
-    openImportReview(tourId, rows, 'ynab', { feed: true });
+    openImportReview(tourId, rows, 'Card feed', { feed: true });
   }
 
   function openFeedSheet(tourId) {
     var B = window.GR_BACKEND;
     var MODES = ['log', 'ask', 'off'];
     var settingUp = !(S.feed && S.feed.row && S.feed.row.switched_on);
-    var body = h('div', { class: 'feed-body' }, h('p', { class: 'sh-sub' }, 'Checking YNAB\u2026'));
+    var body = h('div', { class: 'feed-body' }, h('p', { class: 'sh-sub' }, 'Checking the cards\u2026'));
     var st = null;
     var starts = feedStarts(tourId);
     var startIdx = 0;
@@ -7945,64 +8033,99 @@
       if (busy) return;
       busy = true;
       body.classList.add('busy');
-      var btns = body.querySelectorAll('button');
-      btns.forEach(function (b) { b.disabled = true; });
+      body.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
       try { await fn(); } catch (e) { toast(feedProblem('unavailable')); }
       busy = false;
       body.classList.remove('busy');
       await load();
     }
-
-    function reconnectBtn(label) {
-      return h('button', { class: 'btn primary block', type: 'button', onclick: connectYnab }, label || 'Reconnect YNAB');
+    function connectBtn(label, cls) {
+      return h('button', { class: 'btn ' + (cls || 'primary') + ' block', type: 'button',
+        onclick: function () { closeSheet(); connectCards(tourId); } }, icon('card', 18), label);
     }
-    function disconnectBtn() {
+    function disconnectAll() {
       return h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
         confirmSheet({
-          title: 'Disconnect YNAB?',
-          body: 'Greenroom deletes its YNAB key right away, along with the charges waiting for a look. ' +
+          title: 'Disconnect every bank?',
+          body: 'Greenroom tells Plaid to delete each connection right away, and clears the charges waiting for a look. ' +
             'Charges already on your tours stay. You can connect again anytime.',
-          action: 'Disconnect',
+          action: 'Disconnect', danger: true,
           onConfirm: async function () {
             var r = await B.feedCall('disconnect');
+            toast(r && r.ok ? 'Banks disconnected' : feedProblem('unavailable'));
+            return true;
+          }
+        });
+      } }, 'Disconnect every bank');
+    }
+    function stopYnab() {
+      return h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
+        confirmSheet({
+          title: 'Stop the YNAB feed?',
+          body: 'Greenroom deletes its YNAB key right away. Charges already on your tours stay.',
+          action: 'Stop YNAB', danger: true,
+          onConfirm: async function () {
+            var r = await B.feedCall('disconnect', { provider: 'ynab' });
             toast(r && r.ok ? 'YNAB disconnected' : feedProblem('unavailable'));
             return true;
           }
         });
-      } }, 'Disconnect YNAB');
+      } }, 'Stop the YNAB feed');
     }
-    var privacy = h('p', { class: 'note feed-privacy' },
-      h('a', { href: 'privacy.html', target: '_blank', rel: 'noopener' }, 'How Greenroom handles your YNAB data'));
+    var safety = h('p', { class: 'note feed-privacy' },
+      'Read-only through Plaid: Greenroom can see charges, never move money. Your bank password goes only to Plaid or your bank. ',
+      h('a', { href: 'privacy.html', target: '_blank', rel: 'noopener' }, 'How Greenroom handles your card data'));
+    function bankNote(code) {
+      return code === 'ITEM_LOGIN_REQUIRED' || code === 'PENDING_EXPIRATION' ? 'Needs you to sign in again'
+        : code === 'lock_changed' ? 'Can\u2019t be opened (lock password changed)' : 'Having trouble \u2014 try Refresh';
+    }
 
     function draw() {
-      var code = st && (st.status || st.error);
       if (!st || !st.ok) {
-        var gone = code === 'token_refused' || code === 'not_connected';
-        body.replaceChildren(h('div', null,
-          h('p', { class: 'note' }, feedProblem(code)),
-          gone ? h('div', { class: 'stack' }, reconnectBtn(), disconnectBtn()) : null,
-          privacy));
+        body.replaceChildren(h('div', null, h('p', { class: 'note' }, feedProblem(st && (st.status || st.error))), safety));
         return;
       }
-      if (st.needsPlan) {
-        body.replaceChildren(h('div', null,
-          h('h3', { class: 'sh-h3' }, st.missing
-            ? 'Couldn\u2019t find \u201c' + st.plan + '\u201d in YNAB anymore. Which plan is the band\u2019s?'
-            : 'Which YNAB plan is the band\u2019s?'),
-          h('p', { class: 'note' }, 'Greenroom only ever reads the one you pick.'),
-          h('div', { class: 'stack feed-plans' }, st.plans.map(function (pl) {
-            return h('button', { class: 'btn ghost block', type: 'button', onclick: function () {
-              run('plan', async function () {
-                var r = await B.feedCall('setup', { plan: pl.id });
-                if (!r || !r.ok) toast(feedProblem(r && (r.status || r.error)));
-              });
-            } }, pl.name);
-          })),
-          st.plans.length ? null : h('p', { class: 'note' }, 'Your YNAB has no plans yet.'),
-          h('div', { class: 'stack', style: 'margin-top:18px' }, disconnectBtn()),
-          privacy));
+      var parts = [];
+      if (st.test) {
+        parts.push(h('div', { class: 'feed-test' }, h('b', null, 'TEST MODE'),
+          ' Plaid\u2019s fake banks only. Nothing is filed onto your tours.'));
+      }
+      if (st.needsConnect) {
+        parts.push(
+          h('p', { class: 'note' }, st.source === 'ynab'
+            ? 'Your cards come in through YNAB right now. Connect them through Plaid and Greenroom switches over.'
+            : 'Connect the bank or card company your tour cards are with. You sign in on Plaid\u2019s screen, or your bank\u2019s.'),
+          h('div', { class: 'stack' }, connectBtn('Connect a bank or card')));
+        if (st.source === 'ynab') parts.push(h('div', { class: 'stack', style: 'margin-top:10px' }, stopYnab()));
+        parts.push(safety);
+        body.replaceChildren(h('div', null, parts));
         return;
       }
+
+      parts.push(h('h3', { class: 'sh-h3' }, 'Banks'),
+        h('div', { class: 'ledger feed-banks' }, st.banks.map(function (bk) {
+          var trouble = bk.status && bk.status !== 'ok';
+          return h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, bk.name,
+              trouble ? h('span', { class: 'hint over' }, bankNote(bk.status)) : null),
+            trouble ? h('button', { class: 'btn sm quiet', type: 'button',
+              onclick: function () { closeSheet(); connectCards(tourId, bk.id); } }, 'Reconnect') : null,
+            h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Disconnect ' + bk.name,
+              onclick: function () {
+                confirmSheet({
+                  title: 'Disconnect ' + bk.name + '?',
+                  body: 'Greenroom tells Plaid to delete this connection right away. Charges already on your tours stay.',
+                  action: 'Disconnect', danger: true,
+                  onConfirm: async function () {
+                    var r = await B.feedCall('disconnect', { itemId: bk.id });
+                    toast(r && r.ok ? bk.name + ' disconnected' : feedProblem('unavailable'));
+                    return true;
+                  }
+                });
+              } }, icon('trash', 16)));
+        })),
+        h('div', { class: 'stack', style: 'margin-top:10px' }, connectBtn('Connect another bank or card', 'ghost')));
+
       var accts = h('div', { class: 'feed-accts' }, st.accounts.map(function (a) {
         var idx = MODES.indexOf(a.mode);
         return h('div', { class: 'feed-acct' },
@@ -8016,15 +8139,15 @@
             });
           }, 'What the feed does with ' + a.name));
       }));
-      var parts = [
+      parts.push(
         h('h3', { class: 'sh-h3' }, 'Accounts'),
         accts,
         h('p', { class: 'note' },
           'Log: files each charge on the tour by itself once Greenroom knows the merchant, and asks about new ones. ',
-          'Ask me: every charge waits for you first. Off: ignored.')
-      ];
+          'Ask me: every charge waits for you first. Off: ignored.'));
+
       // Where atVenu's merch payouts land, so a matching deposit settles the show.
-      var banks = st.accounts.filter(function (a) { return a.type !== 'creditCard' && a.type !== 'lineOfCredit'; });
+      var banks = st.accounts.filter(function (a) { return a.type === 'checking' || a.type === 'savings'; });
       if (banks.length) {
         var msel = h('select', { class: 'input', 'aria-label': 'Account merch payouts land in',
           onchange: function (e) {
@@ -8039,10 +8162,10 @@
         parts.push(
           h('h3', { class: 'sh-h3' }, 'Merch payouts land in'),
           msel,
-          h('p', { class: 'note' }, 'When a deposit here matches what atVenu says should land (the net, less the cash ' +
-            'the table kept), that show\u2019s merch is marked received and its city stops being red. ' +
-            'Only the date and amount of these deposits are kept.'));
+          h('p', { class: 'note' }, 'When a deposit here matches what atVenu says should land, that show\u2019s merch is ' +
+            'marked received and its city stops being red. Only the date and amount of these deposits are kept.'));
       }
+
       if (!st.switchedOn) {
         var startNote = h('p', { class: 'note' }, starts[startIdx].note);
         parts.push(
@@ -8057,9 +8180,8 @@
               run('on', async function () {
                 var r = await B.feedCall('setup', { on: true, since: starts[startIdx].date });
                 if (!r || !r.ok) { toast(feedProblem(r && (r.status || r.error))); return; }
-                // Asked once: from here on it's the Refresh button.
                 closeSheet();
-                toast('Card feed on. Reading YNAB\u2026');
+                toast('Card feed on. Reading the cards\u2026');
                 var got = await B.feedCall('sync', { force: true });
                 if (got && got.ok && tourId && feedWaiting(tourId).length) openFeedReview(tourId);
                 else toast(feedResult(got));
@@ -8077,27 +8199,19 @@
               });
             } }, 'Turn the feed off')));
       }
-      // Still on the key saved by hand: the button gives a read-only one.
-      if (st.viaButton === false) {
-        parts.push(h('p', { class: 'note', style: 'margin-top:22px' },
-          'Connected with the YNAB key you saved by hand. Switch to YNAB\u2019s sign-in for a key that can only read.'),
-          h('div', { class: 'stack' }, reconnectBtn('Switch to YNAB sign-in')));
-      }
-      parts.push(h('div', { class: 'stack', style: 'margin-top:14px' }, disconnectBtn()), privacy);
+      parts.push(h('div', { class: 'stack', style: 'margin-top:14px' }, disconnectAll()), safety);
       body.replaceChildren(h('div', null, parts));
     }
 
     openSheet(function () {
       load();
       return [
-        h('h2', { class: 'sh-title' }, settingUp ? 'Set up the card feed' : 'Card feed settings'),
-        h('p', { class: 'sh-sub' }, ((S.feed && S.feed.row && S.feed.row.plan_name)
-          ? 'Greenroom reads your YNAB plan \u201c' + S.feed.row.plan_name + '\u201d'
-          : 'Greenroom reads your YNAB') +
-          ' and logs what the cards spend. Money coming in is never logged, and only you see this.'),
+        h('h2', { class: 'sh-title' }, settingUp ? 'Set up the card feed' : 'Card feed'),
+        h('p', { class: 'sh-sub' }, 'Greenroom reads what your cards spend through Plaid and logs it. ' +
+          'Money coming in is never logged, and only you see this.'),
         body
       ];
-    }, { label: settingUp ? 'Set up the card feed' : 'Card feed settings' });
+    }, { label: settingUp ? 'Set up the card feed' : 'Card feed' });
   }
 
   /* ---------------- Card charges, imports and learned labels ---------------- */

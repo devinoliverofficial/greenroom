@@ -452,7 +452,8 @@ Deno.serve(async (req) => {
   if (knock) {
     const { data: good } = await admin.rpc("cron_key_ok", { k: knock });
     if (good !== true) return reply(401, { error: "bad_key" });
-    const { data: feeds } = await admin.from("feed").select("*").eq("switched_on", true);
+    // YNAB feeds only; a feed moved to Plaid is the plaid function's.
+    const { data: feeds } = await admin.from("feed").select("*").eq("switched_on", true).eq("source", "ynab");
     const out: string[] = [];
     for (const f of (feeds ?? []) as Feed[]) {
       // Opening the app may have just done this.
@@ -579,7 +580,7 @@ Deno.serve(async (req) => {
   const owner = server ? String(body.owner ?? "") : uid;
   if (!owner) return reply(401, { error: "not_signed_in" });
   const { data: row } = await admin.from("feed").select("*").eq("owner_id", owner).maybeSingle();
-  if (!row) return reply(403, { error: "no_feed" });
+  if (!row || (row as { source?: string }).source === "plaid") return reply(403, { error: "no_feed" });
   const feed = row as Feed;
 
   // Disconnect: the key is deleted on the spot, along with the pile.
