@@ -545,7 +545,7 @@
         }
       } catch (e) { /* already gone */ }
     },
-    /* ---- the card feed (Plaid; YNAB until the manager switches) ----
+    /* ---- the card feed (Plaid, read-only) ----
        The feed belongs to one tour manager. Row-level security hands its row
        and its pile to that person only; for everyone else feedWatch reports
        nothing and the app never mentions it. */
@@ -554,11 +554,7 @@
       loadFeed(true);
     },
     feedCall: async function (action, body) {
-      // Plaid does everything, except keeping an old YNAB feed going (sync and
-      // its settings) until a bank is connected through Plaid.
-      var fn = feedSource === 'ynab' && (action === 'sync' || action === 'setup' ||
-        (action === 'disconnect' && body && body.provider === 'ynab')) ? 'ynab' : 'plaid';
-      var r = await callFn(fn, {
+      var r = await callFn('plaid', {
         method: 'POST',
         body: JSON.stringify(Object.assign({ action: action }, body || {}))
       });
@@ -595,11 +591,9 @@
 
   var feedListeners = [];
   var feedTimer = 0;
-  var feedSource = null;   // 'plaid', 'ynab' (an older feed) or null
   async function loadFeed(opening) {
     try {
       var f = await sb.from('feed').select('switched_on, plan_name, since, last_run, last_status, source').maybeSingle();
-      feedSource = f.data ? f.data.source || 'ynab' : null;
       if (f.error || !f.data) {
         // No feed yet: only accounts on the approved list get a Connect button.
         var ok = await sb.from('ynab_allowed').select('owner_id').maybeSingle();

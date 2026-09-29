@@ -356,11 +356,8 @@
 
   /* The card feed belongs to the tour manager who connected it. For everyone
      else S.feed stays null and they only ever see a Connect button on tours
-     they run. YNAB's sign-in page sends people back with ?ynab=<result>. */
-  var ynabBack = (/[?&]ynab=(connected|cancelled|failed)/.exec(location.search) || [])[1] || null;
-  if (ynabBack) {
-    try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* cosmetic */ }
-  }
+     they run. A bank that signs people in on its own site sends them back
+     with ?oauth_state_id=, and Plaid picks up where it left off. */
   var plaidBack = /[?&]oauth_state_id=/.test(location.search) ? location.href : null;
   if (plaidBack) {
     try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* cosmetic */ }
@@ -376,14 +373,6 @@
         plaidBack = null;
         whenLoaded(function () { resumePlaid(back); });
       }
-      if (!ynabBack) return;
-      var r = ynabBack;
-      ynabBack = null;
-      if (r === 'connected' && f && f.row) {
-        toast('YNAB connected');
-        whenLoaded(function () { openFeedSheet(null); });
-      } else if (r === 'cancelled') toast('YNAB wasn\u2019t connected');
-      else toast('Couldn\u2019t connect YNAB. Try again.');
     });
   }
   function whenLoaded(fn, tries) {
@@ -7642,7 +7631,7 @@
       if (chosen.length) {
         var patch = {};
         chosen.forEach(function (r, i) {
-          patch[(S.feed && S.feed.row && S.feed.row.source === 'plaid' ? 'p' : 'y') + r.feedId] = {
+          patch['p' + r.feedId] = {
             date: r.date, merchant: r.merchant, amount: G.num(r.amount),
             category: r.category, accounted: !!r.accounted,
             importId: importId, createdAt: Date.now() + i
@@ -7786,8 +7775,7 @@
      Greenroom reads what the tour manager's cards and bank accounts spend,
      through Plaid, read-only, and files it on the tour that was running that
      day. What it can't place with confidence waits here, for the manager
-     only. A feed set up through YNAB before MODEL5 keeps running until a bank
-     is connected through Plaid. */
+     only. */
 
   // With the feed on, the cards and bank accounts say what's been paid.
   function feedOn() { return !!(S.feed && S.feed.row && S.feed.row.switched_on); }
@@ -7896,11 +7884,7 @@
       RATE_LIMIT_EXCEEDED: 'Plaid asked Greenroom to slow down. Try again in a minute.',
       INSTITUTION_DOWN: 'The bank isn\u2019t answering right now. Try again later.',
       INSTITUTION_NOT_RESPONDING: 'The bank isn\u2019t answering right now. Try again later.',
-      save_failed: 'Couldn\u2019t save what came in. Try again.',
-      // An older YNAB feed, until it's switched over
-      token_refused: 'YNAB stopped accepting Greenroom\u2019s key. Connect your cards through Plaid in Card feed settings.',
-      plan_missing: 'Couldn\u2019t find the YNAB plan. Connect your cards through Plaid in Card feed settings.',
-      ynab_busy: 'YNAB asked Greenroom to slow down. It tries again next time you open the app.'
+      save_failed: 'Couldn\u2019t save what came in. Try again.'
     })[code] || 'Couldn\u2019t reach the cards just now. Try again in a moment.';
   }
   function feedResult(r) {
@@ -8059,20 +8043,6 @@
         });
       } }, 'Disconnect every bank');
     }
-    function stopYnab() {
-      return h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
-        confirmSheet({
-          title: 'Stop the YNAB feed?',
-          body: 'Greenroom deletes its YNAB key right away. Charges already on your tours stay.',
-          action: 'Stop YNAB', danger: true,
-          onConfirm: async function () {
-            var r = await B.feedCall('disconnect', { provider: 'ynab' });
-            toast(r && r.ok ? 'YNAB disconnected' : feedProblem('unavailable'));
-            return true;
-          }
-        });
-      } }, 'Stop the YNAB feed');
-    }
     var safety = h('p', { class: 'note feed-privacy' },
       'Read-only through Plaid: Greenroom can see charges, never move money. Your bank password goes only to Plaid or your bank. ',
       h('a', { href: 'privacy.html', target: '_blank', rel: 'noopener' }, 'How Greenroom handles your card data'));
@@ -8093,11 +8063,9 @@
       }
       if (st.needsConnect) {
         parts.push(
-          h('p', { class: 'note' }, st.source === 'ynab'
-            ? 'Your cards come in through YNAB right now. Connect them through Plaid and Greenroom switches over.'
-            : 'Connect the bank or card company your tour cards are with. You sign in on Plaid\u2019s screen, or your bank\u2019s.'),
+          h('p', { class: 'note' },
+            'Connect the bank or card company your tour cards are with. You sign in on Plaid\u2019s screen, or your bank\u2019s.'),
           h('div', { class: 'stack' }, connectBtn('Connect a bank or card')));
-        if (st.source === 'ynab') parts.push(h('div', { class: 'stack', style: 'margin-top:10px' }, stopYnab()));
         parts.push(safety);
         body.replaceChildren(h('div', null, parts));
         return;

@@ -1670,8 +1670,8 @@ button.input.role-pick.empty { color: var(--ink-3); font-weight: 500; }
     var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
     if (nav && nav.type) how = nav.type;
   } catch (e) { /* older browsers: treat as a fresh launch */ }
-  // Coming back from YNAB's sign-in page is not a launch either.
-  if (how !== 'navigate' || /[?&]ynab=/.test(location.search)) { s.remove(); return; }
+  // Coming back from a bank's own sign-in page is not a launch either.
+  if (how !== 'navigate' || /[?&]oauth_state_id=/.test(location.search)) { s.remove(); return; }
   var word = s.querySelector('.sp-word'), bus = s.querySelector('.sp-bus'), stage = s.querySelector('.sp-stage');
   var finished = false;
   function done(wait) {

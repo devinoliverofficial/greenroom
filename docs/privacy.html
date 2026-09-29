@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Greenroom for YNAB · Privacy</title>
+<title>Greenroom Card Feed Privacy</title>
 <style>
   :root { color-scheme: dark; --bg: #0b0c08; --ink: #f2f4ea; --ink-2: #b9bdaa; --line: #2a2d22; --pos: #ccf80a; }
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -21,39 +21,45 @@
 </head>
 <body>
 <main>
-  <h1>Greenroom for YNAB: privacy</h1>
-  <p class="date">Last updated: September 27, 2026</p>
+  <h1>Greenroom card feed: privacy</h1>
+  <p class="date">Last updated: September 29, 2026</p>
 
-  <p>Greenroom is a budget app for touring bands. A tour manager can connect their YNAB account so the
-  charges on their cards file themselves onto their tour. This page explains what that connection reads,
-  what Greenroom keeps, and what it never touches.</p>
+  <p>Greenroom is a budget app for touring bands. A tour manager can connect the bank or card company their
+  tour cards are with, through Plaid, so the charges on those cards file themselves onto their tour. This page
+  explains what that connection reads, what Greenroom keeps, and what it never touches.</p>
 
-  <h2>What Greenroom reads from YNAB</h2>
+  <h2>What Greenroom can do</h2>
   <ul>
-    <li><strong>Only the one YNAB plan you pick.</strong></li>
-    <li>The names and types of the accounts in that plan (for example “Business Gold Card”), so you can
-      choose which accounts feed your tour.</li>
-    <li>The plan’s transactions: date, amount and payee name. Accounts you switch off are skipped.</li>
+    <li><strong>Read charges. That’s all.</strong> Greenroom asks Plaid for one thing only: transactions.</li>
+    <li><strong>It cannot move money.</strong> Greenroom never asks for payments, transfers or anything else that
+      moves money, and its server refuses every Plaid request except reading accounts and transactions and
+      connecting or disconnecting a bank.</li>
+  </ul>
+
+  <h2>What Greenroom reads through Plaid</h2>
+  <ul>
+    <li>The names and types of your card, checking and savings accounts (for example “Business Gold Card”),
+      so you can choose which ones feed your tour.</li>
+    <li>Transactions on those accounts: date, amount and merchant name. Accounts you switch off are skipped.</li>
     <li>If you pick an account for merch payouts: the date and amount of deposits into that one account, to
       confirm that what atVenu said the band would be paid actually arrived.</li>
   </ul>
-  <p>Greenroom asks YNAB for <strong>read-only</strong> access. It cannot change anything in your YNAB, and it
-  cannot move money.</p>
 
   <h2>What Greenroom never reads or keeps</h2>
   <ul>
-    <li>Your YNAB password. You sign in on YNAB’s own website, never inside Greenroom.</li>
-    <li>Bank logins, card numbers, account numbers or routing numbers.</li>
-    <li>Account balances.</li>
+    <li>Your bank password. You sign in on Plaid’s screen or your bank’s own site, never inside Greenroom.</li>
+    <li>Full card numbers, account numbers or routing numbers. Greenroom keeps only an account’s last four
+      digits, as part of its name, so you can tell your cards apart.</li>
+    <li>Account balances. Plaid includes them when it lists your accounts; Greenroom throws them away.</li>
     <li>Money coming into your accounts, such as deposits and payouts, is skipped and never stored. The one
       exception is the merch payout account you choose, and from it only each deposit’s date and amount.</li>
   </ul>
 
   <h2>What Greenroom keeps</h2>
   <ul>
-    <li><strong>The key YNAB issues for your connection.</strong> It is stored on Greenroom’s server, where
-      only the server can read it. It is never sent to your phone or anyone else’s.</li>
-    <li><strong>Spending it looks at:</strong> the date, amount, a cleaned-up payee name, the account’s name
+    <li><strong>The key Plaid issues for each bank you connect.</strong> It is locked (encrypted) on Greenroom’s
+      server, where only the server can open it. It is never sent to your phone or anyone else’s.</li>
+    <li><strong>Spending it looks at:</strong> the date, amount, a cleaned-up merchant name, the account’s name
       and a category. Charges Greenroom isn’t sure about wait in your private pile until you add them to a
       tour or set them aside. Refunds on a card are shown to you in the same pile.</li>
     <li><strong>Charges on your tours:</strong> once added, a charge is part of that tour’s budget.</li>
@@ -71,7 +77,7 @@
 
   <h2>How long it’s kept</h2>
   <ul>
-    <li>The YNAB key: until you disconnect.</li>
+    <li>A bank’s Plaid key: until you disconnect that bank.</li>
     <li>Your pile, and the record of what’s already been brought in (so nothing comes in twice): until you
       disconnect.</li>
     <li>Charges on a tour: as long as the tour exists. A deleted tour waits in Recently deleted for 30 days,
@@ -80,14 +86,14 @@
 
   <h2>Deleting your data</h2>
   <ul>
-    <li><strong>Disconnect in Greenroom:</strong> Card feed → Disconnect YNAB. Greenroom deletes its YNAB key and
-      your pile immediately.</li>
-    <li><strong>Or from YNAB:</strong> remove Greenroom from the connected apps in your YNAB account settings.
-      Greenroom stops being able to read anything right away.</li>
+    <li><strong>Disconnect in Greenroom:</strong> Card feed → the trash next to a bank, or Disconnect every bank.
+      Greenroom tells Plaid to close the connection and deletes its key right away.</li>
+    <li><strong>Or through Plaid:</strong> at my.plaid.com you can see and remove the apps connected to your
+      banks. Greenroom stops being able to read anything right away.</li>
     <li><strong>Delete a tour</strong> to remove the charges on it.</li>
   </ul>
 
-  <footer>Greenroom is an independent app. It is not made, endorsed or supported by YNAB.</footer>
+  <footer>Greenroom is an independent app. It is not made, endorsed or supported by Plaid or your bank.</footer>
 </main>
 </body>
 </html>
