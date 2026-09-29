@@ -3540,6 +3540,7 @@
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       h('div', { class: 'ov-lines' },
         line('Doors', G.cleanTime(d.doors))),
+      buyoutAlertBtn(id, t),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
@@ -4319,9 +4320,8 @@
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
-    var boBtn = buyoutAlertBtn(id, t);
-    if (only === 'sheet') return [rail, editRow, placeEl, body, copyBtn, boBtn];
-    return [hero, rail, editRow, body, guestBtn, copyBtn, boBtn];
+    if (only === 'sheet') return [rail, editRow, placeEl, body, copyBtn];
+    return [hero, rail, editRow, body, guestBtn, copyBtn];
   }
 
   function clearDaySheet(tourId, show, date, off) {
@@ -5339,12 +5339,12 @@
     patch.shows[sh.id] = { buyoutTrack: next };
     api.update(id, patch).then(function (ok) { if (ok) { toast('Buyouts saved'); render(true); } });
   }
-  /* BUYOUT ALERT, under the day sheet: it glows and pulses while someone
+  /* BUYOUT ALERT, on the Overview: it glows and pulses while someone
      from an earlier show still hasn't had their buyout. */
   function buyoutAlertBtn(id, t) {
     if (!canEditTour(id)) return null;
     var owed = buyoutsOwed(t);
-    return h('button', { class: 'btn block bo-alert' + (owed.length ? ' on' : ''), type: 'button', style: 'margin-top:12px',
+    return h('button', { class: 'btn block bo-alert' + (owed.length ? ' on' : ''), type: 'button', style: 'margin-top:22px',
       onclick: function () {
         if (!owed.length) { toast('Everyone has their buyouts'); return; }
         if (owed.length === 1) {
