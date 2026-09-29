@@ -5344,7 +5344,7 @@
   function buyoutAlertBtn(id, t) {
     if (!canEditTour(id)) return null;
     var owed = buyoutsOwed(t);
-    return h('button', { class: 'btn block bo-alert' + (owed.length ? ' on' : ''), type: 'button', style: 'margin-top:22px',
+    return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (owed.length ? ' on' : ''), type: 'button',
       onclick: function () {
         if (!owed.length) { toast('Everyone has their buyouts'); return; }
         if (owed.length === 1) {
@@ -5369,7 +5369,7 @@
             }))
           ];
         }, { label: 'Buyout alert' });
-      } }, icon('bell', 18), 'BUYOUT ALERT');
+      } }, icon('bell', 15), 'BUYOUT ALERT'));
   }
 
   function openBuyoutTracker(id, show, total, track, done) {
