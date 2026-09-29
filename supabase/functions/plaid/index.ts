@@ -603,7 +603,10 @@ Deno.serve(async (req) => {
         cursor: null, status: "ok", updated_at: new Date().toISOString(),
       }, { onConflict: "owner_id,item_id" });
       const { data: row } = await admin.from("feed").select("*").eq("owner_id", uid).maybeSingle();
-      const fresh = !row || (row as Feed).source !== "plaid";
+      // The first bank here (or the first real one after test mode) starts
+      // the feed over, so nothing files until the manager has set it up.
+      const others = (await itemsFor(uid)).filter((i) => i.item_id !== itemId);
+      const fresh = !row || (row as Feed).source !== "plaid" || !others.length;
       const accounts: Record<string, Account> = fresh ? {} : { ...((row as Feed).accounts ?? {}) };
       await accountsFor({ item_id: itemId } as Item, token, accounts);
       if (fresh) {
