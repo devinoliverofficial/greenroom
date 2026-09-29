@@ -2130,7 +2130,7 @@
     var total = G.crewProjection(t);
     var paid = G.num((G.normExpenses(t && t.expenses)).crew.paid) + chargedTo(t, 'crew');
     return h('button', {
-      class: 'row rowbtn', type: 'button', onclick: function () { openCrewSheet(id); }
+      class: 'row rowbtn', type: 'button', onclick: function () { openCrewSheet(id, true); }
     },
       h('div', { class: 'row-label' }, 'Crew',
         h('span', { class: 'hint' }, crew.length
@@ -2204,7 +2204,7 @@
       return h('button', {
         class: 'row rowbtn ex-row', type: 'button',
         onclick: function () {
-          if (l.key === 'crew') openCrewSheet(id);
+          if (l.key === 'crew') openCrewSheet(id, true);
           else if (l.key === 'commission') openCommissionSheet(id);
           else openCategorySheet(id, l.key);
         }
@@ -2252,93 +2252,168 @@
     ];
   }
 
+  /* Where each dollar in a category came from, so a wrong one is easy to
+     spot: PLAID (the card feed), MANUAL (logged by hand), PDF, SCREENSHOT or
+     CSV (a statement imported), and UNKNOWN when Greenroom can't tell, which
+     is a bug worth reporting. */
+  function chargeSource(t, ch) {
+    if (ch.manual) return 'MANUAL';
+    var imp = ch.importId && G.isObj(t && t.imports) ? t.imports[ch.importId] : null;
+    var src = imp ? String(imp.source || '') : '';
+    if (src === 'Card feed' || (!imp && /^p/.test(ch.id) && /^cards-/.test(String(ch.importId || '')))) return 'PLAID';
+    if (src === 'csv') return 'CSV';
+    if (src === 'pdf') return 'PDF';
+    if (src === 'image') return 'SCREENSHOT';
+    return 'UNKNOWN';
+  }
+  function categoryEntries(t, key) {
+    var out = [];
+    G.rows(t && t.charges).forEach(function (ch) {
+      if (ch.category !== key) return;
+      out.push({ date: ch.date || '', label: ch.merchant || 'Charge', amount: G.num(ch.amount),
+        detail: [ch.account || '', ch.accounted ? 'already accounted for' : ''].filter(Boolean).join(' · '),
+        source: chargeSource(t, ch), chargeId: ch.id, counts: !ch.accounted });
+    });
+    G.rows(t && t.cashLog).forEach(function (x) {
+      if (x.category !== key) return;
+      out.push({ date: x.date || '', label: x.note || x.label || 'Merch cash', amount: G.num(x.amount),
+        detail: 'Merch cash', source: 'MANUAL', counts: true });
+    });
+    (G.cardPaidDetail(t)[key] || []).forEach(function (r) {
+      out.push({ date: '', label: r.label + (r.feed ? ' balance' : r.leftover ? ' (left over going in)' : ' going in'),
+        amount: r.amount, detail: r.feed ? 'Still under Credit card' : 'Card balance going into the tour',
+        source: r.feed ? 'PLAID' : 'MANUAL', counts: true });
+    });
+    var typed = G.num((G.normExpenses(t && t.expenses)[key] || {}).paid);
+    if (typed > 0) out.push({ date: '', label: 'Paid (typed in)', amount: typed, detail: 'One total, typed in by hand',
+      source: 'MANUAL', typed: true, counts: true });
+    return out.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  }
+  function openLoggedSheet(id, key, back) {
+    function build() {
+      var t = getTour(id);
+      var cat = G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0] || { label: key };
+      var list = categoryEntries(t, key);
+      var total = list.reduce(function (a, r) { return r.counts ? a + r.amount : a; }, 0);
+      return [
+        h('h2', { class: 'sh-title' }, 'Logged Card Transactions'),
+        h('p', { class: 'sh-sub' }, cat.label + ' · ' + plural(list.length, 'entry').replace('entrys', 'entries') + ' · ' + money(total)),
+        list.length ? h('div', { class: 'ledger logged' }, list.map(function (r) {
+          var removable = canWrite() && (r.typed || (r.chargeId && r.source === 'MANUAL'));
+          return h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, r.label,
+              h('span', { class: 'hint' }, [r.date ? dayMD(r.date) : '', r.detail].filter(Boolean).join(' · '))),
+            h('span', { class: 'src-tag src-' + r.source.toLowerCase() }, r.source),
+            h('span', { class: 'amt num' + (r.counts ? '' : ' quiet') }, money(r.amount)),
+            removable ? h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + r.label,
+              onclick: function () {
+                confirmSheet({
+                  title: 'Remove this?', body: money(r.amount) + ' comes off ' + cat.label + '.',
+                  action: 'Remove', danger: true,
+                  onConfirm: async function () {
+                    var patch;
+                    if (r.typed) { patch = { expenses: {} }; patch.expenses[key] = { paid: 0 }; }
+                    else { patch = { charges: {} }; patch.charges[r.chargeId] = null; }
+                    var ok = await api.update(id, patch);
+                    if (ok) { toast('Removed'); setTimeout(function () { openLoggedSheet(id, key, back); }, 250); }
+                    return ok;
+                  }
+                });
+              } }, icon('trash', 16)) : null);
+        })) : emptyState('Nothing logged yet', 'Charges from the card feed, statements you import and payments you log by hand all show up here.'),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { if (back) back(); else closeSheet(); } },
+            back ? 'Back' : 'Close'))
+      ];
+    }
+    openSheet(build, { label: 'Logged Card Transactions' });
+  }
+  function loggedButton(id, key, back) {
+    var n = categoryEntries(getTour(id), key).length;
+    return h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:14px',
+      onclick: function () { openLoggedSheet(id, key, back); } },
+      icon('card', 18), 'Logged Card Transactions' + (n ? ' (' + n + ')' : ''));
+  }
+  // A payment logged by hand: an entry of its own, dated, marked MANUAL.
+  function paidLogForm(id, key, label, after) {
+    var f = { amount: 0, date: G.tourToday(), what: '' };
+    var submit = async function (e) {
+      e.preventDefault();
+      blurActive();
+      if (!(f.amount > 0)) { toast('Enter how much was paid'); return; }
+      if (!G.parseDay(f.date)) { toast('Pick the day it was paid'); return; }
+      var patch = { charges: {} };
+      patch.charges[newId()] = { date: f.date, merchant: f.what.trim() || label, amount: f.amount, category: key,
+        accounted: false, manual: true, createdAt: Date.now() };
+      if (await api.update(id, patch)) {
+        delete S.drafts['exp:' + id];
+        toast(money(f.amount) + ' logged as paid'); render(true);
+        if (after) after(); else closeSheet();
+      }
+    };
+    return h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
+      field('How much was paid', moneyInput({ id: 'log-paid', value: 0, label: label + ' paid', nextId: 'log-what',
+        onValue: function (v) { f.amount = v; } })),
+      field('What was it for?', h('input', { class: 'input', type: 'text', id: 'log-what', maxlength: 60, autocomplete: 'off',
+        placeholder: 'Optional, e.g. per diems', oninput: function (e) { f.what = e.target.value; } })),
+      field('Day it was paid', h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Day it was paid',
+        onchange: function (e) { f.date = e.target.value; } })),
+      h('div', { class: 'stack' },
+        h('button', { class: 'btn primary block', type: 'submit' }, 'Log it as paid')));
+  }
+
   function openCategorySheet(id, key) {
     var t = getTour(id);
     var cat = G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0];
     var rec = G.normExpenses(t && t.expenses)[key] || { projected: null, paid: 0 };
-    var f = { projected: rec.projected, paid: G.num(rec.paid) };
-    var charged = chargedTo(t, key);
-    var onCards = (G.cardPaidDetail(t)[key] || []);
-    var cardTotal = onCards.reduce(function (a, r) { return a + r.amount; }, 0);
+    var line = G.calc(t).lines.filter(function (l) { return l.key === key; })[0] || { paid: 0 };
+    var f = { projected: rec.projected };
+    var kind = null;
 
     openSheet(function () {
       var readout = h('div', { class: 'preview' });
-      function refresh() {
-        var paid = f.paid + charged + cardTotal;
-        var p = f.projected;
-        var kids = [
-          h('div', null, h('span', null, 'Projected'),
-            h('strong', { class: 'num' }, p == null ? 'Not set' : money(p))),
-          h('div', null, h('span', null, 'Paid so far'), h('strong', { class: 'num' }, money(paid)))
-        ];
-        if (p == null) {
-          kids.push(h('div', null, h('span', null, 'Counts as'), h('strong', { class: 'num' }, money(paid))));
-        } else if (paid > p) {
-          kids.push(h('div', null, h('span', null, 'Over by'),
-            h('strong', { class: 'num neg' }, money(paid - p))));
-        } else {
-          kids.push(h('div', null, h('span', null, 'Left to pay'),
-            h('strong', { class: 'num' }, money(p - paid))));
-        }
-        readout.replaceChildren.apply(readout, kids);
+      var paid = G.num(line.paid);
+      var p = rec.projected;
+      readout.append(
+        h('div', null, h('span', null, 'Projected'), h('strong', { class: 'num' }, p == null ? 'Not set' : money(p))),
+        h('div', null, h('span', null, 'Paid so far'), h('strong', { class: 'num' }, money(paid))),
+        p == null ? h('div', null, h('span', null, 'Counts as'), h('strong', { class: 'num' }, money(paid)))
+          : paid > p ? h('div', null, h('span', null, 'Over by'), h('strong', { class: 'num neg' }, money(paid - p)))
+          : h('div', null, h('span', null, 'Left to pay'), h('strong', { class: 'num' }, money(p - paid))));
+
+      var box = h('div');
+      function draw() {
+        if (kind === 'projected') {
+          box.replaceChildren(h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
+            e.preventDefault();
+            blurActive();
+            var patch = { expenses: {} };
+            patch.expenses[key] = { projected: f.projected };
+            if (await api.update(id, patch)) {
+              delete S.drafts['exp:' + id];
+              closeSheet(); toast(cat.label + ' projection saved'); render(true);
+            }
+          } },
+            field('Projected for the whole tour', moneyInput({
+              id: 'cat-proj', value: f.projected, label: cat.label + ' projected cost', placeholder: '—', last: true,
+              onValue: function (v) { f.projected = v > 0 ? v : null; }
+            }), 'What you expect it to cost. What’s paid fills it up; it doesn’t add on top.'),
+            h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' }, 'Save projection'))));
+        } else if (kind === 'paid') {
+          box.replaceChildren(paidLogForm(id, key, cat.label));
+        } else box.replaceChildren();
       }
-      var submit = async function (e) {
-        e.preventDefault();
-        blurActive();
-        var patch = { expenses: {} };
-        patch.expenses[key] = { projected: f.projected, paid: f.paid };
-        if (await api.update(id, patch)) {
-          delete S.drafts['exp:' + id];
-          closeSheet(); toast(cat.label + ' saved'); render(true);
-        }
-      };
-      // With the card feed on, what's typed here is the plan and the cards
-      // fill in what's paid. Paying another way still has a place, one tap in.
-      var fed = feedOn();
-      var showPaid = !fed || f.paid > 0;
-      var paidField = field(fed ? 'Paid outside the linked accounts' : 'Already paid', moneyInput({
-            id: 'cat-paid', value: f.paid, label: cat.label + (fed ? ' paid outside the linked accounts' : ' already paid'), last: true,
-            onValue: function (v) { f.paid = v; refresh(); }
-          }), fed ? [
-            'Cash, a personal card, or anything paid before ' + feedSince() + '. ',
-            'Don\u2019t type what the cards or bank accounts paid: that comes in from the card feed and counts on its own',
-            charged > 0 ? ' (' + money(charged) + ' so far).' : '.'
-          ].join('') : [
-            charged > 0 ? money(charged) + ' of imported charges is counted on top of this. ' : '',
-            onCards.map(function (r) {
-              return money(r.amount) + (r.leftover ? ' left over from ' : ' on ') + r.label + ' going in. ';
-            }).join(''),
-            (!charged && !onCards.length) ? 'Deposits or anything settled up front.' : ''
-          ].join(''));
-      var paidWrap = h('div', { hidden: !showPaid }, paidField);
-      var paidOpen = showPaid ? null : h('button', {
-        class: 'linkbtn', type: 'button',
-        onclick: function (e) {
-          paidWrap.hidden = false;
-          e.currentTarget.remove();
-          var inp = document.getElementById('cat-paid');
-          if (inp) inp.focus();
-        }
-      }, 'Paid some of it another way?');
-      var form = h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
-          field('Projected for the whole tour', moneyInput({
-            id: 'cat-proj', value: f.projected, label: cat.label + ' projected cost',
-            placeholder: '—', nextId: showPaid ? 'cat-paid' : null, last: !showPaid,
-            onValue: function (v) { f.projected = v > 0 ? v : null; refresh(); }
-          }), fed
-            ? 'What you expect it to cost. Charges from the cards fill this up; they don\u2019t add on top.'
-            : 'Leave this blank and the category just totals what actually gets spent.'),
-          paidOpen,
-          paidWrap,
-          readout,
-          h('div', { class: 'stack' },
-            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
-            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')));
-      refresh();
+      draw();
       return [
         h('h2', { class: 'sh-title' }, cat.label),
         cat.note ? h('p', { class: 'sh-sub' }, cat.note) : null,
-        form
+        readout,
+        canWrite() ? [
+          h('h3', { class: 'sh-h3' }, 'Is this log projected or paid?'),
+          segmented(['Projected', 'Paid'], -1, function (i) { kind = i ? 'paid' : 'projected'; draw(); }, 'Projected or paid'),
+          box
+        ] : null,
+        loggedButton(id, key, function () { openCategorySheet(id, key); })
       ];
     }, { label: cat.label });
   }
@@ -2417,13 +2492,16 @@
 
   /* ============================== Crew ============================== */
 
-  function openCrewSheet(id) {
+  var crewKind = {};
+  function openCrewSheet(id, fresh) {
+    if (fresh) crewKind[id] = null;
     function build() {
       var t = getTour(id);
       var crew = G.rows(t && t.crew).sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
       var total = G.crewProjection(t);
       var exp = G.normExpenses(t && t.expenses);
       var paid = G.num(exp.crew.paid);
+      var chargedCrew = chargedTo(t, 'crew');
 
       var list = crew.length
         ? h('div', { class: 'ledger' },
@@ -2466,36 +2544,26 @@
           h('button', { class: 'linkbtn', type: 'button', style: 'min-height:32px',
             onclick: function () { openRosterManager(id); } }, 'Manage saved crew'));
       }
+      var kind = crewKind[id] || null;
+      var ask = canWrite() ? [
+        h('h3', { class: 'sh-h3' }, 'Is this log projected or paid?'),
+        segmented(['Projected', 'Paid'], kind === 'projected' ? 0 : kind === 'paid' ? 1 : -1, function (i) {
+          crewKind[id] = i ? 'paid' : 'projected';
+          openCrewSheet(id);
+        }, 'Projected or paid'),
+        kind === 'projected' ? h('div', { style: 'margin-top:14px' },
+          benchRow,
+          h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:16px',
+            onclick: function () { openCrewPerson(id, null); } }, icon('plus', 18), 'Add someone')) : null,
+        kind === 'paid' ? paidLogForm(id, 'crew', 'Crew', function () { crewKind[id] = null; openCrewSheet(id); }) : null
+      ] : null;
       return [
         h('h2', { class: 'sh-title' }, 'Crew'),
-        h('p', { class: 'sh-sub' }, 'Each person’s pay is their total for the tour.'),
-        benchRow,
-        canWrite() ? h('button', {
-          class: 'btn primary block', type: 'button', style: 'margin-bottom:16px',
-          onclick: function () { openCrewPerson(id, null); }
-        }, icon('plus', 18), 'Add someone') : null,
-        list,
-        canWrite() ? h('div', { style: 'margin-top:18px' },
-          field(feedOn() ? 'Paid to crew outside the linked accounts' : 'Already paid to crew',
-            moneyInput({
-              id: 'crew-paid', value: paid, label: 'Already paid to crew',
-              onValue: function (v) { S.drafts['crewPaid:' + id] = v; }
-            }),
-            feedOn()
-              ? 'Cash per diems, or pay from an account that isn\u2019t linked. Crew pay from the linked bank accounts comes in from the card feed.'
-              : 'Advances or per diems you’ve already handed out.'),
-          h('button', {
-            class: 'btn ghost block', type: 'button',
-            onclick: async function () {
-              var v = S.drafts['crewPaid:' + id];
-              if (v == null) { closeSheet(); return; }
-              if (await api.update(id, { expenses: { crew: { paid: v } } })) {
-                delete S.drafts['crewPaid:' + id];
-                delete S.drafts['exp:' + id];
-                toast('Saved'); closeSheet(); render(true);
-              }
-            }
-          }, 'Save what’s paid')) : null
+        h('p', { class: 'sh-sub' }, 'Each person’s pay is their total for the tour.' +
+          (paid > 0 || chargedCrew > 0 ? ' Paid so far: ' + money(paid + chargedCrew) + '.' : '')),
+        ask,
+        h('div', { style: 'margin-top:18px' }, list),
+        loggedButton(id, 'crew', function () { openCrewSheet(id); })
       ];
     }
     openSheet(build, { label: 'Crew' });

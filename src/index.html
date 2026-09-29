@@ -1379,6 +1379,14 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .feed-checked { margin: 6px 2px 0; text-align: center; font-size: 12px; color: var(--ink-3); }
 .feed-accts { margin-top: 10px; }
 .fa-name { font-weight: 600; margin: 0 2px 6px; }
+/* Where each logged dollar came from. UNKNOWN is a bug and says so loudly. */
+.logged .row { gap: 10px; }
+.src-tag { flex: none; padding: 3px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  background: var(--surface-2); color: var(--ink-2); }
+.src-tag.src-plaid { background: var(--brand); color: var(--on-brand); }
+.src-tag.src-manual { background: var(--ink); color: var(--bg); }
+.src-tag.src-unknown { background: var(--neg); color: #fff; }
+.logged .amt.quiet { color: var(--ink-3); text-decoration: line-through; }
 .fa-row { width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .fa-row .icon { flex: none; color: var(--ink-2); }
 .fa-ticks { display: grid; gap: 12px; margin-top: 8px; }
