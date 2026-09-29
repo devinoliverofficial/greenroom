@@ -186,12 +186,8 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
   const announce = async (showId: string, kind: "loadin" | "showtime" | "daysheet", groups: Group[]) => {
     if (!(await claim(tour.id, showId, kind))) return;
     const to = (await everyone()).filter((s) => groups.includes(groupOf(s)));
+    // Phones only: the chat is for settlements and merch, not reminders.
     sent += await push(to, SAY[kind], tour.id);
-    // Ari says it in the chat too, so it's there for anyone without alerts.
-    await admin.from("notes").insert({
-      id: "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-      tour_id: tour.id, day: "chat", body: SAY[kind], author: "Ari", added_by: tour.owner_id,
-    });
   };
 
   for (const [showId, raw] of shows) {
