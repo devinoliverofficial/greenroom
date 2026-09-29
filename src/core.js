@@ -243,9 +243,26 @@
     return COMMISSION_LINES.concat(extra);
   }
 
-  function showIncomeTotal(show) {
+  /* Buyouts: the venue pays one for each person on the road. What goes to
+     the crew passes through to them; only what's paid to the Artists is the
+     band's income. show.buyoutTrack = { perHead, paid: { who: { name,
+     artist } } } says who has theirs; until it does, buyouts count nothing. */
+  function buyoutIncome(show) {
+    var total = num(show && isObj(show.income) ? show.income.buyouts : 0);
+    var tr = show && isObj(show.buyoutTrack) ? show.buyoutTrack : null;
+    if (!(total > 0) || !tr) return 0;
+    var paid = isObj(tr.paid) ? tr.paid : {};
+    var artists = Object.keys(paid).filter(function (k) { return isObj(paid[k]) && paid[k].artist; }).length;
+    return Math.min(total, round(num(tr.perHead) * artists * 100) / 100);
+  }
+  // One income stream of a show, as it counts.
+  function incomeOf(show, key) {
+    if (key === 'buyouts') return buyoutIncome(show);
     var inc = show && isObj(show.income) ? show.income : {};
-    return INCOME_FIELDS.reduce(function (t, f) { return t + num(inc[f.key]); }, 0);
+    return num(inc[key]);
+  }
+  function showIncomeTotal(show) {
+    return INCOME_FIELDS.reduce(function (t, f) { return t + incomeOf(show, f.key); }, 0);
   }
 
   /* Money in hand, show by show. A guarantee only counts toward the budget
@@ -496,7 +513,7 @@
       INCOME_FIELDS.forEach(function (f) {
         // A guarantee not received yet isn't money the tour has.
         if (f.key === 'guarantee' && !guaranteeIn(s)) return;
-        incomeBy[f.key] += num(inc[f.key]);
+        incomeBy[f.key] += f.key === 'buyouts' ? buyoutIncome(s) : num(inc[f.key]);
       });
     });
     income = INCOME_FIELDS.reduce(function (t, f) { return t + incomeBy[f.key]; }, 0);
@@ -1035,7 +1052,7 @@
     shows.forEach(function (s) {
       var inc = isObj(s.income) ? s.income : {};
       showRows.push([s.date || '', s.city || '', s.venue || '', s.soldOut ? 'yes' : ''].concat(
-        INCOME_FIELDS.map(function (f) { return num(inc[f.key]) || ''; }),
+        INCOME_FIELDS.map(function (f) { return incomeOf(s, f.key) || ''; }),
         [showIncomeTotal(s) || '', settlementNoteText(s)]));
     });
 
@@ -1140,7 +1157,7 @@
     CATEGORIES: CATEGORIES,
     TYPED_CATEGORIES: TYPED_CATEGORIES,
     COMMISSION_LINES: COMMISSION_LINES, commissionLines: commissionLines,
-    INCOME_FIELDS: INCOME_FIELDS,
+    INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
     CHARGE_CATEGORIES: CHARGE_CATEGORIES,
     extraCategories: extraCategories, typedCategoriesFor: typedCategoriesFor,
     chargeCategoriesFor: chargeCategoriesFor, slugCategory: slugCategory,

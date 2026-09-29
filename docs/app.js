@@ -4319,8 +4319,9 @@
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
-    if (only === 'sheet') return [rail, editRow, placeEl, body, copyBtn];
-    return [hero, rail, editRow, body, guestBtn, copyBtn];
+    var boBtn = buyoutAlertBtn(id, t);
+    if (only === 'sheet') return [rail, editRow, placeEl, body, copyBtn, boBtn];
+    return [hero, rail, editRow, body, guestBtn, copyBtn, boBtn];
   }
 
   function clearDaySheet(tourId, show, date, off) {
@@ -5314,6 +5315,150 @@
 
   /* ============================== Income ============================== */
 
+  /* Buyouts: tick each person as they get theirs. The venue's total, split
+     per person; what the crew gets passes through, and only the Artists'
+     share is the band's income. */
+  function buyoutPaidCount(track) {
+    var p = G.isObj(track) && G.isObj(track.paid) ? track.paid : {};
+    return Object.keys(p).filter(function (k) { return G.isObj(p[k]); }).length;
+  }
+  // Shows before today whose buyouts aren't all handed out: nobody ticked
+  // yet, or fewer ticked than the venue paid for.
+  function buyoutsOwed(t) {
+    var today = G.tourToday();
+    return G.rows(t && t.shows).filter(function (sh) {
+      var total = G.num(G.isObj(sh.income) ? sh.income.buyouts : 0);
+      if (!G.parseDay(sh.date) || sh.date >= today || !(total > 0)) return false;
+      var per = G.isObj(sh.buyoutTrack) ? G.num(sh.buyoutTrack.perHead) : 0;
+      var paid = buyoutPaidCount(sh.buyoutTrack);
+      return !paid || (per > 0 && paid < Math.round(total / per));
+    }).sort(G.byDate);
+  }
+  function saveBuyouts(id, sh, next) {
+    var patch = { shows: {} };
+    patch.shows[sh.id] = { buyoutTrack: next };
+    api.update(id, patch).then(function (ok) { if (ok) { toast('Buyouts saved'); render(true); } });
+  }
+  /* BUYOUT ALERT, under the day sheet: it glows and pulses while someone
+     from an earlier show still hasn't had their buyout. */
+  function buyoutAlertBtn(id, t) {
+    if (!canEditTour(id)) return null;
+    var owed = buyoutsOwed(t);
+    return h('button', { class: 'btn block bo-alert' + (owed.length ? ' on' : ''), type: 'button', style: 'margin-top:12px',
+      onclick: function () {
+        if (!owed.length) { toast('Everyone has their buyouts'); return; }
+        if (owed.length === 1) {
+          var one = owed[0];
+          openBuyoutTracker(id, one, G.num(one.income.buyouts), one.buyoutTrack, function (next) { saveBuyouts(id, one, next); });
+          return;
+        }
+        openSheet(function () {
+          return [
+            h('h2', { class: 'sh-title' }, 'BUYOUT ALERT'),
+            h('p', { class: 'sh-sub' }, 'These shows still have people waiting on their buyout.'),
+            h('div', { class: 'ledger' }, owed.map(function (sh) {
+              var per = G.isObj(sh.buyoutTrack) ? G.num(sh.buyoutTrack.perHead) : 0;
+              var paid = buyoutPaidCount(sh.buyoutTrack);
+              return h('button', { class: 'row rowbtn', type: 'button', onclick: function () {
+                closeSheet();
+                openBuyoutTracker(id, sh, G.num(sh.income.buyouts), sh.buyoutTrack, function (next) { saveBuyouts(id, sh, next); });
+              } },
+                h('div', { class: 'row-label' }, (sh.city || 'Show') + ' \u00b7 ' + dayMD(sh.date),
+                  h('span', { class: 'hint' }, paid ? paid + ' of ' + Math.round(G.num(sh.income.buyouts) / per) + ' paid' : 'Nobody ticked yet')),
+                h('span', { class: 'amt num' }, money(G.num(sh.income.buyouts))), icon('chevron', 18));
+            }))
+          ];
+        }, { label: 'Buyout alert' });
+      } }, icon('bell', 18), 'BUYOUT ALERT');
+  }
+
+  function openBuyoutTracker(id, show, total, track, done) {
+    var B = window.GR_BACKEND;
+    var t = getTour(id);
+    var cur = { perHead: G.isObj(track) ? track.perHead : null, paid: {} };
+    var before = G.isObj(track) && G.isObj(track.paid) ? track.paid : {};
+    Object.keys(before).forEach(function (k) { if (G.isObj(before[k])) cur.paid[k] = before[k]; });
+    var people = [];
+    var seen = {};
+    function add(name, role, key) {
+      name = String(name || '').trim();
+      if (!name) return;
+      var k = key || 'n:' + name.toLowerCase();
+      if (seen[k] || seen['n:' + name.toLowerCase()]) return;
+      seen[k] = true; seen['n:' + name.toLowerCase()] = true;
+      people.push({ key: k, name: name, role: String(role || ''), artist: /artist/i.test(String(role || '')) });
+    }
+    // Anyone already ticked stays on the list, even if they've left the tour.
+    Object.keys(cur.paid).forEach(function (k) {
+      var x = cur.paid[k];
+      if (G.isObj(x)) add(x.name, x.artist ? 'Artist' : '', k);
+    });
+    var pop = h('div', { class: 'pop', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Track buyouts' });
+    var listEl = h('div', { class: 'ledger bo-list' });
+    var perIn = null;
+    var foot = h('p', { class: 'bo-foot' });
+    function perHead() { return G.num(cur.perHead) > 0 ? G.num(cur.perHead) : (people.length ? Math.round(total / people.length * 100) / 100 : 0); }
+    function drawFoot() {
+      var artists = people.filter(function (p) { return p.artist && cur.paid[p.key]; }).length;
+      var got = Object.keys(cur.paid).length;
+      foot.textContent = (got === 1 ? '1 person' : got + ' people') + ' paid \u00b7 ' + money(Math.min(total, perHead() * artists)) +
+        ' counts as income (' + plural(artists, 'Artist') + ')';
+    }
+    function drawList() {
+      listEl.replaceChildren.apply(listEl, people.length ? people.map(function (p) {
+        var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: !!cur.paid[p.key],
+          'aria-label': p.name + ' has their buyout',
+          onchange: function (e) {
+            if (e.target.checked) cur.paid[p.key] = { name: p.name, artist: p.artist };
+            else delete cur.paid[p.key];
+            drawFoot();
+          } });
+        return h('label', { class: 'row bo-row' }, cb,
+          h('span', { class: 'row-label' }, p.name, h('span', { class: 'hint' }, p.role || 'Crew')),
+          p.artist ? h('span', { class: 'src-tag src-plaid' }, 'INCOME') : h('span', { class: 'hint' }, 'passes through'));
+      }) : [h('div', { class: 'row' }, h('span', { class: 'hint' }, 'No crew on this tour yet. Invite them from the Overview, or add crew under Expenses.'))]);
+      drawFoot();
+    }
+    function close(save) {
+      if (save) {
+        cur.perHead = perHead();
+        Object.keys(before).forEach(function (k) { if (!cur.paid[k]) cur.paid[k] = null; });
+        done(cur);
+      }
+      pop.classList.remove('on');
+      setTimeout(function () { pop.remove(); }, 250);
+    }
+    perIn = moneyInput({ id: 'bo-per', value: perHead(), label: 'Buyout per person', last: true,
+      onValue: function (v) { cur.perHead = v > 0 ? v : null; drawFoot(); } });
+    pop.append(h('div', { class: 'pop-card' },
+      h('h2', { class: 'sh-title' }, 'Buyouts'),
+      h('p', { class: 'sh-sub' }, money(total) + ' from the venue' + (show.city ? ' in ' + show.city : '') +
+        '. Tick each person as they get theirs. The crew\u2019s pass through to them; only the Artists\u2019 count as income.'),
+      field('Buyout per person', perIn),
+      listEl,
+      foot,
+      h('div', { class: 'stack' },
+        h('button', { class: 'btn primary block', type: 'button', onclick: function () { close(true); } }, 'Done'),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { close(false); } }, 'Cancel'))));
+    document.body.appendChild(pop);
+    requestAnimationFrame(function () { pop.classList.add('on'); });
+    // The crew on the Overview (with their roles), then crew listed under Expenses.
+    G.rows(t && t.crew).forEach(function (c) { add(c.name, c.title); });
+    drawList();
+    var cached = S.crewCache && S.crewCache[id];
+    function fromMembers(rows) {
+      (rows || []).forEach(function (m) { add(m.name || m.username || m.email, m.tourRole, m.email ? 'e:' + String(m.email).toLowerCase() : null); });
+      people.sort(function (a, b) { return (b.artist ? 1 : 0) - (a.artist ? 1 : 0) || a.name.localeCompare(b.name); });
+      if (!(G.num(cur.perHead) > 0) && perIn) {
+        var inp = perIn.querySelector ? perIn.querySelector('input') : null;
+        if (inp) inp.value = (Math.round(perHead() * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
+      }
+      drawList();
+    }
+    if (cached) fromMembers(cached.rows);
+    else if (B && B.crew && S.mode === 'db') B.crew(id).then(fromMembers).catch(function () { /* the Expenses crew is enough */ });
+  }
+
   function openIncome(id, showId) {
     var t = getTour(id);
     var s = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : null;
@@ -5323,6 +5468,8 @@
       draft[f.key] = G.num(G.isObj(s.income) ? s.income[f.key] : 0);
     });
     var miscLabel = String((G.isObj(s.income) && s.income.miscLabel) || '');
+    // Who has their buyout (only the Artists' count as income).
+    var track = G.isObj(s.buyoutTrack) ? JSON.parse(JSON.stringify(s.buyoutTrack)) : null;
     var settNotes = Array.isArray(s.settlementNotes)
       ? JSON.parse(JSON.stringify(s.settlementNotes)) : [];
     // Merch cash collected at the table, and whether each payment has landed.
@@ -5353,7 +5500,7 @@
             }),
             h('div', { class: 'row total' },
               h('span', null, 'This show'),
-              h('strong', { class: 'amt num' }, money(G.showIncomeTotal({ income: draft }))))),
+              h('strong', { class: 'amt num' }, money(G.showIncomeTotal({ income: draft, buyoutTrack: track }))))),
           settNotes.length ? [
             h('h3', { class: 'sh-h3' }, 'From the settlement'),
             h('div', { class: 'ledger' }, settNotes.map(function (n) {
@@ -5372,7 +5519,7 @@
       var afterEl = h('strong', { class: 'num' }, '');
       function refresh() {
         var cur = getTour(id) || t;
-        showEl.textContent = money(G.showIncomeTotal({ income: draft }));
+        showEl.textContent = money(G.showIncomeTotal({ income: draft, buyoutTrack: track }));
         var c2 = G.calc(cur, { override: { showId: showId, income: draft, flags: currentFlags() } });
         afterEl.textContent = money(c2.net, true);
         afterEl.className = 'num ' + (G.round(c2.net) < 0 ? 'neg' : 'pos');
@@ -5380,14 +5527,16 @@
       var save = async function (e) {
         e.preventDefault();
         blurActive();
-        var total = G.showIncomeTotal({ income: draft });
+        var total = G.showIncomeTotal({ income: draft, buyoutTrack: track });
         var before = G.calc(getTour(id) || t).net;
         var flagsNow = currentFlags();
         var income = Object.assign({}, draft);
         income.miscLabel = draft.misc > 0 ? miscLabel.trim() : '';
         var patch = {};
         var due = G.merchDue({ income: draft, merchCash: merchCash, merchCardDeposit: merchCardDeposit });
-        patch[showId] = { income: income, loggedAt: total > 0 ? Date.now() : null,
+        var anyLogged = G.INCOME_FIELDS.some(function (f) { return G.num(draft[f.key]) > 0; });
+        patch[showId] = { income: income, loggedAt: total > 0 || anyLogged ? Date.now() : null,
+          buyoutTrack: draft.buyouts > 0 && track ? track : null,
           settlementNotes: settNotes.length ? settNotes : null,
           merchCash: draft.merch > 0 && merchCash > 0 ? merchCash : null,
           merchCardDeposit: draft.merch > 0 && merchCardDeposit != null ? merchCardDeposit : null,
@@ -5423,7 +5572,7 @@
       function currentFlags() {
         return { guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
           merchReceived: draft.merch > 0 ? !!recv.merch : null, merchCash: merchCash,
-          merchCardDeposit: merchCardDeposit };
+          merchCardDeposit: merchCardDeposit, buyoutTrack: track };
       }
       var perHeadEl = h('span', { class: 'amt num mx-val' }, '');
       function updatePerHead() {
@@ -5527,6 +5676,15 @@
       var miscRow = h('div', { class: 'row stackrow' }, miscNote);
       function syncMisc() { miscRow.hidden = !(draft.misc > 0); }
 
+      var buyoutHint = h('span', { class: 'hint' }, '');
+      function updateBuyouts() {
+        var counted = G.buyoutIncome({ income: draft, buyoutTrack: track });
+        var paid = buyoutPaidCount(track);
+        buyoutHint.textContent = !(draft.buyouts > 0) ? 'Only the Artists\u2019 buyouts count as income'
+          : !paid ? 'Tap Track: only what the Artists get counts as income'
+          : money(counted) + ' counts as income \u00b7 ' + (paid === 1 ? '1 person' : paid + ' people') + ' paid';
+      }
+      updateBuyouts();
       var rows = [];
       fields.forEach(function (f, i) {
         var mkInput = moneyInput({
@@ -5534,7 +5692,11 @@
           nextId: f.key === 'misc' ? 'inc-misc-label'
             : (i < fields.length - 1 ? 'inc-' + fields[i + 1].key : null),
           last: i === fields.length - 1,
-          onValue: function (v) { draft[f.key] = v; syncMisc(); refresh(); if (f.key === 'merch') updateDeposit(); }
+          onValue: function (v) {
+            draft[f.key] = v; syncMisc(); refresh();
+            if (f.key === 'merch') updateDeposit();
+            if (f.key === 'buyouts') updateBuyouts();
+          }
         });
         if (f.key === 'merch') {
           // Merch gets room of its own: the net atVenu reports, the cash the
@@ -5594,6 +5756,16 @@
             h('span', { class: 'row-label' }, '$ per head'),
             perHeadEl));
           rows.push(depositRow);
+        } else if (f.key === 'buyouts') {
+          rows.push(h('div', { class: 'row' },
+            h('div', { class: 'row-label' },
+              h('label', { for: 'inc-buyouts' }, f.label),
+              buyoutHint),
+            h('button', { class: 'btn sm quiet bo-track', type: 'button', onclick: function () {
+              if (!(draft.buyouts > 0)) { toast('Log the buyout total first'); return; }
+              openBuyoutTracker(id, s, draft.buyouts, track, function (next) { track = next; updateBuyouts(); refresh(); });
+            } }, 'Track'),
+            mkInput));
         } else if (f.key === 'guarantee') {
           rows.push(h('div', { class: 'row' },
             h('div', { class: 'row-label' },
@@ -6636,12 +6808,11 @@
         var inc = G.isObj(sh.income) ? sh.income : {};
         return repRow([dayMD(sh.date),
           (sh.city || '') + (sh.venue ? ' \u00b7 ' + sh.venue : '') + (sh.soldOut ? ' (sold out)' : '')].concat(
-          G.INCOME_FIELDS.map(function (f) { return G.num(inc[f.key]) ? money(G.num(inc[f.key])) : '\u2014'; }),
+          G.INCOME_FIELDS.map(function (f) { return G.incomeOf(sh, f.key) ? money(G.incomeOf(sh, f.key)) : '\u2014'; }),
           [money(G.showIncomeTotal(sh))]));
       }),
       repRow(['', 'Total'].concat(G.INCOME_FIELDS.map(function (f) {
-        var sum = shows.reduce(function (a, sh) {
-          return a + G.num((sh.income || {})[f.key]); }, 0);
+        var sum = shows.reduce(function (a, sh) { return a + G.incomeOf(sh, f.key); }, 0);
         return sum ? money(sum) : '\u2014';
       }), [money(c.income)]), 'rp-total')));
 

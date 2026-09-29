@@ -1379,6 +1379,29 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .feed-checked { margin: 6px 2px 0; text-align: center; font-size: 12px; color: var(--ink-3); }
 .feed-accts { margin-top: 10px; }
 .fa-name { font-weight: 600; margin: 0 2px 6px; }
+/* A small window over the sheet (buyouts), so nothing typed below is lost. */
+.pop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: end center; padding: 16px;
+  background: rgba(0, 0, 0, 0); transition: background-color .2s ease; }
+.pop.on { background: rgba(0, 0, 0, .6); }
+.pop-card { width: 100%; max-width: 440px; max-height: 86vh; overflow: auto; padding: 22px 18px 18px;
+  border-radius: 22px; background: var(--surface); box-shadow: 0 0 0 1px var(--line);
+  transform: translateY(24px); opacity: 0; transition: transform .22s ease, opacity .22s ease; }
+.pop.on .pop-card { transform: none; opacity: 1; }
+.bo-row { gap: 12px; cursor: pointer; }
+.bo-row .rv-check { margin: 0; }
+.bo-foot { margin: 12px 2px 0; font-size: 14px; color: var(--ink-2); }
+.bo-track { flex: none; }
+/* BUYOUT ALERT: quiet until someone from an earlier show is still owed,
+   then it glows and pulses. */
+.bo-alert { background: var(--surface-2); color: var(--ink-3); letter-spacing: .06em; }
+.bo-alert.on { background: var(--brand); color: var(--on-brand);
+  box-shadow: 0 0 18px color-mix(in oklab, var(--brand), transparent 35%);
+  animation: bopulse 1.4s ease-in-out infinite; }
+@keyframes bopulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 10px color-mix(in oklab, var(--brand), transparent 55%); }
+  50% { transform: scale(1.025); box-shadow: 0 0 28px color-mix(in oklab, var(--brand), transparent 15%); }
+}
+@media (prefers-reduced-motion: reduce) { .bo-alert.on { animation: none; } }
 /* Where each logged dollar came from. UNKNOWN is a bug and says so loudly. */
 .logged .row { gap: 10px; }
 .src-tag { flex: none; padding: 3px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em;

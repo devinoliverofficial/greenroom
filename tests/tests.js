@@ -331,6 +331,19 @@
     eq(G.calc(t).out, 27000 + 50 + 300, 'paying the card never changes what the tour spent');
   });
 
+  test('buyouts count only what the Artists got as income', function () {
+    var show = { date: '2026-05-10', income: { buyouts: 60, guarantee: 1000 }, loggedAt: 1 };
+    eq(G.buyoutIncome(show), 0, 'nobody ticked yet: nothing counts');
+    show.buyoutTrack = { perHead: 20, paid: { a: { name: 'Devin', artist: true }, b: { name: 'Brent', artist: false } } };
+    eq(G.buyoutIncome(show), 20, 'the Artist\u2019s $20 counts; the crew\u2019s passes through');
+    show.buyoutTrack.paid.b = null;
+    eq(G.buyoutIncome(show), 20, 'an untick (null) changes nothing for crew');
+    show.buyoutTrack.paid.c = { name: 'Sam', artist: true };
+    eq(G.showIncomeTotal(show), 1040, 'two Artists\u2019 buyouts plus the guarantee');
+    var t = { shows: { s1: show }, expenses: {}, crew: {}, commission: {}, extras: {}, charges: {}, debts: {} };
+    eq(G.calc(t).incomeBy.buyouts, 40, 'the tour counts the same');
+  });
+
   test('card logging dates follow the tour, rehearsals or a chosen day', function () {
     var t = { shows: keyed([{ date: '2026-05-10', city: 'A' }, { date: '2026-05-20', city: 'B' }]) };
     eq(G.cardWindow(t), null, 'no dates chosen: nothing is logged');
