@@ -63,7 +63,13 @@
   async function refetch() {
     var tours = await sb.from('tours').select('id, owner_id, doc');
     if (tours.error) throw tours.error;
-    cache.tours = new Map(tours.data.map(function (r) {
+    // GA crew can't read a tour's money: the database hands them its own
+    // copy of those tours, without it.
+    var ga = await sb.from('tour_public').select('id, owner_id, doc');
+    var full = {};
+    tours.data.forEach(function (r) { full[r.id] = true; });
+    var rows = tours.data.concat(ga.error ? [] : ga.data.filter(function (r) { return !full[r.id]; }));
+    cache.tours = new Map(rows.map(function (r) {
       var doc = isObj(r.doc) ? r.doc : {};
       doc._ownerId = r.owner_id; // lets the UI know whose tour this is
       return [r.id, doc];
@@ -1152,6 +1158,7 @@
     try { await importLocalTours(); } catch (e) { /* local copies stay put */ }
     sb.channel('greenroom')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tours' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tour_public' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, scheduleRefetch)
