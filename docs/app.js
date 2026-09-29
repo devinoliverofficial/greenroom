@@ -3515,6 +3515,8 @@
     var quote = String(d.quote || '').trim();
     return [
       h('div', { class: 'ov-today' },
+        // Top-left, level with the pencil on the right.
+        buyoutAlertBtn(id, t),
         canEditTour(id) ? h('button', { class: 'iconbtn ov-edit', type: 'button',
           'aria-label': 'Edit today',
           onclick: function () { openTodaySheet(id, next ? next.id : null); } },
@@ -3540,7 +3542,6 @@
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       h('div', { class: 'ov-lines' },
         line('Doors', G.cleanTime(d.doors))),
-      buyoutAlertBtn(id, t),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
@@ -5339,7 +5340,7 @@
     patch.shows[sh.id] = { buyoutTrack: next };
     api.update(id, patch).then(function (ok) { if (ok) { toast('Buyouts saved'); render(true); } });
   }
-  /* BUYOUT ALERT, on the Overview: it glows and pulses while someone
+  /* BUYOUT ALERT, top-left of the Overview: it glows and pulses while someone
      from an earlier show still hasn't had their buyout. */
   function buyoutAlertBtn(id, t) {
     if (!canEditTour(id)) return null;
