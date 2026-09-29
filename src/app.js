@@ -7993,7 +7993,8 @@
           code === 'token_refused' || code === 'plan_missing') openFeedSheet(id);
       return;
     }
-    if (feedWaiting(id).length) openFeedReview(id);
+    // Test mode says what it would have done; the pile (older, real charges) waits.
+    if (!r.test && feedWaiting(id).length) openFeedReview(id);
     else toast(feedResult(r));
   }
 
@@ -8183,7 +8184,7 @@
                 closeSheet();
                 toast('Card feed on. Reading the cards\u2026');
                 var got = await B.feedCall('sync', { force: true });
-                if (got && got.ok && tourId && feedWaiting(tourId).length) openFeedReview(tourId);
+                if (got && got.ok && !got.test && tourId && feedWaiting(tourId).length) openFeedReview(tourId);
                 else toast(feedResult(got));
               });
             } }, 'Turn on the card feed')));
