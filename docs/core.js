@@ -405,6 +405,35 @@
     return out;
   }
   // The last day whose charges are assumed inside the opening balances.
+  /* The run's first and last day: the first and last show, stretched by any
+     travel days. */
+  function tourStart(tour) {
+    var d = rows(tour && tour.shows).map(function (s) { return s.date; }).filter(parseDay).sort();
+    if (!d.length) return null;
+    return parseDay(tour.spanStart) && tour.spanStart < d[0] ? tour.spanStart : d[0];
+  }
+  function tourEnd(tour) {
+    var d = rows(tour && tour.shows).map(function (s) { return s.date; }).filter(parseDay).sort();
+    if (!d.length) return null;
+    var last = d[d.length - 1];
+    return parseDay(tour.spanEnd) && tour.spanEnd > last ? tour.spanEnd : last;
+  }
+  /* The days a tour takes card charges for, as the tour manager chose them:
+     from the start of the tour, the start of rehearsals or a date, to the end
+     of the tour or a date. Named choices follow the tour when its dates move.
+     A tour with no choice yet takes none. */
+  function cardWindow(tour) {
+    var w = tour && tour.cardLog;
+    if (!w || !w.from || !w.to) return null;
+    var start = tourStart(tour), end = tourEnd(tour);
+    var from = w.from === 'tour' ? start
+      : w.from === 'rehearsals' ? (parseDay(tour.rehearsalStart) ? tour.rehearsalStart : start)
+      : (parseDay(w.from) ? w.from : null);
+    var to = w.to === 'tour' ? end : (parseDay(w.to) ? w.to : null);
+    if (!from || !to || to < from) return null;
+    return { from: from, to: to };
+  }
+
   function preTourCutoff(tour) {
     var cards = cardDebts(tour);
     if (!cards.length) return null;
@@ -1113,6 +1142,7 @@
     guaranteeIn: guaranteeIn, merchDue: merchDue, showMoneyState: showMoneyState,
     CASH_MOVES: CASH_MOVES, cashSummary: cashSummary, cashByShow: cashByShow,
     cardPaidDetail: cardPaidDetail, preTourCutoff: preTourCutoff,
+    tourStart: tourStart, tourEnd: tourEnd, cardWindow: cardWindow,
 
     calc: calc, stateOf: stateOf, caption: caption,
     balanceSeries: balanceSeries, latestChange: latestChange,

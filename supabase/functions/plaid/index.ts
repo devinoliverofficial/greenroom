@@ -231,11 +231,11 @@ const NOT_SPENDING = [
 const isNotSpending = (payee: string) => NOT_SPENDING.some((re) => re.test(payee));
 const FEES = /\b(interest charge|finance charge|annual (membership )?fee|late (payment )?fee|foreign transaction fee|returned payment fee|overdraft fee|monthly (maintenance|service) fee)\b/i;
 
-interface Tour { id: string; doc: Obj; first: string; last: string; touched: string }
-function tourFor(tours: Tour[], date: string): Tour | null {
-  const hits = tours.filter((t) => t.first && date >= G.addDays(t.first, -7) && date <= G.addDays(t.last, 2));
-  hits.sort((a, b) => b.touched.localeCompare(a.touched));
-  return hits[0] ?? null;
+// A tour takes charges only between the logging dates its manager chose
+// (G.cardWindow). Outside every tour's dates, a charge isn't logged at all.
+interface Tour { id: string; doc: Obj; win: { from: string; to: string } | null }
+function toursOn(tours: Tour[], date: string): Tour[] {
+  return tours.filter((t) => t.win && date >= t.win.from && date <= t.win.to);
 }
 
 interface Bucket { tour: Tour; charges: Obj; total: number; n: number }
@@ -273,8 +273,11 @@ function sortTransactions(
     if (spent < 0 && !isCard) continue;
 
     const date = String(t.date);
+    const hits = toursOn(tours, date);
+    if (!hits.length) continue;
+    // Two tours logging the same day: the manager picks.
+    const tour = hits.length === 1 ? hits[0] : null;
     const merchant = GRS.cleanMerchant(payee) || "Unknown";
-    const tour = tourFor(tours, date);
     const cats = tour ? G.chargeCategoriesFor(tour.doc).map((c: Obj) => c.key) : [];
     let category: string | null = FEES.test(payee) ? "interest" : GRS.learnedCategory(labels, merchant);
     if (category && tour && cats.indexOf(category) < 0) category = null;
@@ -292,7 +295,7 @@ function sortTransactions(
 
     let why = "";
     if (spent < 0) why = "Refund";
-    else if (!tour) why = "No tour that day";
+    else if (!tour) why = "Two tours that day";
     else if (twin) why = "Maybe already in";
     else if (typed > 0) why = "Already typed into " + catLabel;
     else if (mode === "ask") why = "From " + (acct?.name ?? "a bank account");
@@ -348,8 +351,7 @@ async function toursOf(owner: string): Promise<Tour[]> {
   for (const r of tourRows ?? []) {
     const doc = (r.doc ?? {}) as Obj;
     if (doc.deletedAt) continue;
-    const dates = G.rows(doc.shows).map((s: Obj) => String(s.date ?? "")).filter((d: string) => G.parseDay(d)).sort();
-    tours.push({ id: r.id, doc, first: dates[0] ?? "", last: dates[dates.length - 1] ?? "", touched: String(r.updated_at ?? "") });
+    tours.push({ id: r.id, doc, win: G.cardWindow(doc) });
   }
   return tours;
 }
@@ -396,12 +398,11 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
       const token = await unseal(item.token_enc);
       if (opts.refresh) { try { await plaidCall("/transactions/refresh", { access_token: token }); } catch { /* the regular read still runs */ } }
       await accountsFor(item, token, accounts);
-      if (!feed.switched_on || !feed.since) continue;
+      if (!feed.switched_on) continue;
       const got = await pull(item, token);
       cursors.set(item.item_id, got.cursor);
       for (const t of got.added) {
         if (t.pending) continue;                       // posted charges only
-        if (String(t.date) < String(feed.since)) continue;
         txs.push(asTx(t, accounts));
       }
       for (const t of got.removed) txs.push({ id: String(t.transaction_id), account_id: String(t.account_id ?? ""), deleted: true, amount: 0, date: "" });
@@ -414,7 +415,7 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
     }
   }
 
-  if (!feed.switched_on || !feed.since) {
+  if (!feed.switched_on) {
     await admin.from("feed").update({ accounts }).eq("owner_id", feed.owner_id);
     return { ok: true, status: "off" };
   }
@@ -568,8 +569,9 @@ Deno.serve(async (req) => {
         }
         const posted = got.added.filter((t) => !t.pending);
         const dates = posted.map((t) => String(t.date)).sort();
-        const doc = { shows: { a: { date: dates[0] ?? G.ymd(new Date()) }, b: { date: dates[dates.length - 1] ?? G.ymd(new Date()) } } };
-        const tours: Tour[] = [{ id: "t", doc, first: String(doc.shows.a.date), last: String(doc.shows.b.date), touched: "" }];
+        const doc = { shows: { a: { date: dates[0] ?? G.ymd(new Date()) }, b: { date: dates[dates.length - 1] ?? G.ymd(new Date()) } },
+          cardLog: { from: "tour", to: "tour" } };
+        const tours: Tour[] = [{ id: "t", doc, win: G.cardWindow(doc) }];
         const r = sortTransactions(posted.map((t) => asTx(t, accounts)), accounts, tours, {}, new Map(), "o", 1, "");
         const count = (s: string) => r.items.filter((x) => x.status === s).length;
         return reply(200, {
@@ -705,10 +707,15 @@ Deno.serve(async (req) => {
       }
       if (body.on === true && !feed.switched_on) {
         const since = String(body.since ?? "");
-        if (!G.parseDay(since)) return reply(400, { error: "bad_since" });
-        Object.assign(patch, { switched_on: true, since });
+        Object.assign(patch, { switched_on: true, since: G.parseDay(since) ? since : G.ymd(new Date()) });
       } else if (body.on === false) {
         patch.switched_on = false;
+      }
+      // A tour's logging dates changed: read every connection from the start
+      // again, so charges now inside the dates come in. Ones already brought
+      // in are known and never come in twice.
+      if (body.rescan === true) {
+        await admin.from("plaid_items").update({ cursor: null }).eq("owner_id", uid).eq("env", ENV);
       }
       await admin.from("feed").update(patch).eq("owner_id", uid);
       return reply(200, { ok: true });

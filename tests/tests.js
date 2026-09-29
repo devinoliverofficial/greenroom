@@ -305,6 +305,23 @@
     eq(G.preTourCutoff(t), null, 'no dates, no cutoff');
   });
 
+  test('card logging dates follow the tour, rehearsals or a chosen day', function () {
+    var t = { shows: keyed([{ date: '2026-05-10', city: 'A' }, { date: '2026-05-20', city: 'B' }]) };
+    eq(G.cardWindow(t), null, 'no dates chosen: nothing is logged');
+    t.cardLog = { from: 'tour', to: 'tour' };
+    eq(JSON.stringify(G.cardWindow(t)), JSON.stringify({ from: '2026-05-10', to: '2026-05-20' }), 'first show to last show');
+    t.spanStart = '2026-05-08'; t.spanEnd = '2026-05-22';
+    eq(JSON.stringify(G.cardWindow(t)), JSON.stringify({ from: '2026-05-08', to: '2026-05-22' }), 'travel days stretch it');
+    t.cardLog.from = 'rehearsals';
+    eq(G.cardWindow(t).from, '2026-05-08', 'no rehearsal days: starts with the tour');
+    t.rehearsalStart = '2026-05-01'; t.rehearsalEnd = '2026-05-05';
+    eq(G.cardWindow(t).from, '2026-05-01', 'start of rehearsals');
+    t.cardLog = { from: '2026-04-15', to: '2026-05-31' };
+    eq(JSON.stringify(G.cardWindow(t)), JSON.stringify({ from: '2026-04-15', to: '2026-05-31' }), 'custom days');
+    t.cardLog = { from: '2026-06-01', to: 'tour' };
+    eq(G.cardWindow(t), null, 'an end before the start logs nothing');
+  });
+
   /* ============ Commission behaviour ============ */
 
   test('percentage commission grows as income is logged', function () {

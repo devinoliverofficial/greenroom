@@ -7906,28 +7906,8 @@
     return bits.length ? bits.join(' \u00b7 ') : 'Nothing new on the cards';
   }
 
-  // Where the feed can start: the tour's first week (the feed files the week
-  // before the first show on that tour too), or today.
-  function feedStarts(tourId) {
-    var today = G.tourToday();
-    var t = tourId ? getTour(tourId) : null;
-    if (!t) {
-      var live = allTourEntries().map(function (e) { return e[1]; }).filter(function (x) {
-        var d = G.rows(x.shows).map(function (s) { return s.date; }).filter(G.parseDay).sort();
-        return d.length && d[d.length - 1] >= today;
-      });
-      t = live[0] || null;
-    }
-    var dates = t ? G.rows(t.shows).map(function (s) { return s.date; }).filter(G.parseDay).sort() : [];
-    var out = [];
-    if (dates.length) {
-      var from = G.addDays(dates[0], -7);
-      if (from < today) out.push({ label: 'Tour start', date: from,
-        note: 'Brings in everything from ' + dayLong(from) + ', the week before ' + (t.name || 'the tour') + '\u2019s first show.' });
-    }
-    out.push({ label: 'Today', date: today, note: 'Only charges from today on. Older ones stay as they are.' });
-    return out;
-  }
+  // A tour whose logging dates are set takes card charges between them.
+  function feedLogs(tourId) { return !!G.cardWindow(getTour(tourId)); }
 
   function feedEntry(id) {
     var B = window.GR_BACKEND;
@@ -7940,11 +7920,11 @@
         icon('card', 18), 'Connect the cards');
     }
     var row = S.feed.row || {};
-    if (!row.switched_on) {
-      // Connected but not set up yet: the one time the choices are asked.
+    if (!row.switched_on || !feedLogs(id)) {
+      // Not logging this tour yet: the one time the choices are asked.
       return h('button', { class: 'btn ghost block feed-entry', type: 'button',
         onclick: function () { openFeedSheet(id); } },
-        icon('card', 18), 'Set up the card feed');
+        icon('card', 18), row.switched_on ? 'Choose logging dates' : 'Set up the card feed');
     }
     // Set up: one button does the rest. The gear holds the choices.
     var n = feedWaiting(id).length;
@@ -8008,12 +7988,79 @@
   function openFeedSheet(tourId) {
     var B = window.GR_BACKEND;
     var MODES = ['log', 'ask', 'off'];
-    var settingUp = !(S.feed && S.feed.row && S.feed.row.switched_on);
+    var t = tourId ? getTour(tourId) : null;
+    var settingUp = !(S.feed && S.feed.row && S.feed.row.switched_on) || (t && !feedLogs(tourId));
     var body = h('div', { class: 'feed-body' }, h('p', { class: 'sh-sub' }, 'Checking the cards\u2026'));
     var st = null;
-    var starts = feedStarts(tourId);
-    var startIdx = 0;
     var busy = false;
+    // This tour's logging dates: a named choice follows the tour's own dates.
+    var had = t && t.cardLog ? t.cardLog : {};
+    var plan = {
+      from: had.from === 'rehearsals' ? 'rehearsals' : G.parseDay(had.from) ? 'custom' : 'tour',
+      fromDate: G.parseDay(had.from) ? had.from : '',
+      to: G.parseDay(had.to) ? 'custom' : 'tour',
+      toDate: G.parseDay(had.to) ? had.to : ''
+    };
+    function planLog() {
+      return { from: plan.from === 'custom' ? plan.fromDate : plan.from, to: plan.to === 'custom' ? plan.toDate : plan.to };
+    }
+    function planFrom() {
+      if (plan.from === 'custom') return G.parseDay(plan.fromDate) ? plan.fromDate : null;
+      if (plan.from === 'rehearsals' && G.parseDay(t.rehearsalStart)) return t.rehearsalStart;
+      return G.tourStart(t);
+    }
+    function planTo() {
+      if (plan.to === 'custom') return G.parseDay(plan.toDate) ? plan.toDate : null;
+      return G.tourEnd(t);
+    }
+    function logSection() {
+      var fromIn = h('input', { class: 'input', type: 'date', value: plan.fromDate, 'aria-label': 'Start logging on',
+        onchange: function (e) { plan.fromDate = e.target.value; notes(); } });
+      var toIn = h('input', { class: 'input', type: 'date', value: plan.toDate, 'aria-label': 'Stop logging after',
+        onchange: function (e) { plan.toDate = e.target.value; notes(); } });
+      var fromNote = h('p', { class: 'note' }), toNote = h('p', { class: 'note' });
+      function notes() {
+        fromIn.hidden = plan.from !== 'custom';
+        toIn.hidden = plan.to !== 'custom';
+        var f = planFrom(), e = planTo();
+        fromNote.textContent = plan.from === 'rehearsals' && !G.parseDay(t.rehearsalStart)
+          ? 'This tour has no rehearsal days yet, so logging starts with the tour' + (f ? ', ' + dayLong(f) : '') +
+            '. Add them from the Overview.'
+          : f ? 'From ' + dayLong(f) + '.' + (f < G.addDays(G.tourToday(), -180)
+            ? ' Banks share about the last 6 months, so older charges may not come in.' : '')
+          : 'Pick the first day to log.';
+        toNote.textContent = e ? 'Through ' + dayLong(e) + '.' + (f && e < f ? ' That\u2019s before the start.' : '')
+          : 'Pick the last day to log.';
+      }
+      notes();
+      return [
+        h('h3', { class: 'sh-h3' }, 'How far back would you like to log?'),
+        segmented(['Start of tour', 'Start of rehearsals', 'Custom'], ['tour', 'rehearsals', 'custom'].indexOf(plan.from),
+          function (i) { plan.from = ['tour', 'rehearsals', 'custom'][i]; notes(); }, 'How far back to log'),
+        fromIn, fromNote,
+        h('h3', { class: 'sh-h3' }, 'When would you like to conclude logging for this tour?'),
+        segmented(['End of tour', 'Custom'], plan.to === 'custom' ? 1 : 0,
+          function (i) { plan.to = i ? 'custom' : 'tour'; notes(); }, 'When to stop logging'),
+        toIn, toNote
+      ];
+    }
+    // Save this tour's dates; the server then reads the cards from the start
+    // again so everything inside them comes in (and nothing twice).
+    async function saveDates(turnOn) {
+      var f = planFrom(), e = planTo();
+      if (!f || !e) { toast('Pick both dates first.'); return false; }
+      if (e < f) { toast('The last day is before the first day.'); return false; }
+      if (!(await api.update(tourId, { cardLog: planLog() }))) return false;
+      var r = await B.feedCall('setup', turnOn ? { on: true, since: f, rescan: true } : { rescan: true });
+      if (!r || !r.ok) { toast(feedProblem(r && (r.status || r.error))); return false; }
+      closeSheet();
+      toast((turnOn ? 'Logging ' : 'Dates saved. Logging ') + dayMD(f) + '\u2013' + dayMD(e) + '. Reading the cards\u2026');
+      var got = await B.feedCall('sync', { force: true });
+      render(true);
+      if (got && got.ok && !got.test && feedWaiting(tourId).length) openFeedReview(tourId);
+      else toast(feedResult(got));
+      return true;
+    }
 
     async function load() {
       try { st = await B.feedCall('status'); } catch (e) { st = { error: 'unavailable' }; }
@@ -8140,30 +8187,22 @@
             'marked received and its city stops being red. Only the date and amount of these deposits are kept.'));
       }
 
-      if (!st.switchedOn) {
-        var startNote = h('p', { class: 'note' }, starts[startIdx].note);
-        parts.push(
-          h('h3', { class: 'sh-h3' }, 'Start from'),
-          segmented(starts.map(function (x) { return x.label; }), startIdx, function (i) {
-            startIdx = i;
-            startNote.textContent = starts[i].note;
-          }, 'Where the feed starts'),
-          startNote,
-          h('div', { class: 'stack' },
-            h('button', { class: 'btn primary block', type: 'button', onclick: function () {
-              run('on', async function () {
-                var r = await B.feedCall('setup', { on: true, since: starts[startIdx].date });
-                if (!r || !r.ok) { toast(feedProblem(r && (r.status || r.error))); return; }
-                closeSheet();
-                toast('Card feed on. Reading the cards\u2026');
-                var got = await B.feedCall('sync', { force: true });
-                if (got && got.ok && !got.test && tourId && feedWaiting(tourId).length) openFeedReview(tourId);
-                else toast(feedResult(got));
-              });
-            } }, 'Turn on the card feed')));
+      if (t && G.tourStart(t)) {
+        // Asked for every tour before anything is logged onto it.
+        parts.push(logSection());
+        var logsNow = st.switchedOn && feedLogs(tourId);
+        parts.push(h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: function () {
+            run('dates', function () { return saveDates(!st.switchedOn); });
+          } }, logsNow ? 'Save dates' : 'Start logging')));
+      } else if (t) {
+        parts.push(h('p', { class: 'note' }, 'Add this tour\u2019s shows first, then choose its logging dates here.'));
       } else {
+        parts.push(h('p', { class: 'note' }, 'Each tour has its own logging dates. Open a tour\u2019s Expenses and tap the gear to choose them.'));
+      }
+      if (st.switchedOn) {
         parts.push(
-          h('p', { class: 'sh-sub feed-when' }, 'On since ' + dayLong(st.since) + ' \u00b7 last checked ' + feedAgo(st.lastRun)),
+          h('p', { class: 'sh-sub feed-when' }, 'Last checked ' + feedAgo(st.lastRun)),
           st.lastStatus && st.lastStatus !== 'ok' ? h('p', { class: 'note' }, feedProblem(st.lastStatus)) : null,
           h('div', { class: 'stack' },
             h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
