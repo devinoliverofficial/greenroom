@@ -217,6 +217,7 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
 .btn.danger-solid { background: var(--neg); color: #fff; }
 .btn.sm { min-height: 42px; padding: 0 14px; font-size: 15px; border-radius: 11px; }
 .btn.block { display: flex; width: 100%; }
+a.btn { text-decoration: none; }
 .btn:disabled { opacity: .42; cursor: default; }
 .btn:not(:disabled):active { transform: scale(.985); }
 .stack { display: grid; gap: 10px; margin-top: 18px; }
@@ -1670,8 +1671,7 @@ button.input.role-pick.empty { color: var(--ink-3); font-weight: 500; }
     var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
     if (nav && nav.type) how = nav.type;
   } catch (e) { /* older browsers: treat as a fresh launch */ }
-  // Coming back from a bank's own sign-in page is not a launch either.
-  if (how !== 'navigate' || /[?&]oauth_state_id=/.test(location.search)) { s.remove(); return; }
+  if (how !== 'navigate') { s.remove(); return; }
   var word = s.querySelector('.sp-word'), bus = s.querySelector('.sp-bus'), stage = s.querySelector('.sp-stage');
   var finished = false;
   function done(wait) {

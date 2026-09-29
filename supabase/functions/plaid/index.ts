@@ -34,7 +34,6 @@ const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE
   { auth: { persistSession: false } });
 
 type Obj = Record<string, unknown>;
-const HOME = "https://devinoliverofficial.github.io/greenroom/";
 const ENV: "sandbox" | "production" = Deno.env.get("PLAID_ENV") === "production" ? "production" : "sandbox";
 const TEST = ENV === "sandbox";
 
@@ -43,6 +42,7 @@ const TEST = ENV === "sandbox";
 // The only Plaid requests this server can make. Nothing here moves money.
 const ALLOWED = new Set([
   "/link/token/create",          // open Plaid's connect window
+  "/link/token/get",             // ask how that window went (read-only)
   "/item/public_token/exchange", // save a new connection
   "/item/get",                   // which products a connection has
   "/item/remove",                // disconnect (Plaid deletes its key)
@@ -484,6 +484,34 @@ function claimsOf(req: Request): Obj {
   } catch { return {}; }
 }
 
+// Save a new connection: swap Plaid's one-time token for the lasting key,
+// lock the key away, and bring in its accounts.
+async function addBank(uid: string, pub: string, name: string): Promise<string> {
+  const ex = await plaidCall("/item/public_token/exchange", { public_token: pub });
+  const token = String(ex.access_token), itemId = String(ex.item_id);
+  const institution = name.slice(0, 80) || "Bank";
+  await admin.from("plaid_items").upsert({
+    owner_id: uid, item_id: itemId, env: ENV, institution, token_enc: await seal(token),
+    cursor: null, status: "ok", updated_at: new Date().toISOString(),
+  }, { onConflict: "owner_id,item_id" });
+  const { data: row } = await admin.from("feed").select("*").eq("owner_id", uid).maybeSingle();
+  // The first bank here (or the first real one after test mode) starts
+  // the feed over, so nothing files until the manager has set it up.
+  const others = (await itemsFor(uid)).filter((i) => i.item_id !== itemId);
+  const fresh = !row || (row as Feed).source !== "plaid" || !others.length;
+  const accounts: Record<string, Account> = fresh ? {} : { ...((row as Feed).accounts ?? {}) };
+  await accountsFor({ item_id: itemId } as Item, token, accounts);
+  if (fresh) {
+    await admin.from("feed").upsert({
+      owner_id: uid, source: "plaid", plan_name: "", plan_id: "", accounts, switched_on: false,
+      since: null, knowledge: null, last_run: null, last_status: "", merch_account: null, personal_token: false,
+    }, { onConflict: "owner_id" });
+  } else {
+    await admin.from("feed").update({ accounts }).eq("owner_id", uid);
+  }
+  return institution;
+}
+
 // Only approved accounts that run a tour may connect cards.
 async function mayConnect(uid: string): Promise<boolean> {
   const { data: ok } = await admin.from("ynab_allowed").select("owner_id").eq("owner_id", uid).maybeSingle();
@@ -562,19 +590,23 @@ Deno.serve(async (req) => {
       return reply(200, { ok: false, status: "not_set_up" });
     }
 
-    // Open Plaid's connect window: a one-time pass for this manager. With an
-    // itemId, it reconnects that bank (after a password change, say).
+    // Open Plaid's connect window: a one-time pass for this manager, as a
+    // Plaid-hosted page. The whole bank sign-in happens in that one window, so
+    // it works from the home-screen app; afterwards the app asks "finish".
+    // With an itemId, it reconnects that bank (after a password change, say).
     if (action === "link") {
       if (!(await mayConnect(uid))) return reply(403, { error: "not_allowed" });
       const params: Obj = {
         client_name: "Greenroom", language: "en", country_codes: ["US"],
-        user: { client_user_id: uid }, redirect_uri: HOME,
+        user: { client_user_id: uid }, hosted_link: {},
       };
+      let reconnect: string | null = null;
       if (body.itemId) {
         const { data: it } = await admin.from("plaid_items").select("*").eq("owner_id", uid)
           .eq("item_id", String(body.itemId)).eq("env", ENV).maybeSingle();
         if (!it) return reply(404, { error: "no_such_bank" });
         params.access_token = await unseal((it as Item).token_enc);
+        reconnect = (it as Item).item_id;
       } else {
         // Transactions only: a read-only list of charges. Cards and bank
         // accounts only; no loans or investments.
@@ -586,40 +618,57 @@ Deno.serve(async (req) => {
         };
       }
       const j = await plaidCall("/link/token/create", params);
-      return reply(200, { ok: true, linkToken: j.link_token, test: TEST });
+      if (!j.hosted_link_url) return reply(200, { ok: false, status: "no_hosted_link" });
+      await admin.from("plaid_pending").upsert({
+        owner_id: uid, link_token: String(j.link_token), item_id: reconnect, created_at: new Date().toISOString(),
+      }, { onConflict: "owner_id" });
+      return reply(200, { ok: true, url: j.hosted_link_url, test: TEST });
     }
 
-    // Save a new connection: swap Plaid's one-time token for the lasting key,
-    // lock the key away, and bring in its accounts.
-    if (action === "connect") {
-      if (!(await mayConnect(uid))) return reply(403, { error: "not_allowed" });
-      const pub = String(body.publicToken ?? "");
-      if (!pub) return reply(400, { error: "invalid" });
-      const ex = await plaidCall("/item/public_token/exchange", { public_token: pub });
-      const token = String(ex.access_token), itemId = String(ex.item_id);
-      const institution = String(body.institution ?? "").slice(0, 80) || "Bank";
-      await admin.from("plaid_items").upsert({
-        owner_id: uid, item_id: itemId, env: ENV, institution, token_enc: await seal(token),
-        cursor: null, status: "ok", updated_at: new Date().toISOString(),
-      }, { onConflict: "owner_id,item_id" });
-      const { data: row } = await admin.from("feed").select("*").eq("owner_id", uid).maybeSingle();
-      // The first bank here (or the first real one after test mode) starts
-      // the feed over, so nothing files until the manager has set it up.
-      const others = (await itemsFor(uid)).filter((i) => i.item_id !== itemId);
-      const fresh = !row || (row as Feed).source !== "plaid" || !others.length;
-      const accounts: Record<string, Account> = fresh ? {} : { ...((row as Feed).accounts ?? {}) };
-      await accountsFor({ item_id: itemId } as Item, token, accounts);
-      if (fresh) {
-        // First Plaid bank: the feed starts over on Plaid, off until set up.
-        await admin.from("feed").upsert({
-          owner_id: uid, source: "plaid", plan_name: "", plan_id: "", accounts, switched_on: false,
-          since: null, knowledge: null, last_run: null, last_status: "", merch_account: null, personal_token: false,
-        }, { onConflict: "owner_id" });
-      } else {
-        await admin.from("feed").update({ accounts }).eq("owner_id", uid);
+    // Back from Plaid's window: ask Plaid how it went and save any bank the
+    // manager connected there. state: none | waiting | exited | connected |
+    // reconnected.
+    if (action === "finish") {
+      const { data: p } = await admin.from("plaid_pending").select("*").eq("owner_id", uid).maybeSingle();
+      if (!p) return reply(200, { ok: true, state: "none" });
+      const pend = p as { link_token: string; item_id: string | null; created_at: string };
+      if (Date.now() - Date.parse(pend.created_at) > 4 * 3600_000) {
+        await admin.from("plaid_pending").delete().eq("owner_id", uid);
+        return reply(200, { ok: true, state: "none" });
       }
-      return reply(200, { ok: true, institution, test: TEST });
+      const j = await plaidCall("/link/token/get", { link_token: pend.link_token });
+      const sessions = (j.link_sessions ?? []) as Obj[];
+      const found = new Map<string, string>();
+      let succeeded = false, exited = false;
+      for (const s of sessions) {
+        const res = (s.results ?? {}) as Obj;
+        for (const a of (res.item_add_results ?? []) as Obj[]) {
+          if (a.public_token) found.set(String(a.public_token), String(((a.institution ?? {}) as Obj).name ?? ""));
+        }
+        const win = s.on_success as Obj | undefined;
+        if (win) {
+          succeeded = true;
+          const meta = (win.metadata ?? {}) as Obj;
+          if (win.public_token && !found.size) {
+            found.set(String(win.public_token), String(((meta.institution ?? {}) as Obj).name ?? ""));
+          }
+        }
+        if (s.exit) exited = true;
+      }
+      if (pend.item_id) {
+        if (!succeeded && !found.size) return reply(200, { ok: true, state: exited ? "exited" : "waiting" });
+        await admin.from("plaid_pending").delete().eq("owner_id", uid);
+        await admin.from("plaid_items").update({ status: "ok", updated_at: new Date().toISOString() })
+          .eq("owner_id", uid).eq("item_id", pend.item_id);
+        return reply(200, { ok: true, state: "reconnected" });
+      }
+      if (!found.size) return reply(200, { ok: true, state: exited ? "exited" : "waiting" });
+      const names: string[] = [];
+      for (const [pub, name] of found) names.push(await addBank(uid, pub, name));
+      await admin.from("plaid_pending").delete().eq("owner_id", uid).eq("link_token", pend.link_token);
+      return reply(200, { ok: true, state: "connected", institutions: names, test: TEST });
     }
+
 
     const { data: row } = await admin.from("feed").select("*").eq("owner_id", uid).maybeSingle();
     const feed = row as Feed | null;

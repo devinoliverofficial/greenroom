@@ -356,23 +356,16 @@
 
   /* The card feed belongs to the tour manager who connected it. For everyone
      else S.feed stays null and they only ever see a Connect button on tours
-     they run. A bank that signs people in on its own site sends them back
-     with ?oauth_state_id=, and Plaid picks up where it left off. */
-  var plaidBack = /[?&]oauth_state_id=/.test(location.search) ? location.href : null;
-  if (plaidBack) {
-    try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* cosmetic */ }
-  }
+     they run. */
+  var feedSeen = false;
   function subscribeFeed() {
     var B = window.GR_BACKEND;
     if (!B || !B.feedWatch) return;
     B.feedWatch(function (f) {
       S.feed = f;
       if (S.loaded) render();
-      if (plaidBack) {
-        var back = plaidBack;
-        plaidBack = null;
-        whenLoaded(function () { resumePlaid(back); });
-      }
+      // Opened fresh while Plaid's window was out: finish what was started.
+      if (!feedSeen) { feedSeen = true; whenLoaded(function () { checkPlaid(false); }); }
     });
   }
   function whenLoaded(fn, tries) {
@@ -7799,77 +7792,88 @@
     return allTourEntries().some(function (e) { return tourRole(e[0]) === 'owner'; });
   }
 
-  /* Plaid's own connect window. The bank sign-in happens there (or on the
-     bank's own page for Chase, Amex and the like), never in Greenroom. */
-  var plaidReady = null;
-  function loadPlaid() {
-    if (window.Plaid) return Promise.resolve(window.Plaid);
-    if (plaidReady) return plaidReady;
-    plaidReady = new Promise(function (res, rej) {
-      var sc = document.createElement('script');
-      sc.src = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
-      sc.onload = function () { res(window.Plaid); };
-      sc.onerror = function () { plaidReady = null; rej(new Error('plaid_load')); };
-      document.head.appendChild(sc);
-    });
-    return plaidReady;
+  /* Plaid's connect window is a Plaid-hosted page in its own window. The bank
+     sign-in happens entirely there, never in Greenroom, and it works from the
+     home-screen app. When the manager comes back, Greenroom asks the server
+     how it went, and the server saves the bank. */
+  var plaidTrip = null;      // { tourId, itemId, at } while Plaid's window is out
+  var plaidChecking = false;
+  var plaidPoll = 0;
+  function keepPlaidTrip(t) {
+    plaidTrip = t;
+    try {
+      if (t) localStorage.setItem('gr-plaid', JSON.stringify(t));
+      else localStorage.removeItem('gr-plaid');
+    } catch (e) { /* this visit remembers it */ }
+    clearInterval(plaidPoll);
+    plaidPoll = 0;
+    // Plaid's window can sit over the app without the app noticing it closed,
+    // so look every few seconds while it's out.
+    if (t) plaidPoll = setInterval(function () {
+      if (!plaidTrip || Date.now() - plaidTrip.at > 20 * 60e3) { clearInterval(plaidPoll); plaidPoll = 0; return; }
+      if (document.visibilityState === 'visible') checkPlaid(false);
+    }, 5000);
   }
-  function forgetPlaidTrip() { try { localStorage.removeItem('gr-plaid'); } catch (e) { /* nothing kept */ } }
-  function openPlaid(token, o) {
+  function currentPlaidTrip() {
+    if (plaidTrip) return plaidTrip;
+    var t = null;
+    try { t = JSON.parse(localStorage.getItem('gr-plaid') || 'null'); } catch (e) { t = null; }
+    if (t && t.at && Date.now() - t.at < 4 * 3600e3) { plaidTrip = t; return t; }
+    if (t) keepPlaidTrip(null);
+    return null;
+  }
+  async function checkPlaid(manual) {
+    var trip = currentPlaidTrip();
     var B = window.GR_BACKEND;
-    return loadPlaid().then(function (Plaid) {
-      Plaid.create(Object.assign({
-        token: token,
-        onSuccess: async function (publicToken, meta) {
-          forgetPlaidTrip();
-          if (o.itemId) {
-            toast('Reconnected');
-            B.feedCall('sync', { force: true }).catch(function () { /* the Refresh button tries again */ });
-            return;
-          }
-          toast('Saving the connection\u2026');
-          var r = null;
-          try {
-            r = await B.feedCall('connect', { publicToken: publicToken,
-              institution: meta && meta.institution ? meta.institution.name : '' });
-          } catch (e) { r = null; }
-          if (r && r.ok) {
-            toast((r.institution || 'Bank') + ' connected' + (r.test ? ' (test bank)' : ''));
-            whenLoaded(function () { openFeedSheet(o.tourId || null); });
-          } else toast(feedProblem(r && (r.status || r.error)));
-        },
-        onExit: function (err) {
-          forgetPlaidTrip();
-          if (err) toast('Plaid closed before the bank was connected. Try again when you\u2019re ready.');
-        }
-      }, o.redirect ? { receivedRedirectUri: o.redirect } : {})).open();
-    });
+    if (!trip || plaidChecking || !B || !B.feedCall) return;
+    plaidChecking = true;
+    var r = null;
+    try { r = await B.feedCall('finish'); } catch (e) { r = null; }
+    plaidChecking = false;
+    if (!plaidTrip) return;
+    if (!r || !r.ok) { if (manual) toast(feedProblem(r && (r.status || r.error))); return; }
+    if (r.state === 'waiting') {
+      if (manual) toast('Plaid isn\u2019t finished yet. Finish in Plaid\u2019s window, then tap Done.');
+      return;
+    }
+    keepPlaidTrip(null);
+    if (sheet && sheet.plaid) closeSheet();
+    if (r.state === 'none') { if (manual) toast('Nothing to finish. Tap Connect to start again.'); return; }
+    if (r.state === 'exited') { toast('Plaid closed before a bank was connected. Tap Connect to try again.'); return; }
+    if (r.state === 'reconnected') {
+      toast('Reconnected');
+      B.feedCall('sync', { force: true }).catch(function () { /* the Refresh button tries again */ });
+      return;
+    }
+    var names = r.institutions && r.institutions.length ? r.institutions.join(' and ') : 'Bank';
+    toast(names + ' connected' + (r.test ? ' (test bank)' : ''));
+    whenLoaded(function () { openFeedSheet(trip.tourId || null); });
   }
-  // Connect a bank (or, with itemId, sign back in to one that asked).
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') checkPlaid(false);
+  });
+  window.addEventListener('focus', function () { checkPlaid(false); });
+
+  // Connect a bank (or, with itemId, sign back in to one that asked). Plaid's
+  // page opens from a real tap on a link, so the phone never blocks it.
   async function connectCards(tourId, itemId) {
     var B = window.GR_BACKEND;
     var r = null;
     try { r = await B.feedCall('link', itemId ? { itemId: itemId } : {}); } catch (e) { r = null; }
-    if (!r || !r.ok || !r.linkToken) { toast(feedProblem(r && (r.status || r.error))); return; }
-    // A bank that signs in on its own page sends the phone back to Greenroom
-    // mid-way; this is what's needed to pick up where it left off.
-    try {
-      localStorage.setItem('gr-plaid', JSON.stringify({ token: r.linkToken, tourId: tourId || null,
-        itemId: itemId || null, at: Date.now() }));
-    } catch (e) { /* the popup path doesn't need it */ }
-    try { await openPlaid(r.linkToken, { tourId: tourId, itemId: itemId }); }
-    catch (e) { toast('Couldn\u2019t open Plaid. Check your connection and try again.'); }
-  }
-  // Back from a bank's own sign-in page (?oauth_state_id=...): finish in Plaid.
-  function resumePlaid(back) {
-    var saved = null;
-    try { saved = JSON.parse(localStorage.getItem('gr-plaid') || 'null'); } catch (e) { saved = null; }
-    if (!saved || !saved.token || Date.now() - saved.at > 30 * 60e3) {
-      toast('That bank sign-in took too long. Tap Connect again.');
-      return;
-    }
-    openPlaid(saved.token, { tourId: saved.tourId, itemId: saved.itemId, redirect: back })
-      .catch(function () { toast('Couldn\u2019t open Plaid. Try again.'); });
+    if (!r || !r.ok || !r.url) { toast(feedProblem(r && (r.status || r.error))); return; }
+    keepPlaidTrip({ tourId: tourId || null, itemId: itemId || null, at: Date.now() });
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, itemId ? 'Sign back in to your bank' : 'Connect a bank or card'),
+        h('p', { class: 'sh-sub' }, 'Plaid opens in its own window. Sign in to your bank there. ' +
+          'When Plaid says you\u2019re done, tap Done at the top to come back, and Greenroom finishes by itself.'),
+        h('div', { class: 'stack' },
+          h('a', { class: 'btn primary block', href: r.url, target: '_blank', rel: 'noopener' }, 'Open Plaid'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { checkPlaid(true); } },
+            'I\u2019m done in Plaid'))
+      ];
+    }, { label: 'Connect a bank or card' });
+    if (sheet) sheet.plaid = true;
   }
 
   function feedProblem(code) {
@@ -7884,7 +7888,8 @@
       RATE_LIMIT_EXCEEDED: 'Plaid asked Greenroom to slow down. Try again in a minute.',
       INSTITUTION_DOWN: 'The bank isn\u2019t answering right now. Try again later.',
       INSTITUTION_NOT_RESPONDING: 'The bank isn\u2019t answering right now. Try again later.',
-      save_failed: 'Couldn\u2019t save what came in. Try again.'
+      save_failed: 'Couldn\u2019t save what came in. Try again.',
+      no_hosted_link: 'Plaid didn\u2019t open its connect window. Try again in a moment.'
     })[code] || 'Couldn\u2019t reach the cards just now. Try again in a moment.';
   }
   function feedResult(r) {

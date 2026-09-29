@@ -140,8 +140,14 @@ shim = r"""<script>
       var F = window.__harness.feed;
       window.__harness.calls.push([action, JSON.parse(JSON.stringify(body || {}))]);
       // Plaid's shape: banks, accounts, test mode.
-      if (action === 'link') return Promise.resolve({ ok: true, linkToken: 'link-sandbox-harness', test: true });
-      if (action === 'connect') return Promise.resolve({ ok: true, institution: 'First Platypus Bank', test: true });
+      // Plaid's hosted window: 'finish' says waiting until the harness sets plaidDone.
+      if (action === 'link') { window.__harness.plaidDone = null; return Promise.resolve({ ok: true, url: 'about:blank#plaid-harness', test: true }); }
+      if (action === 'finish') {
+        var done = window.__harness.plaidDone;
+        if (!done) return Promise.resolve({ ok: true, state: 'waiting' });
+        window.__harness.plaidDone = null;
+        return Promise.resolve(done === 'connected' ? { ok: true, state: 'connected', institutions: ['First Platypus Bank'], test: true } : { ok: true, state: done });
+      }
       if (action === 'disconnect' && body && body.itemId) {
         F.banks = F.banks.filter(function (b) { return b.id !== body.itemId; });
         return Promise.resolve({ ok: true, left: F.banks.length });
