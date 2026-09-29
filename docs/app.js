@@ -7920,17 +7920,18 @@
         icon('card', 18), 'Connect the cards');
     }
     var row = S.feed.row || {};
-    if (!row.switched_on || !feedLogs(id)) {
-      // Not logging this tour yet: the one time the choices are asked.
+    if (!row.switched_on) {
+      // Connected but not set up yet: the one time the choices are asked.
       return h('button', { class: 'btn ghost block feed-entry', type: 'button',
         onclick: function () { openFeedSheet(id); } },
-        icon('card', 18), row.switched_on ? 'Choose logging dates' : 'Set up the card feed');
+        icon('card', 18), 'Set up the card feed');
     }
     // Set up: one button does the rest. The gear holds the choices.
     var n = feedWaiting(id).length;
     var label = h('span', null, 'Refresh Card Expenses');
+    // A tour without logging dates yet gets asked for them first.
     var refreshBtn = h('button', { class: 'btn quiet glow feed-refresh', type: 'button',
-      onclick: function () { refreshCards(id, refreshBtn, label); } },
+      onclick: function () { if (feedLogs(id)) refreshCards(id, refreshBtn, label); else openFeedSheet(id); } },
       icon('refresh', 18), label);
     return h('div', { class: 'feed-entry' },
       n ? h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:10px',
