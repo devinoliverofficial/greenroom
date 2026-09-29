@@ -305,6 +305,32 @@
     eq(G.preTourCutoff(t), null, 'no dates, no cutoff');
   });
 
+  test('a card balance the feed read sits under Credit card; its earlier charges move out, never twice', function () {
+    var t = {
+      expenses: {}, crew: {}, commission: {}, extras: {}, shows: keyed([{ date: '2026-05-10', city: 'A' }]),
+      debts: { c1: { label: 'Gold ··1008', amount: 27000, kind: 'card', cutoff: '2026-05-12', breakdown: {},
+        feed: { name: 'Gold ··1008' }, createdAt: 1 } },
+      charges: {}
+    };
+    var line = function (k) { return G.calc(t).lines.filter(function (l) { return l.key === k; })[0]; };
+    eq(line('card').paid, 27000, 'the whole balance is under Credit card');
+    eq(G.calc(t).out, 27000, 'counted once');
+    t.charges = {
+      a: { date: '2026-05-11', merchant: 'Shell', amount: 200, category: 'gas', account: 'Gold ··1008' },
+      b: { date: '2026-05-14', merchant: 'Shell', amount: 50, category: 'gas', account: 'Gold ··1008' },
+      c: { date: '2026-05-11', merchant: 'Hotel', amount: 300, category: 'hotels', account: 'Other ··2222' }
+    };
+    eq(line('gas').paid, 250, 'both gas charges land in Gas');
+    eq(line('card').paid, 26800, 'the one inside the balance moved out of Credit card');
+    eq(G.calc(t).out, 27000 + 50 + 300, 'the balance once, plus spending after it and on other cards');
+    eq(G.preTourCutoff(t), null, 'a read card never hides charges as before the tour');
+    t.debts.c1.payments = { p1: { date: '2026-05-20', amount: 10000 } };
+    var sm = G.cardSummary(t.debts.c1, t);
+    eq(sm.paidOff, 10000, 'payments add up');
+    eq(sm.owed, 17000, 'and come off what is still owed');
+    eq(G.calc(t).out, 27000 + 50 + 300, 'paying the card never changes what the tour spent');
+  });
+
   test('card logging dates follow the tour, rehearsals or a chosen day', function () {
     var t = { shows: keyed([{ date: '2026-05-10', city: 'A' }, { date: '2026-05-20', city: 'B' }]) };
     eq(G.cardWindow(t), null, 'no dates chosen: nothing is logged');

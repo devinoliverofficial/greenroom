@@ -376,30 +376,52 @@
   function otherDebts(tour) {
     return rows(tour && tour.debts).filter(function (d) { return d.kind !== 'card'; });
   }
-  function cardSummary(card) {
+  /* A card the card feed read (card.feed): its balance was read the day
+     logging started (card.cutoff), and it sits under Credit card. Charges on
+     that card from on or before that day are already inside the balance, so
+     as each one is filed under a category it moves out of Credit card and
+     into that category. Payments on the card after that day come off what's
+     still owed; the tour's spending doesn't change, the money was spent. */
+  function cardMoved(card, tour) {
+    if (!card || !isObj(card.feed) || !parseDay(card.cutoff)) return 0;
+    return rows(tour && tour.charges).reduce(function (t, ch) {
+      if (ch.accounted || !ch.category || ch.account !== card.feed.name) return t;
+      return ch.date && ch.date <= card.cutoff ? t + num(ch.amount) : t;
+    }, 0);
+  }
+  function cardPaidOff(card) {
+    var p = isObj(card && card.payments) ? card.payments : {};
+    return round(Object.keys(p).reduce(function (t, k) { return t + num(p[k] && p[k].amount); }, 0) * 100) / 100;
+  }
+  function cardSummary(card, tour) {
     var bd = isObj(card.breakdown) ? card.breakdown : {};
-    var accounted = 0;
+    var accounted = cardMoved(card, tour);
     TYPED_CATEGORIES.forEach(function (c) { accounted += num(bd[c.key]); });
     var balance = num(card.amount);
+    var paidOff = cardPaidOff(card);
     return {
-      id: card.id, label: card.label || 'Card', balance: balance,
+      id: card.id, label: card.label || 'Card', balance: balance, feed: isObj(card.feed),
       accounted: Math.min(accounted, balance),
       remainder: Math.max(0, balance - accounted),
-      over: Math.max(0, accounted - balance)
+      over: Math.max(0, accounted - balance),
+      paidOff: paidOff, owed: Math.max(0, round((balance - paidOff) * 100) / 100)
     };
   }
   // What each category was paid on cards going in: { key: [{label, amount}] }
   function cardPaidDetail(tour) {
     var out = {};
     cardDebts(tour).forEach(function (card) {
-      var s = cardSummary(card);
+      var s = cardSummary(card, tour);
       var bd = isObj(card.breakdown) ? card.breakdown : {};
       TYPED_CATEGORIES.forEach(function (c) {
         var v = num(bd[c.key]);
         if (v > 0) (out[c.key] = out[c.key] || []).push({ label: s.label, amount: v });
       });
-      if (s.remainder > 0) {
-        (out.misc = out.misc || []).push({ label: s.label, amount: s.remainder, leftover: true });
+      // A read balance waits under Credit card; a typed one's rest is Misc.
+      if (s.remainder > 0 || s.feed) {
+        var k = s.feed ? 'card' : 'misc';
+        (out[k] = out[k] || []).push({ label: s.label, amount: s.remainder, leftover: true,
+          feed: s.feed, balance: s.balance, paidOff: s.paidOff, owed: s.owed });
       }
     });
     return out;
@@ -435,7 +457,8 @@
   }
 
   function preTourCutoff(tour) {
-    var cards = cardDebts(tour);
+    // A read card's earlier charges move out of its balance instead.
+    var cards = cardDebts(tour).filter(function (c) { return !isObj(c.feed); });
     if (!cards.length) return null;
     var shows = rows(tour && tour.shows).filter(function (s) { return parseDay(s.date); })
       .map(function (s) { return s.date; }).sort();
@@ -1142,7 +1165,7 @@
     guaranteeIn: guaranteeIn, merchDue: merchDue, showMoneyState: showMoneyState,
     CASH_MOVES: CASH_MOVES, cashSummary: cashSummary, cashByShow: cashByShow,
     cardPaidDetail: cardPaidDetail, preTourCutoff: preTourCutoff,
-    tourStart: tourStart, tourEnd: tourEnd, cardWindow: cardWindow,
+    tourStart: tourStart, tourEnd: tourEnd, cardWindow: cardWindow, cardMoved: cardMoved, cardPaidOff: cardPaidOff,
 
     calc: calc, stateOf: stateOf, caption: caption,
     balanceSeries: balanceSeries, latestChange: latestChange,

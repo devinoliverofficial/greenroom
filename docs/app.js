@@ -2157,9 +2157,16 @@
   /* Expenses tab: one row per category, each opening its own sheet. */
   function cardBit(l) {
     if (!l.cards || !l.cards.length) return '';
-    return ' · ' + l.cards.map(function (r) {
+    var read = l.cards.filter(function (r) { return r.feed; });
+    var typed = l.cards.filter(function (r) { return !r.feed; });
+    var out = typed.length ? ' · ' + typed.map(function (r) {
       return money(r.amount) + (r.leftover ? ' left over from ' : ' on ') + r.label;
-    }).join(', ') + ' going in';
+    }).join(', ') + ' going in' : '';
+    read.forEach(function (r) {
+      out += ' · ' + r.label + ': ' + (r.owed > 0 ? money(r.owed) + ' still owed' : 'paid off') +
+        (r.paidOff > 0 && r.owed > 0 ? ', ' + money(r.paidOff) + ' paid' : '');
+    });
+    return out;
   }
   // The two numbers sit in their own columns; this line says how they compare.
   function lineHint(l) {
@@ -2646,9 +2653,26 @@
   /* One card: its balance, and an optional breakdown of where that money went.
      Whatever isn't broken down goes to Misc — plainly said, never required. */
   function cardBlock(tourId, card) {
-    var s = G.cardSummary(card);
+    var s = G.cardSummary(card, getTour(tourId));
     var bd = G.isObj(card.breakdown) ? card.breakdown : {};
     var used = Object.keys(bd).filter(function (k) { return G.num(bd[k]) > 0; });
+    if (s.feed) {
+      // Read by the card feed: the balance, what's moved into categories, and
+      // what's been paid off since.
+      return h('div', { class: 'ledger', style: 'margin-bottom:14px' },
+        h('div', { class: 'row' },
+          h('div', { class: 'row-label' }, s.label,
+            h('span', { class: 'hint' }, 'Balance read ' + dayMD(card.cutoff))),
+          h('span', { class: 'amt num' }, money(s.balance))),
+        h('div', { class: 'row bd-row' },
+          h('span', { class: 'row-label' }, h('span', { class: 'hint' },
+            money(s.accounted) + ' filed into categories \u00b7 ' + money(s.remainder) + ' still under Credit card')),
+          h('span', null)),
+        h('div', { class: 'row bd-row' },
+          h('span', { class: 'row-label' }, h('span', { class: 'hint' + (s.owed > 0 ? '' : ' done') },
+            s.owed > 0 ? money(s.paidOff) + ' paid off \u00b7 ' + money(s.owed) + ' still owed' : 'Paid off')),
+          h('span', null)));
+    }
 
     var kids = [
       h('div', { class: 'row' },
@@ -6573,11 +6597,13 @@
       repRow(['Total commission', '', '', money(c.commission)], 'rp-total')));
 
     var cards = G.cardDebts(t).map(function (card) {
-      var sm = G.cardSummary(card);
+      var sm = G.cardSummary(card, t);
       var bd = G.isObj(card.breakdown) ? card.breakdown : {};
       var bits = G.TYPED_CATEGORIES.filter(function (x) { return G.num(bd[x.key]) > 0; })
         .map(function (x) { return x.label + ' ' + money(G.num(bd[x.key])); });
-      if (sm.remainder > 0) bits.push('Misc ' + money(sm.remainder));
+      if (sm.accounted > 0 && sm.feed) bits.push('filed into categories ' + money(sm.accounted));
+      if (sm.remainder > 0) bits.push((sm.feed ? 'Credit card ' : 'Misc ') + money(sm.remainder));
+      if (sm.feed && sm.paidOff > 0) bits.push('paid off ' + money(sm.paidOff));
       return h('p', { class: 'rp-note' }, h('b', null, sm.label + ' \u2014 ' + money(sm.balance) + ' carried in. '),
         bits.length ? 'Broken down: ' + bits.join(', ') + '.' : 'Not broken down.');
     });
@@ -7626,7 +7652,7 @@
         chosen.forEach(function (r, i) {
           patch['p' + r.feedId] = {
             date: r.date, merchant: r.merchant, amount: G.num(r.amount),
-            category: r.category, accounted: !!r.accounted,
+            category: r.category, accounted: !!r.accounted, account: r.account || '',
             importId: importId, createdAt: Date.now() + i
           };
           if (!r.accounted) total += G.num(r.amount);
@@ -7847,7 +7873,7 @@
     }
     var names = r.institutions && r.institutions.length ? r.institutions.join(' and ') : 'Bank';
     toast(names + ' connected' + (r.test ? ' (test bank)' : ''));
-    whenLoaded(function () { openFeedSheet(trip.tourId || null); });
+    whenLoaded(function () { openFeedSheet(trip.tourId || null, true); });
   }
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible') checkPlaid(false);
@@ -7901,6 +7927,8 @@
     }
     var bits = [];
     if (r.merchPaid) bits.push('merch payout landed for ' + plural(r.merchPaid, 'show'));
+    if (r.guaranteesIn) bits.push('guarantee landed for ' + plural(r.guaranteesIn, 'show'));
+    if (r.paidOff) bits.push(money(r.paidOff) + ' paid on the cards');
     if (r.filed) bits.push(plural(r.filed, 'charge') + ' filed');
     if (r.waiting) bits.push(r.waiting + ' need' + (r.waiting === 1 ? 's' : '') + ' a look');
     return bits.length ? bits.join(' \u00b7 ') : 'Nothing new on the cards';
@@ -7963,6 +7991,7 @@
           code === 'token_refused' || code === 'plan_missing') openFeedSheet(id);
       return;
     }
+    if (!r.test) await celebratePayments(id, G.num(r.paidOff));
     // Test mode says what it would have done; the pile (older, real charges) waits.
     if (!r.test && feedWaiting(id).length) openFeedReview(id);
     else toast(feedResult(r));
@@ -7975,7 +8004,7 @@
       var cat = it.category && valid[it.category] ? it.category : '';
       var amt = G.num(it.amount);
       return {
-        feedId: it.id, date: it.date, merchant: it.merchant, amount: amt,
+        feedId: it.id, date: it.date, merchant: it.merchant, amount: amt, account: it.account || '',
         category: cat, source: cat ? 'learned' : null, why: it.why || '',
         duplicate: false, preCutoff: false,
         // Refunds and look-alikes of charges already on the tour start unticked.
@@ -7986,9 +8015,194 @@
     openImportReview(tourId, rows, 'Card feed', { feed: true });
   }
 
-  function openFeedSheet(tourId) {
+  /* Each account, as it arrives: credit card or debit card, then expenses or
+     income, and for income which kind. Plaid's own reading is picked to start. */
+  function acctSummary(a) {
+    var bits = [a.card === 'credit' ? 'Credit card' : 'Debit card'];
+    var inc = a.card !== 'credit' ? (a.income || []) : [];
+    if (a.mode !== 'off') bits.push('Expenses' + (a.mode === 'ask' ? ', ask me first' : ''));
+    if (inc.length) {
+      bits.push(inc.map(function (k) { return k === 'merch' ? 'Merch' : 'Guarantees'; }).join(' + ') + ' income');
+    }
+    if (a.mode === 'off' && !inc.length) bits.push('Not logged');
+    return bits.join(' \u00b7 ');
+  }
+  function openAccountQuestions(list, i, tourId) {
     var B = window.GR_BACKEND;
-    var MODES = ['log', 'ask', 'off'];
+    var a = list[i];
+    var ans = {
+      card: a.card || a.plaidCard || 'debit',
+      what: null,
+      mode: a.mode === 'ask' ? 'ask' : 'log',
+      income: (a.income || []).slice()
+    };
+    if (a.asked) {
+      var exp = a.mode !== 'off', inc = ans.card !== 'credit' && ans.income.length > 0;
+      ans.what = exp && inc ? 'both' : inc ? 'income' : exp ? 'expenses' : 'none';
+    } else {
+      // New account: cards log on their own; for a bank account, you say.
+      ans.what = ans.card === 'credit' ? 'expenses' : null;
+      ans.mode = ans.card === 'credit' ? 'log' : 'ask';
+    }
+    var box = h('div');
+    function whatOptions() {
+      return ans.card === 'credit' ? [['expenses', 'Expenses'], ['none', 'Neither']]
+        : [['expenses', 'Expenses'], ['income', 'Income'], ['both', 'Both'], ['none', 'Neither']];
+    }
+    function tick(key, label, note) {
+      var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: ans.income.indexOf(key) >= 0,
+        onchange: function (e) {
+          ans.income = ans.income.filter(function (k) { return k !== key; });
+          if (e.target.checked) ans.income.push(key);
+        } });
+      return h('label', { class: 'fa-tick' }, cb, h('span', null, h('b', null, label), h('span', { class: 'hint' }, note)));
+    }
+    function draw() {
+      var opts = whatOptions();
+      if (ans.what && !opts.some(function (o) { return o[0] === ans.what; })) ans.what = null;
+      var kids = [
+        h('h3', { class: 'sh-h3' }, 'Is this a credit card or debit card?'),
+        segmented(['Credit card', 'Debit card'], ans.card === 'credit' ? 0 : 1, function (k) {
+          ans.card = k === 0 ? 'credit' : 'debit';
+          if (ans.card === 'credit' && !ans.what) ans.what = 'expenses';
+          draw();
+        }, 'Credit card or debit card'),
+        a.plaidCard ? h('p', { class: 'note' }, 'Your bank calls it a ' + (a.plaidCard === 'credit' ? 'credit card.' : 'bank account (debit).') +
+          (ans.card === 'credit' ? ' Greenroom reads its balance once when logging starts and puts it under Credit card.' : '')) : null,
+        h('h3', { class: 'sh-h3' }, 'Do you want to log expenses or income?'),
+        segmented(opts.map(function (o) { return o[1]; }),
+          opts.map(function (o) { return o[0]; }).indexOf(ans.what), function (k) {
+            ans.what = opts[k][0];
+            draw();
+          }, 'Expenses or income')
+      ];
+      if (ans.what === 'expenses' || ans.what === 'both') {
+        kids.push(
+          h('h3', { class: 'sh-h3' }, 'When a charge comes in'),
+          segmented(['Log it', 'Ask me first'], ans.mode === 'ask' ? 1 : 0, function (k) { ans.mode = k ? 'ask' : 'log'; },
+            'Log it or ask first'),
+          h('p', { class: 'note' }, 'Log it: filed on the tour by itself once Greenroom knows the merchant; new ones ask. ' +
+            'Ask me first: every charge waits for you.'));
+      }
+      if (ans.what === 'income' || ans.what === 'both') {
+        kids.push(
+          h('h3', { class: 'sh-h3' }, 'Which income?'),
+          h('div', { class: 'fa-ticks' },
+            tick('merch', 'Merch', 'atVenu payouts. A deposit that matches what atVenu says a show should pay marks that show\u2019s merch received.'),
+            tick('guarantees', 'Guarantees', 'A deposit that matches a show\u2019s guarantee, in full or less your booking agent\u2019s cut, marks it received.')));
+      }
+      box.replaceChildren.apply(box, kids);
+    }
+    draw();
+    var last = i === list.length - 1;
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, a.name),
+        list.length > 1 ? h('p', { class: 'sh-sub' }, 'Account ' + (i + 1) + ' of ' + list.length) : null,
+        box,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+            if (!ans.what) { toast('Pick expenses, income, both or neither.'); return; }
+            var wantsIncome = ans.card !== 'credit' && (ans.what === 'income' || ans.what === 'both');
+            if (wantsIncome && !ans.income.length) { toast('Check Merch, Guarantees or both.'); return; }
+            var btn = e.currentTarget;
+            btn.disabled = true;
+            var r = null;
+            try {
+              r = await B.feedCall('setup', { account: {
+                id: a.id, card: ans.card,
+                mode: ans.what === 'expenses' || ans.what === 'both' ? ans.mode : 'off',
+                income: wantsIncome ? ans.income : []
+              } });
+            } catch (x) { r = null; }
+            btn.disabled = false;
+            if (!r || !r.ok) { toast('Couldn\u2019t save that. Try again.'); return; }
+            if (!last) openAccountQuestions(list, i + 1, tourId);
+            else openFeedSheet(tourId);
+          } }, last ? 'Done' : 'Next'),
+          i > 0 ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { openAccountQuestions(list, i - 1, tourId); } }, 'Back') : null)
+      ];
+    }, { label: a.name });
+  }
+
+  /* Logging starts on a tour: each credit card's balance is read once and
+     put on the tour under Credit card. Its earlier charges move out of it as
+     they're filed; payments later come off what's still owed. */
+  async function readCardBalances(tourId) {
+    var B = window.GR_BACKEND;
+    var r = null;
+    try { r = await B.feedCall('balances'); } catch (e) { r = null; }
+    if (!r || !r.ok || !r.balances || !r.balances.length) return;
+    if (r.test) {
+      toast('Test mode: ' + r.balances.map(function (b) { return b.name + ' ' + money(b.balance); }).join(', ') + ' not saved');
+      return;
+    }
+    var t = getTour(tourId);
+    var have = {};
+    G.cardDebts(t).forEach(function (d) { if (d.feed) have[d.feed.name] = true; });
+    var today = G.tourToday();
+    var patch = {}, n = 0;
+    r.balances.forEach(function (b) {
+      if (have[b.name] || !(b.balance > 0)) return;
+      patch['feed-' + b.id] = { label: b.name, amount: b.balance, kind: 'card', cutoff: today, breakdown: {},
+        feed: { name: b.name, readAt: today }, createdAt: Date.now() + n };
+      n += 1;
+    });
+    if (n && (await api.update(tourId, { debts: patch }))) {
+      toast(r.balances.filter(function (b) { return patch['feed-' + b.id]; }).map(function (b) {
+        return b.name + ' balance ' + money(b.balance);
+      }).join(', ') + ' logged under Credit card');
+    }
+  }
+
+  /* Paying the card down: a moment to enjoy it. Each payment is celebrated
+     once on this phone. */
+  function paidSeen() {
+    try { return JSON.parse(localStorage.getItem('gr-paid-seen') || '[]'); } catch (e) { return []; }
+  }
+  function unseenPayments(tourId) {
+    var seen = paidSeen(), ids = [], total = 0;
+    G.cardDebts(getTour(tourId)).forEach(function (d) {
+      var p = G.isObj(d.payments) ? d.payments : {};
+      Object.keys(p).forEach(function (k) {
+        if (seen.indexOf(k) >= 0) return;
+        ids.push(k);
+        total += G.num(p[k] && p[k].amount);
+      });
+    });
+    return { ids: ids, total: Math.round(total * 100) / 100 };
+  }
+  function paidSplash(amount) {
+    var el = h('div', { class: 'splash-note paid', role: 'status', 'aria-live': 'polite' },
+      h('div', { class: 'sn-card' },
+        h('span', { class: 'sn-check' }, icon('check', 30)),
+        h('div', { class: 'sn-big' }, 'Congratulations!'),
+        h('div', { class: 'sn-sub' }, 'You paid ' + money(amount) + ' of your credit card debt')));
+    document.body.appendChild(el);
+    confetti();
+    requestAnimationFrame(function () { el.classList.add('on'); });
+    setTimeout(function () {
+      el.classList.remove('on');
+      setTimeout(function () { el.remove(); }, 350);
+    }, reduced() ? 2200 : 2800);
+  }
+  async function celebratePayments(tourId, expected) {
+    // The server's note of the payment reaches this phone a moment later.
+    var u = unseenPayments(tourId);
+    for (var n = 0; n < 12 && expected > 0 && u.total + 0.005 < expected; n++) {
+      await new Promise(function (r) { setTimeout(r, 250); });
+      u = unseenPayments(tourId);
+    }
+    if (!u.ids.length) return false;
+    try { localStorage.setItem('gr-paid-seen', JSON.stringify(paidSeen().concat(u.ids).slice(-500))); } catch (e) { /* shows again next time */ }
+    paidSplash(u.total);
+    await new Promise(function (r) { setTimeout(r, reduced() ? 2300 : 2900); });
+    return true;
+  }
+
+  function openFeedSheet(tourId, askNew) {
+    var B = window.GR_BACKEND;
     var t = tourId ? getTour(tourId) : null;
     var settingUp = !(S.feed && S.feed.row && S.feed.row.switched_on) || (t && !feedLogs(tourId));
     var body = h('div', { class: 'feed-body' }, h('p', { class: 'sh-sub' }, 'Checking the cards\u2026'));
@@ -8051,7 +8265,15 @@
       var f = planFrom(), e = planTo();
       if (!f || !e) { toast('Pick both dates first.'); return false; }
       if (e < f) { toast('The last day is before the first day.'); return false; }
+      var unasked = (st.accounts || []).filter(function (a) { return !a.asked; });
+      if (unasked.length) {
+        toast('Answer the questions for each account first.');
+        openAccountQuestions(unasked, 0, tourId);
+        return false;
+      }
+      var firstTime = !feedLogs(tourId);
       if (!(await api.update(tourId, { cardLog: planLog() }))) return false;
+      if (firstTime) await readCardBalances(tourId);
       var r = await B.feedCall('setup', turnOn ? { on: true, since: f, rescan: true } : { rescan: true });
       if (!r || !r.ok) { toast(feedProblem(r && (r.status || r.error))); return false; }
       closeSheet();
@@ -8105,6 +8327,12 @@
     }
 
     function draw() {
+      // Just connected: every new account's questions come first.
+      if (askNew && st && st.ok && !st.needsConnect) {
+        askNew = false;
+        var fresh = (st.accounts || []).filter(function (a) { return !a.asked; });
+        if (fresh.length) { openAccountQuestions(fresh, 0, tourId); return; }
+      }
       if (!st || !st.ok) {
         body.replaceChildren(h('div', null, h('p', { class: 'note' }, feedProblem(st && (st.status || st.error))), safety));
         return;
@@ -8148,46 +8376,16 @@
         })),
         h('div', { class: 'stack', style: 'margin-top:10px' }, connectBtn('Connect another bank or card', 'ghost')));
 
-      var accts = h('div', { class: 'feed-accts' }, st.accounts.map(function (a) {
-        var idx = MODES.indexOf(a.mode);
-        return h('div', { class: 'feed-acct' },
-          h('div', { class: 'fa-name' }, a.name),
-          segmented(['Log', 'Ask me', 'Off'], idx < 0 ? 1 : idx, function (i) {
-            a.mode = MODES[i];
-            var m = {};
-            m[a.id] = a.mode;
-            B.feedCall('setup', { modes: m }).then(function (r) {
-              if (!r || !r.ok) toast('Couldn\u2019t save that. Try again.');
-            });
-          }, 'What the feed does with ' + a.name));
-      }));
+      // Each account says what it is and what to log; tap one to change it.
       parts.push(
         h('h3', { class: 'sh-h3' }, 'Accounts'),
-        accts,
-        h('p', { class: 'note' },
-          'Log: files each charge on the tour by itself once Greenroom knows the merchant, and asks about new ones. ',
-          'Ask me: every charge waits for you first. Off: ignored.'));
-
-      // Where atVenu's merch payouts land, so a matching deposit settles the show.
-      var banks = st.accounts.filter(function (a) { return a.type === 'checking' || a.type === 'savings'; });
-      if (banks.length) {
-        var msel = h('select', { class: 'input', 'aria-label': 'Account merch payouts land in',
-          onchange: function (e) {
-            B.feedCall('setup', { merchAccount: e.target.value }).then(function (r) {
-              toast(r && r.ok ? (e.target.value ? 'Merch payouts watched' : 'Merch payouts not watched')
-                : 'Couldn\u2019t save that. Try again.');
-            });
-          } },
-          h('option', { value: '' }, 'None \u2014 I\u2019ll tick merch received myself'),
-          banks.map(function (a) { return h('option', { value: a.id }, a.name); }));
-        msel.value = st.merchAccount || '';
-        parts.push(
-          h('h3', { class: 'sh-h3' }, 'Merch payouts land in'),
-          msel,
-          h('p', { class: 'note' }, 'When a deposit here matches what atVenu says should land, that show\u2019s merch is ' +
-            'marked received and its city stops being red. Only the date and amount of these deposits are kept.'));
-      }
-
+        h('div', { class: 'ledger feed-accts' }, st.accounts.map(function (a) {
+          return h('button', { class: 'row fa-row', type: 'button',
+            onclick: function () { openAccountQuestions([a], 0, tourId); } },
+            h('div', { class: 'row-label' }, a.name,
+              h('span', { class: 'hint' + (a.asked ? '' : ' over') }, a.asked ? acctSummary(a) : 'Needs your answers')),
+            icon('chevron', 18));
+        })));
       if (t && G.tourStart(t)) {
         // Asked for every tour before anything is logged onto it.
         parts.push(logSection());

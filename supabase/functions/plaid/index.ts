@@ -95,7 +95,12 @@ async function unseal(sealed: string): Promise<string> {
 /* ---------------- The feed ---------------- */
 
 type Mode = "log" | "ask" | "off";
-interface Account { name: string; type: string; mode: Mode; item?: string; closed?: boolean }
+// card: the manager's answer to "credit card or debit card?" (Plaid's own
+// reading until then). income: which deposits to watch on a bank account.
+interface Account {
+  name: string; type: string; mode: Mode; item?: string; closed?: boolean;
+  plaid?: string; card?: "credit" | "debit"; income?: string[]; asked?: boolean;
+}
 interface Feed {
   owner_id: string; accounts: Record<string, Account>; switched_on: boolean; since: string | null;
   last_run: string | null; last_status: string; merch_account: string | null; source: string;
@@ -126,22 +131,32 @@ async function accountsFor(item: Item, token: string, into: Record<string, Accou
   const j = await plaidCall("/accounts/get", { access_token: token });
   for (const a of (j.accounts ?? []) as Obj[]) {
     const id = String(a.account_id);
-    const type = typeOf(a);
+    const plaid = typeOf(a);
     const had = into[id];
+    const type = cardType(plaid, had?.card);
     into[id] = {
       name: [String(a.name ?? a.official_name ?? "Account"), a.mask ? "··" + a.mask : ""].filter(Boolean).join(" "),
-      type, mode: had?.mode ?? defaultMode(type), item: item.item_id,
+      type, plaid, mode: had?.mode ?? defaultMode(type), item: item.item_id,
+      ...(had?.card ? { card: had.card } : {}), income: had?.income ?? [], asked: had?.asked ?? false,
     };
   }
 }
 
-// Where merch payouts land: the manager's pick, or on first look a bank
-// account with "merch" in its name.
-function merchAccountFor(feed: Feed, accounts: Record<string, Account>): string {
-  if (feed.merch_account != null) return feed.merch_account;
-  const hit = Object.entries(accounts).find(([, a]) =>
-    (a.type === "checking" || a.type === "savings") && /merch/i.test(a.name));
-  return hit ? hit[0] : "";
+// The manager's answer wins over Plaid's reading of the account.
+function cardType(plaid: string, card?: string): string {
+  if (card === "credit") return "creditCard";
+  if (card === "debit") return plaid === "savings" ? "savings" : "checking";
+  return plaid;
+}
+// Bank accounts marked for income, and what their deposits may be.
+function incomeAccounts(accounts: Record<string, Account>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [id, a] of Object.entries(accounts)) {
+    if (a.type === "creditCard") continue;
+    const m = (a.income ?? []).includes("merch"), g = (a.income ?? []).includes("guarantees");
+    if (m || g) out.set(id, m && g ? "both" : m ? "merch" : "guarantees");
+  }
+  return out;
 }
 
 /* One Plaid transaction in the shape the sorter reads (the YNAB shape the
@@ -155,16 +170,20 @@ function asTx(t: Obj, accounts: Record<string, Account>): Obj {
   const onCard = accounts[String(t.account_id)]?.type === "creditCard";
   const transfer = pfc.primary === "LOAN_PAYMENTS" || pfc.primary === "TRANSFER_OUT" ||
     (pfc.primary === "TRANSFER_IN" && onCard);
+  // Money arriving on a card that isn't a refund: the card being paid down.
+  const payment = onCard && amt < 0 && (pfc.primary === "LOAN_PAYMENTS" || pfc.primary === "TRANSFER_IN" ||
+    /\bpayment\b/i.test(String(t.name || "")));
   return {
     id: String(t.transaction_id), account_id: String(t.account_id), amount: Math.round(-amt * 1000),
     payee_name: String(t.merchant_name || t.name || ""), import_payee_name_original: String(t.name || ""),
-    date: String(t.date), deleted: false, transfer_account_id: transfer ? "transfer" : null,
+    date: String(t.date), deleted: false, transfer_account_id: transfer || payment ? "transfer" : null,
+    payment,
   };
 }
 
 /* ---------------- The sorting (the YNAB feed's, unchanged) ---------------- */
 
-interface Dep { id: string; date: string; amount: number; av?: boolean }
+interface Dep { id: string; date: string; amount: number; av?: boolean; watch?: string }
 function payoutDay(showDate: string): string {
   let d = showDate, left = 2;
   while (left > 0) {
@@ -241,20 +260,24 @@ function toursOn(tours: Tour[], date: string): Tour[] {
 interface Bucket { tour: Tour; charges: Obj; total: number; n: number }
 function sortTransactions(
   txs: Obj[], accounts: Record<string, Account>, tours: Tour[], labels: Obj,
-  known: Map<string, string>, owner: string, now: number, merchAccount = "",
-): { items: Obj[]; toFile: Map<string, Bucket>; dropped: string[]; deposits: Dep[] } {
+  known: Map<string, string>, owner: string, now: number, income = new Map<string, string>(),
+): { items: Obj[]; toFile: Map<string, Bucket>; dropped: string[]; deposits: Dep[]; payments: Dep[] } {
   const items: Obj[] = [];
   const deposits: Dep[] = [];
+  const payments: Dep[] = [];
   const toFile = new Map<string, Bucket>();
   const dropped: string[] = [];
 
   for (const t of txs) {
     const id = String(t.id);
-    if (merchAccount && String(t.account_id) === merchAccount && !t.deleted &&
-        !t.transfer_account_id && Number(t.amount) > 0) {
+    const watch = income.get(String(t.account_id));
+    if (watch && !t.deleted && !t.transfer_account_id && Number(t.amount) > 0) {
       const raw = String(t.import_payee_name_original ?? t.payee_name ?? "").trim();
       deposits.push({ id, date: String(t.date), amount: Math.round(Number(t.amount) / 10) / 100,
-        av: /^AV[A-Z0-9]/i.test(raw) || /\batvenu\b/i.test(raw) });
+        av: /^AV[A-Z0-9]/i.test(raw) || /\batvenu\b/i.test(raw), watch });
+    }
+    if (t.payment && !t.deleted && Number(t.amount) > 0) {
+      payments.push({ id, date: String(t.date), amount: Math.round(Number(t.amount) / 10) / 100, watch: String(t.account_id) });
     }
     if (known.has(id)) {
       if (t.deleted && known.get(id) === "waiting") dropped.push(id);
@@ -305,20 +328,20 @@ function sortTransactions(
 
     const bucket = toFile.get(tour!.id) ?? { tour: tour!, charges: {}, total: 0, n: 0 };
     (bucket.charges as Obj)["p" + id] = {
-      date, merchant, amount: spent, category, accounted: false,
+      date, merchant, amount: spent, category, accounted: false, account: acct?.name ?? "",
       importId: "cards-" + now, createdAt: now + bucket.n,
     };
     bucket.total += spent; bucket.n += 1;
     toFile.set(tour!.id, bucket);
     items.push({ ...base, why: "", status: "filed" });
   }
-  return { items, toFile, dropped, deposits };
+  return { items, toFile, dropped, deposits, payments };
 }
 
 async function settleMerch(owner: string, tours: Tour[]): Promise<number> {
   const since = G.addDays(G.ymd(new Date()), -60);
   const { data: open } = await admin.from("merch_deposits").select("id, date, amount, atvenu")
-    .eq("owner_id", owner).eq("matched", false).gte("date", since);
+    .eq("owner_id", owner).eq("matched", false).in("watch", ["merch", "both"]).gte("date", since);
   if (!open || !open.length) return 0;
   const cands: Cand[] = [];
   for (const t of tours) {
@@ -343,6 +366,104 @@ async function settleMerch(owner: string, tours: Tour[]): Promise<number> {
       show_ids: h.picks.map((p) => p.showId) }).eq("owner_id", owner).eq("id", h.dep.id);
   }
   return n;
+}
+
+/* A guarantee deposit: the guarantee in full (the promoter paid the band),
+   or less the booking agent's cut (the agency paid it), for one show or a
+   run of shows on the same tour paid together. Exact to the dollar only,
+   from a month before the show to six weeks after. A match ticks that
+   show's guarantee Received. */
+interface GCand { tourId: string; showId: string; date: string; full: number; net: number }
+function matchGuarantees(deps: Dep[], cands: GCand[]): { dep: Dep; picks: GCand[]; net: boolean }[] {
+  const used = new Set<string>();
+  const out: { dep: Dep; picks: GCand[]; net: boolean }[] = [];
+  const near = (c: GCand, d: Dep) => { const g = G.daysBetween(c.date, d.date); return g >= -30 && g <= 45; };
+  for (const d of [...deps].sort((a, b) => a.date.localeCompare(b.date))) {
+    const open = cands.filter((c) => !used.has(c.tourId + "/" + c.showId) && near(c, d))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    let hit: { picks: GCand[]; net: boolean } | null = null;
+    for (const net of [false, true]) {
+      const due = (c: GCand) => net ? c.net : c.full;
+      const one = open.filter((c) => Math.abs(due(c) - d.amount) <= 1)
+        .sort((a, b) => Math.abs(G.daysBetween(a.date, d.date)) - Math.abs(G.daysBetween(b.date, d.date)));
+      if (one.length) { hit = { picks: [one[0]], net }; break; }
+      search: for (let i = 0; i < open.length; i++) {
+        let sum = 0;
+        const run: GCand[] = [];
+        for (let j = i; j < open.length && run.length < 7; j++) {
+          if (open[j].tourId !== open[i].tourId) break;
+          sum += due(open[j]);
+          run.push(open[j]);
+          if (run.length > 1 && Math.abs(sum - d.amount) <= 1) { hit = { picks: run.slice(), net }; break search; }
+          if (sum > d.amount + 1) break;
+        }
+      }
+      if (hit) break;
+    }
+    if (hit) {
+      hit.picks.forEach((p) => used.add(p.tourId + "/" + p.showId));
+      out.push({ dep: d, ...hit });
+    }
+  }
+  return out;
+}
+function agentShare(doc: Obj): number {
+  const rule = ((doc.commission ?? {}) as Obj).agent as Obj | undefined;
+  return rule && rule.mode === "pct" ? Math.max(0, Math.min(100, G.num(rule.value))) / 100 : 0;
+}
+async function settleGuarantees(owner: string, tours: Tour[]): Promise<number> {
+  const since = G.addDays(G.ymd(new Date()), -90);
+  const { data: open } = await admin.from("merch_deposits").select("id, date, amount, atvenu")
+    .eq("owner_id", owner).eq("matched", false).eq("atvenu", false).in("watch", ["guarantees", "both"]).gte("date", since);
+  if (!open || !open.length) return 0;
+  const cands: GCand[] = [];
+  for (const t of tours) {
+    const cut = agentShare(t.doc);
+    for (const s of G.rows(t.doc.shows) as Obj[]) {
+      const g = G.num(((s.income ?? {}) as Obj).guarantee);
+      if (!s.loggedAt || s.guaranteeReceived !== false || !(g > 0) || !G.parseDay(String(s.date))) continue;
+      cands.push({ tourId: t.id, showId: String(s.id), date: String(s.date), full: g, net: Math.round(g * (1 - cut) * 100) / 100 });
+    }
+  }
+  if (!cands.length) return 0;
+  const hits = matchGuarantees(open.map((d) => ({ id: d.id, date: String(d.date), amount: Number(d.amount) })), cands);
+  let n = 0;
+  for (const h of hits) {
+    for (const p of h.picks) {
+      const r = await admin.rpc("merge_show", { t_id: p.tourId, s_id: p.showId,
+        patch: { guaranteeReceived: true, guaranteeReceivedAt: h.dep.date, guaranteeDeposit: h.net ? p.net : p.full } });
+      if (!r.error) n += 1;
+    }
+    await admin.from("merch_deposits").update({ matched: true, tour_id: h.picks[0].tourId,
+      show_ids: h.picks.map((p) => p.showId) }).eq("owner_id", owner).eq("id", h.dep.id);
+  }
+  return n;
+}
+
+/* Payments on a card whose balance the feed read come off what's still owed
+   on it: each goes to the tour entry for that card read most recently before
+   the payment. Once each (by transaction). */
+async function applyPayments(tours: Tour[], accounts: Record<string, Account>, pays: Dep[]): Promise<number> {
+  let total = 0;
+  for (const p of pays) {
+    const name = accounts[String(p.watch)]?.name;
+    if (!name) continue;
+    let best: { tour: Tour; id: string; cutoff: string } | null = null;
+    for (const t of tours) {
+      for (const [id, d] of Object.entries((t.doc.debts ?? {}) as Record<string, Obj>)) {
+        const f = (d?.feed ?? null) as Obj | null;
+        if (!f || d.kind !== "card" || f.name !== name || !G.parseDay(String(d.cutoff))) continue;
+        const cut = String(d.cutoff);
+        if (cut >= p.date || ((d.payments ?? {}) as Obj)[p.id]) continue;
+        if (!best || cut > best.cutoff) best = { tour: t, id, cutoff: cut };
+      }
+    }
+    if (!best) continue;
+    const r = await admin.rpc("add_card_payment", { t_id: best.tour.id, d_id: best.id, p_id: p.id,
+      payment: { date: p.date, amount: p.amount } });
+    if (!r.error) total += p.amount;
+  }
+  return Math.round(total * 100) / 100;
 }
 
 async function toursOf(owner: string): Promise<Tour[]> {
@@ -432,9 +553,8 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
     for (const s of seen ?? []) known.set(s.id, s.status);
   }
   const now = Date.now();
-  const merchAccount = merchAccountFor(feed, accounts);
-  const { items: rows, toFile, dropped, deposits } =
-    sortTransactions(txs, accounts, tours, labels, known, feed.owner_id, now, merchAccount);
+  const { items: rows, toFile, dropped, deposits, payments } =
+    sortTransactions(txs, accounts, tours, labels, known, feed.owner_id, now, incomeAccounts(accounts));
   const filed = rows.filter((i) => i.status === "filed").length;
   const waiting = rows.filter((i) => i.status === "waiting").length;
 
@@ -460,19 +580,21 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
   }
   if (deposits.length) {
     await admin.from("merch_deposits").upsert(
-      deposits.map((d) => ({ owner_id: feed.owner_id, id: d.id, date: d.date, amount: d.amount, atvenu: !!d.av })),
+      deposits.map((d) => ({ owner_id: feed.owner_id, id: d.id, date: d.date, amount: d.amount, atvenu: !!d.av, watch: d.watch ?? "merch" })),
       { onConflict: "owner_id,id", ignoreDuplicates: true });
   }
   const paid = await settleMerch(feed.owner_id, tours);
+  const guaranteesIn = await settleGuarantees(feed.owner_id, tours);
+  const paidOff = await applyPayments(tours, accounts, payments);
   // Everything is saved: now each connection's place can move on.
   for (const [itemId, cursor] of cursors) {
     await admin.from("plaid_items").update({ cursor, updated_at: new Date().toISOString() })
       .eq("owner_id", feed.owner_id).eq("item_id", itemId);
   }
   await admin.from("feed").update({
-    accounts, merch_account: merchAccount, last_run: new Date().toISOString(), last_status: problems[0] ?? "ok",
+    accounts, last_run: new Date().toISOString(), last_status: problems[0] ?? "ok",
   }).eq("owner_id", feed.owner_id);
-  return { ok: !problems.length, status: problems[0] ?? "ok", filed, waiting, merchPaid: paid };
+  return { ok: !problems.length, status: problems[0] ?? "ok", filed, waiting, merchPaid: paid, guaranteesIn, paidOff };
 }
 
 /* ---------------- Requests ---------------- */
@@ -572,7 +694,7 @@ Deno.serve(async (req) => {
         const doc = { shows: { a: { date: dates[0] ?? G.ymd(new Date()) }, b: { date: dates[dates.length - 1] ?? G.ymd(new Date()) } },
           cardLog: { from: "tour", to: "tour" } };
         const tours: Tour[] = [{ id: "t", doc, win: G.cardWindow(doc) }];
-        const r = sortTransactions(posted.map((t) => asTx(t, accounts)), accounts, tours, {}, new Map(), "o", 1, "");
+        const r = sortTransactions(posted.map((t) => asTx(t, accounts)), accounts, tours, {}, new Map(), "o", 1);
         const count = (s: string) => r.items.filter((x) => x.status === s).length;
         return reply(200, {
           ok: true, env: ENV, keyLockRoundTrip: roundTrip,
@@ -686,8 +808,9 @@ Deno.serve(async (req) => {
         ok: true, source: "plaid", test: TEST, switchedOn: feed.switched_on, since: feed.since,
         lastRun: feed.last_run, lastStatus: feed.last_status,
         banks: items.map((i) => ({ id: i.item_id, name: i.institution, status: i.status })),
-        accounts: accounts.map(([id, a]) => ({ id, name: a.name, type: a.type, mode: a.mode, bank: a.item })),
-        merchAccount: merchAccountFor(feed, feed.accounts ?? {}),
+        accounts: accounts.map(([id, a]) => ({ id, name: a.name, type: a.type, mode: a.mode, bank: a.item,
+          card: a.card ?? (a.type === "creditCard" ? "credit" : "debit"), plaidCard: (a.plaid ?? a.type) === "creditCard" ? "credit" : "debit",
+          income: a.type === "creditCard" ? [] : (a.income ?? []), asked: !!a.asked })),
         needsConnect: !items.length,
       });
     }
@@ -700,11 +823,26 @@ Deno.serve(async (req) => {
       for (const [id, m] of Object.entries(modes)) {
         if (accounts[id] && (m === "log" || m === "ask" || m === "off")) accounts[id] = { ...accounts[id], mode: m };
       }
-      const patch: Obj = { accounts };
-      if (typeof body.merchAccount === "string") {
-        if (body.merchAccount && !accounts[body.merchAccount]) return reply(400, { error: "no_such_account" });
-        patch.merch_account = body.merchAccount;
+      // One account's answers: credit or debit, expenses (Log / Ask me) or
+      // not, and which income its deposits are.
+      const ans = body.account as Obj | undefined;
+      if (ans) {
+        const id = String(ans.id ?? "");
+        if (!accounts[id]) return reply(400, { error: "no_such_account" });
+        const a: Account = { ...accounts[id] };
+        if (ans.card === "credit" || ans.card === "debit") {
+          a.card = ans.card;
+          a.type = cardType(a.plaid ?? (a.type === "savings" ? "savings" : a.type), ans.card);
+        }
+        if (ans.mode === "log" || ans.mode === "ask" || ans.mode === "off") a.mode = ans.mode;
+        if (Array.isArray(ans.income)) {
+          a.income = [...new Set((ans.income as unknown[]).map(String).filter((k) => k === "merch" || k === "guarantees"))];
+        }
+        if (a.type === "creditCard") a.income = [];
+        a.asked = true;
+        accounts[id] = a;
       }
+      const patch: Obj = { accounts };
       if (body.on === true && !feed.switched_on) {
         const since = String(body.since ?? "");
         Object.assign(patch, { switched_on: true, since: G.parseDay(since) ? since : G.ymd(new Date()) });
@@ -719,6 +857,25 @@ Deno.serve(async (req) => {
       }
       await admin.from("feed").update(patch).eq("owner_id", uid);
       return reply(200, { ok: true });
+    }
+
+    // The balance on each credit card the feed logs, read once when logging
+    // starts on a tour (the phone puts it on that tour under Credit card).
+    if (action === "balances") {
+      const out: Obj[] = [];
+      for (const it of await itemsFor(uid)) {
+        try {
+          const j = await plaidCall("/accounts/get", { access_token: await unseal(it.token_enc) });
+          for (const a of (j.accounts ?? []) as Obj[]) {
+            const mine = (feed.accounts ?? {})[String(a.account_id)];
+            if (!mine || mine.type !== "creditCard" || mine.mode === "off") continue;
+            const cur = Number(((a.balances ?? {}) as Obj).current);
+            if (!isFinite(cur)) continue;
+            out.push({ id: String(a.account_id), name: mine.name, balance: Math.max(0, Math.round(cur * 100) / 100) });
+          }
+        } catch { /* that bank's balance can wait */ }
+      }
+      return reply(200, { ok: true, test: TEST, balances: out });
     }
 
     if (action === "sync") {

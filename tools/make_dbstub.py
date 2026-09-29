@@ -156,7 +156,22 @@ shim = r"""<script>
       if (action === 'status') return Promise.resolve({ ok: true, source: 'plaid', test: true, switchedOn: F.row.switched_on,
         since: F.row.since, lastRun: F.row.last_run, lastStatus: 'ok', banks: JSON.parse(JSON.stringify(F.banks)),
         needsConnect: !F.banks.length,
-        accounts: JSON.parse(JSON.stringify(F.accounts)), merchAccount: F.merchAccount == null ? 'ac2' : F.merchAccount });
+        accounts: F.accounts.map(function (a) {
+          var plaidCard = a.type === 'creditCard' ? 'credit' : 'debit';
+          return { id: a.id, name: a.name, type: a.type, mode: a.mode, card: a.card || plaidCard, plaidCard: plaidCard,
+            income: a.income || [], asked: !!a.asked };
+        }) });
+      // One account's answers, as the server keeps them.
+      if (action === 'setup' && body && body.account) {
+        F.accounts.forEach(function (a) {
+          if (a.id !== body.account.id) return;
+          a.card = body.account.card; a.mode = body.account.mode; a.income = body.account.income; a.asked = true;
+        });
+      }
+      // Credit card balances, read when logging starts on a tour.
+      if (action === 'balances') return Promise.resolve({ ok: true, test: false, balances: F.accounts.filter(function (a) {
+        return (a.card || (a.type === 'creditCard' ? 'credit' : 'debit')) === 'credit' && a.mode !== 'off';
+      }).map(function (a, i) { return { id: a.id, name: a.name, balance: i ? 4210.55 : 27000 }; }) });
       if (action === 'setup' && typeof body.merchAccount === 'string') F.merchAccount = body.merchAccount;
       if (action === 'setup' && body.plan) { F.row.plan_name = body.plan === 'p1' ? 'I SEE STARS' : 'Personal Plan'; }
       if (action === 'setup') {
@@ -166,7 +181,7 @@ shim = r"""<script>
       }
       if (action === 'sync') F.row.last_run = new Date().toISOString();
       window.__harness.feedPush();
-      return Promise.resolve(action === 'sync' ? { ok: true, status: 'ok', test: true, seen: 16, filed: 3, waiting: 10 } : { ok: true });
+      return Promise.resolve(action === 'sync' ? (window.__harness.syncReply || { ok: true, status: 'ok', test: true, seen: 16, filed: 3, waiting: 10 }) : { ok: true });
     },
     feedMark: function (ids, patch) {
       var F = window.__harness.feed;
