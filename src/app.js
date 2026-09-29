@@ -5594,7 +5594,7 @@
       var depositHint = h('span', { class: 'hint' }, '');
       var depositAmt = h('span', { class: 'amt num mx-val' }, '');
       var depositRow = h('div', { class: 'row mx-row' },
-        h('div', { class: 'row-label' }, 'Deposit', depositHint, receivedBox('merch', 'Merch deposit')),
+        h('div', { class: 'row-label' }, 'Deposit', depositHint),
         depositAmt);
       function updateDeposit() {
         var due = G.merchDue({ income: draft, merchCash: merchCash, merchCardDeposit: merchCardDeposit });
@@ -5741,14 +5741,14 @@
           var avBtn = h('button', { class: 'av-bubble', type: 'button', 'aria-label': 'atVenu: upload or refresh',
             onclick: function () { avMenu.hidden = !avMenu.hidden; } },
             h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }));
+          // Typed by hand like every other line, or filled from atVenu.
+          // Received: ticked by hand when the deposit isn't spotted on its own.
           rows.push(h('div', { class: 'row mx-head' },
-            h('span', { class: 'row-label' }, 'Merch'),
-            avReader, avBtn));
+            h('div', { class: 'row-label' },
+              h('label', { for: 'inc-merch' }, 'Merch'),
+              receivedBox('merch', 'Merch deposit')),
+            mkInput, avReader, avBtn));
           rows.push(avMenu);
-          rows.push(h('div', { class: 'row mx-row' },
-            h('label', { class: 'row-label', for: 'inc-merch' }, 'Total net',
-              h('span', { class: 'hint' }, 'What the band keeps')),
-            mkInput));
           rows.push(h('div', { class: 'row mx-row' },
             h('label', { class: 'row-label', for: 'inc-merch-cash' }, 'Cash',
               h('span', { class: 'hint' }, 'Cash from the show, on hand')),
