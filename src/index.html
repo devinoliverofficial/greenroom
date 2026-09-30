@@ -993,7 +993,7 @@ span.avatar { cursor: inherit; }
 .cc-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .cc-bank { padding: 2px 7px; border-radius: 999px; border: 1px solid color-mix(in oklab, var(--pos), transparent 55%);
   color: var(--pos); font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-.rv-card { margin: -2px 0 6px; font-size: 13px; font-weight: 700; letter-spacing: .03em; color: var(--pos); }
+.rv-card { margin: -2px 44px 6px 0; font-size: 13px; font-weight: 700; letter-spacing: .03em; color: var(--pos); }
 .wn-sec { margin-top: 16px; }
 .wn-h { display: flex; align-items: center; gap: 4px; margin: 0 0 6px; font-size: 13px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); }
 button.row.wn-row { appearance: none; width: 100%; border: 0; background: none; font: inherit; color: inherit;
@@ -1444,6 +1444,25 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
   border: 1px solid var(--line); border-radius: 14px; background: var(--surface);
 }
 .rv-row.off { opacity: .5; }
+.rv-row.on { border-color: color-mix(in oklab, var(--pos), transparent 45%); background: color-mix(in oklab, var(--pos) 6%, var(--surface)); }
+/* The review's toolbar rides the top of the sheet: check all, a category for
+   everything checked, and ADD. */
+.rv-tools { position: sticky; top: -22px; z-index: 2; margin: 0 -18px 10px; padding: 10px 18px 10px;
+  background: var(--bg); border-bottom: 1px solid var(--line); }
+.rv-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.rv-all { display: flex; align-items: center; gap: 9px; font-size: 15px; font-weight: 700; cursor: pointer; }
+.rv-all .rv-check { margin: 0; }
+.rv-addall { min-width: 96px; font-weight: 800; letter-spacing: .04em; }
+.rv-chips { display: flex; gap: 7px; margin-top: 10px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.rv-chips::-webkit-scrollbar { display: none; }
+.rv-chip { flex: none; appearance: none; border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  color: var(--ink); font: inherit; font-size: 13px; font-weight: 650; padding: 7px 12px; cursor: pointer; }
+.rv-chip:active { background: var(--pos-soft); border-color: var(--pos); color: var(--pos); }
+.rv-act { display: flex; align-items: center; gap: 8px; }
+.rv-act .catpick { flex: 1; min-width: 0; }
+.rv-act .catpick select, .rv-act .catpick input { width: 100%; }
+.rv-add1 { flex: none; min-width: 64px; }
+.rv-aside { justify-self: start; font-size: 12.5px; color: var(--ink-3); }
 .rv-check { flex: none; width: 22px; height: 22px; margin: 9px 0 0; accent-color: var(--brand); }
 .rv-fields { flex: 1; min-width: 0; display: grid; gap: 8px; }
 .rv-line { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr); gap: 8px; }

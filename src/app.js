@@ -9230,194 +9230,182 @@
     return holder;
   }
 
+  /* Review charges before they go on the tour, from the card feed (one card
+     at a time) or a statement, oldest first. Check charges, tap a category to
+     sort them all at once, then ADD; or sort and Add each one on its own.
+     From the feed, anything not added stays in the pile for later, and "Set
+     aside" drops a charge that isn't the tour's. */
   function openImportReview(tourId, rows, source, opts) {
     var importId = newId();
-    // Oldest charge first, newest last, whether from the cards or a statement.
     rows.sort(function (a, b) {
       var da = G.parseDay(a.date) ? a.date : '9999', db = G.parseDay(b.date) ? b.date : '9999';
       return da.localeCompare(db);
     });
-    // From the card feed: charges keep the feed's id, and whatever is left
-    // unticked is set aside so it never comes back.
     var feed = !!(opts && opts.feed);
+    rows.forEach(function (r) { r.pick = false; });
+    var live = rows.slice();
+    var busy = false;
+    var cats = G.chargeCategoriesFor(getTour(tourId)).filter(function (c) { return c.key !== 'commission'; });
 
-    function counts() {
-      var n = 0, total = 0;
-      rows.forEach(function (r) {
-        if (!r.keep) return;
-        n += 1;
-        if (!r.accounted) total += G.num(r.amount);
-      });
-      return { n: n, total: total };
-    }
-
-    async function save() {
-      var missing = rows.filter(function (r) { return r.keep && !r.category; });
-      if (missing.length) {
-        toast('Pick a category for each charge you’re adding');
-        return;
+    // Add these charges to the tour (keep), or set them aside (feed only).
+    async function file(list, keep) {
+      if (busy || !list.length) return;
+      if (keep) {
+        var missing = list.filter(function (r) { return !r.category; });
+        if (missing.length) {
+          toast(list.length === 1 ? 'Pick a category first' : 'Pick a category for ' + plural(missing.length, 'checked charge'));
+          return;
+        }
       }
-      var chosen = rows.filter(function (r) { return r.keep; });
-      if (!chosen.length && !feed) { toast('Pick at least one charge'); return; }
-      if (feed) { await saveFeed(); return; }
-
-      var patch = {};
-      var total = 0;
-      chosen.forEach(function (r, i) {
-        // Only ever these four fields: no card numbers, no raw text, no file names.
-        patch[newId() + i] = {
-          date: r.date, merchant: r.merchant, amount: G.num(r.amount),
-          category: r.category, accounted: !!r.accounted,
-          importId: importId, createdAt: Date.now() + i
-        };
-        if (!r.accounted) total += G.num(r.amount);
-      });
-      var imports = {};
-      imports[importId] = { createdAt: Date.now(), count: chosen.length, total: total, source: source };
-
-      if (!(await api.update(tourId, { charges: patch, imports: imports }))) return;
-      for (var i = 0; i < chosen.length; i++) await writeLabel(chosen[i].merchant, chosen[i].category);
-      closeSheet();
-      toast(plural(chosen.length, 'charge') + ' added, ' + G.moneyCents(total));
-      render(true);
-    }
-
-    async function saveFeed() {
-      var B = window.GR_BACKEND;
-      var picks = rows.map(function (r) {
-        return { id: r.feedId, keep: !!r.keep, category: r.keep ? r.category : null, accounted: !!r.accounted };
-      });
-      var r = null;
-      try { r = await B.feedCall('file', { tourId: tourId, picks: picks }); } catch (e) { r = null; }
-      if (!r || !r.ok) {
-        toast(r && r.error === 'not_allowed' ? 'Only the tour manager can sort card charges.' : 'Couldn\u2019t save that. Try again.');
-        return;
-      }
-      if (S.pile && S.pile[tourId] && S.pile[tourId].lead) await loadPile(tourId);
-      var said = [];
-      if (r.filed) said.push(plural(r.filed, 'charge') + ' added, ' + G.moneyCents(r.total));
-      if (r.skipped) said.push(r.skipped + ' set aside');
-      if (r.already) said.push(plural(r.already, 'charge') + ' already sorted by someone else');
-      closeSheet();
-      toast(said.join(' \u00b7 ') || 'Nothing to save');
-      render(true);
-      if (opts && opts.next) setTimeout(opts.next, 380);
-    }
-
-    openSheet(function () {
-      var saveBtn = h('button', { class: 'btn primary block', type: 'button', onclick: save }, '');
-      function refresh() {
-        var c = counts();
-        saveBtn.textContent = (c.n ? 'Add ' + plural(c.n, 'charge') + ' · ' + G.moneyCents(c.total)
-          : (feed ? 'Set ' + (rows.length === 1 ? 'it' : 'all ' + rows.length) + ' aside' : 'Pick the charges to add')) +
-          (opts && opts.next ? ' \u2192 next card' : '');
-        saveBtn.disabled = !c.n && !feed;
-      }
-
-      function chargeRow(r) {
-        var wrap = h('div', { class: 'rv-row' + (r.keep ? '' : ' off') });
-        var cb = h('input', {
-          type: 'checkbox', class: 'rv-check', 'aria-label': 'Add ' + r.merchant,
-          onchange: function (e) { r.keep = e.target.checked; wrap.classList.toggle('off', !r.keep); refresh(); }
-        });
-        cb.checked = r.keep;
-
-        var sel = categorySelect(tourId, {
-          value: r.category || '', aria: 'Category for ' + r.merchant,
-          onPick: function (v) {
-            r.category = v;
-            r.source = v ? 'chosen' : null;
-            var tagEl = $('.rv-flag', wrap);
-            if (tagEl) tagEl.remove();
-            refresh();
+      busy = true;
+      var said = '';
+      try {
+        if (feed) {
+          var B = window.GR_BACKEND, r = null;
+          try {
+            r = await B.feedCall('file', { tourId: tourId, picks: list.map(function (x) {
+              return { id: x.feedId, keep: keep, category: keep ? x.category : null, accounted: false };
+            }) });
+          } catch (e) { r = null; }
+          if (!r || !r.ok) {
+            toast(r && r.error === 'not_allowed' ? 'Only the tour manager can sort card charges.' : 'Couldn’t save that. Try again.');
+            return;
           }
-        });
+          if (S.pile && S.pile[tourId] && S.pile[tourId].lead) await loadPile(tourId);
+          var bits = [];
+          if (r.filed) bits.push(plural(r.filed, 'charge') + ' added, ' + G.moneyCents(r.total));
+          if (r.skipped) bits.push(plural(r.skipped, 'charge') + ' set aside');
+          if (r.already) bits.push(plural(r.already, 'charge') + ' already sorted by someone else');
+          said = bits.join(' · ');
+        } else {
+          var patch = {}, total = 0;
+          list.forEach(function (x, i) {
+            // Only ever these fields: no card numbers, no raw text, no file names.
+            patch[newId() + i] = { date: x.date, merchant: x.merchant, amount: G.num(x.amount), category: x.category,
+              accounted: false, importId: importId, createdAt: Date.now() + i };
+            total += G.num(x.amount);
+          });
+          var prev = (G.isObj(getTour(tourId).imports) ? getTour(tourId).imports : {})[importId];
+          var imports = {};
+          imports[importId] = { createdAt: prev ? prev.createdAt : Date.now(), count: (prev ? G.num(prev.count) : 0) + list.length,
+            total: (prev ? G.num(prev.total) : 0) + total, source: source };
+          if (!(await api.update(tourId, { charges: patch, imports: imports }))) return;
+          for (var i = 0; i < list.length; i++) await writeLabel(list[i].merchant, list[i].category);
+          said = plural(list.length, 'charge') + ' added, ' + G.moneyCents(total);
+        }
+      } finally { busy = false; }
+      live = live.filter(function (x) { return list.indexOf(x) < 0; });
+      toast(said);
+      render(true);
+      if (!live.length) {
+        closeSheet();
+        if (opts && opts.next) setTimeout(opts.next, 380);
+      } else draw();
+    }
 
-        // Some charges are already in the budget as money paid. Saying yes
-        // files the charge without counting it a second time.
-        var already = h('div', { class: 'rv-acc' },
-          h('span', { class: 'rv-acc-q' }, 'Already accounted for?'),
-          segmented(['No', 'Yes'], r.accounted ? 1 : 0, function (i) {
-            r.accounted = i === 1;
-            wrap.classList.toggle('accounted', r.accounted);
-            refresh();
-          }, 'Is this charge already accounted for?'));
+    var title = h('h2', { class: 'sh-title' });
+    var allBox = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check all',
+      onchange: function (e) { live.forEach(function (r) { r.pick = e.target.checked; }); draw(); } });
+    var addTop = h('button', { class: 'btn primary sm rv-addall', type: 'button',
+      onclick: function () { file(live.filter(function (r) { return r.pick; }), true); } }, 'ADD');
+    var chips = h('div', { class: 'rv-chips', role: 'group', 'aria-label': 'Sort the checked charges' }, cats.map(function (c) {
+      return h('button', { class: 'rv-chip', type: 'button', onclick: function () {
+        var picked = live.filter(function (r) { return r.pick; });
+        if (!picked.length) { toast('Check the charges first, then tap a category'); return; }
+        picked.forEach(function (r) { r.category = c.key; r.source = 'chosen'; });
+        draw();
+        toast(plural(picked.length, 'charge') + ' → ' + c.label);
+      } }, c.label);
+    }));
+    var tools = h('div', { class: 'rv-tools' },
+      h('div', { class: 'rv-bar' },
+        h('label', { class: 'rv-all' }, allBox, h('span', null, 'Check all')),
+        addTop),
+      chips);
+    var listHost = h('div');
 
-        wrap.append(cb, h('div', { class: 'rv-fields' },
-          h('div', { class: 'rv-head' },
-            h('span', { class: 'rv-name' }, r.merchant),
-            h('span', { class: 'amt num' }, G.moneyCents(r.amount))),
-          h('div', { class: 'rv-sub' }, dayMD(r.date),
-            r.why ? h('span', { class: 'rv-flag' + (r.why === 'Refund' ? ' learned' : '') }, r.why) : null,
-            (r.source === 'learned' && !r.why) ? h('span', { class: 'rv-flag learned' }, 'Learned') : null,
-            r.source === 'suggested' ? h('span', { class: 'rv-flag' }, 'Suggested') : null),
-          sel, already));
-        return wrap;
-      }
+    function refreshBar() {
+      var picked = live.filter(function (r) { return r.pick; });
+      var total = picked.reduce(function (n, r) { return n + G.num(r.amount); }, 0);
+      allBox.checked = live.length > 0 && picked.length === live.length;
+      allBox.indeterminate = picked.length > 0 && picked.length < live.length;
+      addTop.textContent = picked.length ? 'ADD ' + picked.length + ' · ' + G.moneyCents(total) : 'ADD';
+      addTop.disabled = !picked.length;
+      title.textContent = feed
+        ? plural(live.length, 'card charge') + (live.length === 1 ? ' needs' : ' need') + ' a look'
+        : 'Found ' + plural(live.length, 'charge');
+    }
 
-      var groups = GRS.groupForReview(rows.map(function (r) {
-        return Object.assign({}, r, { category: r.category || null });
-      }));
-      // Work against the live rows, not the copies the grouping made.
-      var needs = rows.filter(function (r) { return !r.duplicate && !r.preCutoff && !r.category; });
-      var filled = rows.filter(function (r) { return !r.duplicate && !r.preCutoff && r.category; });
-      var already = rows.filter(function (r) { return r.duplicate; });
-      var before = rows.filter(function (r) { return r.preCutoff && !r.duplicate; });
+    function chargeRow(r) {
+      var wrap = h('div', { class: 'rv-row' + (r.pick ? ' on' : '') });
+      var cb = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check ' + r.merchant,
+        onchange: function (e) { r.pick = e.target.checked; wrap.classList.toggle('on', r.pick); refreshBar(); } });
+      cb.checked = !!r.pick;
+      var sel = categorySelect(tourId, {
+        value: r.category || '', aria: 'Category for ' + r.merchant,
+        onPick: function (v) { r.category = v; r.source = v ? 'chosen' : null; var f = $('.rv-flag.learned', wrap); if (f) f.remove(); }
+      });
+      wrap.append(cb, h('div', { class: 'rv-fields' },
+        h('div', { class: 'rv-head' },
+          h('span', { class: 'rv-name' }, r.merchant),
+          h('span', { class: 'amt num' }, G.moneyCents(r.amount))),
+        h('div', { class: 'rv-sub' }, dayMD(r.date),
+          r.why ? h('span', { class: 'rv-flag' + (r.why === 'Refund' ? ' learned' : '') }, r.why) : null,
+          (r.source === 'learned' && !r.why) ? h('span', { class: 'rv-flag learned' }, 'Learned') : null,
+          r.source === 'suggested' ? h('span', { class: 'rv-flag' }, 'Suggested') : null),
+        h('div', { class: 'rv-act' }, sel,
+          h('button', { class: 'btn sm primary rv-add1', type: 'button', onclick: function () { file([r], true); } }, 'Add')),
+        feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false); } },
+          'Not a tour charge — set it aside') : null));
+      return wrap;
+    }
 
-      var body = [];
-      if (needs.length) {
-        body.push(h('h3', { class: 'sh-h3' }, 'Needs a label'));
-        body.push(h('p', { class: 'sh-sub' }, 'Pick where each of these belongs. Greenroom remembers for next time.'));
-        body.push(h('div', { class: 'review' }, needs.map(chargeRow)));
-      }
-      if (filled.length) {
-        body.push(h('h3', { class: 'sh-h3' }, 'Filled in'));
-        body.push(h('div', { class: 'review' }, filled.map(chargeRow)));
-      }
+    // Statements only: charges already imported, or from before the tour
+    // (already inside a card balance going in), wait folded away.
+    var openBefore = false, openDup = false;
+    function draw() {
+      var main = live.filter(function (r) { return !r.duplicate && !r.preCutoff; });
+      var before = live.filter(function (r) { return r.preCutoff && !r.duplicate; });
+      var dup = live.filter(function (r) { return r.duplicate; });
+      var kids = [h('div', { class: 'review' }, main.map(chargeRow))];
       if (before.length) {
         var t2 = getTour(tourId);
-        var cardNames = G.cardDebts(t2).map(function (c) { return c.label || 'your card'; });
-        var whose = cardNames.length === 1 ? 'the ' + cardNames[0] + ' balance' : 'the card balance';
-        var beforeList = h('div', { class: 'review', hidden: true }, before.map(chargeRow));
-        body.push(h('button', {
-          class: 'btn quiet block', type: 'button', style: 'margin-top:18px',
-          onclick: function (e) {
-            beforeList.hidden = !beforeList.hidden;
-            e.currentTarget.textContent = (beforeList.hidden ? 'Show ' : 'Hide ') +
-              plural(before.length, 'charge') + ' from before the tour started';
-          }
-        }, 'Show ' + plural(before.length, 'charge') + ' from before the tour started'));
-        body.push(h('p', { class: 'note' },
-          'These are already inside ' + whose + ' you entered, so adding them would count the money twice. Tick one only if it isn’t.'));
-        body.push(beforeList);
+        var names = G.cardDebts(t2).map(function (c) { return c.label || 'your card'; });
+        kids.push(h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:18px',
+          onclick: function () { openBefore = !openBefore; draw(); } },
+          (openBefore ? 'Hide ' : 'Show ') + plural(before.length, 'charge') + ' from before the tour started'));
+        if (openBefore) {
+          kids.push(h('p', { class: 'note' }, 'These are already inside ' + (names.length === 1 ? 'the ' + names[0] + ' balance' : 'the card balance') +
+            ' you entered, so adding them would count the money twice. Add one only if it isn’t.'));
+          kids.push(h('div', { class: 'review' }, before.map(chargeRow)));
+        }
       }
-      if (already.length) {
-        var alreadyList = h('div', { class: 'review', hidden: true }, already.map(chargeRow));
-        body.push(h('button', {
-          class: 'btn quiet block', type: 'button', style: 'margin-top:18px',
-          onclick: function (e) {
-            alreadyList.hidden = !alreadyList.hidden;
-            e.currentTarget.textContent = (alreadyList.hidden ? 'Show ' : 'Hide ') +
-              plural(already.length, 'charge') + ' already imported';
-          }
-        }, 'Show ' + plural(already.length, 'charge') + ' already imported'));
-        body.push(alreadyList);
+      if (dup.length) {
+        kids.push(h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:18px',
+          onclick: function () { openDup = !openDup; draw(); } },
+          (openDup ? 'Hide ' : 'Show ') + plural(dup.length, 'charge') + ' already imported'));
+        if (openDup) kids.push(h('div', { class: 'review' }, dup.map(chargeRow)));
       }
-      refresh();
+      listHost.replaceChildren.apply(listHost, kids);
+      refreshBar();
+    }
+    draw();
 
+    openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, feed
-          ? plural(rows.length, 'card charge') + (rows.length === 1 ? ' needs' : ' need') + ' a look'
-          : 'Found ' + plural(rows.length, 'charge')),
-        opts && opts.card ? h('p', { class: 'rv-card' }, (opts.steps > 1 ? 'Card ' + opts.step + ' of ' + opts.steps + ' \u00b7 ' : '') +
-          opts.card + ' \u00b7 oldest first') : null,
+        opts && opts.card ? h('p', { class: 'rv-card' }, (opts.steps > 1 ? 'Card ' + opts.step + ' of ' + opts.steps + ' · ' : '') +
+          opts.card + ' · oldest first') : null,
+        title,
         h('p', { class: 'sh-sub' }, feed
-          ? 'From the card feed. Tick the ones that belong to this tour. Anything you leave unticked is set aside for good.'
-          : 'Tick the ones that belong to this tour. Nothing you leave unticked is saved.'),
-        body,
-        h('div', { class: 'stack' }, saveBtn,
+          ? 'Check charges and tap a category to sort them all, then ADD. Or sort and Add them one at a time. Anything you don’t add stays here for later.'
+          : 'Check charges and tap a category to sort them all, then ADD. Or sort and Add them one at a time. Nothing you don’t add is saved.'),
+        tools,
+        listHost,
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          opts && opts.next ? h('button', { class: 'btn quiet block', type: 'button',
+            onclick: function () { closeSheet(); setTimeout(opts.next, 380); } }, 'Next card →') : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } },
-            feed ? 'Not now' : 'Cancel'))
+            feed ? 'Not now' : 'Done'))
       ];
     }, { label: 'Review card charges' });
   }
