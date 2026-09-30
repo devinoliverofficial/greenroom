@@ -96,6 +96,40 @@ shim = r"""<script>
       'Guitar Tech', 'Drum Tech', 'Assistant', 'FOH Engineer', 'Monitors', 'Friend', 'Family Member', 'Liaison', 'Dancer'],
     email: function () { return 'devin@example.com'; },
     uid: function () { return 'u-devin'; },
+    // Crew Stats and the game ball, in memory.
+    statsFor: function (tourId) {
+      return (window.__harness.stats || []).filter(function (x) { return x.tour_id === tourId; })
+        .map(function (x) { return { id: x.id, person: x.person, stat: x.stat, day: x.day, mine: x.added_by === 'u-devin', at: x.created_at }; });
+    },
+    checkIn: function (tourId, date) {
+      var H = window.__harness;
+      var have = (H.stats || []).some(function (x) { return x.tour_id === tourId && x.stat === 'checkin' && x.day === date && x.person === 'owner'; });
+      if (!have) H.stats = (H.stats || []).concat([{ id: 'ci' + Date.now(), tour_id: tourId, person: 'owner', stat: 'checkin', day: date, added_by: 'u-devin', created_at: new Date().toISOString() }]);
+      return Promise.resolve();
+    },
+    addStat: function (tourId, person, stat) {
+      var H = window.__harness, id = 'st' + Date.now() + Math.random().toString(36).slice(2, 5);
+      H.stats = (H.stats || []).concat([{ id: id, tour_id: tourId, person: person, stat: stat, added_by: 'u-devin', created_at: new Date().toISOString() }]);
+      return Promise.resolve(id);
+    },
+    removeStat: function (id) { window.__harness.stats = (window.__harness.stats || []).filter(function (x) { return x.id !== id; }); return Promise.resolve(); },
+    gameBall: function (tourId) {
+      var H = window.__harness;
+      return { rounds: (H.rounds || []).filter(function (g) { return g.tour_id === tourId; }).map(function (g) {
+          return { round: g.round, opensAt: g.opens_at, closesAt: g.closes_at, status: g.status, winner: g.winner, reason: g.winner_reason }; }),
+        votes: (H.gbVotes || []).filter(function (v) { return v.tour_id === tourId; }).map(function (v) {
+          return { round: v.round, voter: v.voter, voterName: v.voter_name, person: v.person, reason: v.reason, mine: v.voter === 'u-devin' }; }) };
+    },
+    voteGameBall: function (tourId, round, person, reason) {
+      var H = window.__harness;
+      H.gbVotes = (H.gbVotes || []).filter(function (v) { return !(v.tour_id === tourId && v.round === round && v.voter === 'u-devin'); });
+      H.gbVotes.push({ tour_id: tourId, round: round, voter: 'u-devin', voter_name: 'Devin Oliver', person: person, reason: reason });
+      return Promise.resolve();
+    },
+    callGameBall: function (tourId, round, person, reason) {
+      (window.__harness.rounds || []).forEach(function (g) { if (g.tour_id === tourId && g.round === round) { g.status = 'won'; g.winner = person; g.winner_reason = reason; } });
+      return Promise.resolve();
+    },
     // The calendar, in memory: polls, votes, special requests.
     pollFor: function (tourId, date) {
       var p = (window.__harness.polls || []).filter(function (x) { return x.tour_id === tourId && x.date === date; })[0];

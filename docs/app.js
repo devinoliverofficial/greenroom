@@ -108,6 +108,7 @@
     tabmap: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>',
     tabguest: '<circle cx="9" cy="8" r="3.4"/><path d="M3.5 20c.6-3.4 2.9-5.2 5.5-5.2s4.9 1.8 5.5 5.2"/><path d="M17 9h5M19.5 6.5v5"/>',
     tabcost: '<path d="M4 20V10M10 20V5M16 20v-7M22 20H2"/>',
+    tabstats: '<path d="M8 4h8v5a4 4 0 0 1-8 0V4z"/><path d="M8 6H5.5a2.5 2.5 0 0 0 2.6 3.6M16 6h2.5a2.5 2.5 0 0 1-2.6 3.6M12 13v4M8.5 20.5h7M10 17h4"/>',
     tabchat: '<path d="M21 11.5c0 3.6-4 6.5-9 6.5-1.1 0-2.1-.13-3-.37L4 20l1.5-3.4C4.1 15.4 3 13.6 3 11.5 3 7.9 7 5 12 5s9 2.9 9 6.5z"/>',
     bell: '<path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16l-2-3z"/><path d="M10.5 21a2.2 2.2 0 0 0 3 0"/>',
     calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
@@ -3015,6 +3016,7 @@
     { view: 'day', label: 'Day sheet', icon: 'tabsheet' },
     { view: 'costs', label: 'Expenses', icon: 'tabcost' },
     { view: 'guests', label: 'Guest list', icon: 'tabguest' },
+    { view: 'stats', label: 'Crew Stats', icon: 'tabstats' },
     { view: 'chat', label: 'Chat', icon: 'tabchat' }
   ];
 
@@ -3029,7 +3031,7 @@
         return h('button', {
           class: 'tabbar-b' + (on ? ' on' : ''), type: 'button',
           'aria-current': on ? 'page' : null,
-          onclick: function () { if (!on) go({ name: 'tour', id: id, view: t.view }); }
+          onclick: function () { if (!on || (S.route.view || 'details') !== t.view) go({ name: 'tour', id: id, view: t.view }); }
         }, icon(t.icon, 23), h('span', null, t.label));
       }));
   }
@@ -3429,6 +3431,7 @@
     }
     if (view === 'chat') return viewTourChat(id, t);
     if (view === 'calendar') return viewCalendar(id, t);
+    if (view === 'stats') return viewStats(id, t);
     var c = G.calc(t);
     if (view === 'costs') {
       return h('div', { class: 'page tour has-tabs' },
@@ -3662,8 +3665,10 @@
       }));
       requestAnimationFrame(sizeColumns);
     }
+    var ball = gameBallHolder(tourId);
     function crewRow(m) {
       var title = m.name || m.username || m.email;
+      if (ball && ball.winner === personKey(m)) title = title + ' \ud83c\udfc8';
       // Invited but no account yet: "Pending", and no contact buttons until
       // they sign up and their own card fills in.
       var pending = !m.joined;
@@ -4091,6 +4096,202 @@
     }, dateBlock(s.date), whereBlock(s), right));
   }
 
+  /* ============================== Crew Stats ==============================
+     The fun side of the tour, one column per person. Anyone adds beers and
+     joints; the tour manager adds the rest. The game ball is voted on after
+     the first show, every week, and after the last show. */
+  var STATS = [
+    { key: 'laminate', label: 'Laminates lost', emoji: '🪪' },
+    { key: 'beer', label: 'Beers', emoji: '🍺', anyone: true },
+    { key: 'late', label: 'Late to soundcheck', emoji: '⏰' },
+    { key: 'bus', label: 'Bus cleans', emoji: '🧽' },
+    { key: 'joint', label: 'Joints', emoji: '🌿', anyone: true },
+    { key: 'checkin', label: 'Check In’s', emoji: '✅', self: true }
+  ];
+  function personKey(m) { return m.owner ? 'owner' : 'e:' + String(m.invitedEmail || m.email || '').toLowerCase(); }
+  function firstName(m) { return String(m.name || m.username || m.email || 'Crew').trim().split(/\s+/)[0]; }
+  // Who holds the game ball: the latest round with a winner.
+  function gameBallHolder(id) {
+    var B = window.GR_BACKEND;
+    var gb = B && B.gameBall ? B.gameBall(id) : { rounds: [] };
+    var won = gb.rounds.filter(function (g) { return g.status === 'won' && g.winner; })
+      .sort(function (a, b) { return String(b.round).localeCompare(String(a.round)); });
+    return won[0] || null;
+  }
+  // The vote days: the first show, every 7 days after, and the last show.
+  function gameBallDays(t) {
+    var d = G.rows(t && t.shows).map(function (s) { return s.date; }).filter(G.parseDay).sort();
+    if (!d.length) return [];
+    var out = [];
+    for (var r = d[0]; r <= d[d.length - 1]; r = G.addDays(r, 7)) out.push(r);
+    if (out.indexOf(d[d.length - 1]) < 0) out.push(d[d.length - 1]);
+    return out;
+  }
+  function toastUndo(msg, undo) {
+    var root = $('#toast');
+    var t = h('div', { class: 't t-undo' }, h('span', null, msg),
+      h('button', { class: 'linkbtn', type: 'button', onclick: function () { t.classList.remove('is-on'); undo(); } }, 'Undo'));
+    root.replaceChildren(t);
+    requestAnimationFrame(function () { t.classList.add('is-on'); });
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove('is-on'); }, 5000);
+  }
+
+  function viewStats(id, t) {
+    var B = window.GR_BACKEND;
+    var body = h('div', { class: 'stats-body' }, h('p', { class: 'note' }, 'Loading the crew…'));
+    function draw(crew) {
+      var people = crew.map(function (m) { return { key: personKey(m), name: m.name || m.username || m.email || 'Crew', first: firstName(m) }; });
+      var stats = B && B.statsFor ? B.statsFor(id) : [];
+      var gb = B && B.gameBall ? B.gameBall(id) : { rounds: [], votes: [] };
+      var holder = gameBallHolder(id);
+      var nameOf = function (k) { var p = people.filter(function (x) { return x.key === k; })[0]; return p ? p.name : 'Someone'; };
+      var count = function (k, stat) { return stats.filter(function (x) { return x.person === k && x.stat === stat; }).length; };
+      var balls = function (k) { return gb.rounds.filter(function (g) { return g.status === 'won' && g.winner === k; }).length; };
+      var owner = canEditTour(id);
+
+      // The game ball, up top.
+      var parts = [];
+      var open = gb.rounds.filter(function (g) { return g.status === 'open' && Date.parse(g.closesAt) > Date.now(); })[0];
+      var tie = gb.rounds.filter(function (g) { return g.status === 'tie'; })[0];
+      parts.push(h('div', { class: 'gb-card' },
+        h('div', { class: 'gb-ball', 'aria-hidden': 'true' }, '🏈'),
+        h('div', { class: 'gb-text' },
+          holder ? [h('div', { class: 'gb-who' }, nameOf(holder.winner) + ' has the game ball'),
+            holder.reason ? h('div', { class: 'gb-why' }, '“' + holder.reason + '”') : null]
+            : [h('div', { class: 'gb-who' }, 'No game ball yet'),
+              h('div', { class: 'gb-why' }, (function () {
+                var days = gameBallDays(t); var today = G.tourToday();
+                var next = days.filter(function (d) { return d >= today; })[0];
+                return next ? 'The first vote opens ' + dayLong(next) + ', the night of the show.' : 'Add shows and the votes line up.';
+              })())])));
+      if (open) {
+        var mine = gb.votes.filter(function (v) { return v.round === open.round && v.mine; })[0];
+        parts.push(h('button', { class: 'btn primary block gb-vote' + (mine ? ' voted' : ''), type: 'button',
+          onclick: function () { openGameBallVote(id, open, people); } },
+          mine ? 'You voted for ' + nameOf(mine.person) + ' · change' : '🏈 Vote for the game ball'),
+          h('p', { class: 'note gb-note' }, 'Voting closes ' + closesText(open.closesAt) + '.'));
+      }
+      if (tie) {
+        var tv = gb.votes.filter(function (v) { return v.round === tie.round; });
+        var tally = {}; tv.forEach(function (v) { tally[v.person] = (tally[v.person] || 0) + 1; });
+        var top = Math.max.apply(null, [0].concat(Object.keys(tally).map(function (k) { return tally[k]; })));
+        var tied = Object.keys(tally).filter(function (k) { return tally[k] === top; });
+        parts.push(h('div', { class: 'gb-tie' },
+          h('p', { class: 'note' }, 'It’s a tie for ' + dayMD(tie.round) + '’s game ball. ' + (owner ? 'Make the call:' : 'The tour manager makes the call.')),
+          owner ? h('div', { class: 'btnrow' }, tied.map(function (k) {
+            var why = (tv.filter(function (v) { return v.person === k; })[0] || {}).reason || '';
+            return h('button', { class: 'btn quiet sm', type: 'button', onclick: async function () {
+              try { await B.callGameBall(id, tie.round, k, why); toast('🏈 ' + nameOf(k) + ' gets the game ball'); }
+              catch (x) { toast('Couldn’t do that. Try again.'); }
+              render(true);
+            } }, nameOf(k));
+          })) : null));
+      }
+
+      // The table: one row per stat, one column per person.
+      var head = h('tr', null, h('th', { class: 'st-corner' }, ''), people.map(function (p) {
+        return h('th', { scope: 'col' }, p.first, holder && holder.winner === p.key ? h('span', { class: 'gb-mark', 'aria-label': 'has the game ball' }, ' 🏈') : null);
+      }));
+      var rowsEls = STATS.map(function (st) {
+        return h('tr', null, h('th', { scope: 'row' }, h('span', { class: 'st-emoji', 'aria-hidden': 'true' }, st.emoji), st.label),
+          people.map(function (p) {
+            var n = count(p.key, st.key);
+            if (st.self) return h('td', null, h('span', { class: 'st-cell counted', 'aria-label': st.label + ' for ' + p.name + ': ' + n }, String(n)));
+            var can = st.anyone || owner;
+            return h('td', null, h('button', { class: 'st-cell' + (can ? '' : ' locked'), type: 'button',
+              'aria-label': st.label + ' for ' + p.name + ': ' + n + (can ? '. Tap to add one.' : ''),
+              onclick: async function () {
+                if (!can) { toast('Only the tour manager adds ' + st.label.toLowerCase() + '.'); return; }
+                var newId = null;
+                try { newId = await B.addStat(id, p.key, st.key); }
+                catch (x) { toast('Couldn’t add that. Try again.'); return; }
+                render(true);
+                toastUndo(st.emoji + ' +1 for ' + p.first + ' (' + (n + 1) + ')', async function () {
+                  if (!newId) return;
+                  try { await B.removeStat(newId); } catch (x) { toast('Couldn’t undo that.'); }
+                  render(true);
+                });
+              } }, String(n)));
+          }));
+      });
+      rowsEls.push(h('tr', { class: 'st-balls' }, h('th', { scope: 'row' }, h('span', { class: 'st-emoji', 'aria-hidden': 'true' }, '🏈'), 'Game balls'),
+        people.map(function (p) { return h('td', null, h('span', { class: 'st-cell' }, String(balls(p.key)))); })));
+      parts.push(people.length
+        ? h('div', { class: 'stats-wrap' }, h('table', { class: 'stats' }, h('thead', null, head), h('tbody', null, rowsEls)))
+        : h('p', { class: 'note' }, 'Invite the crew from the Overview and they show up here.'));
+      parts.push(h('p', { class: 'note' }, 'Tap a number to add one. Anyone can add beers and joints; the tour manager adds the rest. ' +
+        'Check In’s count each time someone checks in on a day sheet. ' +
+        'The game ball is voted on after the first show, every week, and after the last show.'));
+
+      // Past votes, everyone's picks and why.
+      var past = gb.rounds.filter(function (g) { return g.status !== 'open'; }).sort(function (a, b) { return String(b.round).localeCompare(String(a.round)); });
+      if (past.length) {
+        parts.push(h('h3', { class: 'sh-h3' }, 'Game ball history'), h('div', { class: 'ledger' }, past.map(function (g) {
+          var vs = gb.votes.filter(function (v) { return v.round === g.round; });
+          return h('div', { class: 'row' }, h('div', { class: 'row-label' },
+            dayMD(g.round) + ' · ' + (g.winner ? nameOf(g.winner) : g.status === 'tie' ? 'Tie' : 'No votes'),
+            h('span', { class: 'hint' }, vs.length ? vs.map(function (v) { return v.voterName + ' → ' + nameOf(v.person) + ': “' + v.reason + '”'; }).join(' · ') : 'Nobody voted')));
+        })));
+      }
+      body.replaceChildren.apply(body, parts);
+    }
+    S.crewCache = S.crewCache || {};
+    var cached = S.crewCache[id];
+    if (cached) draw(cached.rows);
+    if (B && B.crew && S.mode === 'db' && (!cached || Date.now() - cached.at > 60e3)) {
+      B.crew(id).then(function (rows) { S.crewCache[id] = { rows: rows, at: Date.now() }; draw(rows); })
+        .catch(function () { if (!cached) body.replaceChildren(h('p', { class: 'note' }, 'Couldn’t load the crew.')); });
+    }
+    return h('div', { class: 'page tour has-tabs' },
+      h('div', { class: 'headband' },
+        tourTopbar(t, id, 'stats'),
+        h('h1', { class: 'tour-title' }, 'Crew Stats')),
+      dbBanner(),
+      body,
+      tourTabs(id, 'stats'));
+  }
+  function openGameBallVote(id, round, people) {
+    var B = window.GR_BACKEND;
+    var gb = B.gameBall(id);
+    var mine = gb.votes.filter(function (v) { return v.round === round.round && v.mine; })[0];
+    var f = { person: mine ? mine.person : '', reason: mine ? mine.reason : '' };
+    var list = h('div', { class: 'ledger poll' });
+    function draw() {
+      var votes = B.gameBall(id).votes.filter(function (v) { return v.round === round.round; });
+      list.replaceChildren.apply(list, people.map(function (p) {
+        var who = votes.filter(function (v) { return v.person === p.key; });
+        return h('button', { class: 'row poll-opt' + (f.person === p.key ? ' mine' : ''), type: 'button',
+          onclick: function () { f.person = p.key; draw(); } },
+          h('span', { class: 'poll-dot' }, f.person === p.key ? icon('check', 14) : null),
+          h('div', { class: 'row-label' }, p.name,
+            h('span', { class: 'hint' }, who.length ? who.map(function (v) { return v.voterName + ': “' + v.reason + '”'; }).join(' · ') : 'No votes yet')),
+          h('span', { class: 'amt num' }, String(who.length)));
+      }));
+    }
+    draw();
+    var why = h('input', { class: 'input', type: 'text', maxlength: 200, autocomplete: 'off', value: f.reason,
+      placeholder: 'Why? e.g. loaded out solo in the rain', 'aria-label': 'Why they get the game ball',
+      oninput: function (e) { f.reason = e.target.value; } });
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, '🏈 Game ball'),
+        h('p', { class: 'sh-sub' }, 'Who earned it, and why? Voting closes ' + closesText(round.closesAt) + '.'),
+        list,
+        field('Why?', why),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+            if (!f.person) { toast('Pick who gets it'); return; }
+            if (!f.reason.trim()) { toast('Say why they earned it'); why.focus(); return; }
+            e.currentTarget.disabled = true;
+            try { await B.voteGameBall(id, round.round, f.person, f.reason); }
+            catch (x) { e.currentTarget.disabled = false; toast(Date.parse(round.closesAt) <= Date.now() ? 'Voting has closed.' : 'Couldn’t vote. Try again.'); return; }
+            closeSheet(); toast('🏈 Vote in'); render(true);
+          } }, mine ? 'Change my vote' : 'Vote'))
+      ];
+    }, { label: 'Game ball vote' });
+  }
+
   /* ============================== Calendar ==============================
      Every day of the run, laid out like the Budget but with no money: show
      days take special requests, days off take a vote. Everyone on the tour
@@ -4124,11 +4325,11 @@
     var reqs = B && B.requestsFor ? B.requestsFor(id, s.date) : [];
     var open = reqs.filter(function (r) { return r.status === 'pending'; }).length;
     return h('li', null, h('div', { class: 'show-row cal-row' + (s.date === today ? ' is-today' : '') },
-      dateBlock(s.date), whereBlock(s),
+      dateBlock(s.date), whereBlock(s), daySheetBtn(id, s.date),
       h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
         'aria-label': 'Special requests for ' + (s.city || 'this show') + (open ? ', ' + open + ' waiting for an answer' : ''),
         onclick: function () { openRequests(id, s); } },
-        'Special requests' + (reqs.length ? ' · ' + reqs.length : ''))));
+        'Special requests')));
   }
   function calOffRow(id, t, date, travel) {
     var off = offDayFor(t, date);
@@ -4157,7 +4358,33 @@
       h('div', { class: 'where' },
         h('div', { class: 'city' }, off.city || (reh ? 'Rehearsal day' : travel ? 'Travel day' : 'Day off')),
         off.hotel ? h('div', { class: 'venue' }, off.hotel) : null),
+      daySheetBtn(id, date),
       right));
+  }
+  /* Check In: at the top of the day sheet, each person's way of saying
+     they've seen the day's info. Once a day, counted in Crew Stats. */
+  function checkInBtn(id, date, hasSheet) {
+    var B = window.GR_BACKEND;
+    if (!hasSheet || !B || !B.checkIn || S.mode !== 'db') return null;
+    var done = B.statsFor(id).some(function (x) { return x.stat === 'checkin' && x.day === date && x.mine; });
+    return h('div', { class: 'ci-wrap' }, h('button', { class: 'ci-btn' + (done ? ' done' : ''), type: 'button', disabled: done,
+      onclick: async function (e) {
+        e.currentTarget.disabled = true;
+        try { await B.checkIn(id, date); toast('✅ Checked in for ' + dayMD(date)); }
+        catch (x) { e.currentTarget.disabled = false; toast('Couldn’t check in. Try again.'); return; }
+        render(true);
+      } }, done ? '✅ Checked in' : 'Check In'));
+  }
+
+  // Straight to that day's day sheet.
+  function daySheetBtn(id, date) {
+    return h('button', { class: 'cal-btn ds-jump', type: 'button', 'aria-label': 'Day sheet for ' + dayMD(date),
+      onclick: function () {
+        var got = overviewDays(getTour(id));
+        var i = got ? got.days.map(function (x) { return x.date; }).indexOf(date) : -1;
+        if (i >= 0) { S.dsIndex = i; S.dsTour = id; }
+        go({ name: 'tour', id: id, view: 'day' });
+      } }, 'Day sheet');
   }
 
   // Voting closes at noon the day before the day off.
@@ -4612,7 +4839,7 @@
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
-    if (only === 'sheet') return [rail, editRow, placeEl, body, copyBtn];
+    if (only === 'sheet') return [checkInBtn(id, entry.date, lines.length > 0), rail, editRow, placeEl, body, copyBtn];
     return [hero, rail, editRow, body, guestBtn, copyBtn];
   }
 

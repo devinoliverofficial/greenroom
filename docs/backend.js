@@ -28,7 +28,8 @@
   var sbMod = null;        // the supabase-js module, for one-off clients
   var resetting = false;   // arrived by a password-reset link
   var session = null;
-  var cache = { tours: new Map(), labels: new Map(), guests: [], notes: [], polls: [], votes: [], requests: [] };
+  var cache = { tours: new Map(), labels: new Map(), guests: [], notes: [], polls: [], votes: [], requests: [],
+    stats: [], rounds: [], gbVotes: [] };
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
 
@@ -90,6 +91,15 @@
     if (!cal[0].error) cache.polls = cal[0].data;
     if (!cal[1].error) cache.votes = cal[1].data;
     if (!cal[2].error) cache.requests = cal[2].data;
+    // Crew Stats and the game ball.
+    var fun = await Promise.all([
+      sb.from('crew_stats').select('*'),
+      sb.from('game_ball_rounds').select('*').order('round'),
+      sb.from('game_ball_votes').select('*')
+    ]);
+    if (!fun[0].error) cache.stats = fun[0].data;
+    if (!fun[1].error) cache.rounds = fun[1].data;
+    if (!fun[2].error) cache.gbVotes = fun[2].data;
     emit('tours'); emit('labels');
   }
   function scheduleRefetch() {
@@ -519,6 +529,54 @@
     },
     deleteRequest: async function (id) {
       var q = await sb.from('day_requests').delete().eq('id', id).select('id');
+      if (q.error) throw mapError(q.error);
+      if (!q.data || !q.data.length) throw err('permission');
+      await refetch();
+    },
+    /* Crew Stats. A person is 'owner' or 'e:' + their invite email. */
+    statsFor: function (tourId) {
+      return cache.stats.filter(function (x) { return x.tour_id === tourId; }).map(function (x) {
+        return { id: x.id, person: x.person, stat: x.stat, day: x.day, mine: !!session && x.added_by === session.user.id, at: x.created_at };
+      });
+    },
+    addStat: async function (tourId, person, stat) {
+      var q = await sb.from('crew_stats').insert({ tour_id: tourId, person: person, stat: stat }).select('id');
+      if (q.error) throw mapError(q.error);
+      await refetch();
+      return q.data && q.data[0] ? q.data[0].id : null;
+    },
+    // Check yourself in on a day's sheet (the database knows who you are).
+    checkIn: async function (tourId, date) {
+      var q = await sb.rpc('check_in', { t_id: tourId, d: date });
+      if (q.error) throw mapError(q.error);
+      await refetch();
+    },
+    removeStat: async function (id) {
+      var q = await sb.from('crew_stats').delete().eq('id', id).select('id');
+      if (q.error) throw mapError(q.error);
+      if (!q.data || !q.data.length) throw err('permission');
+      await refetch();
+    },
+    gameBall: function (tourId) {
+      return {
+        rounds: cache.rounds.filter(function (g) { return g.tour_id === tourId; }).map(function (g) {
+          return { round: g.round, opensAt: g.opens_at, closesAt: g.closes_at, status: g.status, winner: g.winner, reason: g.winner_reason };
+        }),
+        votes: cache.gbVotes.filter(function (v) { return v.tour_id === tourId; }).map(function (v) {
+          return { round: v.round, voter: v.voter, voterName: v.voter_name, person: v.person, reason: v.reason, mine: !!session && v.voter === session.user.id };
+        })
+      };
+    },
+    voteGameBall: async function (tourId, round, person, reason) {
+      var q = await sb.from('game_ball_votes').upsert({ tour_id: tourId, round: round, voter: session.user.id, person: person,
+        reason: String(reason || '').trim().slice(0, 200) }, { onConflict: 'tour_id,round,voter' });
+      if (q.error) throw mapError(q.error);
+      await refetch();
+    },
+    // A tie: the tour manager makes the call.
+    callGameBall: async function (tourId, round, person, reason) {
+      var q = await sb.from('game_ball_rounds').update({ status: 'won', winner: person, winner_reason: reason || '' })
+        .eq('tour_id', tourId).eq('round', round).select('round');
       if (q.error) throw mapError(q.error);
       if (!q.data || !q.data.length) throw err('permission');
       await refetch();
@@ -1239,6 +1297,9 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_polls' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_votes' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_requests' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'crew_stats' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_ball_rounds' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_ball_votes' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, scheduleRefetch)

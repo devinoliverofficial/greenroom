@@ -8,6 +8,9 @@
 //   MERCH NUMBERS        a night's merch number arrives / changes → phones that asked
 //   DAY-OFF POLL         a poll goes up → everyone; 2 hours before it closes
 //                        (noon the day before) → everyone who hasn't voted
+//   GAME BALL            the first show, every 7 days after, and the last
+//                        show: a vote opens that day (everyone), closes at
+//                        noon the next day, and the winner is announced
 //
 // Times on a day sheet are the venue's local time, so each show is read in
 // its own city's time zone. Every message goes out once (table ari_sent).
@@ -204,6 +207,84 @@ async function runPolls(tours: { id: string; owner_id: string }[], now: Date): P
   return sent;
 }
 
+/* The game ball: voted on the day of the first show, every 7 days after,
+   and the last show. Ari opens each vote that day and closes it at noon the
+   next day, in the show's own time zone. Most votes wins; a tie goes to the
+   tour manager; nobody voting leaves the ball where it is. */
+async function personName(tourId: string, ownerId: string, person: string): Promise<string> {
+  if (person === "owner") {
+    const { data } = await admin.from("profiles").select("full_name, username").eq("user_id", ownerId).maybeSingle();
+    return String(data?.full_name || data?.username || "The tour manager");
+  }
+  const email = person.replace(/^e:/, "");
+  const { data: m } = await admin.from("members").select("display_name, user_id").eq("tour_id", tourId).ilike("invited_email", email).maybeSingle();
+  if (m?.user_id) {
+    const { data } = await admin.from("profiles").select("full_name, username").eq("user_id", m.user_id).maybeSingle();
+    if (data?.full_name || data?.username) return String(data.full_name || data.username);
+  }
+  return String(m?.display_name || email.split("@")[0] || "Someone");
+}
+async function runGameBall(tour: { id: string; owner_id: string; doc: Record<string, unknown> }, now: Date, fallbackTz: string): Promise<number> {
+  const doc = isObj(tour.doc) ? tour.doc : {};
+  if (doc.deletedAt) return 0;
+  const shows = (isObj(doc.shows) ? Object.values(doc.shows) : []).filter((x) => isObj(x) && /^\d{4}-\d{2}-\d{2}$/.test(String((x as Record<string, unknown>).date ?? ""))) as Record<string, unknown>[];
+  if (!shows.length) return 0;
+  shows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const first = String(shows[0].date), last = String(shows[shows.length - 1].date);
+  const rounds: string[] = [];
+  for (let r = first; r <= last; r = addDays(r, 7)) rounds.push(r);
+  if (!rounds.includes(last)) rounds.push(last);
+  const { data: existing } = await admin.from("game_ball_rounds").select("*").eq("tour_id", tour.id);
+  const have = new Map((existing ?? []).map((g) => [String(g.round), g]));
+  let sent = 0;
+  for (const r of rounds) {
+    const at = shows.filter((x) => String(x.date) <= r).pop() ?? shows[0];
+    const ds = isObj(at.daySheet) ? at.daySheet : {};
+    const tz = tzFor(String(at.city ?? ""), typeof ds.tz === "string" && validTz(ds.tz) ? ds.tz : fallbackTz);
+    const here = localNow(now, tz);
+    const next = addDays(r, 1);
+    const g = have.get(r);
+    if (!g) {
+      // Open it on the day, until noon the next day.
+      const inWindow = here.date === r || (here.date === next && here.minutes < 720);
+      if (!inWindow) continue;
+      const left = (here.date === r ? 1440 : 0) + 720 - here.minutes;
+      const closes = new Date(now.getTime() + left * 60000).toISOString();
+      const ins = await admin.from("game_ball_rounds").insert({ tour_id: tour.id, round: r, closes_at: closes }).select("round");
+      if (ins.error || !ins.data?.length) continue;
+      sent += await push(await crewSubs(tour.id, tour.owner_id),
+        "\u{1F3C8} Game ball vote is open! Who earned it and why? Vote in Crew Stats by noon tomorrow.", tour.id);
+      continue;
+    }
+    if (g.status !== "open" || Date.parse(String(g.closes_at)) > now.getTime()) continue;
+    // Close it: most votes wins.
+    const { data: votes } = await admin.from("game_ball_votes").select("person, reason, updated_at")
+      .eq("tour_id", tour.id).eq("round", r).order("updated_at");
+    const count = new Map<string, number>();
+    for (const v of votes ?? []) count.set(String(v.person), (count.get(String(v.person)) ?? 0) + 1);
+    const top = Math.max(0, ...count.values());
+    const leaders = [...count.entries()].filter(([, n]) => n === top && top > 0).map(([p]) => p);
+    if (leaders.length === 1) {
+      const why = (votes ?? []).find((v) => v.person === leaders[0])?.reason ?? "";
+      const upd = await admin.from("game_ball_rounds").update({ status: "won", winner: leaders[0], winner_reason: why })
+        .eq("tour_id", tour.id).eq("round", r).eq("status", "open").select("round");
+      if (upd.data?.length) {
+        const name = await personName(tour.id, tour.owner_id, leaders[0]);
+        sent += await push(await crewSubs(tour.id, tour.owner_id),
+          `\u{1F3C8} ${name} gets the game ball!${why ? ` "${String(why).slice(0, 120)}"` : ""}`, tour.id);
+      }
+    } else {
+      const upd = await admin.from("game_ball_rounds").update({ status: leaders.length ? "tie" : "won" })
+        .eq("tour_id", tour.id).eq("round", r).eq("status", "open").select("round");
+      if (upd.data?.length && leaders.length) {
+        sent += await push(await crewSubs(tour.id, tour.owner_id),
+          "\u{1F3C8} It's a tie for the game ball. The tour manager makes the call in Crew Stats.", tour.id);
+      }
+    }
+  }
+  return sent;
+}
+
 async function runTour(tour: { id: string; owner_id: string; doc: Record<string, unknown> }, now: Date, fallbackTz: string) {
   const doc = isObj(tour.doc) ? tour.doc : {};
   if (doc.deletedAt) return 0;
@@ -315,5 +396,9 @@ Deno.serve(async (req) => {
   }
   try { sent += await runPolls((tours ?? []) as { id: string; owner_id: string }[], now); }
   catch (_) { /* the next minute tries again */ }
+  for (const t of tours ?? []) {
+    try { sent += await runGameBall(t as { id: string; owner_id: string; doc: Record<string, unknown> }, now, fallbackTz); }
+    catch (_) { /* the next minute tries again */ }
+  }
   return reply(200, { sent });
 });
