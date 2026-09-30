@@ -472,15 +472,20 @@ async function applyPayments(tours: Tour[], accounts: Record<string, Account>, p
 
 /* Owed on cards: each tour entry for a card the feed read gets the bank's
    current balance on that card, as of this refresh. */
-async function markOwed(tours: Tour[], accounts: Record<string, Account>) {
+// With the card company's name (the bank the card came in through), so each
+// card shows as its own line: "Business Gold Card – 1008 · AMEX".
+async function markOwed(tours: Tour[], accounts: Record<string, Account>, banks: Map<string, string>) {
   const at = new Date().toISOString();
-  const byName = new Map<string, number>();
-  for (const a of Object.values(accounts)) if (a.type === "creditCard" && typeof a.owed === "number") byName.set(a.name, a.owed);
+  const byName = new Map<string, { amount: number; bank: string }>();
+  for (const a of Object.values(accounts)) {
+    if (a.type === "creditCard" && typeof a.owed === "number") byName.set(a.name, { amount: a.owed, bank: banks.get(a.item ?? "") ?? "" });
+  }
   for (const t of tours) {
     for (const [id, d] of Object.entries((t.doc.debts ?? {}) as Record<string, Obj>)) {
       const f = (d?.feed ?? null) as Obj | null;
       if (!f || d.kind !== "card" || !byName.has(String(f.name))) continue;
-      await admin.rpc("set_card_owed", { t_id: t.id, d_id: id, owed: { amount: byName.get(String(f.name)), at } });
+      const o = byName.get(String(f.name))!;
+      await admin.rpc("set_card_owed", { t_id: t.id, d_id: id, owed: { amount: o.amount, at, ...(o.bank ? { bank: o.bank } : {}) } });
     }
   }
 }
@@ -605,7 +610,7 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
   const paid = await settleMerch(feed.owner_id, tours);
   const guaranteesIn = await settleGuarantees(feed.owner_id, tours);
   const paidOff = await applyPayments(tours, accounts, payments);
-  await markOwed(tours, accounts);
+  await markOwed(tours, accounts, new Map(items.map((i) => [i.item_id, i.institution])));
   // Everything is saved: now each connection's place can move on.
   for (const [itemId, cursor] of cursors) {
     await admin.from("plaid_items").update({ cursor, updated_at: new Date().toISOString() })
@@ -1033,7 +1038,8 @@ Deno.serve(async (req) => {
             if (!mine || mine.type !== "creditCard" || mine.mode === "off") continue;
             const cur = Number(((a.balances ?? {}) as Obj).current);
             if (!isFinite(cur)) continue;
-            out.push({ id: String(a.account_id), name: mine.name, balance: Math.max(0, Math.round(cur * 100) / 100) });
+            out.push({ id: String(a.account_id), name: mine.name, bank: it.institution || "",
+              balance: Math.max(0, Math.round(cur * 100) / 100) });
           }
         } catch { /* that bank's balance can wait */ }
       }

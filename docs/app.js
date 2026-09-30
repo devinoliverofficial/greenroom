@@ -2214,6 +2214,82 @@
     return { text: money(l.left) + ' left to pay' + cardBit(l), cls: '' };
   }
 
+  /* A credit card the feed reads, as its own category: its name and card
+     company, and in the Spent column what of its balance is still to sort.
+     Each charge sorted into a category moves out of it. */
+  function cardBank(card) {
+    var b = String((G.isObj(card.feed) && card.feed.bank) || (G.isObj(card.owedNow) && card.owedNow.bank) || '').trim();
+    return /^american express$/i.test(b) ? 'AMEX' : b;
+  }
+  function cardRow(id, t, card) {
+    var sm = G.cardSummary(card, t);
+    var bank = cardBank(card);
+    var inner = [
+      h('div', { class: 'row-label' },
+        h('span', { class: 'cc-name' }, card.label || card.feed.name, bank ? h('span', { class: 'cc-bank' }, bank) : null),
+        h('span', { class: 'hint' + (sm.remainder > 0.004 ? '' : ' done') },
+          (sm.remainder > 0.004 ? money(sm.remainder) + ' still to sort' : 'All sorted') +
+          (sm.accounted > 0 ? ' \u00b7 ' + money(sm.accounted) + ' sorted into categories' : '') +
+          ' \u00b7 ' + (sm.owed > 0 ? money(sm.owed) + ' owed now' : 'paid off'))),
+      h('span', { class: 'amt num glow ex-proj', 'aria-label': 'Projected not set' }, '\u2014'),
+      h('span', { class: 'amt num ex-paid', 'aria-label': 'Still to sort ' + money(sm.remainder) }, money(sm.remainder))
+    ];
+    if (!canSeeMoney(id)) return h('div', { class: 'row ex-row cc-row' }, inner);
+    return h('button', { class: 'row rowbtn ex-row cc-row', type: 'button',
+      onclick: function () { openFeedCardSheet(id, card.id); } }, inner, icon('chevron', 18));
+  }
+  /* One credit card: the balance it came into the tour with, where the sorted
+     part of it went, what's still to sort, and what the card company is owed. */
+  function openFeedCardSheet(id, cardId) {
+    var t = getTour(id);
+    var card = G.cardDebts(t).filter(function (d) { return d.id === cardId; })[0];
+    if (!card || !G.isObj(card.feed)) return;
+    var sm = G.cardSummary(card, t);
+    var bank = cardBank(card);
+    var cats = {};
+    G.chargeCategoriesFor(t).forEach(function (c) { cats[c.key] = c.label; });
+    var byCat = {}, since = 0, sinceN = 0;
+    G.rows(t.charges).forEach(function (ch) {
+      if (ch.accounted || !ch.category || ch.account !== card.feed.name) return;
+      if (ch.date && ch.date <= card.cutoff) byCat[ch.category] = (byCat[ch.category] || 0) + G.num(ch.amount);
+      else { since += G.num(ch.amount); sinceN += 1; }
+    });
+    var waiting = feedWaiting(id).filter(function (it) { return it.account === card.feed.name; }).length;
+    var at = G.isObj(card.owedNow) && card.owedNow.at ? new Date(card.owedNow.at) : null;
+    var line = function (label, v, cls) {
+      return h('div', null, h('span', null, label), h('strong', { class: 'num' + (cls ? ' ' + cls : '') }, v));
+    };
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, card.label || card.feed.name),
+        h('p', { class: 'sh-sub' }, [bank, 'Credit card'].filter(Boolean).join(' \u00b7 ')),
+        h('div', { class: 'preview' },
+          line('Balance when logging started' + (G.parseDay(card.cutoff) ? ' (' + dayMD(card.cutoff) + ')' : ''), G.moneyCents(sm.balance)),
+          line('Sorted into categories', '\u2212 ' + G.moneyCents(sm.accounted)),
+          line('Still to sort', G.moneyCents(sm.remainder), sm.remainder > 0.004 ? '' : 'pos'),
+          sm.over > 0.004 ? line('Sorted past the balance', G.moneyCents(sm.over), 'neg') : null),
+        Object.keys(byCat).length
+          ? h('section', { class: 'wn-sec' }, h('h3', { class: 'wn-h' }, 'Where it went'),
+              h('div', { class: 'ledger' }, Object.keys(byCat).sort(function (a, b) { return byCat[b] - byCat[a]; }).map(function (k) {
+                return h('div', { class: 'row' }, h('span', { class: 'row-label' }, cats[k] || k),
+                  h('span', { class: 'amt num' }, G.moneyCents(byCat[k])));
+              })))
+          : h('p', { class: 'note' }, 'As you sort this card\u2019s charges, each one moves out of this balance and into its category.'),
+        h('section', { class: 'wn-sec' }, h('h3', { class: 'wn-h' }, 'The card company'),
+          h('div', { class: 'preview' },
+            sinceN ? line('Charged since, already in their categories', G.moneyCents(since)) : null,
+            sm.paidOff > 0 ? line('Paid on the card since', '\u2212 ' + G.moneyCents(sm.paidOff)) : null,
+            line('Owed now' + (at ? ' (as of ' + dayMD(G.ymd(at)) + ')' : ''), sm.owed > 0 ? G.moneyCents(sm.owed) : 'Paid off',
+              sm.owed > 0 ? 'neg' : 'pos'))),
+        h('div', { class: 'stack' },
+          waiting ? h('button', { class: 'btn primary block', type: 'button', onclick: function () {
+            closeSheet(); setTimeout(function () { openFeedReview(id, 0, card.feed.name); }, 320);
+          } }, icon('card', 18), 'Sort ' + plural(waiting, 'charge') + ' from this card') : null,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: card.label || 'Credit card' });
+  }
+
   /* The plan stays put in its column and what's actually been paid sits next
      to it, so over and under are there to read at a glance. */
   function tabExpenses(id, t, c) {
@@ -2226,7 +2302,8 @@
     // deal is actually filled in.
     var comm = G.normCommission(t && t.commission);
     var commSet = G.commissionLines(comm).some(function (cl) { return G.num(comm[cl.key].value) > 0; });
-    var rows = c.lines.map(function (l) {
+    var feedCards = G.cardDebts(t).filter(function (d) { return G.isObj(d.feed); });
+    var lineRow = function (l) {
       var hint = lineHint(l);
       var unset = l.projected == null || (l.key === 'commission' && !l.projected && !commSet);
       var inner = [
@@ -2246,6 +2323,23 @@
           else openCategorySheet(id, l.key);
         }
       }, inner, icon('chevron', 18));
+    };
+    var rows = [];
+    c.lines.forEach(function (l) {
+      if (l.key !== 'card' || !feedCards.length) { rows.push(lineRow(l)); return; }
+      feedCards.forEach(function (card) { rows.push(cardRow(id, t, card)); });
+      // Anything else under Credit card (a card typed in by hand, or a charge
+      // sorted there) keeps a line of its own.
+      var inCards = feedCards.reduce(function (n, card) { return n + G.cardSummary(card, t).remainder; }, 0);
+      var rest = Math.round((l.paid - inCards) * 100) / 100;
+      if (rest > 0.004 || l.projected != null) {
+        rows.push(lineRow(Object.assign({}, l, {
+          label: 'Credit card (other)', paid: Math.max(0, rest),
+          cards: (l.cards || []).filter(function (r) { return !r.feed; }),
+          over: l.projected != null ? Math.max(0, rest - l.projected) : 0,
+          left: l.projected != null ? Math.max(0, l.projected - Math.max(0, rest)) : l.left
+        })));
+      }
     });
     var projTotal = 0, paidTotal = 0;
     c.lines.forEach(function (l) { projTotal += l.projected || 0; paidTotal += l.paid; });
@@ -9462,10 +9556,10 @@
     else toast(feedResult(r));
   }
 
-  function openFeedReview(tourId, done) {
+  function openFeedReview(tourId, done, only) {
     var cards = [];
     feedWaiting(tourId).slice().sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); })
-      .forEach(function (it) { var k = it.account || ''; if (cards.indexOf(k) < 0) cards.push(k); });
+      .forEach(function (it) { var k = it.account || ''; if (cards.indexOf(k) < 0 && (only == null || k === only)) cards.push(k); });
     if (!cards.length) { toast('Nothing waiting'); return; }
     var i = done || 0;
     var next = function () {
@@ -9627,7 +9721,8 @@
       // Every logged credit card is tracked from here, even at $0 owed.
       if (have[b.name] || !(b.balance >= 0)) return;
       patch['feed-' + b.id] = { label: b.name, amount: b.balance, kind: 'card', cutoff: today, breakdown: {},
-        feed: { name: b.name, readAt: today }, owedNow: { amount: b.balance, at: new Date().toISOString() }, createdAt: Date.now() + n };
+        feed: { name: b.name, readAt: today, bank: b.bank || '' },
+        owedNow: { amount: b.balance, at: new Date().toISOString(), bank: b.bank || '' }, createdAt: Date.now() + n };
       n += 1;
     });
     if (n && (await api.update(tourId, { debts: patch }))) {
