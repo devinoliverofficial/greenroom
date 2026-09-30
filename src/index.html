@@ -1389,6 +1389,25 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .feed-checked { margin: 6px 2px 0; text-align: center; font-size: 12px; color: var(--ink-3); }
 .feed-accts { margin-top: 10px; }
 .fa-name { font-weight: 600; margin: 0 2px 6px; }
+/* The Day sheet page: everything a size smaller, in the calendar's date
+   style (Inter, semi-bold, tight), for more room on the screen. */
+.ds-page .ds-venue-row .ds-venue { font-size: 22px; }
+.ds-page .ds-sec { margin-top: 18px; }
+.ds-page .ds-sec-h { margin-bottom: 8px; font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.ds-page .ledger .row.ds-row { min-height: 42px; padding: 9px 14px; }
+.ds-page .ds-row .row-label { font-size: 13.5px; }
+.ds-page .ds-row .ds-time { font-size: 13.5px; letter-spacing: -.02em; }
+.ds-page .ds-row .ds-val, .ds-page .ds-row .num { font-size: 13px; letter-spacing: -.02em; }
+.ds-page .ds-drive .hint { font-size: 12.5px; }
+.ds-page .ds-notes { font-size: 13.5px; padding: 11px 14px; }
+.ds-page .ds-city { font-size: 16px; }
+.ds-page .ov-actions .btn, .ds-page .btn.ghost.block { font-size: 14px; min-height: 44px; }
+.ds-page .ov-actions { margin-top: 18px !important; }
+
+/* Expenses: the same font as the calendar dates (Inter, not the number font). */
+.exp-page .amt, .exp-page .num, .exp-page .money-in input { font-family: var(--font); font-weight: 600; letter-spacing: -.02em; }
+.exp-page .ledger .row { font-size: 15px; }
+
 /* The calendar: Budget's list without the money. */
 .cal-open { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
 .cal-open .btn { gap: 6px; }

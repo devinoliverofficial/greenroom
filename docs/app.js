@@ -3434,7 +3434,7 @@
     if (view === 'stats') return viewStats(id, t);
     var c = G.calc(t);
     if (view === 'costs') {
-      return h('div', { class: 'page tour has-tabs' },
+      return h('div', { class: 'page tour has-tabs exp-page' },
         h('div', { class: 'headband' },
           tourTopbar(t, id, 'costs'),
           h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
@@ -3443,7 +3443,7 @@
         tourTabs(id, 'costs'));
     }
     if (view === 'daybyday') {
-      return h('div', { class: 'page tour has-tabs' },
+      return h('div', { class: 'page tour has-tabs exp-page' },
         h('div', { class: 'headband' },
           tourTopbar(t, id, 'daybyday'),
           h('h1', { class: 'tour-title' }, 'Day by day')),
@@ -3452,7 +3452,7 @@
         tourTabs(id, 'costs'));
     }
     if (view === 'cashlog') {
-      return h('div', { class: 'page tour has-tabs' },
+      return h('div', { class: 'page tour has-tabs exp-page' },
         h('div', { class: 'headband' },
           tourTopbar(t, id, 'cashlog'),
           h('h1', { class: 'tour-title' }, 'MERCH CASH LOG')),
@@ -3871,7 +3871,7 @@
         overviewBody(id, t),
         tourTabs(id, view));
     }
-    return h('div', { class: 'page tour has-tabs' + (view === 'guests' ? ' guest-page' : '') },
+    return h('div', { class: 'page tour has-tabs' + (view === 'guests' ? ' guest-page' : ' ds-page') },
       h('div', { class: 'headband' },
         tourTopbar(t, id, view),
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
@@ -4878,7 +4878,7 @@
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
-    if (only === 'sheet') return [checkInBtn(id, entry.date, lines.length > 0), rail, editRow, placeEl, body, copyBtn];
+    if (only === 'sheet') return [checkInBtn(id, entry.date, lines.length > 0), rail, placeEl, body, editRow, copyBtn];
     return [hero, rail, editRow, body, guestBtn, copyBtn];
   }
 
