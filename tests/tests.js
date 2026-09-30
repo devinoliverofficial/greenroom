@@ -331,6 +331,20 @@
     eq(G.calc(t).out, 27000 + 50 + 300, 'paying the card never changes what the tour spent');
   });
 
+  test('owed on cards comes from the bank and never changes what the tour spent', function () {
+    var t = { shows: {}, expenses: { bus: { projected: 18000, paid: 0 } }, crew: {}, commission: {}, extras: {},
+      debts: { c1: { label: 'Amex ··1008', amount: 2000, kind: 'card', cutoff: '2026-05-01', breakdown: {}, feed: { name: 'Amex ··1008' } } },
+      charges: { b1: { date: '2026-05-03', merchant: 'Bus Co', amount: 18000, category: 'bus', account: 'Amex ··1008' } } };
+    var before = G.calc(t).out;
+    eq(before, 18000 + 2000, 'the bus fills its projection; the balance going in counts once');
+    t.debts.c1.owedNow = { amount: 20000, at: '2026-05-04T12:00:00Z' };
+    eq(G.cardSummary(t.debts.c1, t).owed, 20000, 'the bank says $20,000 is owed');
+    eq(G.calc(t).out, before, 'what the tour spent is unchanged');
+    t.debts.c1.owedNow = { amount: 5000, at: '2026-05-10T12:00:00Z' };
+    eq(G.cardSummary(t.debts.c1, t).owed, 5000, 'after paying the card down');
+    eq(G.calc(t).out, before, 'still unchanged');
+  });
+
   test('buyouts count only what the Artists got as income', function () {
     var show = { date: '2026-05-10', income: { buyouts: 60, guarantee: 1000 }, loggedAt: 1 };
     eq(G.buyoutIncome(show), 0, 'nobody ticked yet: nothing counts');

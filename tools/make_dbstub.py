@@ -226,6 +226,27 @@ shim = r"""<script>
     ariKick: function (tourId) { window.__harness.ariKicks = (window.__harness.ariKicks || 0) + 1; return Promise.resolve(); },
     pushDisable: function () { window.__harness.pushOn = false; return Promise.resolve(); },
     notify: function (tourId, type, data) { window.__harness.notified.push([type, data]); return Promise.resolve(window.__harness.phones); },
+    // Ari's questions, in memory: Yes sets the night's merch, and she answers in the chat.
+    asksFor: function (tourId) {
+      return (window.__harness.asks || []).filter(function (a) { return a.tour_id === tourId; }).map(function (a) {
+        return { id: a.id, noteId: a.note_id, showId: a.show_id, place: a.place, was: a.was, fix: a.fix, status: a.status }; });
+    },
+    ariAnswer: async function (id, yes) {
+      var H = window.__harness, a = (H.asks || []).filter(function (x) { return x.id === id; })[0];
+      if (!a) return 'gone';
+      if (a.status !== 'open') return a.status;
+      H.answers = (H.answers || []).concat([[id, !!yes]]);
+      var said = 'Okay, leaving ' + a.place + ' at $' + a.was + '.';
+      if (yes) {
+        var db = await window.claude.use('db'), sh = {};
+        sh[a.show_id] = { income: { merch: a.fix } };
+        await db.doc('tours/' + a.tour_id).update({ shows: sh });
+        said = 'Done. ' + a.place + ' merch is now $' + a.fix + ' (it was $' + a.was + ').';
+      }
+      a.status = yes ? 'fixed' : 'left';
+      H.notes.push({ id: 'n-ans-' + id, day: 'chat', body: said, author: 'Ari', at: Date.now() });
+      return a.status;
+    },
     saveNote: function (tourId, day, note) { window.__harness.notes.push(note); return Promise.resolve(); },
     notesFor: function () { return window.__harness.notes; },
     // A fake card feed: the pile, the switch and the account choices, all in memory.

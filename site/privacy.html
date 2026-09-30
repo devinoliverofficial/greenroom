@@ -43,8 +43,10 @@
     <li>Transactions on those accounts: date, amount and merchant name. Accounts you switch off are skipped.</li>
     <li>For each bank account you mark for income (merch, guarantees or both): the date and amount of its
       deposits, to confirm that what atVenu said a show would pay, or a show’s guarantee, actually arrived.</li>
-    <li>For each credit card you log: its balance, read once when you start logging a tour and put on that tour
-      under Credit card, and the payments you make on it afterwards, which come off what’s still owed.</li>
+    <li>For each credit card you log: its balance when you start logging a tour, put on that tour under Credit
+      card, and the payments you make on it afterwards. At each refresh Greenroom also reads the card’s current
+      balance and shows it as Owed on cards. Only that one latest number is kept (each new reading replaces the
+      last), and it never changes what the tour spent.</li>
   </ul>
 
   <h2>What Greenroom never reads or keeps</h2>
@@ -53,7 +55,7 @@
     <li>Full card numbers, account numbers or routing numbers. Greenroom keeps only an account’s last four
       digits, as part of its name, so you can tell your cards apart.</li>
     <li>Bank account balances. Plaid includes them when it lists your accounts; Greenroom throws them away. The
-      only balance kept is a credit card’s, read once as described above.</li>
+      only balances kept are a credit card’s, as described above.</li>
     <li>Money coming into your accounts is skipped and never stored, except deposits on accounts you mark for
       income, and from those only each deposit’s date and amount.</li>
   </ul>

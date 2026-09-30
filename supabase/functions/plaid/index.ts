@@ -100,6 +100,7 @@ type Mode = "log" | "ask" | "off";
 interface Account {
   name: string; type: string; mode: Mode; item?: string; closed?: boolean;
   plaid?: string; card?: "credit" | "debit"; income?: string[]; asked?: boolean;
+  owed?: number | null;   // a credit card's current balance, from the bank
 }
 interface Feed {
   owner_id: string; accounts: Record<string, Account>; switched_on: boolean; since: string | null;
@@ -134,10 +135,13 @@ async function accountsFor(item: Item, token: string, into: Record<string, Accou
     const plaid = typeOf(a);
     const had = into[id];
     const type = cardType(plaid, had?.card);
+    // A credit card's balance is what's owed on it; bank balances aren't kept.
+    const cur = Number(((a.balances ?? {}) as Obj).current);
     into[id] = {
       name: [String(a.name ?? a.official_name ?? "Account"), a.mask ? "··" + a.mask : ""].filter(Boolean).join(" "),
       type, plaid, mode: had?.mode ?? defaultMode(type), item: item.item_id,
       ...(had?.card ? { card: had.card } : {}), income: had?.income ?? [], asked: had?.asked ?? false,
+      owed: type === "creditCard" && isFinite(cur) ? Math.max(0, Math.round(cur * 100) / 100) : null,
     };
   }
 }
@@ -466,6 +470,21 @@ async function applyPayments(tours: Tour[], accounts: Record<string, Account>, p
   return Math.round(total * 100) / 100;
 }
 
+/* Owed on cards: each tour entry for a card the feed read gets the bank's
+   current balance on that card, as of this refresh. */
+async function markOwed(tours: Tour[], accounts: Record<string, Account>) {
+  const at = new Date().toISOString();
+  const byName = new Map<string, number>();
+  for (const a of Object.values(accounts)) if (a.type === "creditCard" && typeof a.owed === "number") byName.set(a.name, a.owed);
+  for (const t of tours) {
+    for (const [id, d] of Object.entries((t.doc.debts ?? {}) as Record<string, Obj>)) {
+      const f = (d?.feed ?? null) as Obj | null;
+      if (!f || d.kind !== "card" || !byName.has(String(f.name))) continue;
+      await admin.rpc("set_card_owed", { t_id: t.id, d_id: id, owed: { amount: byName.get(String(f.name)), at } });
+    }
+  }
+}
+
 async function toursOf(owner: string): Promise<Tour[]> {
   const { data: tourRows } = await admin.from("tours").select("id, doc, updated_at").eq("owner_id", owner);
   const tours: Tour[] = [];
@@ -586,6 +605,7 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
   const paid = await settleMerch(feed.owner_id, tours);
   const guaranteesIn = await settleGuarantees(feed.owner_id, tours);
   const paidOff = await applyPayments(tours, accounts, payments);
+  await markOwed(tours, accounts);
   // Everything is saved: now each connection's place can move on.
   for (const [itemId, cursor] of cursors) {
     await admin.from("plaid_items").update({ cursor, updated_at: new Date().toISOString() })

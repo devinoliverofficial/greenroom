@@ -29,7 +29,7 @@
   var resetting = false;   // arrived by a password-reset link
   var session = null;
   var cache = { tours: new Map(), labels: new Map(), guests: [], notes: [], polls: [], votes: [], requests: [],
-    stats: [], rounds: [], gbVotes: [] };
+    stats: [], rounds: [], gbVotes: [], asks: [] };
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
 
@@ -100,6 +100,9 @@
     if (!fun[0].error) cache.stats = fun[0].data;
     if (!fun[1].error) cache.rounds = fun[1].data;
     if (!fun[2].error) cache.gbVotes = fun[2].data;
+    // Ari's questions to the tour manager (only they and ALL ACCESS see them).
+    var asks = await sb.from('ari_asks').select('*').order('created_at');
+    if (!asks.error) cache.asks = asks.data;
     emit('tours'); emit('labels');
   }
   function scheduleRefetch() {
@@ -609,6 +612,21 @@
       if (q.error) throw mapError(q.error);
       if (!q.data || !q.data.length) throw err('permission');
       scheduleRefetch();
+    },
+    /* ---- Ari asks before she fixes a night's merch ---- */
+    asksFor: function (tourId) {
+      return cache.asks.filter(function (a) { return a.tour_id === tourId; }).map(function (a) {
+        return { id: a.id, noteId: a.note_id, showId: a.show_id, place: a.place, was: Number(a.was), fix: Number(a.fix),
+          status: a.status, at: a.created_at };
+      });
+    },
+    // The tour manager's answer. Resolves 'fixed', 'left', 'moved' (the number
+    // changed since she asked, so she left it) or 'gone'.
+    ariAnswer: async function (id, yes) {
+      var q = await sb.rpc('ari_answer', { a_id: id, yes: !!yes });
+      if (q.error) throw q.error.code === '42501' ? err('permission') : mapError(q.error);
+      await refetch();
+      return q.data;
     },
     /* ---- notes on a night: anyone on the tour can leave one ---- */
     notesFor: function (tourId, day) {
@@ -1306,6 +1324,7 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ari_asks' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_items' }, feedChanged)
       .subscribe();
     resolvers.db(db);

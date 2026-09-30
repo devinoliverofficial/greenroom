@@ -106,8 +106,10 @@ function prompt(kind: "text" | "files", body: string): string {
     '- reportType: "settlement" when this is ONE show\'s Settlement (sections like Credit Card/Cash, Gross Sales,',
     '  Settlement, Final Payment, Cash from Show; subjects usually end in "Settlement"). "tour_progress" when it covers',
     '  several shows or the tour so far (Tour Progress, tour-to-date, a summary across dates). Anything else: "other".',
-    '- merch: what the band keeps for the show — "Total Due Artist" (or "Net to Artist" / "Due to Artist"). Only if no',
-    '  such line exists take "Total Gross" and add a note "Gross merch". Never compute it yourself.',
+    '- merch: what the band keeps for the show — "Total Due Artist" (or "Net to Artist" / "Due to Artist"). If no such',
+    '  line exists and the venue took no cut (0%, or nothing due to the venue), take the "Adjusted Gross" (the gross less',
+    '  card fees, sales tax and off-top costs). Only if neither is printed take "Total Gross" and add a note "Gross merch".',
+    '  Never compute it yourself. Never report the gross as merch when a smaller band number is printed.',
     '- cash: the "Cash from Show" total — the cash the band holds at the end of the night after paying the venue any',
     '  cash. If the venue collected the cash, 0. If there is no such line, null.',
     '- cards.receipts: the "Total CC Receipts" (credit card sales). cards.fee: the credit card "Fee ($)" amount.',
@@ -120,6 +122,25 @@ function prompt(kind: "text" | "files", body: string): string {
     'Keep every value under a dozen words. If unreadable, reply {"show":{},"income":{},"notes":[]}.',
     kind === "text" ? "\nEmail text:\n" + body.slice(0, 40_000) : "",
   ].join("\n");
+}
+
+/* A settlement's notes laid over the night's own, one per label. */
+function mergedNotes(had: unknown, notes: { label: string; value: string }[]) {
+  const old = (Array.isArray(had) ? had : []) as { label: string; value: string }[];
+  const seen: Record<string, boolean> = {};
+  notes.forEach((n) => { seen[n.label.toLowerCase()] = true; });
+  return old.filter((n) => !seen[String(n.label).toLowerCase()]).concat(notes);
+}
+
+const usd = (n: number) => "$" + n.toLocaleString("en-US",
+  Number.isInteger(n) ? {} : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/* Ari only offers a number she can point to on the page: "3,258.54" must be
+   printed in the settlement itself, not worked out. */
+function printed(n: number, text: string): boolean {
+  const flat = text.replace(/,/g, "");
+  if (flat.includes(n.toFixed(2))) return true;
+  return Number.isInteger(n) && new RegExp("(^|[^0-9.])" + n + "(?![0-9]|\\.[0-9])").test(flat);
 }
 
 /* Ari, the tour manager who reads the paperwork so nobody else has to.
@@ -143,6 +164,11 @@ function ariPrompt(body: string, where: string, merch: number, notes: { label: s
     "- Use only numbers that appear in the settlement or above. Never invent one. If something is",
     "  missing or looks off, say so plainly in one line.",
     "- Say whether this night was strong, normal or soft for merch, and why, in one line.",
+    "",
+    "Then, on its own last line (the app reads it; the crew never sees it), write KEEPS: and the settlement's own",
+    "number for what the band keeps this night, copied exactly as printed: Total Due Artist (or Net to Artist /",
+    "Due to Artist), or, when the venue took no cut and there is no such line, the Adjusted Gross. Like KEEPS: 3,258.54",
+    "If the settlement prints no such number, write KEEPS: none",
     "",
     "The settlement:",
     body.slice(0, 20000),
@@ -311,10 +337,7 @@ Deno.serve(async (req) => {
     else if (cardsByVenue) s.merchCardDeposit = null;
     const due = cardDeposit >= 0 ? cardDeposit : Math.round((merch - Number(s.merchCash ?? 0)) * 100) / 100;
     if (s.merchReceived !== true) s.merchReceived = due > 0 ? false : true;
-    const old = (Array.isArray(s.settlementNotes) ? s.settlementNotes : []) as { label: string; value: string }[];
-    const seen: Record<string, boolean> = {};
-    notes.forEach((n) => { seen[n.label.toLowerCase()] = true; });
-    s.settlementNotes = old.filter((n) => !seen[String(n.label).toLowerCase()]).concat(notes);
+    s.settlementNotes = mergedNotes(s.settlementNotes, notes);
     const ph = notes.filter((n) => /per head/i.test(n.label))[0];
     note = `atVenu settlement for ${where}: $${merch.toLocaleString("en-US")} merch logged` +
       (ph ? `, ${ph.value} per head` : "") + ". That's what the band keeps after the venue's cut.";
@@ -331,15 +354,42 @@ Deno.serve(async (req) => {
   // can't speak, the plain filing line goes out under her name instead, so
   // the chat never stays silent about money that just landed.
   const kept = had > 0 && had !== merch ? had : 0;
-  const plain = async (why: string) => {
-    await admin.from("notes").insert({
-      id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-      tour_id: hit.id, day: "chat", body: note, author: "Ari", added_by: hit.owner,
+  const logged = kept > 0 ? kept : merch;
+  // One id for her message, whichever version goes out, so her question
+  // stays tied to it.
+  const id = "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const say = (id: string, body: string) => admin.from("notes").insert({
+    id, tour_id: hit.id, day: "chat", body, author: "Ari", added_by: hit.owner,
+  });
+  // When the settlement's number for the band isn't the one logged, Ari asks
+  // the tour manager before anything changes (0035_ari_asks.sql). Yes applies
+  // this: the settlement's number and the rest of that night, worked out the
+  // same way a clean filing would.
+  let asked = "";
+  const ask = async (fix: number): Promise<string> => {
+    if (asked || !(fix > 0) || Math.abs(fix - logged) < 0.01) return asked;
+    const heldCash = cash >= 0 ? cash : typeof s.merchCash === "number" ? Number(s.merchCash) : NaN;
+    const patch: Record<string, unknown> = { settlementNotes: mergedNotes(s.settlementNotes, notes) };
+    if (heldCash >= 0) patch.merchCash = Math.min(heldCash, fix);
+    if (cardDeposit >= 0) patch.merchCardDeposit = cardDeposit;
+    else if (cardsByVenue) patch.merchCardDeposit = null;
+    const due = cardDeposit >= 0 ? cardDeposit : Math.round((fix - Number(patch.merchCash ?? 0)) * 100) / 100;
+    patch.received = !(due > 0);
+    const put = await admin.from("ari_asks").insert({
+      tour_id: hit.id, note_id: id, show_id: hit.showId, place: where, was: logged, fix, patch,
     });
+    if (put.error) { await logMail(mail.from, mail.subject, "ask_failed", put.error.message); return ""; }
+    asked = `\n\nWould you like me to correct this to ${usd(fix)}? Reply yes and I'll fix it.`;
+    return asked;
+  };
+  const plain = async (why: string) => {
+    const q = kept > 0 ? await ask(merch) : asked;
+    await say(id, note + q);
     await logMail(mail.from, mail.subject, "ari_quiet", why);
   };
   try {
-    const source = mail.text && mail.text.replace(/\s/g, "").length > 60
+    const hasText = !!mail.text && mail.text.replace(/\s/g, "").length > 60;
+    const source = hasText
       ? mail.text
       : "(the settlement came as an attachment; the numbers above are what was read from it)";
     const ari = await anthropic.messages.create({
@@ -348,16 +398,17 @@ Deno.serve(async (req) => {
       model: "claude-opus-5", max_tokens: 4000,
       messages: [{ role: "user", content: ariPrompt(source, where, merch, notes, kept) }],
     });
-    const said = ari.content.filter((b) => b.type === "text")
+    const raw = ari.content.filter((b) => b.type === "text")
       .map((b) => (b as { text: string }).text).join("").trim();
+    // Her last line names what the band keeps, for the app only.
+    const line = raw.match(/^[ \t]*KEEPS:[ \t]*(.*)$/im);
+    const said = raw.replace(/^[ \t]*KEEPS:.*$/gim, "").trim();
+    const read = line && !/none/i.test(line[1]) ? money(line[1]) : NaN;
+    const keeps = hasText && read > 0 && printed(read, mail.text) ? Math.round(read * 100) / 100 : NaN;
+    const q = await ask(keeps > 0 ? keeps : kept > 0 ? merch : NaN);
     // supabase-js hands back errors instead of throwing them, so a silent
     // Ari would otherwise look exactly like a happy one.
-    const ins = said
-      ? await admin.from("notes").insert({
-          id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-          tour_id: hit.id, day: "chat", body: said.slice(0, 1600), author: "Ari", added_by: hit.owner,
-        })
-      : { error: null };
+    const ins = said ? await say(id, said.slice(0, 1500) + q) : { error: null };
     if (!said || ins.error) {
       await plain("len=" + said.length + " stop=" + String(ari.stop_reason) + " err=" + (ins.error?.message ?? "none"));
     }

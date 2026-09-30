@@ -423,7 +423,11 @@
       accounted: Math.min(accounted, balance),
       remainder: Math.max(0, balance - accounted),
       over: Math.max(0, accounted - balance),
-      paidOff: paidOff, owed: Math.max(0, round((balance - paidOff) * 100) / 100)
+      paidOff: paidOff,
+      // The bank's own number when the feed has read it; otherwise the balance
+      // going in less the payments since.
+      owed: isObj(card.owedNow) && card.owedNow.amount != null ? Math.max(0, round(num(card.owedNow.amount) * 100) / 100)
+        : Math.max(0, round((balance - paidOff) * 100) / 100)
     };
   }
   // What each category was paid on cards going in: { key: [{label, amount}] }
