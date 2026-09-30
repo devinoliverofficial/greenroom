@@ -2322,7 +2322,8 @@
     var typed = G.num((G.normExpenses(t && t.expenses)[key] || {}).paid);
     if (typed > 0) out.push({ date: '', label: 'Paid (typed in)', amount: typed, detail: 'One total, typed in by hand',
       source: 'MANUAL', typed: true, counts: true });
-    return out.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+    // Oldest first; the balances going in (no date) lead the list.
+    return out.sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
   }
   function openLoggedSheet(id, key, back) {
     function build() {
@@ -8488,6 +8489,11 @@
 
   function openImportReview(tourId, rows, source, opts) {
     var importId = newId();
+    // Oldest charge first, newest last, whether from the cards or a statement.
+    rows.sort(function (a, b) {
+      var da = G.parseDay(a.date) ? a.date : '9999', db = G.parseDay(b.date) ? b.date : '9999';
+      return da.localeCompare(db);
+    });
     // From the card feed: charges keep the feed's id, and whatever is left
     // unticked is set aside so it never comes back.
     var feed = !!(opts && opts.feed);
@@ -9321,8 +9327,9 @@
   function openChargesSheet(tourId) {
     function build() {
       var t = getTour(tourId);
+      // Oldest first, newest last.
       var charges = G.rows(t && t.charges).sort(function (a, b) {
-        return String(b.date || '').localeCompare(String(a.date || ''));
+        return String(a.date || '').localeCompare(String(b.date || '')) || (a.createdAt || 0) - (b.createdAt || 0);
       });
       var catLabel = {};
       G.chargeCategoriesFor(getTour(tourId)).forEach(function (c) { catLabel[c.key] = c.label; });
