@@ -52,6 +52,18 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
   }
 }
 
+/* The tour's Tour Manager: ALL ACCESS on it, with that role (their own
+   card, what the invite said, or what the crew list was edited to). */
+async function isTourManager(tourId: string, uid: string): Promise<boolean> {
+  if (!uid) return false;
+  const { data: m } = await admin.from("members").select("role, tour_role, overrides")
+    .eq("tour_id", tourId).eq("user_id", uid).maybeSingle();
+  if (!m || m.role !== "editor") return false;
+  const { data: p } = await admin.from("profiles").select("tour_role").eq("user_id", uid).maybeSingle();
+  const ov = (m.overrides ?? {}) as Record<string, unknown>;
+  return String(ov.tourRole || p?.tour_role || m.tour_role || "").trim().toLowerCase() === "tour manager";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return reply(405, { error: "method_not_allowed" });
@@ -83,8 +95,8 @@ Deno.serve(async (req) => {
   const memberIds = new Set<string>([tour.owner_id, ...(members ?? []).map((m) => m.user_id).filter(Boolean)]);
   if (!memberIds.has(senderId)) return reply(403, { error: "not_on_tour" });
 
-  // Alerts are the tour manager's siren: only the owner may pull it.
-  if (type === "alert" && senderId !== tour.owner_id) {
+  // Alerts are the tour manager's siren: the creator or the Tour Manager pulls it.
+  if (type === "alert" && senderId !== tour.owner_id && !(await isTourManager(tourId, senderId))) {
     return reply(403, { error: "not_manager" });
   }
 

@@ -40,10 +40,14 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* empty */ }
   if (body.action !== "refresh") return reply(400, { error: "unknown_action" });
 
-  // Only the tour manager, on their own tour.
+  // The tour's creator or anyone with ALL ACCESS on it (they edit the income too).
   const tourId = String(body.tourId ?? "");
   const { data: tour } = await admin.from("tours").select("id, owner_id, doc").eq("id", tourId).maybeSingle();
-  if (!tour || tour.owner_id !== uid) return reply(403, { error: "not_manager" });
+  if (!tour) return reply(403, { error: "not_manager" });
+  if (tour.owner_id !== uid) {
+    const { data: m } = await admin.from("members").select("role").eq("tour_id", tourId).eq("user_id", uid).maybeSingle();
+    if (!m || m.role !== "editor") return reply(403, { error: "not_manager" });
+  }
   const doc = (tour.doc ?? {}) as Obj;
   const allShows = (doc.shows ?? {}) as Record<string, Obj>;
   // Refreshing from one night's income sheet looks for that night only.
@@ -56,7 +60,8 @@ Deno.serve(async (req) => {
   // if atVenu re-sent a corrected copy). Older reports whose kind wasn't
   // recorded count only when they agree; two different numbers for the same
   // night (a Tour Progress summary crept in once) are left for a human.
-  let rq = admin.from("merch_reports").select("*").eq("owner_id", uid);
+  // The reports the mailbox kept for this tour's creator.
+  let rq = admin.from("merch_reports").select("*").eq("owner_id", tour.owner_id);
   if (onlyDate) rq = rq.eq("date", onlyDate);
   const { data: reports } = await rq.order("received_at");
   const nights = new Map<string, Obj[]>();

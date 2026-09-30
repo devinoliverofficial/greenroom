@@ -1440,6 +1440,7 @@
     return allTourEntries(true).filter(function (e) { return e[1].deletedAt; });
   }
   async function softDeleteTour(id) {
+    if (S.mode === 'db' && !createdTour(id)) { toast('Only the tour\u2019s creator can delete it.'); return false; }
     if (await api.update(id, { deletedAt: Date.now() })) {
       toast('Deleted — it sits in Recently deleted for ' + TRASH_DAYS + ' days');
       return true;
@@ -1623,7 +1624,7 @@
       byArtist.size
         ? h('ul', { class: 'tour-list rows' }, Array.from(byArtist, function (pair) {
             var cardEl = artistCard(pair[0], pair[1]);
-            if (!canWrite()) return h('li', null, cardEl);
+            if (!canWrite() || (S.mode === 'db' && !pair[1].every(function (e) { return createdTour(e[0]); }))) return h('li', null, cardEl);
             return h('li', null, swipeable(cardEl, function () {
               confirmSheet({
                 title: 'Delete everything for ' + pair[0] + '?',
@@ -1649,7 +1650,7 @@
            h('ul', { class: 'tour-list rows' },
              loose.map(function (e) {
                var cardEl = tourCard(e[0], e[1]);
-               if (!canWrite()) return h('li', null, cardEl);
+               if (!canWrite() || (S.mode === 'db' && !createdTour(e[0]))) return h('li', null, cardEl);
                return h('li', null, swipeable(cardEl, function () { softDeleteTour(e[0]).then(function () { render(true); }); },
                  e[1].name || 'tour'));
              })),
@@ -1833,7 +1834,7 @@
       entries.length
         ? h('ul', { class: 'tour-list rows' }, entries.map(function (e, i) {
             var cardEl = tourCard(e[0], e[1], i + 1);
-            if (!canWrite()) return h('li', null, cardEl);
+            if (!canWrite() || (S.mode === 'db' && !createdTour(e[0]))) return h('li', null, cardEl);
             return h('li', null, swipeable(cardEl, function () {
               softDeleteTour(e[0]).then(function () { render(true); });
             }, e[1].name || 'tour'));
@@ -3738,7 +3739,11 @@
     }
     return 'viewer';
   }
-  function canEditTour(id) { return tourRole(id) === 'owner'; }
+  // ALL ACCESS edits a tour like its creator does (Devin, 2026-09-30).
+  function canEditTour(id) { var r = tourRole(id); return r === 'owner' || r === 'editor'; }
+  // What stays the creator's: deleting the tour, the bank and card settings,
+  // Crew Stats' tour-manager stats, starting the band's Off Tour book.
+  function createdTour(id) { return tourRole(id) === 'owner'; }
   // The tour manager and ALL ACCESS: polls, and marking requests done.
   function leadsTour(id) { return tourRole(id) === 'owner' || tourRole(id) === 'editor'; }
   function canSeeMoney(id) { return tourRole(id) !== 'viewer'; }
@@ -4179,7 +4184,7 @@
       h('div', { class: 'sec-head', style: 'margin-top:30px;text-align:center' },
         h('h2', { class: 'sec-title hdr' }, 'Crew')),
       list,
-      owns ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
+      (owns || moneyLead(tourId)) ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
         h('button', { class: 'crew-invite', type: 'button',
           onclick: function () { openInviteSheet(tourId); } },
           h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew')) : null,
@@ -5089,7 +5094,7 @@
         return stats.filter(function (x) { return x.person === k && x.stat === stat; }).length + (pend[k + '|' + stat] || 0);
       };
       var balls = function (k) { return gb.rounds.filter(function (g) { return g.status === 'won' && g.winner === k; }).length; };
-      var owner = canEditTour(id);
+      var owner = createdTour(id);
 
       // The game ball, up top.
       var parts = [];
@@ -8190,7 +8195,7 @@
       return [
         h('h2', { class: 'sh-title' }, 'Tour alerts'),
         h('div', { class: 'stack' },
-          canEditTour(tourId) ? h('button', { class: 'btn primary block', type: 'button',
+          (createdTour(tourId) || moneyLead(tourId)) ? h('button', { class: 'btn primary block', type: 'button',
             onclick: function () { openAlertSheet(tourId); } }, icon('bell', 18), 'Send Tour Alert') : null,
           phone)
       ];
@@ -8467,7 +8472,7 @@
             icon('history', 18), 'Card statement history'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLabelsSheet(); } },
             icon('tag', 18), 'Learned labels'),
-          isOwner() || S.mode === 'local' ? h('button', {
+          createdTour(id) || S.mode === 'local' ? h('button', {
             class: 'btn danger block', type: 'button',
             onclick: function () {
               confirmSheet({
@@ -9769,7 +9774,7 @@
 
   function feedEntry(id) {
     var B = window.GR_BACKEND;
-    if (!canEditTour(id)) return tmFeedEntry(id);
+    if (!createdTour(id)) return tmFeedEntry(id);
     if (!S.feed) return null;
     // Only accounts on the approved list ever get this far without a feed.
     if (S.feed.connectOnly) {

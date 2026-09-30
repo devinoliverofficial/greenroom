@@ -17,6 +17,18 @@ const admin = createClient(
   { auth: { persistSession: false } },
 );
 
+/* The tour's Tour Manager: ALL ACCESS on it, with that role (their own
+   card, what the invite said, or what the crew list was edited to). */
+async function isTourManager(tourId: string, uid: string): Promise<boolean> {
+  if (!uid) return false;
+  const { data: m } = await admin.from("members").select("role, tour_role, overrides")
+    .eq("tour_id", tourId).eq("user_id", uid).maybeSingle();
+  if (!m || m.role !== "editor") return false;
+  const { data: p } = await admin.from("profiles").select("tour_role").eq("user_id", uid).maybeSingle();
+  const ov = (m.overrides ?? {}) as Record<string, unknown>;
+  return String(ov.tourRole || p?.tour_role || m.tour_role || "").trim().toLowerCase() === "tour manager";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return reply(405, { error: "method_not_allowed" });
@@ -44,10 +56,10 @@ Deno.serve(async (req) => {
   const last = clip(body.last, 30) || name.split(/\s+/).slice(1).join(" ");
   if (!tourId || email.indexOf("@") < 1) return reply(400, { error: "invalid" });
 
-  // Only the tour manager may invite.
+  // The tour's creator or its Tour Manager may invite.
   const { data: tour } = await admin.from("tours").select("id, owner_id, doc").eq("id", tourId).single();
   if (!tour) return reply(404, { error: "no_tour" });
-  if (tour.owner_id !== senderId) return reply(403, { error: "not_manager" });
+  if (tour.owner_id !== senderId && !(await isTourManager(tourId, senderId))) return reply(403, { error: "not_manager" });
 
   // Create the account and send the email in one move. Everything the
   // manager typed rides on the account, so the sign-up page only asks for a
