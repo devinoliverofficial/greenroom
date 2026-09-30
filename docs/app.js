@@ -4101,12 +4101,13 @@
      joints; the tour manager adds the rest. The game ball is voted on after
      the first show, every week, and after the last show. */
   var STATS = [
-    { key: 'laminate', label: 'Laminates lost', emoji: '🪪' },
-    { key: 'beer', label: 'Beers', emoji: '🍺', anyone: true },
-    { key: 'late', label: 'Late to soundcheck', emoji: '⏰' },
-    { key: 'bus', label: 'Bus cleans', emoji: '🧽' },
-    { key: 'joint', label: 'Joints', emoji: '🌿', anyone: true },
-    { key: 'checkin', label: 'Check In’s', emoji: '✅', self: true }
+    { key: 'beer', unit: ['beer', 'beers'],  label: 'Beers', emoji: '🍺', title: 'Party Animal', anyone: true },
+    { key: 'joint', unit: ['joint', 'joints'],  label: 'Joints', emoji: '🌿', title: 'Smoke Show', anyone: true },
+    { key: 'checkin', unit: ['check in', 'check in’s'],  label: 'Check In’s', emoji: '✅', title: 'Always Ready', self: true },
+    { key: 'bus', unit: ['bus clean', 'bus cleans'],  label: 'Bus cleans', emoji: '🧽', title: 'Bus Hero' },
+    { key: 'late', unit: ['time late', 'times late'],  label: 'Late to soundcheck', emoji: '⏰', title: 'Fashionably Late' },
+    { key: 'laminate', unit: ['laminate lost', 'laminates lost'],  label: 'Laminates lost', emoji: '🪪', title: 'Lost & Found' },
+    { key: 'gameball', unit: ['game ball', 'game balls'],  label: 'Game balls', emoji: '🏈', title: 'MVP', balls: true }
   ];
   function personKey(m) { return m.owner ? 'owner' : 'e:' + String(m.invitedEmail || m.email || '').toLowerCase(); }
   function firstName(m) { return String(m.name || m.username || m.email || 'Crew').trim().split(/\s+/)[0]; }
@@ -4127,68 +4128,66 @@
     if (out.indexOf(d[d.length - 1]) < 0) out.push(d[d.length - 1]);
     return out;
   }
-  function toastUndo(msg, undo) {
-    var root = $('#toast');
-    var t = h('div', { class: 't t-undo' }, h('span', null, msg),
-      h('button', { class: 'linkbtn', type: 'button', onclick: function () { t.classList.remove('is-on'); undo(); } }, 'Undo'));
-    root.replaceChildren(t);
-    requestAnimationFrame(function () { t.classList.add('is-on'); });
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('is-on'); }, 5000);
-  }
 
-  /* Tap a number: a small window with − and + for that person and stat.
-     The tour manager can take any away; everyone else only the beers and
-     joints they added themselves. */
-  function openStatStepper(id, person, st, owner) {
+  // The stat you're looking at, kept per phone.
+  function statPick(id, set) {
+    var k = 'gr-stat-pick';
+    try {
+      if (set) { localStorage.setItem(k, set); return set; }
+      return localStorage.getItem(k) || 'beer';
+    } catch (e) { S.statPickMem = set || S.statPickMem || 'beer'; return S.statPickMem; }
+  }
+  // Clean, drawn + and − (the text characters sat crooked in the circles).
+  function stepIcon(plus) {
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '18'); svg.setAttribute('height', '18');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.innerHTML = plus ? '<path d="M12 5v14M5 12h14"/>' : '<path d="M5 12h14"/>';
+    return svg;
+  }
+  async function stepStat(id, person, st, up, owner, before) {
     var B = window.GR_BACKEND;
-    var busy = false;
-    var num = h('div', { class: 'stp-n num' });
-    var minus = h('button', { class: 'stp-b', type: 'button', 'aria-label': 'Take one away' }, '\u2212');
-    var plus = h('button', { class: 'stp-b plus', type: 'button', 'aria-label': 'Add one' }, '+');
-    function entries() {
-      return B.statsFor(id).filter(function (x) { return x.person === person.key && x.stat === st.key; })
-        .sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); });
-    }
-    function draw() {
-      var list = entries();
-      num.textContent = String(list.length);
-      minus.disabled = !list.some(function (x) { return owner || x.mine; });
-    }
-    async function step(up) {
-      if (busy) return;
-      busy = true;
-      try {
-        if (up) await B.addStat(id, person.key, st.key);
-        else {
-          var take = entries().filter(function (x) { return owner || x.mine; })[0];
-          if (!take) { toast('You can only take back ones you added.'); busy = false; return; }
-          await B.removeStat(take.id);
-        }
-      } catch (x) { toast('Couldn\u2019t save that. Try again.'); }
-      busy = false;
-      draw(); render(true);
-    }
-    minus.addEventListener('click', function () { step(false); });
-    plus.addEventListener('click', function () { step(true); });
-    draw();
-    var pop = h('div', { class: 'pop', role: 'dialog', 'aria-modal': 'true', 'aria-label': st.label + ' for ' + person.name },
-      h('div', { class: 'pop-card stp' },
-        h('div', { class: 'stp-what' }, h('span', { 'aria-hidden': 'true' }, st.emoji + ' '), st.label),
-        h('div', { class: 'stp-who' }, person.name),
-        h('div', { class: 'stp-row' }, minus, num, plus),
-        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { close(); } }, 'Done')));
-    function close() { pop.classList.remove('on'); setTimeout(function () { pop.remove(); }, 250); }
-    pop.addEventListener('click', function (e) { if (e.target === pop) close(); });
-    document.body.appendChild(pop);
-    requestAnimationFrame(function () { pop.classList.add('on'); });
+    if (S.statBusy) return;
+    S.statBusy = true;
+    try {
+      if (up) await B.addStat(id, person.key, st.key);
+      else {
+        var take = B.statsFor(id).filter(function (x) { return x.person === person.key && x.stat === st.key && (owner || x.mine); })
+          .sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); })[0];
+        if (!take) { toast('You can only take back ones you added.'); S.statBusy = false; return; }
+        await B.removeStat(take.id);
+      }
+    } catch (x) { toast('Couldn’t save that. Try again.'); S.statBusy = false; return; }
+    S.statBusy = false;
+    S.statBump = { stat: st.key, person: person.key };
+    render(true);
+    // Every 10th is a milestone.
+    var n = (before || 0) + 1;
+    if (up && n % 10 === 0) { confetti(); toast(st.emoji + ' ' + n + ' ' + st.unit[1] + ' for ' + person.first + '!'); }
+  }
+  // A player card: everything one person has on the tour.
+  function openPlayerCard(id, person, stats, gb, owner) {
+    var n = function (k) { return stats.filter(function (x) { return x.person === person.key && x.stat === k; }).length; };
+    var balls = gb.rounds.filter(function (g) { return g.status === 'won' && g.winner === person.key; }).length;
+    openSheet(function () {
+      return [
+        h('div', { class: 'pc-head' },
+          h('div', { class: 'pc-mono', 'aria-hidden': 'true' }, person.first.charAt(0).toUpperCase()),
+          h('div', null, h('h2', { class: 'sh-title pc-name' }, person.name), person.role ? h('p', { class: 'sh-sub' }, person.role) : null)),
+        h('div', { class: 'pc-grid' }, STATS.map(function (st) {
+          return h('div', { class: 'pc-cell' },
+            h('span', { class: 'pc-n' }, String(st.balls ? balls : n(st.key))),
+            h('span', { class: 'pc-l' }, h('span', { 'aria-hidden': 'true' }, st.emoji + ' '), st.label));
+        }))
+      ];
+    }, { label: person.name });
   }
 
   function viewStats(id, t) {
     var B = window.GR_BACKEND;
     var body = h('div', { class: 'stats-body' }, h('p', { class: 'note' }, 'Loading the crew…'));
     function draw(crew) {
-      var people = crew.map(function (m) { return { key: personKey(m), name: m.name || m.username || m.email || 'Crew', first: firstName(m) }; });
+      var people = crew.map(function (m) { return { key: personKey(m), name: m.name || m.username || m.email || 'Crew', first: firstName(m), role: m.tourRole || '' }; });
       var stats = B && B.statsFor ? B.statsFor(id) : [];
       var gb = B && B.gameBall ? B.gameBall(id) : { rounds: [], votes: [] };
       var holder = gameBallHolder(id);
@@ -4236,32 +4235,73 @@
           })) : null));
       }
 
-      // The table: one row per stat, one column per person.
-      var head = h('tr', null, h('th', { class: 'st-corner' }, ''), people.map(function (p) {
-        return h('th', { scope: 'col' }, p.first, holder && holder.winner === p.key ? h('span', { class: 'gb-mark', 'aria-label': 'has the game ball' }, ' 🏈') : null);
-      }));
-      var rowsEls = STATS.map(function (st) {
-        return h('tr', null, h('th', { scope: 'row' }, h('span', { class: 'st-emoji', 'aria-hidden': 'true' }, st.emoji), st.label),
-          people.map(function (p) {
-            var n = count(p.key, st.key);
-            if (st.self) return h('td', null, h('span', { class: 'st-cell counted', 'aria-label': st.label + ' for ' + p.name + ': ' + n }, String(n)));
-            var can = st.anyone || owner;
-            return h('td', null, h('button', { class: 'st-cell' + (can ? '' : ' locked'), type: 'button',
-              'aria-label': st.label + ' for ' + p.name + ': ' + n + (can ? '. Tap to add or take away.' : ''),
-              onclick: function () {
-                if (!can) { toast('Only the tour manager adds ' + st.label.toLowerCase() + '.'); return; }
-                openStatStepper(id, p, st, owner);
-              } }, String(n)));
-          }));
-      });
-      rowsEls.push(h('tr', { class: 'st-balls' }, h('th', { scope: 'row' }, h('span', { class: 'st-emoji', 'aria-hidden': 'true' }, '🏈'), 'Game balls'),
-        people.map(function (p) { return h('td', null, h('span', { class: 'st-cell' }, String(balls(p.key)))); })));
-      parts.push(people.length
-        ? h('div', { class: 'stats-wrap' }, h('table', { class: 'stats' }, h('thead', null, head), h('tbody', null, rowsEls)))
-        : h('p', { class: 'note' }, 'Invite the crew from the Overview and they show up here.'));
-      parts.push(h('p', { class: 'note' }, 'Tap a number to add or take away. Anyone can add beers and joints; the tour manager adds the rest. ' +
-        'Check In’s count each time someone checks in on a day sheet. ' +
-        'The game ball is voted on after the first show, every week, and after the last show.'));
+      // One stat at a time: pick it, then its leaderboard.
+      var valueOf = function (k, st) { return st.balls ? balls(k) : count(k, st.key); };
+      var streakOf = function (k) {
+        var days = {}; stats.forEach(function (x) { if (x.person === k && x.stat === 'checkin' && x.day) days[x.day] = true; });
+        var d = G.tourToday(); if (!days[d]) d = G.addDays(d, -1);
+        var n = 0; while (days[d]) { n += 1; d = G.addDays(d, -1); }
+        return n;
+      };
+      var pick = statPick(id);
+      var cur = STATS.filter(function (x) { return x.key === pick; })[0] || STATS[0];
+      parts.push(h('div', { class: 'st-chips', role: 'tablist', 'aria-label': 'Pick a stat' }, STATS.map(function (st) {
+        var on = st.key === cur.key;
+        return h('button', { class: 'st-chip' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': String(on),
+          onclick: function () { statPick(id, st.key); draw(crew); } },
+          h('span', { 'aria-hidden': 'true' }, st.emoji), st.label);
+      })));
+
+      var ranked = people.map(function (p) { return { p: p, n: valueOf(p.key, cur) }; })
+        .sort(function (a, b) { return b.n - a.n || a.p.name.localeCompare(b.p.name); });
+      var top = ranked.length ? ranked[0].n : 0;
+      var leaders = ranked.filter(function (r) { return r.n === top && top > 0; });
+      var can = !cur.self && !cur.balls && (cur.anyone || owner);
+      var rank = 0, last = null;
+      var bump = S.statBump && S.statBump.stat === cur.key ? S.statBump.person : null;
+      S.statBump = null;
+      parts.push(h('section', { class: 'lb-card' },
+        h('div', { class: 'lb-head' },
+          h('span', { class: 'lb-emoji', 'aria-hidden': 'true' }, cur.emoji),
+          h('div', null,
+            h('div', { class: 'lb-title' }, cur.label),
+            h('div', { class: 'lb-sub' }, leaders.length === 1 ? cur.title + ': ' + leaders[0].p.first
+              : leaders.length > 1 ? cur.title + ': a ' + leaders.length + '-way tie' : 'Nobody on the board yet'))),
+        ranked.length ? h('ol', { class: 'lb-list' }, ranked.map(function (r, i) {
+          if (r.n !== last) { rank = i + 1; last = r.n; }
+          var medal = r.n > 0 && rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : null;
+          var mineToTake = stats.some(function (x) { return x.person === r.p.key && x.stat === cur.key && (owner || x.mine); });
+          var streak = cur.key === 'checkin' ? streakOf(r.p.key) : 0;
+          var holds = holder && holder.winner === r.p.key;
+          return h('li', { class: 'lb-row' + (r.n > 0 && r.n === top ? ' lead' : '') },
+            h('span', { class: 'lb-rank' + (medal ? ' medal' : '') }, medal || (r.n > 0 ? String(rank) : '–')),
+            h('button', { class: 'lb-name', type: 'button', onclick: function () { openPlayerCard(id, r.p, stats, gb, owner); } },
+              h('span', { class: 'lb-n1' }, r.p.name, holds ? h('span', { class: 'lb-ball', 'aria-label': 'has the game ball' }, ' 🏈') : null),
+              h('span', { class: 'lb-n2' }, [r.p.role, streak > 1 ? '🔥 ' + streak + '-day streak' : ''].filter(Boolean).join(' · ') || ' ')),
+            h('span', { class: 'lb-count' + (bump === r.p.key ? ' bump' : '') }, String(r.n)),
+            can ? h('span', { class: 'lb-step' },
+              h('button', { class: 'lb-b minus', type: 'button', disabled: !mineToTake, 'aria-label': 'Take one ' + cur.label.toLowerCase() + ' from ' + r.p.name,
+                onclick: function () { stepStat(id, r.p, cur, false, owner); } }, stepIcon(false)),
+              h('button', { class: 'lb-b plus', type: 'button', 'aria-label': 'Add one ' + cur.label.toLowerCase() + ' for ' + r.p.name,
+                onclick: function () { stepStat(id, r.p, cur, true, owner, r.n); } }, stepIcon(true))) : null);
+        })) : h('p', { class: 'note' }, 'Invite the crew from the Overview and they show up here.'),
+        h('p', { class: 'lb-foot' }, cur.balls ? 'Won by vote after the first show, every week, and after the last show.'
+          : cur.self ? 'Counts itself: tap Check In at the top of each day sheet.'
+          : cur.anyone ? 'Anyone can add. Take back ones you added with −.'
+          : owner ? 'Only you add these.' : 'The tour manager adds these.')));
+
+      // Tour Awards: every stat's leader at a glance.
+      parts.push(h('h3', { class: 'sh-h3 aw-h' }, 'Tour Awards'), h('div', { class: 'aw-grid' }, STATS.map(function (st) {
+        var best = people.map(function (p) { return { p: p, n: valueOf(p.key, st) }; }).sort(function (a, b) { return b.n - a.n; });
+        var lead = best.length && best[0].n > 0 ? best[0] : null;
+        var tied = lead && best.filter(function (b) { return b.n === lead.n; }).length > 1;
+        return h('button', { class: 'aw-card' + (st.key === cur.key ? ' on' : ''), type: 'button',
+          onclick: function () { statPick(id, st.key); draw(crew); window.scrollTo({ top: 0, behavior: reduced() ? 'auto' : 'smooth' }); } },
+          h('span', { class: 'aw-emoji', 'aria-hidden': 'true' }, st.emoji),
+          h('span', { class: 'aw-title' }, st.title),
+          h('span', { class: 'aw-who' }, lead ? (tied ? 'Tie' : lead.p.first) : '—'),
+          h('span', { class: 'aw-n' }, lead ? lead.n + ' ' + st.unit[lead.n === 1 ? 0 : 1] : 'up for grabs'));
+      })));
 
       // Past votes, everyone's picks and why.
       var past = gb.rounds.filter(function (g) { return g.status !== 'open'; }).sort(function (a, b) { return String(b.round).localeCompare(String(a.round)); });
