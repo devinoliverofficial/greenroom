@@ -668,9 +668,26 @@
   // the app, not wherever the last session wandered.
   function restoreLastTour() {}
 
+  /* A tap is never pulled out from under a finger. Live updates redraw the
+     whole screen, and a button swapped out mid-tap swallows the tap, so a
+     redraw that lands while a finger is down waits until it lifts and the
+     tap has gone through. */
+  var fingerDown = 0, redrawAfterTouch = false;
+  document.addEventListener('touchstart', function () { fingerDown = Date.now(); }, { passive: true, capture: true });
+  var fingerUp = function () {
+    fingerDown = 0;
+    if (!redrawAfterTouch) return;
+    redrawAfterTouch = false;
+    // After the click the lifted finger makes (it can open something new).
+    setTimeout(function () { render(); }, 250);
+  };
+  document.addEventListener('touchend', fingerUp, { passive: true, capture: true });
+  document.addEventListener('touchcancel', fingerUp, { passive: true, capture: true });
+
   function render(force) {
     var view = $('#view');
     if (!view) return;
+    if (fingerDown && Date.now() - fingerDown < 4000) { redrawAfterTouch = true; return; }
     var a = document.activeElement;
     var typing = !!(a && view.contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'));
     if (!force && typing) { S.pendingRender = true; return; }
@@ -686,6 +703,11 @@
     else if (S.route.name === 'artist') node = viewArtist();
     else if (S.route.name === 'newartist') node = viewNewArtist();
     else node = viewHome();
+    // The tab bar stays the same element when nothing about it changed, so a
+    // tap on it always lands.
+    var oldBar = view.querySelector('nav.tabbar');
+    var newBar = node && node.querySelector ? node.querySelector('nav.tabbar') : null;
+    if (oldBar && newBar && oldBar.getAttribute('data-sig') === newBar.getAttribute('data-sig')) newBar.replaceWith(oldBar);
     view.replaceChildren(node);
 
     if (key) {
@@ -3229,6 +3251,7 @@
       return t.view !== 'money' && t.view !== 'costs';
     });
     return h('nav', { class: 'tabbar', 'aria-label': 'Tour sections',
+      'data-sig': id + '|' + current + '|' + tabs.map(function (t) { return t.view; }).join(','),
       style: 'grid-template-columns: repeat(' + tabs.length + ', 1fr)' },
       tabs.map(function (t) {
         var on = t.view === current;
