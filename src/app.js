@@ -4137,6 +4137,53 @@
     toastTimer = setTimeout(function () { t.classList.remove('is-on'); }, 5000);
   }
 
+  /* Tap a number: a small window with − and + for that person and stat.
+     The tour manager can take any away; everyone else only the beers and
+     joints they added themselves. */
+  function openStatStepper(id, person, st, owner) {
+    var B = window.GR_BACKEND;
+    var busy = false;
+    var num = h('div', { class: 'stp-n num' });
+    var minus = h('button', { class: 'stp-b', type: 'button', 'aria-label': 'Take one away' }, '\u2212');
+    var plus = h('button', { class: 'stp-b plus', type: 'button', 'aria-label': 'Add one' }, '+');
+    function entries() {
+      return B.statsFor(id).filter(function (x) { return x.person === person.key && x.stat === st.key; })
+        .sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); });
+    }
+    function draw() {
+      var list = entries();
+      num.textContent = String(list.length);
+      minus.disabled = !list.some(function (x) { return owner || x.mine; });
+    }
+    async function step(up) {
+      if (busy) return;
+      busy = true;
+      try {
+        if (up) await B.addStat(id, person.key, st.key);
+        else {
+          var take = entries().filter(function (x) { return owner || x.mine; })[0];
+          if (!take) { toast('You can only take back ones you added.'); busy = false; return; }
+          await B.removeStat(take.id);
+        }
+      } catch (x) { toast('Couldn\u2019t save that. Try again.'); }
+      busy = false;
+      draw(); render(true);
+    }
+    minus.addEventListener('click', function () { step(false); });
+    plus.addEventListener('click', function () { step(true); });
+    draw();
+    var pop = h('div', { class: 'pop', role: 'dialog', 'aria-modal': 'true', 'aria-label': st.label + ' for ' + person.name },
+      h('div', { class: 'pop-card stp' },
+        h('div', { class: 'stp-what' }, h('span', { 'aria-hidden': 'true' }, st.emoji + ' '), st.label),
+        h('div', { class: 'stp-who' }, person.name),
+        h('div', { class: 'stp-row' }, minus, num, plus),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { close(); } }, 'Done')));
+    function close() { pop.classList.remove('on'); setTimeout(function () { pop.remove(); }, 250); }
+    pop.addEventListener('click', function (e) { if (e.target === pop) close(); });
+    document.body.appendChild(pop);
+    requestAnimationFrame(function () { pop.classList.add('on'); });
+  }
+
   function viewStats(id, t) {
     var B = window.GR_BACKEND;
     var body = h('div', { class: 'stats-body' }, h('p', { class: 'note' }, 'Loading the crew…'));
@@ -4200,18 +4247,10 @@
             if (st.self) return h('td', null, h('span', { class: 'st-cell counted', 'aria-label': st.label + ' for ' + p.name + ': ' + n }, String(n)));
             var can = st.anyone || owner;
             return h('td', null, h('button', { class: 'st-cell' + (can ? '' : ' locked'), type: 'button',
-              'aria-label': st.label + ' for ' + p.name + ': ' + n + (can ? '. Tap to add one.' : ''),
-              onclick: async function () {
+              'aria-label': st.label + ' for ' + p.name + ': ' + n + (can ? '. Tap to add or take away.' : ''),
+              onclick: function () {
                 if (!can) { toast('Only the tour manager adds ' + st.label.toLowerCase() + '.'); return; }
-                var newId = null;
-                try { newId = await B.addStat(id, p.key, st.key); }
-                catch (x) { toast('Couldn’t add that. Try again.'); return; }
-                render(true);
-                toastUndo(st.emoji + ' +1 for ' + p.first + ' (' + (n + 1) + ')', async function () {
-                  if (!newId) return;
-                  try { await B.removeStat(newId); } catch (x) { toast('Couldn’t undo that.'); }
-                  render(true);
-                });
+                openStatStepper(id, p, st, owner);
               } }, String(n)));
           }));
       });
@@ -4220,7 +4259,7 @@
       parts.push(people.length
         ? h('div', { class: 'stats-wrap' }, h('table', { class: 'stats' }, h('thead', null, head), h('tbody', null, rowsEls)))
         : h('p', { class: 'note' }, 'Invite the crew from the Overview and they show up here.'));
-      parts.push(h('p', { class: 'note' }, 'Tap a number to add one. Anyone can add beers and joints; the tour manager adds the rest. ' +
+      parts.push(h('p', { class: 'note' }, 'Tap a number to add or take away. Anyone can add beers and joints; the tour manager adds the rest. ' +
         'Check In’s count each time someone checks in on a day sheet. ' +
         'The game ball is voted on after the first show, every week, and after the last show.'));
 
