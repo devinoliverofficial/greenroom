@@ -593,7 +593,7 @@
       }).map(function (g) {
         return { id: g.id, firstName: g.first_name, lastName: g.last_name,
           affiliation: g.affiliation, email: g.email, phone: g.phone,
-          qty: g.qty, passType: g.pass_type, addedBy: g.added_by };
+          qty: g.qty, passType: g.pass_type, addedBy: g.added_by, at: g.created_at };
       });
     },
     saveGuest: async function (tourId, showId, guest) {

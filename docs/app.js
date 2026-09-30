@@ -411,10 +411,12 @@
   function subscribeLabels() {
     if (store.unsubLabels) { try { store.unsubLabels(); } catch (e) { /* already closed */ } }
     store.unsubLabels = store.db.collection('labels').onSnapshot(function (snap) {
-      var m = {};
+      var m = {}, seen = seenMap();
       snap.docs.forEach(function (d) {
         if (!d.exists) return;
         var v = d.data();
+        // When you last looked at something: yours alone, never a merchant label.
+        if (G.isObj(v) && v.kind === 'seen') { if (G.num(v.at) > G.num(seen[d.id])) seen[d.id] = G.num(v.at); return; }
         if (G.isObj(v) && (G.isObj(v.cats) || v.kind === 'crew' || v.kind === 'artistLogo' || v.kind === 'artist')) m[d.id] = v;
       });
       S.labels = m;
@@ -3770,7 +3772,15 @@
         ] });
       }));
       requestAnimationFrame(sizeColumns);
+      fillWhatsNew(rows);
     }
+    // What's new?, under Invite crew: the Creator sees it straight away; the
+    // tour manager once the crew list says who they are.
+    var wnHost = h('div', { class: 'wn-host' });
+    function fillWhatsNew(rows) {
+      wnHost.replaceChildren.apply(wnHost, managesTour(tourId, rows) ? [whatsNewBtn(tourId)] : []);
+    }
+    if (owns || cached) fillWhatsNew(cached ? cached.rows : []);
     var ball = gameBallHolder(tourId);
     function crewRow(m) {
       var title = m.name || m.username || m.email;
@@ -3820,8 +3830,216 @@
       owns ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
         h('button', { class: 'crew-invite', type: 'button',
           onclick: function () { openInviteSheet(tourId); } },
-          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew')) : null
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew')) : null,
+      wnHost
     ];
+  }
+
+  /* ============================== What's new? ==============================
+     For the tour manager: the Creator, and whoever's tour role is Tour
+     Manager. Everything that wants a look, in one place: merch the mailbox
+     logged, special requests, merch cash not accounted for, new expenses,
+     money still to land, days off with no poll, new guests. It glows green
+     while there's something new since you last looked (or a new day with
+     things still open) and greys out once you've looked. Each person's look
+     is their own, kept with their account. */
+  function seenKey() {
+    var B = window.GR_BACKEND;
+    var uid = S.mode === 'db' && B && B.uid ? B.uid() : '';
+    return 'gr-seen' + (uid ? ':' + uid : '');
+  }
+  function seenMap() {
+    if (!S.seen) { try { S.seen = JSON.parse(lsGet(seenKey()) || '{}') || {}; } catch (e) { S.seen = {}; } }
+    return S.seen;
+  }
+  function wnKey(tourId) { return 'seen-wn-' + tourId; }
+  function wnSeen(tourId) { return G.num(seenMap()[wnKey(tourId)]); }
+  function wnMarkSeen(tourId) {
+    var at = Date.now();
+    seenMap()[wnKey(tourId)] = at;
+    lsSet(seenKey(), JSON.stringify(S.seen));
+    if (S.mode === 'db' && store.db) {
+      Promise.resolve(store.db.doc('labels/' + wnKey(tourId)).set({ kind: 'seen', at: at }))
+        .catch(function () { /* this phone still remembers */ });
+    }
+  }
+  function managesTour(tourId, rows) {
+    if (S.mode !== 'db') return true;
+    var B = window.GR_BACKEND;
+    if (B && B.ownsTour && B.ownsTour(tourId)) return true;
+    var me = String((B && B.email && B.email()) || '').trim().toLowerCase();
+    return !!me && (rows || []).some(function (m) {
+      return !m.owner && /^\s*tour manager\s*$/i.test(String(m.tourRole || '')) &&
+        [m.email, m.invitedEmail].some(function (e) { return String(e || '').trim().toLowerCase() === me; });
+    });
+  }
+
+  // What wants a look on this tour, and what's new since `since`.
+  function whatsNew(tourId, since) {
+    var t = getTour(tourId) || {};
+    var B = window.GR_BACKEND, live = S.mode === 'db' && B;
+    var now = Date.now();
+    var shows = G.rows(t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    var byDate = {};
+    shows.forEach(function (x) { byDate[x.date] = x; });
+    var imps = G.isObj(t.imports) ? t.imports : {};
+    var when = function (v) { return typeof v === 'number' ? v : Date.parse(v) || 0; };
+    var d = { asks: [], merch: [], requests: [], cash: 0, spent: [], income: [], polls: [], guests: [] };
+
+    // Ari's questions, waiting on the tour manager.
+    var asks = live && B.asksFor ? B.asksFor(tourId) : [];
+    d.asks = asks.filter(function (a) { return a.status === 'open'; });
+    // Merch the mailbox logged on its own (a night Ari is still asking about
+    // shows up there instead).
+    Object.keys(imps).forEach(function (k) {
+      var im = imps[k], date = (k.match(/^em-(\d{4}-\d{2}-\d{2})-/) || [])[1], x = date && byDate[date];
+      if (!x || !im || im.source !== 'atVenu email' || !(G.num(im.createdAt) > since)) return;
+      var ask = asks.filter(function (a) { return a.showId === x.id; }).pop();
+      if (ask && ask.status === 'open') return;
+      var logged = G.num(x.income && x.income.merch);
+      if (Math.abs(logged - G.num(im.total)) < 0.01 || (ask && ask.status === 'fixed')) d.merch.push({ show: x, amount: logged });
+    });
+    // Special requests: every one still waiting on an answer, and any new one.
+    if (live && B.requestsFor) shows.forEach(function (x) {
+      B.requestsFor(tourId, x.date).forEach(function (r) {
+        var fresh = when(r.at) > since;
+        if (r.status === 'pending' || fresh) d.requests.push({ show: x, r: r, fresh: fresh });
+      });
+    });
+    // Merch cash still not accounted for.
+    var cs = G.cashSummary(t);
+    if (cs.took > 0 && cs.left > 0.004) d.cash = cs.left;
+    // Expenses added since you looked (not ones filed only for the record).
+    G.rows(t.charges).forEach(function (ch) {
+      var im = ch.importId ? imps[ch.importId] : null;
+      var at = G.num(ch.createdAt) || G.num(im && im.createdAt);
+      if (at > since && !ch.accounted && G.num(ch.amount) !== 0) d.spent.push(ch);
+    });
+    // Money a show still owes the band.
+    shows.forEach(function (x) {
+      var st = G.showMoneyState(x);
+      if (st !== 'owed' && st !== 'partial') return;
+      var g = G.num(x.income && x.income.guarantee);
+      if (g > 0 && x.guaranteeReceived === false) d.income.push({ show: x, what: 'Guarantee', amount: g });
+      var md = G.merchDue(x);
+      if (md > 0 && x.merchReceived === false) d.income.push({ show: x, what: 'Merch deposit', amount: md });
+    });
+    // Days off still ahead with no poll, while there's time to vote.
+    var got = overviewDays(t);
+    if (got && shows.length && live && B.pollFor) {
+      var first = shows[0].date, last = shows[shows.length - 1].date;
+      got.days.forEach(function (x) {
+        if (x.show || x.date < first || x.date > last || isRehearsalDay(t, x.date)) return;
+        if (pollCloses(x.date).getTime() <= now) return;
+        if (!B.pollFor(tourId, x.date)) d.polls.push(x.date);
+      });
+    }
+    // New names on the guest list.
+    shows.forEach(function (x) {
+      guestsFor(t, tourId, x.id).forEach(function (g) {
+        if (when(g.at || g.createdAt) > since) d.guests.push({ show: x, g: g });
+      });
+    });
+    d.fresh = d.merch.length + d.guests.length + (d.spent.length ? 1 : 0) +
+      d.requests.filter(function (x) { return x.fresh; }).length +
+      d.asks.filter(function (a) { return when(a.at) > since; }).length;
+    d.open = d.asks.length + d.requests.filter(function (x) { return x.r.status === 'pending'; }).length +
+      (d.cash ? 1 : 0) + d.income.length + d.polls.length;
+    // Green while something's new, or on a new day with things still open.
+    d.glow = d.fresh > 0 || (d.open > 0 && (!since || G.ymd(new Date(since)) < G.ymd(new Date())));
+    return d;
+  }
+
+  function whatsNewBtn(tourId) {
+    var d = whatsNew(tourId, wnSeen(tourId));
+    return h('div', { class: 'wn-wrap' },
+      h('button', { class: 'crew-invite wn-btn' + (d.glow ? ' on' : ' seen'), type: 'button',
+        'aria-label': 'What\u2019s new' + (d.glow ? ', something to look at' : ', all looked at'),
+        onclick: function () { openWhatsNew(tourId); } },
+        'What\u2019s new?', d.glow && d.fresh ? h('span', { class: 'wn-count' }, String(d.fresh)) : null));
+  }
+
+  function openWhatsNew(tourId) {
+    var since = wnSeen(tourId);
+    var d = whatsNew(tourId, since);
+    var t = getTour(tourId) || {};
+    wnMarkSeen(tourId);
+    var place = function (x) { return dayMD(x.date) + ' \u00b7 ' + (String(x.city || '').split(',')[0] || x.venue || 'Show'); };
+    var then = function (fn) { return function () { closeSheet(); setTimeout(fn, 320); }; };
+    var view = function (v) { return then(function () { go({ name: 'tour', id: tourId, view: v }); }); };
+    var onDay = function (v, date) {
+      return then(function () {
+        var got = overviewDays(getTour(tourId));
+        var i = got ? got.days.map(function (x) { return x.date; }).indexOf(date) : -1;
+        if (i >= 0) { S.dsIndex = i; S.dsTour = tourId; }
+        go({ name: 'tour', id: tourId, view: v });
+      });
+    };
+    var row = function (label, hint, right, onclick, fresh) {
+      return h('button', { class: 'row wn-row', type: 'button', onclick: onclick },
+        h('span', { class: 'row-label' }, label, fresh ? h('span', { class: 'wn-new' }, 'New') : null,
+          hint ? h('span', { class: 'hint' }, hint) : null),
+        right != null ? h('span', { class: 'amt num' }, right) : null);
+    };
+    var sec = function (emoji, title, rows) {
+      rows = rows.filter(Boolean);
+      return rows.length ? h('section', { class: 'wn-sec' },
+        h('h3', { class: 'wn-h' }, h('span', { 'aria-hidden': 'true' }, emoji + ' '), title),
+        h('div', { class: 'ledger' }, rows)) : null;
+    };
+    var catLabel = {};
+    G.chargeCategoriesFor(t).forEach(function (c) { catLabel[c.key] = c.label; });
+    var spentBy = {}, spentTotal = 0;
+    d.spent.forEach(function (ch) {
+      var k = ch.category || '';
+      spentBy[k] = (spentBy[k] || 0) + G.num(ch.amount);
+      spentTotal += G.num(ch.amount);
+    });
+    var gname = function (g) {
+      var n = [g.firstName, g.lastName].filter(Boolean).join(' ') || 'A guest';
+      return n + (G.num(g.qty) > 1 ? ' +' + (G.num(g.qty) - 1) : '');
+    };
+    var sections = [
+      sec('\ud83e\udd16', 'Ari needs an answer', d.asks.map(function (a) {
+        return row(a.place + ' merch', 'Logged ' + G.moneyCents(a.was) + ' \u00b7 the settlement says ' + G.moneyCents(a.fix),
+          null, view('chat'));
+      })),
+      sec('\ud83d\udcb0', 'Merch logged automatically', d.merch.map(function (m) {
+        return row(place(m.show), 'From the atVenu settlement', G.moneyCents(m.amount), view('money'), true);
+      })),
+      sec('\ud83d\ude4b', 'Special requests', d.requests.map(function (x) {
+        var status = x.r.status === 'accepted' ? 'Accepted' : x.r.status === 'denied' ? 'Denied' : 'Waiting for an answer';
+        return row(x.r.body, [place(x.show), x.r.author, status].filter(Boolean).join(' \u00b7 '), null,
+          then(function () { openRequests(tourId, x.show); }), x.fresh);
+      })),
+      sec('\ud83d\udcb5', 'Merch cash', d.cash ? [row('Not accounted for yet', 'Open the Merch cash log to square it up',
+        G.moneyCents(d.cash), view('cashlog'))] : []),
+      sec('\ud83e\uddfe', 'New expenses', d.spent.length ? [row(plural(d.spent.length, 'charge') + ' added', null,
+        G.moneyCents(spentTotal), view('costs'), true)].concat(Object.keys(spentBy).sort(function (a, b) {
+          return spentBy[b] - spentBy[a];
+        }).map(function (k) {
+          return row(catLabel[k] || (k ? k : 'Not sorted yet'), null, G.moneyCents(spentBy[k]), view('costs'));
+        })) : []),
+      sec('\u23f3', 'Income not received yet', d.income.map(function (x) {
+        return row(x.what, place(x.show), G.moneyCents(x.amount), view('money'));
+      })),
+      sec('\ud83d\uddf3\ufe0f', 'Days off with no poll', d.polls.map(function (date) {
+        return row(dayLong(date), 'No poll yet', null,
+          leadsTour(tourId) ? then(function () { openPollEditor(tourId, date, null); }) : view('calendar'));
+      })),
+      sec('\ud83c\udf9f\ufe0f', 'New on the guest list', d.guests.map(function (x) {
+        return row(gname(x.g), [place(x.show), x.g.affiliation].filter(Boolean).join(' \u00b7 '), null, onDay('guests', x.show.date), true);
+      }))
+    ].filter(Boolean);
+    var last = since ? new Date(since) : null;
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'What\u2019s new?'),
+        h('p', { class: 'sh-sub' }, last ? 'Since you last looked, ' + dayMD(G.ymd(last)) + ' ' +
+          last.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'Everything that wants a look'),
+        sections.length ? sections : h('p', { class: 'note wn-clear' }, 'All caught up \ud83e\udd18')
+      ];
+    }, { label: 'What\u2019s new', onClose: function () { render(true); } });
   }
 
   function kickOff(tourId, email, who) {

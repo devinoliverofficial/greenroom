@@ -936,6 +936,24 @@ span.avatar { cursor: inherit; }
 }
 .crew-invite:active { transform: translateY(1px); }
 .crew-invite .plus { font-size: 14px; line-height: 1; }
+/* What's new?, under Invite crew: green and pulsing while there's something
+   to look at, grey once you've looked. */
+.wn-wrap { display: flex; justify-content: center; margin-top: 10px; }
+.wn-btn.on { background: var(--brand); color: var(--on-brand); border-color: transparent;
+  animation: bopulse 1.4s ease-in-out infinite; box-shadow: 0 0 14px color-mix(in oklab, var(--brand), transparent 45%); }
+.wn-btn.seen { color: var(--ink-3); border-color: var(--line); background: var(--surface); }
+.wn-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 2px;
+  border-radius: 999px; background: var(--on-brand); color: var(--brand); font-size: 11px; font-weight: 800; letter-spacing: 0; }
+@media (prefers-reduced-motion: reduce) { .wn-btn.on { animation: none; } }
+.wn-sec { margin-top: 16px; }
+.wn-h { display: flex; align-items: center; gap: 4px; margin: 0 0 6px; font-size: 13px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); }
+button.row.wn-row { appearance: none; width: 100%; border: 0; background: none; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; }
+.wn-row .row-label { overflow-wrap: anywhere; }
+.wn-row .hint { display: block; font-size: 12.5px; }
+.wn-new { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; vertical-align: 1px;
+  background: var(--pos-soft); color: var(--pos); font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.wn-clear { text-align: center; font-size: 16px; margin-top: 18px; }
 .crew-row .crew-sub { display: block; font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere; }
 .crew-side { display: flex; align-items: center; gap: 6px; flex: none; }
 .row.crew-row { gap: 6px; }   /* same as .crew-side's gap, so the badge column sits dead centre */
