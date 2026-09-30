@@ -4952,7 +4952,8 @@
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
-    if (only === 'sheet') return [checkInBtn(id, entry.date, lines.length > 0), rail, placeEl, body, editRow, copyBtn];
+    // Check In sits right under the venue's name.
+    if (only === 'sheet') return [rail, placeEl, checkInBtn(id, entry.date, lines.length > 0), body, editRow, copyBtn];
     return [hero, rail, editRow, body, guestBtn, copyBtn];
   }
 
