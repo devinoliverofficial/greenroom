@@ -404,14 +404,21 @@
   // upTo: only what had moved by that day (the balance chart walks the tour).
   function cardMoved(card, tour, upTo) {
     if (!card || !isObj(card.feed) || !parseDay(card.cutoff)) return 0;
-    return rows(tour && tour.charges).reduce(function (t, ch) {
+    var inside = function (d) { return d && d <= card.cutoff && (!upTo || d <= upTo); };
+    var moved = rows(tour && tour.charges).reduce(function (t, ch) {
       if (ch.accounted || !ch.category || ch.account !== card.feed.name) return t;
       // The bank's balance holds posted charges: a charge made before the
       // balance was read but posted after it wasn't inside it yet.
-      var d = ch.posted || ch.date;
-      if (upTo && !(d && d <= upTo)) return t;
-      return d && d <= card.cutoff ? t + num(ch.amount) : t;
+      return inside(ch.posted || ch.date) ? t + num(ch.amount) : t;
     }, 0);
+    // Charges on this card that were logged to another tour (tour.cardAway)
+    // leave the balance too, without counting as this tour's spending.
+    var away = isObj(tour && tour.cardAway) ? tour.cardAway : {};
+    Object.keys(away).forEach(function (k) {
+      var a = away[k];
+      if (isObj(a) && a.account === card.feed.name && inside(a.posted || a.date)) moved += num(a.amount);
+    });
+    return moved;
   }
   function cardPaidOff(card) {
     var p = isObj(card && card.payments) ? card.payments : {};

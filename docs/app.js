@@ -1501,6 +1501,23 @@
     S.offMaking = false;
     return ok ? id : null;
   }
+  // The band's tours that haven't started yet, soonest first.
+  function upcomingToursOf(artist, exceptId) {
+    var today = G.tourToday();
+    return bandTours(artist).filter(function (e) { return e[0] !== exceptId; })
+      .map(function (e) { return { id: e[0], name: e[1].name || 'Tour', start: G.tourStart(e[1]) }; })
+      .filter(function (x) { return x.start && x.start > today; })
+      .sort(function (a, b) { return a.start.localeCompare(b.start); });
+  }
+  // The band's tour running today, if there is one.
+  function currentTourOf(artist) {
+    var today = G.tourToday(), hit = null;
+    bandTours(artist).forEach(function (e) {
+      var a = G.tourStart(e[1]), b = G.tourEnd(e[1]);
+      if (!hit && a && b && a <= today && today <= b) hit = { id: e[0], name: e[1].name || 'Tour' };
+    });
+    return hit;
+  }
   // The band's next tour: the soonest one that hasn't started yet.
   function nextTourOf(artist, exceptId) {
     var today = G.tourToday(), best = null;
@@ -2381,6 +2398,15 @@
       if (d && d <= card.cutoff) byCat[ch.category] = (byCat[ch.category] || 0) + G.num(ch.amount);
       else { since += G.num(ch.amount); sinceN += 1; }
     });
+    var awayTo = {};
+    G.rows(t.cardAway).forEach(function (a) {
+      var d = a.posted || a.date;
+      if (a.account === card.feed.name && d && d <= card.cutoff) {
+        var nm = (getTour(a.to) || {}).name || 'another tour';
+        awayTo[nm] = (awayTo[nm] || 0) + G.num(a.amount);
+      }
+    });
+    Object.keys(awayTo).forEach(function (nm) { byCat['\u2192 ' + nm] = awayTo[nm]; });
     var waiting = feedWaiting(id).filter(function (it) { return it.account === card.feed.name; }).length;
     var at = G.isObj(card.owedNow) && card.owedNow.at ? new Date(card.owedNow.at) : null;
     var line = function (label, v, cls) {
@@ -2390,6 +2416,13 @@
       return [
         h('h2', { class: 'sh-title' }, card.label || card.feed.name),
         h('p', { class: 'sh-sub' }, [bank, 'Credit card'].filter(Boolean).join(' \u00b7 ')),
+        // The whole balance, as the card company has it right now.
+        h('div', { class: 'cc-total' },
+          h('span', { class: 'cc-total-l' }, 'Card balance'),
+          h('strong', { class: 'cc-total-v num' + (sm.owed > 0 ? '' : ' clear') }, sm.owed > 0 ? G.moneyCents(sm.owed) : 'Paid off'),
+          h('span', { class: 'cc-total-at' }, (bank || 'The bank') + (at ? ', as of ' + dayMD(G.ymd(at)) + ' ' +
+            at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''))),
+        h('h3', { class: 'wn-h', style: 'margin-top:14px' }, 'Sorting it on this tour'),
         h('div', { class: 'preview' },
           line('Balance when logging started' + (G.parseDay(card.cutoff) ? ' (' + dayMD(card.cutoff) + ')' : ''), G.moneyCents(sm.balance)),
           line('Sorted into categories', '\u2212 ' + G.moneyCents(sm.accounted)),
@@ -2406,8 +2439,7 @@
           h('div', { class: 'preview' },
             sinceN ? line('Charged since, already in their categories', G.moneyCents(since)) : null,
             sm.paidOff > 0 ? line('Paid on the card since', '\u2212 ' + G.moneyCents(sm.paidOff)) : null,
-            line('Owed now' + (at ? ' (as of ' + dayMD(G.ymd(at)) + ')' : ''), sm.owed > 0 ? G.moneyCents(sm.owed) : 'Paid off',
-              sm.owed > 0 ? 'neg' : 'pos'))),
+            line('Card balance now', sm.owed > 0 ? G.moneyCents(sm.owed) : 'Paid off', sm.owed > 0 ? 'neg' : 'pos'))),
         h('div', { class: 'stack' },
           waiting ? h('button', { class: 'btn primary block', type: 'button', onclick: function () {
             closeSheet(); setTimeout(function () { openFeedReview(id, 0, card.feed.name); }, 320);
@@ -9416,17 +9448,29 @@
       return db.localeCompare(da);
     });
     var feed = !!(opts && opts.feed);
-    // Where each charge goes. On a tour: this tour (the default), the band's
-    // Off Tour book (and this tour's Off Tour Debt), or the band's next tour.
-    // On the Off Tour book: Off Tour (the default) or the next tour.
+    // Where each charge is logged, picked under its category:
+    //   Off Tour: the band's Off Tour book only (from a tour, the tour also
+    //     carries it under Off Tour Debt);
+    //   Current Tour: the tour being reviewed (from the Off Tour book, the
+    //     band's tour running today);
+    //   Upcoming Tour: any of the band's tours that hasn't started (pick one).
     var base = getTour(tourId) || {};
     var baseOff = isOffTour(base);
     var band = artistOf(base);
-    var upcoming = band ? nextTourOf(band, tourId) : null;
-    var dests = (baseOff ? [['off', 'Off Tour']] : [['tour', 'This tour'], ['off', 'Off Tour']])
-      .concat(upcoming ? [['next', 'Upcoming tour']] : []);
-    if (!band) dests = dests.filter(function (d) { return d[0] !== 'off'; });
-    rows.forEach(function (r) { r.pick = false; r.dest = baseOff ? 'off' : 'tour'; });
+    var curTour = baseOff ? (band ? currentTourOf(band) : null) : { id: tourId, name: base.name || 'This tour' };
+    var ups = band ? upcomingToursOf(band, tourId) : [];
+    var dests = [];
+    if (band) dests.push(['off', 'Off Tour']);
+    if (curTour) dests.push(['cur', 'Current Tour']);
+    if (ups.length) dests.push(['up', 'Upcoming Tour']);
+    rows.forEach(function (r) { r.pick = false; r.dest = baseOff ? 'off' : 'cur'; r.upTo = ups.length ? ups[0].id : null; });
+    // The tour a charge lands on (null for the Off Tour book).
+    var landsOn = function (r) {
+      if (r.dest === 'off') return null;
+      if (r.dest === 'up' && r.upTo) return r.upTo;
+      return curTour ? curTour.id : tourId;
+    };
+    var nameOf = function (id2) { var x = getTour(id2); return (x && x.name) || 'the tour'; };
     var live = rows.slice();
     var busy = false;
     var cats = G.chargeCategoriesFor(base).filter(function (c) { return c.key !== 'commission' && c.key !== 'offdebt'; });
@@ -9448,7 +9492,8 @@
           var B = window.GR_BACKEND, r = null;
           try {
             r = await B.feedCall('file', { tourId: tourId, picks: list.map(function (x) {
-              return { id: x.feedId, keep: keep, category: keep ? x.category : null, accounted: false, dest: x.dest };
+              return { id: x.feedId, keep: keep, category: keep ? x.category : null, accounted: false,
+                dest: x.dest === 'off' ? 'off' : 'tour', to: landsOn(x) };
             }) });
           } catch (e) { r = null; }
           if (!r || !r.ok) {
@@ -9461,12 +9506,15 @@
           if (r.skipped) bits.push(plural(r.skipped, 'charge') + ' set aside');
           if (r.already) bits.push(plural(r.already, 'charge') + ' already sorted by someone else');
           if (r.offTour) bits.push(r.offTour + ' to Off Tour');
-          if (r.upcoming) bits.push(r.upcoming + ' to the upcoming tour');
+          if (r.upcoming) bits.push(r.upcoming + ' to ' + (list.length === 1 && landsOn(list[0]) ? nameOf(landsOn(list[0])) : 'another tour'));
           said = bits.join(' \u00b7 ');
         } else {
-          // A statement: each group goes where it was pointed.
-          var groups = { tour: [], off: [], next: [] };
-          list.forEach(function (x) { (groups[x.dest] || groups.tour).push(x); });
+          // A statement: each charge goes where it was pointed.
+          var offs = [], byTour = {};
+          list.forEach(function (x) {
+            var to = landsOn(x);
+            if (!to) offs.push(x); else (byTour[to] = byTour[to] || []).push(x);
+          });
           var total = 0;
           var put = async function (where, xs, extra) {
             if (!where || !xs.length) return true;
@@ -9484,17 +9532,18 @@
               total: (had ? G.num(had.total) : 0) + sum, source: source };
             return api.update(where, { charges: patch, imports: imports });
           };
-          var offId = groups.off.length ? (baseOff ? tourId : await ensureOffTour(band)) : null;
-          if (groups.off.length && !offId) { toast('Only the tour manager can start the Off Tour book.'); return; }
-          if (!(await put(tourId, groups.tour))) return;
-          if (!(await put(offId, groups.off))) return;
+          var offId = offs.length ? (baseOff ? tourId : await ensureOffTour(band)) : null;
+          if (offs.length && !offId) { toast('Only the tour\u2019s creator can start the Off Tour book.'); return; }
+          var tids = Object.keys(byTour);
+          for (var q = 0; q < tids.length; q++) { if (!(await put(tids[q], byTour[tids[q]]))) return; }
+          if (!(await put(offId, offs))) return;
           // Off-tour spending on this tour's card: the tour carries it as Off Tour Debt.
-          if (!baseOff && !(await put(tourId, groups.off, function (x) { return { category: 'offdebt', offTour: true, offCategory: x.category }; }))) return;
-          if (!(await put(upcoming && upcoming.id, groups.next))) return;
+          if (!baseOff && !(await put(tourId, offs, function (x) { return { category: 'offdebt', offTour: true, offCategory: x.category }; }))) return;
           for (var i = 0; i < list.length; i++) { await writeLabel(list[i].merchant, list[i].category); total += G.num(list[i].amount); }
+          var away = tids.filter(function (x) { return x !== tourId; });
           said = plural(list.length, 'charge') + ' added, ' + G.moneyCents(total) +
-            (groups.off.length && !baseOff ? ' \u00b7 ' + groups.off.length + ' to Off Tour' : '') +
-            (groups.next.length ? ' \u00b7 ' + groups.next.length + ' to ' + upcoming.name : '');
+            (offs.length && !baseOff ? ' \u00b7 ' + offs.length + ' to Off Tour' : '') +
+            (away.length ? ' \u00b7 ' + away.map(function (x) { return byTour[x].length + ' to ' + nameOf(x); }).join(', ') : '');
         }
       } finally { busy = false; }
       live = live.filter(function (x) { return list.indexOf(x) < 0; });
@@ -9539,6 +9588,30 @@
         : 'Found ' + plural(live.length, 'charge');
     }
 
+    // Under the category: Log to Off Tour, Current Tour or Upcoming Tour (and
+    // which one, when the band has more than one coming up).
+    function destRow(r) {
+      if (dests.length < 2) return null;
+      var upSel = ups.length ? h('select', { class: 'input sm rv-upsel', 'aria-label': 'Which upcoming tour',
+        onchange: function (e) { r.upTo = e.target.value; } },
+        ups.map(function (u) { return h('option', { value: u.id }, u.name + ' \u00b7 starts ' + dayMD(u.start)); })) : null;
+      if (upSel) { upSel.value = r.upTo || ''; upSel.hidden = r.dest !== 'up'; }
+      return h('div', { class: 'rv-dwrap' },
+        h('div', { class: 'rv-dest', role: 'group', 'aria-label': 'Log ' + r.merchant + ' to' },
+          h('span', { class: 'rv-dlabel' }, 'Log to'),
+          dests.map(function (d) {
+            return h('button', { class: 'rv-dpill' + (r.dest === d[0] ? ' on' : ''), type: 'button',
+              title: d[0] === 'cur' && curTour ? curTour.name : null,
+              onclick: function (e) {
+                r.dest = d[0];
+                Array.prototype.forEach.call(e.currentTarget.parentNode.querySelectorAll('.rv-dpill'), function (b) {
+                  b.classList.toggle('on', b === e.currentTarget);
+                });
+                if (upSel) upSel.hidden = r.dest !== 'up';
+              } }, d[1]);
+          })),
+        upSel);
+    }
     function chargeRow(r) {
       var wrap = h('div', { class: 'rv-row' + (r.pick ? ' on' : '') });
       var cb = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check ' + r.merchant,
@@ -9556,17 +9629,9 @@
           r.why ? h('span', { class: 'rv-flag' + (r.why === 'Refund' ? ' learned' : '') }, r.why) : null,
           (r.source === 'learned' && !r.why) ? h('span', { class: 'rv-flag learned' }, 'Learned') : null,
           r.source === 'suggested' ? h('span', { class: 'rv-flag' }, 'Suggested') : null),
-        dests.length > 1 ? h('div', { class: 'rv-dest', role: 'group', 'aria-label': 'Where ' + r.merchant + ' goes' },
-          dests.map(function (d) {
-            return h('button', { class: 'rv-dpill' + (r.dest === d[0] ? ' on' : ''), type: 'button',
-              title: d[0] === 'next' && upcoming ? upcoming.name : null,
-              onclick: function (e) {
-                r.dest = d[0];
-                Array.prototype.forEach.call(e.currentTarget.parentNode.children, function (b) { b.classList.toggle('on', b === e.currentTarget); });
-              } }, d[1]);
-          })) : null,
         h('div', { class: 'rv-act' }, sel,
           h('button', { class: 'btn sm primary rv-add1', type: 'button', onclick: function () { file([r], true); } }, 'Add')),
+        destRow(r),
         feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false); } },
           'Not a tour charge — set it aside') : null));
       return wrap;

@@ -376,6 +376,16 @@
     near(G.cardSummary(card, t).remainder, 750, 'what is still to sort');
   });
 
+  test('a card charge logged to another tour leaves this tour\u2019s card balance without counting here', function () {
+    var card = { label: 'Gold', amount: 1000, kind: 'card', cutoff: '2026-09-28', breakdown: {}, feed: { name: 'Gold' } };
+    var t = { shows: {}, expenses: {}, crew: {}, commission: {}, extras: {}, debts: { c1: card },
+      charges: { a: { date: '2026-09-20', merchant: 'Hotel', amount: 200, category: 'hotels', account: 'Gold' } } };
+    var before = G.calc(t).out;
+    t.cardAway = { pg: { account: 'Gold', amount: 150, date: '2026-09-27', posted: '2026-09-27', to: 'winter' } };
+    near(G.cardSummary(card, t).remainder, 650, 'the gear for the next tour is out of what is still to sort');
+    near(G.calc(t).out, before - 150, 'and this tour no longer counts it');
+  });
+
   test('buyouts count only what the Artists got as income', function () {
     var show = { date: '2026-05-10', income: { buyouts: 60, guarantee: 1000 }, loggedAt: 1 };
     eq(G.buyoutIncome(show), 0, 'nobody ticked yet: nothing counts');

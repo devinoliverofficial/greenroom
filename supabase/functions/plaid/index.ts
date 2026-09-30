@@ -919,6 +919,9 @@ Deno.serve(async (req) => {
         const adds = new Map<string, Obj>();
         const into = (tid: string, key: string, ch: Obj) => { const a = adds.get(tid) ?? {}; a[key] = ch; adds.set(tid, a); };
         const landed = new Map<string, string>();
+        // Card charges from this tour's pile logged to another tour: a note
+        // here, so they leave this tour's card balance without counting here.
+        const away: Obj = {};
         got.forEach((r, i) => {
           const pk = want.get(String(r.id))!;
           const amount = Number(r.amount);
@@ -928,7 +931,15 @@ Deno.serve(async (req) => {
             paid: !isCredit(byName.get(String(r.account))), ...(by ? { by } : {}),
           };
           const dest = String(pk.dest ?? (baseOff ? "off" : "tour"));
-          if (dest === "next" && next) { into(next.id, "p" + r.id, ch); landed.set(String(r.id), next.id); upcoming += 1; }
+          // A tour picked by name (the current one from the Off Tour book, or
+          // an upcoming one): it has to be one of this band's tours.
+          const toId = String(pk.to ?? "");
+          const other = dest === "next" ? next
+            : dest === "tour" && toId && toId !== tourId ? band.find((b) => b.id === toId && b.doc.kind !== "offtour") ?? null : null;
+          if (other) {
+            into(other.id, "p" + r.id, ch); landed.set(String(r.id), other.id); upcoming += 1;
+            if (!baseOff && ch.account) away["p" + r.id] = { account: ch.account, amount, date: ch.date, posted: ch.posted, to: other.id };
+          }
           else if (dest === "off" && book && !baseOff) {
             into(book.id, "p" + r.id, { ...ch, fromTour: tourId });
             // Off-tour spending on this tour's card: the tour carries it as debt.
@@ -945,6 +956,7 @@ Deno.serve(async (req) => {
           const saved = await admin.rpc("file_charges", { t_id: tid, add, imp });
           if (saved.error) { failed = true; break; }
         }
+        if (!failed && Object.keys(away).length) await admin.rpc("set_card_away", { t_id: tourId, add: away });
         for (const [fid, tid] of landed) {
           if (tid !== tourId) await admin.from("feed_items").update({ tour_id: tid }).eq("owner_id", owner).eq("id", fid);
         }

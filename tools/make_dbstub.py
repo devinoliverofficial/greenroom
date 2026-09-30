@@ -278,6 +278,10 @@ shim = r"""<script>
             account: it.account, importId: 'review-' + now, createdAt: now + i, paid: !(acct && acct.type === 'creditCard'),
             by: H.asTM ? 'Brent Allen' : 'Devin Oliver' };
           if (pk.dest === 'next' && H.nextTourId) { into(H.nextTourId, 'p' + it.id, ch); nextN += 1; }
+          else if (pk.dest === 'tour' && pk.to && pk.to !== body.tourId) {
+            into(pk.to, 'p' + it.id, ch); nextN += 1;
+            H.away = H.away || {}; H.away['p' + it.id] = { account: it.account, amount: it.amount, date: it.date, posted: it.date, to: pk.to };
+          }
           else if (pk.dest === 'off' && H.offTourId && body.tourId !== H.offTourId) {
             into(H.offTourId, 'p' + it.id, Object.assign({}, ch, { fromTour: body.tourId }));
             into(body.tourId, 'p' + it.id, Object.assign({}, ch, { category: 'offdebt', offTour: true, offCategory: pk.category }));
@@ -288,6 +292,9 @@ shim = r"""<script>
         H.filedPicks = (H.filedPicks || []).concat([picks]);
         H.feedPush();
         return window.claude.use('db').then(function (db) {
+          if (H.away && Object.keys(H.away).length) { var aw = H.away; H.away = null; adds.__away = { tid: body.tourId, away: aw }; }
+          var awayNote = adds.__away; delete adds.__away;
+          if (awayNote) db.doc('tours/' + awayNote.tid).update({ cardAway: awayNote.away });
           return Promise.all(Object.keys(adds).map(function (tid) {
             var imp = {}; imp['review-' + now] = { createdAt: now, count: Object.keys(adds[tid]).length, total: 0, source: 'Card feed' };
             return db.doc('tours/' + tid).update({ charges: adds[tid], imports: imp });
