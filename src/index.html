@@ -1389,6 +1389,20 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .feed-checked { margin: 6px 2px 0; text-align: center; font-size: 12px; color: var(--ink-3); }
 .feed-accts { margin-top: 10px; }
 .fa-name { font-weight: 600; margin: 0 2px 6px; }
+/* The Budget tab, sized like the other tabs. */
+.budget-page .hero { padding: 18px 16px 14px; border-radius: 22px; }
+.budget-page .odo { font-size: clamp(40px, 12.5vw, 56px); }
+.budget-page .hero-cap { font-size: 13.5px; }
+.budget-page .btn.add-more { min-height: 44px; font-size: 14px; margin: 2px 0 14px; }
+.budget-page .count-line { font-size: 12px; }
+.budget-page .show-row { min-height: 56px; padding: 10px 2px; gap: 12px; }
+.budget-page .show-row .city { font-size: 14px; }
+.budget-page .show-row .venue { font-size: 12px; margin-top: 2px; }
+.budget-page .show-row .date .d { font-size: 16px; }
+.budget-page .show-row .amt { font-size: 13px; }
+.budget-page .show-row .tag { font-size: 11.5px; }
+.budget-page .tonight .tn-city { font-size: 17px; }
+
 /* The Day sheet page: everything a size smaller, in the calendar's date
    style (Inter, semi-bold, tight), for more room on the screen. */
 .ds-page .ds-venue-row .ds-venue { font-size: 22px; }
@@ -1418,7 +1432,10 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .cal-btn { flex: none; border: 0; border-radius: 999px; padding: 5px 9px; font: inherit; font-size: 11px; font-weight: 700;
   background: var(--surface-2); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
 /* Day sheet sits in the middle of each calendar row. */
-.show-row.cal-row { grid-template-columns: 42px minmax(0, 1fr) auto auto; gap: 8px; }
+/* Day sheet sits in one straight column on every row: the last column is a
+   fixed width, whatever button (or tag) is in it. */
+.show-row.cal-row { grid-template-columns: 42px minmax(0, 1fr) auto 108px; gap: 8px; }
+.show-row.cal-row > :last-child { justify-self: end; }
 .cal-row .where { min-width: 0; }
 .cal-row .where .city, .cal-row .where .venue { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 .cal-btn.ds-jump { background: none; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-2); }

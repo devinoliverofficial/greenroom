@@ -842,7 +842,7 @@
     var series = d.series;
     var last = series.length - 1;
     var W = Math.max(260, Math.round(wrap.clientWidth || 340));
-    var H = 184, PAD = 14, PADX = 8; // PADX keeps the first and last markers whole
+    var H = 140, PAD = 14, PADX = 8; // PADX keeps the first and last markers whole
 
     var nets = series.map(function (p) { return p.net; });
     var lo = Math.min.apply(null, nets.concat([0]));
@@ -3462,7 +3462,7 @@
     }
     var body = tabShows(id, t, c);
 
-    return h('div', { class: 'page tour has-tabs' },
+    return h('div', { class: 'page tour has-tabs budget-page' },
       h('div', { class: 'headband' },
         tourTopbar(t, id, 'money'),
         h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
@@ -4145,25 +4145,31 @@
     svg.innerHTML = plus ? '<path d="M12 5v14M5 12h14"/>' : '<path d="M5 12h14"/>';
     return svg;
   }
-  async function stepStat(id, person, st, up, owner, before) {
+  function stepStat(id, person, st, up, owner, before, redraw) {
     var B = window.GR_BACKEND;
-    if (S.statBusy) return;
-    S.statBusy = true;
-    try {
-      if (up) await B.addStat(id, person.key, st.key);
-      else {
-        var take = B.statsFor(id).filter(function (x) { return x.person === person.key && x.stat === st.key && (owner || x.mine); })
-          .sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); })[0];
-        if (!take) { toast('You can only take back ones you added.'); S.statBusy = false; return; }
-        await B.removeStat(take.id);
-      }
-    } catch (x) { toast('Couldn’t save that. Try again.'); S.statBusy = false; return; }
-    S.statBusy = false;
+    var key = person.key + '|' + st.key;
+    var pend = S.statPending || (S.statPending = {});
+    pend[key] = (pend[key] || 0) + (up ? 1 : -1);
     S.statBump = { stat: st.key, person: person.key };
-    render(true);
-    // Every 10th is a milestone.
-    var n = (before || 0) + 1;
-    if (up && n % 10 === 0) { confetti(); toast(st.emoji + ' ' + n + ' ' + st.unit[1] + ' for ' + person.first + '!'); }
+    if (S.statShown && S.statShown.stat === st.key) S.statOrder = { stat: st.key, keys: S.statShown.keys.slice(), until: Date.now() + 1500 };
+    clearTimeout(S.statResort);
+    S.statResort = setTimeout(function () { S.statOrder = null; if (S.route && S.route.view === 'stats') redraw(); }, 1600);
+    redraw();
+    var n = before + (up ? 1 : -1);
+    if (up && n > 0 && n % 10 === 0) { confetti(); toast(st.emoji + ' ' + n + ' ' + st.unit[1] + ' for ' + person.first + '!'); }
+    S.statChain = (S.statChain || Promise.resolve()).then(async function () {
+      try {
+        if (up) await B.addStat(id, person.key, st.key);
+        else {
+          var take = B.statsFor(id).filter(function (x) { return x.person === person.key && x.stat === st.key && (owner || x.mine); })
+            .sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); })[0];
+          if (!take) throw new Error('nothing');
+          await B.removeStat(take.id);
+        }
+      } catch (x) { toast(x && x.message === 'nothing' ? 'You can only take back ones you added.' : 'Couldn\u2019t save that. Try again.'); }
+      pend[key] = (pend[key] || 0) - (up ? 1 : -1);
+      if (S.route && S.route.view === 'stats') redraw();
+    });
   }
   // A player card: everything one person has on the tour.
   function openPlayerCard(id, person, stats, gb, owner) {
@@ -4192,7 +4198,10 @@
       var gb = B && B.gameBall ? B.gameBall(id) : { rounds: [], votes: [] };
       var holder = gameBallHolder(id);
       var nameOf = function (k) { var p = people.filter(function (x) { return x.key === k; })[0]; return p ? p.name : 'Someone'; };
-      var count = function (k, stat) { return stats.filter(function (x) { return x.person === k && x.stat === stat; }).length; };
+      var pend = S.statPending || (S.statPending = {});
+      var count = function (k, stat) {
+        return stats.filter(function (x) { return x.person === k && x.stat === stat; }).length + (pend[k + '|' + stat] || 0);
+      };
       var balls = function (k) { return gb.rounds.filter(function (g) { return g.status === 'won' && g.winner === k; }).length; };
       var owner = canEditTour(id);
 
@@ -4245,19 +4254,29 @@
       };
       var pick = statPick(id);
       var cur = STATS.filter(function (x) { return x.key === pick; })[0] || STATS[0];
-      parts.push(h('div', { class: 'st-chips', role: 'tablist', 'aria-label': 'Pick a stat' }, STATS.map(function (st) {
+      var chips = h('div', { class: 'st-chips', role: 'tablist', 'aria-label': 'Pick a stat',
+        onscroll: function (e) { S.chipScroll = e.currentTarget.scrollLeft; } }, STATS.map(function (st) {
         var on = st.key === cur.key;
         return h('button', { class: 'st-chip' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': String(on),
           onclick: function () { statPick(id, st.key); draw(crew); } },
           h('span', { 'aria-hidden': 'true' }, st.emoji), st.label);
-      })));
+      }));
+      parts.push(chips);
+      requestAnimationFrame(function () { chips.scrollLeft = S.chipScroll || 0; });
 
+      // While someone's tapping, the rows hold still (so the next tap lands
+      // on the same person); they re-sort a moment after the tapping stops.
+      var hold = S.statOrder && S.statOrder.stat === cur.key && Date.now() < S.statOrder.until ? S.statOrder.keys : null;
       var ranked = people.map(function (p) { return { p: p, n: valueOf(p.key, cur) }; })
-        .sort(function (a, b) { return b.n - a.n || a.p.name.localeCompare(b.p.name); });
-      var top = ranked.length ? ranked[0].n : 0;
+        .sort(hold ? function (a, b) {
+          var ia = hold.indexOf(a.p.key), ib = hold.indexOf(b.p.key);
+          return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+        } : function (a, b) { return b.n - a.n || a.p.name.localeCompare(b.p.name); });
+      S.statShown = { stat: cur.key, keys: ranked.map(function (r) { return r.p.key; }) };
+      var rankOf = function (n) { return 1 + ranked.filter(function (x) { return x.n > n; }).length; };
+      var top = ranked.reduce(function (m, r) { return Math.max(m, r.n); }, 0);
       var leaders = ranked.filter(function (r) { return r.n === top && top > 0; });
       var can = !cur.self && !cur.balls && (cur.anyone || owner);
-      var rank = 0, last = null;
       var bump = S.statBump && S.statBump.stat === cur.key ? S.statBump.person : null;
       S.statBump = null;
       parts.push(h('section', { class: 'lb-card' },
@@ -4267,10 +4286,11 @@
             h('div', { class: 'lb-title' }, cur.label),
             h('div', { class: 'lb-sub' }, leaders.length === 1 ? cur.title + ': ' + leaders[0].p.first
               : leaders.length > 1 ? cur.title + ': a ' + leaders.length + '-way tie' : 'Nobody on the board yet'))),
-        ranked.length ? h('ol', { class: 'lb-list' }, ranked.map(function (r, i) {
-          if (r.n !== last) { rank = i + 1; last = r.n; }
+        ranked.length ? h('ol', { class: 'lb-list' }, ranked.map(function (r) {
+          var rank = rankOf(r.n);
           var medal = r.n > 0 && rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : null;
-          var mineToTake = stats.some(function (x) { return x.person === r.p.key && x.stat === cur.key && (owner || x.mine); });
+          var mineToTake = stats.filter(function (x) { return x.person === r.p.key && x.stat === cur.key && (owner || x.mine); }).length +
+            (pend[r.p.key + '|' + cur.key] || 0) > 0;
           var streak = cur.key === 'checkin' ? streakOf(r.p.key) : 0;
           var holds = holder && holder.winner === r.p.key;
           return h('li', { class: 'lb-row' + (r.n > 0 && r.n === top ? ' lead' : '') },
@@ -4281,27 +4301,14 @@
             h('span', { class: 'lb-count' + (bump === r.p.key ? ' bump' : '') }, String(r.n)),
             can ? h('span', { class: 'lb-step' },
               h('button', { class: 'lb-b minus', type: 'button', disabled: !mineToTake, 'aria-label': 'Take one ' + cur.label.toLowerCase() + ' from ' + r.p.name,
-                onclick: function () { stepStat(id, r.p, cur, false, owner); } }, stepIcon(false)),
+                onclick: function () { stepStat(id, r.p, cur, false, owner, r.n, function () { draw(crew); }); } }, stepIcon(false)),
               h('button', { class: 'lb-b plus', type: 'button', 'aria-label': 'Add one ' + cur.label.toLowerCase() + ' for ' + r.p.name,
-                onclick: function () { stepStat(id, r.p, cur, true, owner, r.n); } }, stepIcon(true))) : null);
+                onclick: function () { stepStat(id, r.p, cur, true, owner, r.n, function () { draw(crew); }); } }, stepIcon(true))) : null);
         })) : h('p', { class: 'note' }, 'Invite the crew from the Overview and they show up here.'),
         h('p', { class: 'lb-foot' }, cur.balls ? 'Won by vote after the first show, every week, and after the last show.'
           : cur.self ? 'Counts itself: tap Check In at the top of each day sheet.'
           : cur.anyone ? 'Anyone can add. Take back ones you added with −.'
           : owner ? 'Only you add these.' : 'The tour manager adds these.')));
-
-      // Tour Awards: every stat's leader at a glance.
-      parts.push(h('h3', { class: 'sh-h3 aw-h' }, 'Tour Awards'), h('div', { class: 'aw-grid' }, STATS.map(function (st) {
-        var best = people.map(function (p) { return { p: p, n: valueOf(p.key, st) }; }).sort(function (a, b) { return b.n - a.n; });
-        var lead = best.length && best[0].n > 0 ? best[0] : null;
-        var tied = lead && best.filter(function (b) { return b.n === lead.n; }).length > 1;
-        return h('button', { class: 'aw-card' + (st.key === cur.key ? ' on' : ''), type: 'button',
-          onclick: function () { statPick(id, st.key); draw(crew); window.scrollTo({ top: 0, behavior: reduced() ? 'auto' : 'smooth' }); } },
-          h('span', { class: 'aw-emoji', 'aria-hidden': 'true' }, st.emoji),
-          h('span', { class: 'aw-title' }, st.title),
-          h('span', { class: 'aw-who' }, lead ? (tied ? 'Tie' : lead.p.first) : '—'),
-          h('span', { class: 'aw-n' }, lead ? lead.n + ' ' + st.unit[lead.n === 1 ? 0 : 1] : 'up for grabs'));
-      })));
 
       // Past votes, everyone's picks and why.
       var past = gb.rounds.filter(function (g) { return g.status !== 'open'; }).sort(function (a, b) { return String(b.round).localeCompare(String(a.round)); });

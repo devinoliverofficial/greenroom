@@ -539,11 +539,14 @@
         return { id: x.id, person: x.person, stat: x.stat, day: x.day, mine: !!session && x.added_by === session.user.id, at: x.created_at };
       });
     },
+    // Stats save fast: the row goes straight into what this phone knows,
+    // without reloading everything (live updates bring everyone else's).
     addStat: async function (tourId, person, stat) {
-      var q = await sb.from('crew_stats').insert({ tour_id: tourId, person: person, stat: stat }).select('id');
+      var q = await sb.from('crew_stats').insert({ tour_id: tourId, person: person, stat: stat }).select('*');
       if (q.error) throw mapError(q.error);
-      await refetch();
-      return q.data && q.data[0] ? q.data[0].id : null;
+      var row = q.data && q.data[0];
+      if (row && !cache.stats.some(function (x) { return x.id === row.id; })) cache.stats.push(row);
+      return row ? row.id : null;
     },
     // Check yourself in on a day's sheet (the database knows who you are).
     checkIn: async function (tourId, date) {
@@ -555,7 +558,7 @@
       var q = await sb.from('crew_stats').delete().eq('id', id).select('id');
       if (q.error) throw mapError(q.error);
       if (!q.data || !q.data.length) throw err('permission');
-      await refetch();
+      cache.stats = cache.stats.filter(function (x) { return x.id !== id; });
     },
     gameBall: function (tourId) {
       return {
