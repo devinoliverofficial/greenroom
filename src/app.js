@@ -4815,6 +4815,14 @@
         return rows.length ? h('section', { class: 'ds-sec' },
           h('h3', { class: 'ds-sec-h' }, title), h('div', { class: 'ledger' }, rows)) : null;
       };
+      // The schedule in blocks, each its own card: VIP and Doors sit on their
+      // own between the soundchecks and the set times.
+      var blocks = function (title, groups) {
+        var cards = groups.map(function (g) { return [].concat.apply([], g).filter(Boolean); })
+          .filter(function (g) { return g.length; })
+          .map(function (g) { return h('div', { class: 'ledger ds-block' }, g); });
+        return cards.length ? h('section', { class: 'ds-sec' }, h('h3', { class: 'ds-sec-h' }, title), cards) : null;
+      };
       var address = String(d.venueAddress || '').trim();
       body = [
         section('Venue', [
@@ -4824,16 +4832,12 @@
           textRow('Wifi', d.wifi),
           textRow('Wifi password', d.wifiPass),
           textRow('Parking', d.parking)]),
-        section('Schedule', [
-          clockRow('Lobby call', d.lobbyCall),
-          clockRow('Load in', d.loadIn),
-          bandRows('Soundcheck', d.soundchecks),
-          textRow('VIP', d.vip),
-          clockRow('Doors', d.doors),
-          bandRows('Set times', d.setTimes),
-          clockRow('Load out', d.loadOut),
-          clockRow('Bus call', d.busCall),
-          textRow('Drive to next venue', d.driveNext)]),
+        blocks('Schedule', [
+          [clockRow('Lobby call', d.lobbyCall), clockRow('Load in', d.loadIn)],
+          [bandRows('Soundcheck', d.soundchecks)],
+          [textRow('VIP', d.vip), clockRow('Doors', d.doors)],
+          [bandRows('Set times', d.setTimes)],
+          [clockRow('Load out', d.loadOut), clockRow('Bus call', d.busCall), textRow('Drive to next venue', d.driveNext)]]),
         // Every amenity listed, a plain yes or no beside it.
         section('Amenities', G.DS_AMENITIES.map(function (a) {
           return dsRow(a[1], h('span', { class: 'ds-val' },

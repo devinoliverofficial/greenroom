@@ -1406,8 +1406,12 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 /* The Day sheet page: everything a size smaller, in the calendar's date
    style (Inter, semi-bold, tight), for more room on the screen. */
 .ds-page .ds-venue-row .ds-venue { font-size: 22px; }
-.ds-page .ds-sec { margin-top: 18px; }
-.ds-page .ds-sec-h { margin-bottom: 8px; font-size: 14px; font-weight: 600; letter-spacing: -.01em; text-align: center; }
+.ds-page .ds-sec { margin-top: 24px; }
+.ds-page .ds-sec-h { margin-bottom: 10px; font-size: 19px; font-weight: 700; letter-spacing: -.02em; text-align: center; }
+/* The schedule's blocks, spaced apart. */
+.ds-page .ds-block + .ds-block { margin-top: 12px; }
+/* Labels on the left in italics; band names stay upright. */
+.ds-page .ds-row:not(.ds-band-row) .row-label { font-style: italic; }
 .ds-page .row.ds-sub { justify-content: center; text-align: center; }
 .ds-page .ledger .row.ds-row { min-height: 42px; padding: 9px 14px; }
 .ds-page .ds-row .row-label { font-size: 13.5px; }
