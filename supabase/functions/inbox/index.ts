@@ -453,7 +453,7 @@ Deno.serve(async (req) => {
       tour_id: hit.id, note_id: id, show_id: hit.showId, place: where, was: logged, fix, patch,
     });
     if (put.error) { await logMail(mail.from, mail.subject, "ask_failed", put.error.message); return ""; }
-    asked = `\n\nWould you like me to correct this to ${usd(fix)}? Reply yes and I'll fix it.`;
+    asked = `\n\nWould you like me to correct this to ${usd(fix)}? Tap Yes and I'll fix it.`;
     return asked;
   };
   const plain = async (why: string) => {

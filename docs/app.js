@@ -3405,89 +3405,40 @@
 
   /* The bus group chat: one thread for the whole run, riding the notes
      store under the 'chat' day so GA can talk too and RLS stays the judge. */
+  /* The bus group chat: the crew and the team talking, nothing else. Ari's
+     merch and settlement readings live on her own page (the ARI button),
+     so nothing the crew says gets buried under paperwork. */
+  function isAriNote(n) { var a = String(n && n.author || ''); return a === 'Ari' || a === 'atVenu'; }
+  function noteTime(n) { return typeof n.at === 'number' ? n.at : Date.parse(n.at) || 0; }
+  function noteWhen(n) {
+    var ts = noteTime(n), dt = ts ? new Date(ts) : null;
+    if (!dt) return '';
+    var clock = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return G.ymd(dt) === G.ymd(new Date()) ? clock : dayMD(G.ymd(dt)) + ' ' + clock;
+  }
   function viewTourChat(id, t) {
     var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.notesFor);
     var myUid = backend && window.GR_BACKEND.uid ? window.GR_BACKEND.uid() : null;
-    var list = notesFor(t, id, 'chat').slice().sort(function (a, b) {
-      var ta = typeof a.at === 'number' ? a.at : Date.parse(a.at) || 0;
-      var tb = typeof b.at === 'number' ? b.at : Date.parse(b.at) || 0;
-      return ta - tb;
-    });
+    var list = notesFor(t, id, 'chat').filter(function (n) { return !isAriNote(n); }).slice()
+      .sort(function (a, b) { return noteTime(a) - noteTime(b); });
     var refresh = function () { setTimeout(function () { render(true); }, backend ? 500 : 150); };
 
-    /* Ari asks before she fixes a night's merch: the tour manager taps Yes
-       or No under her message, or just types yes (or no) right back. */
-    var asks = backend && window.GR_BACKEND.asksFor ? window.GR_BACKEND.asksFor(id) : [];
-    var askOf = function (noteId) { return asks.filter(function (a) { return a.noteId === noteId; })[0] || null; };
-    var answering = false;
-    // One question, or several in a row answered with one "yes".
-    var answer = async function (list, yes) {
-      if (answering) return;
-      answering = true;
-      var said = [];
-      for (var i = 0; i < list.length; i++) {
-        var a = list[i];
-        try {
-          var out = await window.GR_BACKEND.ariAnswer(a.id, yes);
-          said.push(out === 'fixed' ? '\u2705 ' + a.place + ' merch corrected to ' + G.moneyCents(a.fix)
-            : out === 'left' ? 'Left ' + a.place + ' at ' + G.moneyCents(a.was)
-            : out === 'moved' ? a.place + ' changed since Ari asked, so she left it' : a.place + ' already answered');
-        } catch (e2) {
-          said.push(e2 && e2.code === 'permission' ? 'Only the tour manager can answer Ari.' : 'Couldn\u2019t reach Ari. Try again.');
-          break;
-        }
-      }
-      toast(said.join(' \u00b7 '));
-      answering = false;
-      refresh();
-    };
-    var askRow = function (a) {
-      if (a.status !== 'open') {
-        return h('div', { class: 'ask-done' }, a.status === 'fixed' ? '✓ Corrected to ' + G.moneyCents(a.fix)
-          : a.status === 'left' ? 'Left at ' + G.moneyCents(a.was) : 'Left alone (the number had changed)');
-      }
-      if (!moneyLead(id)) return h('div', { class: 'ask-done' }, 'Waiting on the tour manager');
-      return h('div', { class: 'ask-row' },
-        h('button', { class: 'btn sm ask-yes', type: 'button', onclick: function () { answer([a], true); } },
-          'Yes, correct it'),
-        h('button', { class: 'btn sm quiet', type: 'button', onclick: function () { answer([a], false); } }, 'No, leave it'));
-    };
-    // "yes" (or "no") typed straight back answers Ari's open questions at the
-    // end of the chat: all of them, when she asked several in a row.
-    var trailingAsks = function () {
-      if (!moneyLead(id)) return [];
-      var out = [];
-      for (var i = list.length - 1; i >= 0; i--) {
-        var n = list[i];
-        if (String(n.author || '') !== 'Ari') break;
-        var a = askOf(n.id);
-        if (a && a.status === 'open') out.unshift(a);
-      }
-      return out;
-    };
-
     var msgs = list.map(function (n) {
-      var ts = typeof n.at === 'number' ? n.at : Date.parse(n.at) || 0;
-      var dt = ts ? new Date(ts) : null;
-      var sameDay = dt && G.ymd(dt) === G.ymd(new Date());
-      var when = !dt ? '' : sameDay
-        ? dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-        : dayMD(G.ymd(dt));
       var mine = !backend || !myUid || (n.addedBy && n.addedBy === myUid);
-      var isAri = String(n.author || '') === 'Ari';
-      var q = isAri ? askOf(n.id) : null;
-      return h('div', { class: 'chat-msg' + (isAri ? ' from-ari' : '') + (q && q.status === 'open' ? ' asking' : '') },
+      var ts = noteTime(n), dt = ts ? new Date(ts) : null;
+      var when = !dt ? '' : G.ymd(dt) === G.ymd(new Date())
+        ? dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : dayMD(G.ymd(dt));
+      return h('div', { class: 'chat-msg' },
         h('div', { class: 'chat-top' },
-          h('span', { class: 'chat-a' }, isAri ? 'Ari · tour manager' : (n.author || 'Someone')),
+          h('span', { class: 'chat-a' }, n.author || 'Someone'),
           h('span', { class: 'chat-t' }, when),
           (canWrite() || mine) ? h('button', { class: 'iconbtn sm chat-x', type: 'button',
             'aria-label': 'Delete this message',
             onclick: async function () {
               try { await removeNote(id, 'chat', n.id); refresh(); }
-              catch (e2) { toast('Only the tour manager can delete someone else\u2019s message.'); }
+              catch (e2) { toast('Only the tour manager can delete someone else’s message.'); }
             } }, icon('trash', 14)) : null),
-        h('div', { class: 'chat-b' }, n.body),
-        q ? askRow(q) : null);
+        h('div', { class: 'chat-b' }, n.body));
     });
 
     // The typing bar, iMessage size: a thin pill, the send arrow inside its
@@ -3506,15 +3457,11 @@
       e.preventDefault();
       var body = String(S.drafts[draftKey] || '').trim();
       if (!body) return;
-      var open = trailingAsks();
-      var yes = /^\s*(yes|yeah|yep|yup|ya|sure|ok|okay|do it|fix it|fix them|correct it|correct them)\b/i.test(body);
-      var no = /^\s*(no|nope|nah|leave it|leave them)\b/i.test(body);
       try {
         await saveNote(id, 'chat', { id: newId(), body: body, author: myName() });
         delete S.drafts[draftKey];
-        if (open.length && (yes || no)) return answer(open, yes);
         refresh();
-      } catch (e2) { toast('Couldn\u2019t send that. Try again.'); }
+      } catch (e2) { toast('Couldn’t send that. Try again.'); }
     };
 
     return h('div', { class: 'page tour has-tabs chat-page' },
@@ -3527,11 +3474,110 @@
       dbBanner(),
       // The bus, barely there behind the conversation.
       h('div', { class: 'chat-bus', 'aria-hidden': 'true' }),
-      alertsBell(id),
+      h('div', { class: 'chat-tools' }, h('span', { class: 'ct-side' }), ariButton(id), alertsBell(id) || h('span', { class: 'ct-side' })),
       msgs.length ? h('div', { class: 'chat-list' }, msgs) : null,
       h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
         h('div', { class: 'chat-field' }, input, sendBtn)),
       tourTabs(id, 'chat'));
+  }
+
+  /* ================================ Ari ================================
+     Ari's own page: her merch and settlement readings, her questions ("Would
+     you like me to correct this?") and her answers. ALL ACCESS only (the
+     database never hands her messages to GA). The ARI button glows green
+     while there's something you haven't read, and greys out once you have;
+     each person's reading is their own. */
+  function ariSeenKey(tourId) { return 'seen-ari-' + tourId; }
+  function ariNotes(tourId) {
+    return notesFor(getTour(tourId), tourId, 'chat').filter(isAriNote)
+      .sort(function (a, b) { return noteTime(b) - noteTime(a); });
+  }
+  function ariUnread(tourId) {
+    var seen = seenShape(seenMap()[ariSeenKey(tourId)]).at;
+    return ariNotes(tourId).filter(function (n) { return noteTime(n) > seen; }).length;
+  }
+  function markAriRead(tourId) {
+    var key = ariSeenKey(tourId), rec = seenShape(seenMap()[key]);
+    rec.at = Date.now();
+    seenMap()[key] = rec;
+    lsSet(seenKey(), JSON.stringify(S.seen));
+    if (S.mode === 'db' && store.db) {
+      Promise.resolve(store.db.doc('labels/' + key).set({ kind: 'seen', at: rec.at })).catch(function () { /* this phone remembers */ });
+    }
+  }
+  function ariButton(tourId) {
+    if (!leadsTour(tourId)) return h('span', { class: 'ct-side' });
+    var n = ariUnread(tourId);
+    return h('button', { class: 'ari-btn' + (n ? ' on' : ' seen'), type: 'button',
+      'aria-label': 'Ari' + (n ? ', ' + plural(n, 'new message') : ''),
+      onclick: function () { openAriSheet(tourId); } },
+      'ARI', n ? h('span', { class: 'ari-count' }, String(n)) : null);
+  }
+
+  // Answer Ari's question (or several at once).
+  async function answerAri(tourId, list, yes) {
+    if (S.ariAnswering) return;
+    S.ariAnswering = true;
+    var said = [];
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i];
+      try {
+        var out = await window.GR_BACKEND.ariAnswer(a.id, yes);
+        said.push(out === 'fixed' ? '✅ ' + a.place + ' merch corrected to ' + G.moneyCents(a.fix)
+          : out === 'left' ? 'Left ' + a.place + ' at ' + G.moneyCents(a.was)
+          : out === 'moved' ? a.place + ' changed since Ari asked, so she left it' : a.place + ' already answered');
+      } catch (e2) {
+        said.push(e2 && e2.code === 'permission' ? 'Only the tour manager can answer Ari.' : 'Couldn’t reach Ari. Try again.');
+        break;
+      }
+    }
+    S.ariAnswering = false;
+    toast(said.join(' · '));
+  }
+
+  function openAriSheet(tourId) {
+    var B = window.GR_BACKEND;
+    var box = h('div');
+    function askRow(a) {
+      if (a.status !== 'open') {
+        return h('div', { class: 'ask-done' }, a.status === 'fixed' ? '✓ Corrected to ' + G.moneyCents(a.fix)
+          : a.status === 'left' ? 'Left at ' + G.moneyCents(a.was) : 'Left alone (the number had changed)');
+      }
+      if (!moneyLead(tourId)) return h('div', { class: 'ask-done' }, 'Waiting on the tour manager');
+      var go1 = function (yes) { return async function () { await answerAri(tourId, [a], yes); markAriRead(tourId); draw(); }; };
+      return h('div', { class: 'ask-row' },
+        h('button', { class: 'btn sm ask-yes', type: 'button', onclick: go1(true) }, 'Yes, correct it'),
+        h('button', { class: 'btn sm quiet', type: 'button', onclick: go1(false) }, 'No, leave it'));
+    }
+    function draw() {
+      var asks = S.mode === 'db' && B && B.asksFor ? B.asksFor(tourId) : [];
+      var askOf = function (id2) { return asks.filter(function (a) { return a.noteId === id2; })[0] || null; };
+      var open = asks.filter(function (a) { return a.status === 'open'; });
+      var notes = ariNotes(tourId);
+      box.replaceChildren(
+        open.length > 1 && moneyLead(tourId) ? h('div', { class: 'ari-all' },
+          h('span', null, plural(open.length, 'question') + ' waiting'),
+          h('button', { class: 'btn sm ask-yes', type: 'button', onclick: async function () {
+            await answerAri(tourId, open, true); markAriRead(tourId); draw();
+          } }, 'Yes to all')) : h('span'),
+        notes.length ? h('div', { class: 'ari-list' }, notes.map(function (n) {
+          var q = askOf(n.id);
+          return h('div', { class: 'chat-msg from-ari' + (q && q.status === 'open' ? ' asking' : '') },
+            h('div', { class: 'chat-top' },
+              h('span', { class: 'chat-a' }, 'Ari · tour manager'),
+              h('span', { class: 'chat-t' }, noteWhen(n))),
+            h('div', { class: 'chat-b' }, n.body),
+            q ? askRow(q) : null);
+        })) : h('p', { class: 'note wn-clear' }, 'Nothing from Ari yet. Her merch and settlement readings show up here.'));
+    }
+    markAriRead(tourId);
+    draw();
+    openSheet(function (panel) {
+      panel.classList.add('ari-sheet');
+      return [h('h2', { class: 'sh-title' }, 'Ari'),
+        h('p', { class: 'sh-sub' }, 'Merch and settlement readings, and anything she needs from you. Newest first.'),
+        box];
+    }, { label: 'Ari', onClose: function () { markAriRead(tourId); render(true); } });
   }
 
   var ARI_ADDRESS = '30bb39e4368b9e23ff77@cloudmailin.net';
@@ -4250,7 +4296,7 @@
     asks.filter(function (a) { return a.status === 'open'; }).forEach(function (a) {
       tasks.push({ key: 'ask:' + a.id, standing: true, at: when(a.at), emoji: '🤖', title: 'Ari needs an answer',
         main: a.place + ' merch', sub: 'Logged ' + G.moneyCents(a.was) + ' · the settlement says ' + G.moneyCents(a.fix),
-        open: view('chat') });
+        open: function () { openAriSheet(tourId); } });
     });
     // Special requests: waiting on an answer, or answered since you looked.
     if (live && B.requestsFor) shows.forEach(function (x) {
