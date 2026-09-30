@@ -399,10 +399,12 @@
      as each one is filed under a category it moves out of Credit card and
      into that category. Payments on the card after that day come off what's
      still owed; the tour's spending doesn't change, the money was spent. */
-  function cardMoved(card, tour) {
+  // upTo: only what had moved by that day (the balance chart walks the tour).
+  function cardMoved(card, tour, upTo) {
     if (!card || !isObj(card.feed) || !parseDay(card.cutoff)) return 0;
     return rows(tour && tour.charges).reduce(function (t, ch) {
       if (ch.accounted || !ch.category || ch.account !== card.feed.name) return t;
+      if (upTo && !(ch.date && ch.date <= upTo)) return t;
       return ch.date && ch.date <= card.cutoff ? t + num(ch.amount) : t;
     }, 0);
   }
@@ -410,9 +412,9 @@
     var p = isObj(card && card.payments) ? card.payments : {};
     return round(Object.keys(p).reduce(function (t, k) { return t + num(p[k] && p[k].amount); }, 0) * 100) / 100;
   }
-  function cardSummary(card, tour) {
+  function cardSummary(card, tour, upTo) {
     var bd = isObj(card.breakdown) ? card.breakdown : {};
-    var accounted = cardMoved(card, tour);
+    var accounted = cardMoved(card, tour, upTo);
     TYPED_CATEGORIES.forEach(function (c) { accounted += num(bd[c.key]); });
     var balance = num(card.amount);
     var paidOff = cardPaidOff(card);
@@ -425,10 +427,10 @@
     };
   }
   // What each category was paid on cards going in: { key: [{label, amount}] }
-  function cardPaidDetail(tour) {
+  function cardPaidDetail(tour, upTo) {
     var out = {};
     cardDebts(tour).forEach(function (card) {
-      var s = cardSummary(card, tour);
+      var s = cardSummary(card, tour, upTo);
       var bd = isObj(card.breakdown) ? card.breakdown : {};
       TYPED_CATEGORIES.forEach(function (c) {
         var v = num(bd[c.key]);
@@ -540,7 +542,7 @@
     });
 
     // Pre-tour card money lands here as already-paid, category by category.
-    var cardDetail = cardPaidDetail(tour);
+    var cardDetail = cardPaidDetail(tour, upTo);
     var cardTo = {};
     Object.keys(cardDetail).forEach(function (k) {
       cardTo[k] = cardDetail[k].reduce(function (t, r) { return t + r.amount; }, 0);

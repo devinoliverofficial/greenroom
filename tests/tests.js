@@ -999,5 +999,192 @@
     eq(G.splitTime('11:00 AM').ampm, 'AM', 'the AM/PM comes back out for editing');
   });
 
+  /* ============ The money, checked twice ============
+     A second calculator, written straight from the rules (not from calc's
+     code), run against hundreds of made-up tours with every kind of money
+     in them. The tour's total, income, what's out and every category must
+     agree to the cent, on the day and on every day of the chart. */
+  (function () {
+    var seed = 20260929;
+    function rnd() { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; }
+    function pick(a) { return a[Math.floor(rnd() * a.length)]; }
+    function amt(max) { var v = Math.round(rnd() * max * 100) / 100; return rnd() < 0.15 ? v.toLocaleString('en-US') : v; }
+    function day(i) { return G.addDays('2026-05-01', i); }
+    var n = function (v) { return G.num(v); };
+
+    function makeTour() {
+      var t = { shows: {}, expenses: {}, crew: {}, commission: {}, extras: {}, charges: {}, debts: {}, cashLog: {}, imports: {} };
+      if (rnd() < 0.5) t.extraCats = { 'x-van': 'Van rental' };
+      var cats = G.typedCategoriesFor(t).map(function (c) { return c.key; });
+      var chargeCats = cats.concat(['commission', 'dayByDay']);
+      var ns = 1 + Math.floor(rnd() * 6);
+      for (var i = 0; i < ns; i++) {
+        var sh = { date: day(i * 2), city: 'C' + i, income: {} };
+        G.INCOME_FIELDS.forEach(function (f) { if (rnd() < 0.5) sh.income[f.key] = amt(f.key === 'guarantee' ? 5000 : 900); });
+        if (rnd() < 0.4) sh.guaranteeReceived = rnd() < 0.5;
+        if (rnd() < 0.5) {
+          sh.buyoutTrack = { perHead: amt(40), paid: {} };
+          for (var b = 0; b < 4; b++) {
+            if (rnd() < 0.6) sh.buyoutTrack.paid['p' + b] = rnd() < 0.2 ? null : { name: 'P' + b, artist: rnd() < 0.4 };
+          }
+        }
+        if (rnd() < 0.5) sh.merchCash = amt(300);
+        sh.loggedAt = 1;
+        t.shows['s' + i] = sh;
+      }
+      cats.forEach(function (k) {
+        if (rnd() < 0.5) t.expenses[k] = { projected: rnd() < 0.6 ? amt(4000) : null, paid: rnd() < 0.3 ? amt(800) : 0 };
+      });
+      for (var c = 0; c < 3; c++) if (rnd() < 0.6) t.crew['c' + c] = { name: 'Crew ' + c, pay: amt(3000) };
+      var accts = ['Gold ··1008', 'Amex ··2222', ''];
+      for (var j = 0; j < 12; j++) {
+        if (rnd() < 0.7) t.charges['ch' + j] = { date: rnd() < 0.9 ? day(Math.floor(rnd() * 12) - 2) : '',
+          merchant: 'M' + j, amount: amt(400), category: rnd() < 0.9 ? pick(chargeCats) : '',
+          account: pick(accts), accounted: rnd() < 0.15, manual: rnd() < 0.2 };
+      }
+      for (var k2 = 0; k2 < 4; k2++) {
+        if (rnd() < 0.5) t.cashLog['x' + k2] = { date: day(Math.floor(rnd() * 12)), amount: amt(150),
+          category: pick(cats.concat(['deposit', 'handoff', 'commission'])) };
+      }
+      for (var e = 0; e < 3; e++) if (rnd() < 0.5) t.extras['e' + e] = { date: day(Math.floor(rnd() * 12)), label: 'Meal', amount: amt(120) };
+      if (rnd() < 0.5) t.debts.d1 = { label: 'Trailer loan', amount: amt(5000) };
+      if (rnd() < 0.5) {
+        var bd = {}; if (rnd() < 0.6) { bd.bus = amt(3000); bd.food = amt(500); }
+        t.debts.d2 = { label: 'Visa', amount: amt(6000), kind: 'card', breakdown: bd, cutoff: rnd() < 0.5 ? day(1) : null };
+      }
+      if (rnd() < 0.6) {
+        t.debts.d3 = { label: 'Gold ··1008', amount: amt(20000), kind: 'card', breakdown: {}, cutoff: day(Math.floor(rnd() * 8)),
+          feed: { name: 'Gold ··1008' }, payments: rnd() < 0.5 ? { py1: { date: day(9), amount: amt(8000) } } : {} };
+      }
+      G.commissionLines(t.commission).forEach(function (line) {
+        if (rnd() < 0.5) {
+          var base = {}; G.INCOME_FIELDS.forEach(function (f) { base[f.key] = rnd() < 0.6; });
+          t.commission[line.key] = { mode: rnd() < 0.6 ? 'pct' : 'flat', value: rnd() < 0.6 ? amt(20) : amt(900), base: rnd() < 0.7 ? base : undefined };
+        }
+      });
+      return t;
+    }
+
+    // The rules, written out plainly.
+    function oracle(t, upTo) {
+      var inDay = function (d) { return !upTo || (d && d <= upTo); };
+      var shows = Object.keys(t.shows).map(function (k) { return t.shows[k]; }).filter(function (s) { return inDay(s.date); });
+      var incomeBy = {};
+      G.INCOME_FIELDS.forEach(function (f) { incomeBy[f.key] = 0; });
+      shows.forEach(function (s) {
+        G.INCOME_FIELDS.forEach(function (f) {
+          var v = n(s.income[f.key]);
+          if (f.key === 'guarantee' && s.guaranteeReceived === false) v = 0;
+          if (f.key === 'buyouts') {
+            var tr = s.buyoutTrack, artists = 0;
+            if (tr) Object.keys(tr.paid).forEach(function (k) { if (tr.paid[k] && tr.paid[k].artist) artists += 1; });
+            v = v > 0 && tr ? Math.min(v, Math.round(n(tr.perHead) * artists * 100) / 100) : 0;
+          }
+          incomeBy[f.key] += v;
+        });
+      });
+      var income = 0; Object.keys(incomeBy).forEach(function (k) { income += incomeBy[k]; });
+
+      var paidIn = {};
+      var add = function (k, v) { paidIn[k] = (paidIn[k] || 0) + v; };
+      Object.keys(t.charges).forEach(function (id) {
+        var ch = t.charges[id];
+        if (!ch.accounted && ch.category && inDay(ch.date)) add(ch.category, n(ch.amount));
+      });
+      Object.keys(t.cashLog).forEach(function (id) {
+        var x = t.cashLog[id];
+        if (x.category !== 'deposit' && x.category !== 'handoff' && inDay(x.date)) add(x.category, n(x.amount));
+      });
+      var loans = 0;
+      Object.keys(t.debts).forEach(function (id) {
+        var d = t.debts[id];
+        if (d.kind !== 'card') { loans += n(d.amount); return; }
+        var broken = 0;
+        Object.keys(d.breakdown || {}).forEach(function (k) { add(k, n(d.breakdown[k])); broken += n(d.breakdown[k]); });
+        var moved = 0;
+        if (d.feed) Object.keys(t.charges).forEach(function (cid) {
+          var ch = t.charges[cid];
+          if (!ch.accounted && ch.category && ch.account === d.feed.name && ch.date && ch.date <= d.cutoff && inDay(ch.date)) moved += n(ch.amount);
+        });
+        var rest = Math.max(0, n(d.amount) - broken - moved);
+        add(d.feed ? 'card' : 'misc', rest);
+      });
+
+      var fixed = 0, lines = {};
+      G.typedCategoriesFor(t).forEach(function (c) {
+        var rec = t.expenses[c.key] || {};
+        var crew = 0; Object.keys(t.crew).forEach(function (k) { crew += n(t.crew[k].pay); });
+        var proj = c.key === 'crew' ? (crew || null) : (rec.projected == null || rec.projected === '' ? null : n(rec.projected));
+        var paid = n(rec.paid) + (paidIn[c.key] || 0);
+        var eff = proj == null ? paid : Math.max(proj, paid);
+        lines[c.key] = paid; fixed += eff;
+      });
+      var commProj = 0;
+      G.commissionLines(t.commission).forEach(function (line) {
+        var r = t.commission[line.key] || {};
+        if (r.mode !== 'pct') { commProj += n(r.value); return; }
+        var base = r.base;
+        var basis = 0;
+        G.INCOME_FIELDS.forEach(function (f) {
+          var on = base ? !!base[f.key] : (line.basis === 'guarantee' ? f.key === 'guarantee' : true);
+          if (on) basis += incomeBy[f.key];
+        });
+        commProj += n(r.value) / 100 * basis;
+      });
+      var comm = Math.max(commProj, paidIn.commission || 0);
+      var dbd = paidIn.dayByDay || 0;
+      Object.keys(t.extras).forEach(function (k) { if (inDay(t.extras[k].date)) dbd += n(t.extras[k].amount); });
+      var out = fixed + comm + loans + dbd;
+      return { income: income, out: out, net: income - out, lines: lines, commission: comm, debt: loans, dayByDay: dbd };
+    }
+
+    function close(a, b, what) {
+      if (Math.abs(a - b) > 0.005) throw new Error(what + ': Greenroom ' + a + ' vs check ' + b);
+    }
+    function compare(t, upTo, label) {
+      var c = G.calc(t, upTo ? { upTo: upTo } : {});
+      var o = oracle(t, upTo);
+      close(c.income, o.income, label + ' income');
+      close(c.out, o.out, label + ' out');
+      close(c.net, o.net, label + ' net');
+      close(c.commission, o.commission, label + ' commission');
+      close(c.debt, o.debt, label + ' debts');
+      close(c.dayByDay, o.dayByDay, label + ' day by day');
+      c.lines.forEach(function (l) { if (l.key !== 'commission') close(l.paid, o.lines[l.key], label + ' ' + l.label + ' paid'); });
+    }
+
+    test('money checked twice: 400 random tours, today and every day of the chart', function () {
+      for (var i = 0; i < 400; i++) {
+        var t = makeTour();
+        compare(t, null, 'tour ' + i);
+        for (var d = -2; d < 13; d += 3) compare(t, day(d), 'tour ' + i + ' on ' + day(d));
+      }
+    });
+
+    test('money checked twice: the balance chart ends where the total does', function () {
+      for (var i = 0; i < 60; i++) {
+        var t = makeTour();
+        var s = G.balanceSeries(t);
+        if (!s.length) continue;
+        var all = G.calc(t);
+        var last = s[s.length - 1];
+        // The last day of the chart has everything dated; undated charges only count in the total.
+        var undated = Object.keys(t.charges).some(function (k) { return !t.charges[k].date && !t.charges[k].accounted && t.charges[k].category; });
+        if (!undated) close(last.net, all.net, 'tour ' + i + ' chart end');
+      }
+    });
+
+    test('money checked twice: a card payment never changes the tour’s spending', function () {
+      for (var i = 0; i < 60; i++) {
+        var t = makeTour();
+        if (!t.debts.d3) continue;
+        var before = G.calc(t).out;
+        t.debts.d3.payments = { big: { date: day(11), amount: 99999 } };
+        close(G.calc(t).out, before, 'tour ' + i + ' out after a payment');
+        eq(G.cardSummary(t.debts.d3, t).owed, 0, 'tour ' + i + ' paid off');
+      }
+    });
+  })();
+
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };
 })();

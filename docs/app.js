@@ -2028,14 +2028,12 @@
       return k === 'crew' ? (G.crewProjection(t) || null)
         : (d.expenses[k] ? d.expenses[k].projected : null);
     }
+    // The same arithmetic as the tour's own total, with the draft plugged in:
+    // card balances, merch cash spent and "already accounted for" all count
+    // exactly as they do everywhere else.
     function draftTotal() {
-      var sum = 0;
-      G.typedCategoriesFor(t).forEach(function (cat) {
-        var p = projectedFor(cat.key);
-        var paid = G.num(d.expenses[cat.key].paid) + chargedTo(t, cat.key);
-        sum += p == null ? paid : Math.max(p, paid);
-      });
-      return sum + G.commissionTotal(d.commission, base.income, base.guarantees, base.incomeBy);
+      var c2 = G.calc(Object.assign({}, t, { expenses: d.expenses, commission: d.commission }));
+      return c2.fixed + c2.commission;
     }
     function refresh() {
       var total = draftTotal();
@@ -2052,7 +2050,7 @@
     var rows = G.typedCategoriesFor(t).map(function (cat) {
       if (cat.key === 'crew') return crewRow(id, t);
       var rec = d.expenses[cat.key] || (d.expenses[cat.key] = { projected: null, paid: 0 });
-      var paid = G.num(rec.paid) + chargedTo(t, cat.key);
+      var paid = linePaid(base, cat.key);
       return h('div', { class: 'row' },
         h('div', { class: 'row-label' },
           h('label', { for: 'exp-' + cat.key }, cat.label),
@@ -2073,10 +2071,10 @@
     return [h('div', { class: 'ledger' }, rows), note];
   }
 
-  function chargedTo(tour, key) {
-    return G.rows(tour && tour.charges).reduce(function (sum, ch) {
-      return ch.category === key ? sum + G.num(ch.amount) : sum;
-    }, 0);
+  // What a category has paid, exactly as the tour's total counts it.
+  function linePaid(c, key) {
+    var l = c.lines.filter(function (x) { return x.key === key; })[0];
+    return l ? G.num(l.paid) : 0;
   }
 
   function commissionRow(d, line, changed, onRemove) {
@@ -2132,7 +2130,7 @@
   function crewRow(id, t) {
     var crew = G.rows(t && t.crew);
     var total = G.crewProjection(t);
-    var paid = G.num((G.normExpenses(t && t.expenses)).crew.paid) + chargedTo(t, 'crew');
+    var paid = linePaid(G.calc(t), 'crew');
     return h('button', {
       class: 'row rowbtn', type: 'button', onclick: function () { openCrewSheet(id, true); }
     },
@@ -2505,7 +2503,7 @@
       var total = G.crewProjection(t);
       var exp = G.normExpenses(t && t.expenses);
       var paid = G.num(exp.crew.paid);
-      var chargedCrew = chargedTo(t, 'crew');
+      var paidCrew = linePaid(G.calc(t), 'crew');
 
       var list = crew.length
         ? h('div', { class: 'ledger' },
@@ -2564,7 +2562,7 @@
       return [
         h('h2', { class: 'sh-title' }, 'Crew'),
         h('p', { class: 'sh-sub' }, 'Each person’s pay is their total for the tour.' +
-          (paid > 0 || chargedCrew > 0 ? ' Paid so far: ' + money(paid + chargedCrew) + '.' : '')),
+          (paidCrew > 0 ? ' Paid so far: ' + money(paidCrew) + '.' : '')),
         ask,
         h('div', { style: 'margin-top:18px' }, list),
         loggedButton(id, 'crew', function () { openCrewSheet(id); })
