@@ -96,6 +96,53 @@ shim = r"""<script>
       'Guitar Tech', 'Drum Tech', 'Assistant', 'FOH Engineer', 'Monitors', 'Friend', 'Family Member', 'Liaison', 'Dancer'],
     email: function () { return 'devin@example.com'; },
     uid: function () { return 'u-devin'; },
+    // The calendar, in memory: polls, votes, special requests.
+    pollFor: function (tourId, date) {
+      var p = (window.__harness.polls || []).filter(function (x) { return x.tour_id === tourId && x.date === date; })[0];
+      return p ? { date: p.date, options: p.options, closesAt: p.closes_at, createdAt: p.created_at } : null;
+    },
+    votesFor: function (tourId, date) {
+      return (window.__harness.votes || []).filter(function (v) { return v.tour_id === tourId && v.date === date; })
+        .map(function (v) { return { userId: v.user_id, choice: v.choice, name: v.name }; });
+    },
+    requestsFor: function (tourId, date) {
+      return (window.__harness.requests || []).filter(function (r) { return r.tour_id === tourId && r.date === date; })
+        .map(function (r) { return { id: r.id, body: r.body, author: r.author, mine: r.added_by === 'u-devin', status: r.status || 'pending', at: r.created_at }; });
+    },
+    savePoll: function (tourId, date, options, closesAt) {
+      var H = window.__harness; H.polls = (H.polls || []).filter(function (x) { return !(x.tour_id === tourId && x.date === date); });
+      H.polls.push({ tour_id: tourId, date: date, options: options, closes_at: closesAt, created_at: new Date().toISOString() });
+      return Promise.resolve();
+    },
+    deletePoll: function (tourId, date) {
+      var H = window.__harness;
+      H.polls = (H.polls || []).filter(function (x) { return !(x.tour_id === tourId && x.date === date); });
+      H.votes = (H.votes || []).filter(function (x) { return !(x.tour_id === tourId && x.date === date); });
+      return Promise.resolve();
+    },
+    vote: function (tourId, date, choice) {
+      var H = window.__harness;
+      var p = (H.polls || []).filter(function (x) { return x.tour_id === tourId && x.date === date; })[0];
+      if (!p || Date.parse(p.closes_at) <= Date.now()) return Promise.reject(new Error('closed'));
+      H.votes = (H.votes || []).filter(function (x) { return !(x.tour_id === tourId && x.date === date && x.user_id === 'u-devin'); });
+      H.votes.push({ tour_id: tourId, date: date, user_id: 'u-devin', choice: choice, name: 'Devin Oliver' });
+      return Promise.resolve();
+    },
+    addRequest: function (tourId, date, body) {
+      var H = window.__harness;
+      H.requests = (H.requests || []).concat([{ id: 'rq' + Date.now(), tour_id: tourId, date: date, body: body, author: 'Devin Oliver',
+        added_by: 'u-devin', status: 'pending', created_at: new Date().toISOString() }]);
+      H.notified = (H.notified || []).concat([['request', tourId, date, body]]);
+      return Promise.resolve();
+    },
+    answerRequest: function (id, status) {
+      (window.__harness.requests || []).forEach(function (r) { if (r.id === id) r.status = status; });
+      return Promise.resolve();
+    },
+    deleteRequest: function (id) {
+      window.__harness.requests = (window.__harness.requests || []).filter(function (r) { return r.id !== id; });
+      return Promise.resolve();
+    },
     username: function () { return me.username; },
     ownsTour: function () { return true; },
     myRole: function () { return Promise.resolve('owner'); },

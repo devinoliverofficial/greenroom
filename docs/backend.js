@@ -28,7 +28,7 @@
   var sbMod = null;        // the supabase-js module, for one-off clients
   var resetting = false;   // arrived by a password-reset link
   var session = null;
-  var cache = { tours: new Map(), labels: new Map(), guests: [], notes: [] };
+  var cache = { tours: new Map(), labels: new Map(), guests: [], notes: [], polls: [], votes: [], requests: [] };
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
 
@@ -81,6 +81,15 @@
     cache.guests = guests.error ? cache.guests : guests.data;
     var notes = await sb.from('notes').select('*').order('created_at');
     cache.notes = notes.error ? cache.notes : notes.data;
+    // The calendar: day-off polls, their votes, and show-day requests.
+    var cal = await Promise.all([
+      sb.from('day_polls').select('*'),
+      sb.from('day_votes').select('*'),
+      sb.from('day_requests').select('*').order('created_at')
+    ]);
+    if (!cal[0].error) cache.polls = cal[0].data;
+    if (!cal[1].error) cache.votes = cal[1].data;
+    if (!cal[2].error) cache.requests = cal[2].data;
     emit('tours'); emit('labels');
   }
   function scheduleRefetch() {
@@ -464,6 +473,56 @@
       if (q.error) throw mapError(q.error);
     },
     uid: function () { return session && session.user ? session.user.id : null; },
+    /* The calendar. Everyone on the tour sees every poll, vote and request;
+       the database decides who may write what. */
+    pollFor: function (tourId, date) {
+      var p = cache.polls.filter(function (x) { return x.tour_id === tourId && x.date === date; })[0];
+      return p ? { date: p.date, options: Array.isArray(p.options) ? p.options : [], closesAt: p.closes_at, createdAt: p.created_at } : null;
+    },
+    votesFor: function (tourId, date) {
+      return cache.votes.filter(function (v) { return v.tour_id === tourId && v.date === date; })
+        .map(function (v) { return { userId: v.user_id, choice: v.choice, name: v.name }; });
+    },
+    requestsFor: function (tourId, date) {
+      return cache.requests.filter(function (r) { return r.tour_id === tourId && r.date === date; })
+        .map(function (r) { return { id: r.id, body: r.body, author: r.author, mine: !!session && r.added_by === session.user.id,
+          status: r.status || 'pending', at: r.created_at }; });
+    },
+    savePoll: async function (tourId, date, options, closesAt) {
+      var q = await sb.from('day_polls').upsert({ tour_id: tourId, date: date, options: options, closes_at: closesAt },
+        { onConflict: 'tour_id,date' });
+      if (q.error) throw mapError(q.error);
+      await refetch();
+    },
+    deletePoll: async function (tourId, date) {
+      var q = await sb.from('day_polls').delete().eq('tour_id', tourId).eq('date', date);
+      if (q.error) throw mapError(q.error);
+      await refetch();
+    },
+    vote: async function (tourId, date, choice) {
+      var q = await sb.from('day_votes').upsert({ tour_id: tourId, date: date, user_id: session.user.id, choice: choice },
+        { onConflict: 'tour_id,date,user_id' });
+      if (q.error) throw mapError(q.error);
+      await refetch();
+    },
+    addRequest: async function (tourId, date, body) {
+      var q = await sb.from('day_requests').insert({ tour_id: tourId, date: date, body: String(body || '').trim().slice(0, 300) });
+      if (q.error) throw mapError(q.error);
+      await refetch();
+    },
+    // The tour manager (or ALL ACCESS) answers: 'accepted', 'denied', or back to 'pending'.
+    answerRequest: async function (id, status) {
+      var q = await sb.from('day_requests').update({ status: status }).eq('id', id).select('id');
+      if (q.error) throw mapError(q.error);
+      if (!q.data || !q.data.length) throw err('permission');
+      await refetch();
+    },
+    deleteRequest: async function (id) {
+      var q = await sb.from('day_requests').delete().eq('id', id).select('id');
+      if (q.error) throw mapError(q.error);
+      if (!q.data || !q.data.length) throw err('permission');
+      await refetch();
+    },
     guestsFor: function (tourId, showId) {
       return cache.guests.filter(function (g) {
         return g.tour_id === tourId && g.show_id === showId;
@@ -1177,6 +1236,9 @@
     sb.channel('greenroom')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tours' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tour_public' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'day_polls' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'day_votes' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'day_requests' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, scheduleRefetch)

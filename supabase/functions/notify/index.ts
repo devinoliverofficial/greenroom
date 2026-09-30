@@ -41,6 +41,12 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
       const text = String(d.message ?? "").trim().slice(0, 200);
       return text ? { title: `\u{1F6A8} ${tourName}`, body: text } : null;
     }
+    case "request": {
+      // A special request on the calendar, for the tour manager to answer.
+      const text = String(d.text ?? "").trim().slice(0, 140);
+      const who = String(d.who ?? "Someone");
+      return text ? { title: tourName, body: `${who} has a special request${city ? " for " + city : ""}: "${text}"` } : null;
+    }
     default:
       return null;
   }
@@ -66,7 +72,7 @@ Deno.serve(async (req) => {
   const tourId = String(body.tourId ?? "");
   const type = String(body.type ?? "");
   const data = body.data ?? {};
-  if (!tourId || !["guest", "green", "merch", "soldout", "alert"].includes(type)) {
+  if (!tourId || !["guest", "green", "merch", "soldout", "alert", "request"].includes(type)) {
     return reply(400, { error: "invalid" });
   }
 
@@ -83,11 +89,19 @@ Deno.serve(async (req) => {
   }
 
   const tourName = String((tour.doc as Record<string, unknown>)?.name ?? "Greenroom");
+  if (type === "request") {
+    // The asker's own name, never one sent along with the request.
+    const { data: prof } = await admin.from("profiles").select("full_name, username").eq("user_id", senderId).maybeSingle();
+    data.who = String(prof?.full_name || prof?.username || "Someone");
+  }
   const msg = message(type, data, tourName);
   if (!msg) return reply(400, { error: "invalid" });
 
-  // Everyone else on the tour who opted into this kind of news.
-  const targets = [...memberIds].filter((id) => id !== senderId);
+  // Everyone else on the tour who opted into this kind of news. A special
+  // request goes to the tour manager and ALL ACCESS, who answer it.
+  const leads = new Set<string>([tour.owner_id, ...(members ?? []).filter((m) => m.role === "editor")
+    .map((m) => m.user_id).filter(Boolean)]);
+  const targets = [...memberIds].filter((id) => id !== senderId && (type !== "request" || leads.has(id)));
   if (!targets.length) return reply(200, { sent: 0 });
   const { data: subs } = await admin.from("push_subs")
     .select("endpoint, p256dh, auth, prefs, user_id")
@@ -100,8 +114,8 @@ Deno.serve(async (req) => {
     // Each phone picks CREW, ARTIST or ALL, plus SOLD OUT and MERCH NUMBERS.
     // A phone set up before those choices counts as ALL.
     const group = String(prefs.group ?? "all");
-    if (type === "alert") {
-      // An alert ignores preferences — that is the point of it.
+    if (type === "alert" || type === "request") {
+      // An alert, or a request waiting on an answer, ignores preferences.
     } else if (type === "soldout") {
       if (prefs.soldout !== true) continue;
     } else if (type === "merch") {

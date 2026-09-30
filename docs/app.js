@@ -110,6 +110,7 @@
     tabcost: '<path d="M4 20V10M10 20V5M16 20v-7M22 20H2"/>',
     tabchat: '<path d="M21 11.5c0 3.6-4 6.5-9 6.5-1.1 0-2.1-.13-3-.37L4 20l1.5-3.4C4.1 15.4 3 13.6 3 11.5 3 7.9 7 5 12 5s9 2.9 9 6.5z"/>',
     bell: '<path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16l-2-3z"/><path d="M10.5 21a2.2 2.2 0 0 0 3 0"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     phone: '<path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3z"/>',
     mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 7l8.5 6 8.5-6"/>',
@@ -2989,12 +2990,13 @@
     // Inside a tour the tabs do the moving, so back always leaves it —
     // except the subpages, which step back to the tab they hang off.
     var sub = view === 'daybyday' || view === 'cashlog';
-    var back = view === 'addshows' || sub
+    var cal = view === 'calendar';
+    var back = view === 'addshows' || sub || cal
       ? h('button', { class: 'iconbtn back', type: 'button',
           onclick: function () {
             go({ name: 'tour', id: id, view: sub ? 'costs' : 'details' });
           } },
-          icon('back'), h('span', null, sub ? 'Expenses' : 'Tour'))
+          icon('back'), h('span', null, sub ? 'Expenses' : cal ? 'Overview' : 'Tour'))
       : backBtn(t);
     return h('header', { class: 'topbar' }, back,
       h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
@@ -3266,6 +3268,8 @@
     return 'viewer';
   }
   function canEditTour(id) { return tourRole(id) === 'owner'; }
+  // The tour manager and ALL ACCESS: polls, and marking requests done.
+  function leadsTour(id) { return tourRole(id) === 'owner' || tourRole(id) === 'editor'; }
   function canSeeMoney(id) { return tourRole(id) !== 'viewer'; }
 
   function tourBands(t) {
@@ -3424,6 +3428,7 @@
       return viewTourDay(id, t, view);
     }
     if (view === 'chat') return viewTourChat(id, t);
+    if (view === 'calendar') return viewCalendar(id, t);
     var c = G.calc(t);
     if (view === 'costs') {
       return h('div', { class: 'page tour has-tabs' },
@@ -3544,6 +3549,10 @@
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       h('div', { class: 'ov-lines' },
         line('Doors', G.cleanTime(d.doors))),
+      h('div', { class: 'cal-open' },
+        h('button', { class: 'btn quiet sm glow', type: 'button',
+          onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
+          icon('calendar', 16), 'View calendar')),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
@@ -4080,6 +4089,239 @@
       'aria-label': owedWhat.length ? (s.city || 'Show') + ': waiting on the ' + owedWhat.join(' and ') : null,
       onclick: function () { if (canEditTour(id)) openIncome(id, s.id); }
     }, dateBlock(s.date), whereBlock(s), right));
+  }
+
+  /* ============================== Calendar ==============================
+     Every day of the run, laid out like the Budget but with no money: show
+     days take special requests, days off take a vote. Everyone on the tour
+     sees everything here. */
+  function viewCalendar(id, t) {
+    var today = G.tourToday();
+    var got = overviewDays(t);
+    var rowsOut = [];
+    if (got) {
+      var firstShow = got.days.filter(function (x) { return x.show; })[0];
+      var lastShow = got.days.slice().reverse().filter(function (x) { return x.show; })[0];
+      rowsOut = got.days.map(function (x) {
+        if (x.show) return calShowRow(id, x.show, today);
+        var travel = (firstShow && x.date < firstShow.date) || (lastShow && x.date > lastShow.date);
+        return calOffRow(id, t, x.date, travel);
+      });
+    }
+    return h('div', { class: 'page tour has-tabs' },
+      h('div', { class: 'headband' },
+        tourTopbar(t, id, 'calendar'),
+        h('h1', { class: 'tour-title' }, 'Calendar')),
+      dbBanner(),
+      rowsOut.length
+        ? [h('p', { class: 'count-line' }, 'Special requests on show days · a vote on days off'),
+           h('ul', { class: 'shows cal-list' }, rowsOut)]
+        : emptyState('No dates yet', 'Once the shows are in, every day of the run shows up here.'),
+      tourTabs(id, 'details'));
+  }
+  function calShowRow(id, s, today) {
+    var B = window.GR_BACKEND;
+    var reqs = B && B.requestsFor ? B.requestsFor(id, s.date) : [];
+    var open = reqs.filter(function (r) { return r.status === 'pending'; }).length;
+    return h('li', null, h('div', { class: 'show-row cal-row' + (s.date === today ? ' is-today' : '') },
+      dateBlock(s.date), whereBlock(s),
+      h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
+        'aria-label': 'Special requests for ' + (s.city || 'this show') + (open ? ', ' + open + ' waiting for an answer' : ''),
+        onclick: function () { openRequests(id, s); } },
+        'Special requests' + (reqs.length ? ' · ' + reqs.length : ''))));
+  }
+  function calOffRow(id, t, date, travel) {
+    var off = offDayFor(t, date);
+    var reh = isRehearsalDay(t, date);
+    var right;
+    if (reh || travel) right = h('span', { class: 'tag quiet' }, reh ? 'Rehearsal' : 'Travel');
+    else {
+      var B = window.GR_BACKEND;
+      var poll = B && B.pollFor ? B.pollFor(id, date) : null;
+      var closed = poll && Date.parse(poll.closesAt) <= Date.now();
+      var mine = poll && B.uid ? B.votesFor(id, date).filter(function (v) { return v.userId === B.uid(); })[0] : null;
+      // Create poll for the tour manager until there is one. Then Vote for
+      // everyone: green and pulsing until you vote, steady white with a
+      // white 🤘 once you have.
+      var cls = 'cal-btn vote', kids;
+      if (!poll && leadsTour(id)) kids = ['Create poll'];
+      else if (!poll) { cls += ' idle'; kids = ['Vote']; }
+      else if (mine) { cls += ' voted'; kids = ['Vote ', h('span', { class: 'horns', 'aria-hidden': 'true' }, '\ud83e\udd18')]; }
+      else if (closed) kids = ['Results'];
+      else { cls += ' on'; kids = ['Vote']; }
+      right = h('button', { class: cls, type: 'button', 'aria-label': (mine ? 'Voted' : kids[0]) + ', day off ' + dayMD(date),
+        onclick: function () { openPoll(id, date); } }, kids);
+    }
+    return h('li', null, h('div', { class: 'show-row is-off cal-row' },
+      dateBlock(date),
+      h('div', { class: 'where' },
+        h('div', { class: 'city' }, off.city || (reh ? 'Rehearsal day' : travel ? 'Travel day' : 'Day off')),
+        off.hotel ? h('div', { class: 'venue' }, off.hotel) : null),
+      right));
+  }
+
+  // Voting closes at noon the day before the day off.
+  function pollCloses(date) {
+    var d = G.parseDay(date);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1, 12, 0, 0);
+  }
+  function closesText(iso) {
+    var d = new Date(iso);
+    return F.long.format(d) + ' at ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+  function openPoll(id, date) {
+    var B = window.GR_BACKEND;
+    var poll = B && B.pollFor ? B.pollFor(id, date) : null;
+    if (!poll) {
+      if (leadsTour(id)) openPollEditor(id, date, null);
+      else toast('No poll for ' + dayMD(date) + ' yet. The tour manager posts the options.');
+      return;
+    }
+    var box = h('div');
+    var busy = false;
+    function draw() {
+      var p = B.pollFor(id, date);
+      if (!p) { closeSheet(); return; }
+      var votes = B.votesFor(id, date);
+      var me = B.uid ? B.uid() : null;
+      var closed = Date.parse(p.closesAt) <= Date.now();
+      var counts = {};
+      votes.forEach(function (v) { counts[v.choice] = (counts[v.choice] || 0) + 1; });
+      var top = Math.max.apply(null, [0].concat(p.options.map(function (o) { return counts[o.id] || 0; })));
+      box.replaceChildren(
+        h('p', { class: 'sh-sub' }, closed ? 'Voting closed ' + closesText(p.closesAt) + '.'
+          : 'Vote by ' + closesText(p.closesAt) + '. You can change your vote until then.'),
+        h('div', { class: 'ledger poll' }, p.options.map(function (o) {
+          var who = votes.filter(function (v) { return v.choice === o.id; });
+          var mineHere = who.some(function (v) { return v.userId === me; });
+          var n = counts[o.id] || 0;
+          return h('button', { class: 'row poll-opt' + (mineHere ? ' mine' : '') + (closed && n && n === top ? ' won' : ''),
+            type: 'button', disabled: closed,
+            onclick: async function () {
+              if (busy || closed || mineHere) return;
+              busy = true;
+              try { await B.vote(id, date, o.id); toast('Voted: ' + o.label); }
+              catch (e) { toast(Date.parse(p.closesAt) <= Date.now() ? 'Voting has closed.' : 'Couldn’t vote. Try again.'); }
+              busy = false;
+              draw(); render(true);
+            } },
+            h('span', { class: 'poll-dot' }, mineHere ? icon('check', 14) : null),
+            h('div', { class: 'row-label' }, o.label,
+              h('span', { class: 'hint' }, who.length ? who.map(function (v) { return v.name || 'Someone'; }).join(', ') : 'No votes yet')),
+            h('span', { class: 'amt num' }, String(n)));
+        })),
+        leadsTour(id) ? h('div', { class: 'stack' },
+          !closed ? h('button', { class: 'btn quiet block', type: 'button',
+            onclick: function () { openPollEditor(id, date, p); } }, 'Edit options') : null,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () {
+            confirmSheet({ title: 'Delete this poll?', body: 'The options and every vote go.', action: 'Delete poll', danger: true,
+              onConfirm: async function () {
+                try { await B.deletePoll(id, date); toast('Poll deleted'); return true; }
+                catch (e) { toast('Couldn’t do that. Try again.'); return false; }
+              } });
+          } }, 'Delete poll')) : null);
+    }
+    draw();
+    openSheet(function () {
+      return [h('h2', { class: 'sh-title' }, 'Day off · ' + dayLong(date)), box];
+    }, { label: 'Day off poll' });
+  }
+  function openPollEditor(id, date, poll) {
+    var B = window.GR_BACKEND;
+    var opts = poll ? poll.options.map(function (o) { return { id: o.id, label: o.label }; })
+      : [{ id: 'o1', label: '' }, { id: 'o2', label: '' }];
+    var closes = pollCloses(date);
+    var list = h('div', { class: 'poll-edit' });
+    function draw() {
+      list.replaceChildren.apply(list, opts.map(function (o, i) {
+        return h('div', { class: 'af-row' },
+          h('input', { class: 'input', type: 'text', value: o.label, maxlength: 60, autocomplete: 'off',
+            placeholder: 'Option ' + (i + 1) + (i === 0 ? ', e.g. Bowling' : i === 1 ? ', e.g. Beach day' : ''),
+            'aria-label': 'Option ' + (i + 1), oninput: function (e) { o.label = e.target.value; } }),
+          opts.length > 2 ? h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove option ' + (i + 1),
+            onclick: function () { opts.splice(i, 1); draw(); } }, icon('trash', 16)) : null);
+      }));
+    }
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, poll ? 'Edit the poll' : 'Create a poll'),
+        h('p', { class: 'sh-sub' }, 'Day off · ' + dayLong(date) + '. The crew can vote until noon ' + F.long.format(closes) + '.'),
+        list,
+        opts.length < 8 ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:10px', onclick: function () {
+          opts.push({ id: 'o' + Date.now().toString(36) + opts.length, label: '' }); draw();
+          var ins = list.querySelectorAll('input'); if (ins.length) ins[ins.length - 1].focus();
+        } }, icon('plus', 18), 'Add option') : null,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+            var clean = opts.map(function (o) { return { id: o.id, label: String(o.label || '').trim().slice(0, 60) }; })
+              .filter(function (o) { return o.label; });
+            if (clean.length < 2) { toast('Give the crew at least two options'); return; }
+            if (closes.getTime() <= Date.now()) { toast('It’s past noon the day before, so voting would already be closed.'); return; }
+            e.currentTarget.disabled = true;
+            try { await B.savePoll(id, date, clean, closes.toISOString()); }
+            catch (x) { e.currentTarget.disabled = false; toast('Couldn’t save the poll. Try again.'); return; }
+            closeSheet(); toast(poll ? 'Poll updated' : 'Poll is up. The crew can vote until noon ' + F.long.format(closes) + '.');
+            render(true);
+          } }, poll ? 'Save poll' : 'Post the poll'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+      ];
+    }, { label: 'Create a poll' });
+  }
+
+  function openRequests(id, s) {
+    var B = window.GR_BACKEND;
+    var box = h('div');
+    var text = '';
+    function draw() {
+      var reqs = B.requestsFor(id, s.date);
+      box.replaceChildren(
+        reqs.length ? h('div', { class: 'ledger reqs' }, reqs.map(function (r) {
+          var when = r.at ? new Date(r.at) : null;
+          var answer = async function (status) {
+            try { await B.answerRequest(r.id, status); } catch (x) { toast('Couldn\u2019t save that.'); }
+            draw(); render(true);
+          };
+          return h('div', { class: 'row req ' + r.status },
+            h('div', { class: 'row-label' }, r.body,
+              h('span', { class: 'hint' }, [r.author || 'Someone', when ? dayMD(G.ymd(when)) + ' ' +
+                when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''].filter(Boolean).join(' \u00b7 ')),
+              leadsTour(id) && r.status === 'pending'
+                ? h('span', { class: 'req-answer' },
+                    h('button', { class: 'btn sm primary', type: 'button', onclick: function () { answer('accepted'); } }, 'Accept'),
+                    h('button', { class: 'btn sm quiet', type: 'button', onclick: function () { answer('denied'); } }, 'Deny'))
+                : h('span', { class: 'req-status ' + r.status },
+                    r.status === 'accepted' ? 'Accepted' : r.status === 'denied' ? 'Denied' : 'Waiting for an answer',
+                    leadsTour(id) ? h('button', { class: 'linkbtn', type: 'button', onclick: function () { answer('pending'); } }, 'Change') : null)),
+            (r.mine || leadsTour(id)) ? h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove request',
+              onclick: async function () {
+                try { await B.deleteRequest(r.id); toast('Request removed'); } catch (x) { toast('Couldn\u2019t do that.'); }
+                draw(); render(true);
+              } }, icon('trash', 16)) : null);
+        })) : h('p', { class: 'note' }, 'No requests yet. Need something on this day? Ask here and everyone on the tour sees it.'));
+    }
+    draw();
+    var input = h('input', { class: 'input', type: 'text', maxlength: 300, autocomplete: 'off',
+      placeholder: 'What do you need?', 'aria-label': 'Your request', enterkeyhint: 'send',
+      oninput: function (e) { text = e.target.value; } });
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Special requests'),
+        h('p', { class: 'sh-sub' }, [s.city, dayLong(s.date), s.venue].filter(Boolean).join(' · ')),
+        box,
+        h('form', { class: 'af-row', style: 'margin-top:14px', novalidate: true, onsubmit: async function (e) {
+          e.preventDefault();
+          var body = text.trim();
+          if (!body) { input.focus(); return; }
+          try { await B.addRequest(id, s.date, body); }
+          catch (x) { toast('Couldn’t add that. Try again.'); return; }
+          // The tour manager and ALL ACCESS hear about it on their phones.
+          sendNotify(id, 'request', { city: s.city || '', date: s.date, text: body });
+          text = ''; input.value = '';
+          toast('Request added'); draw(); render(true);
+        } }, input, h('button', { class: 'btn primary', type: 'submit' }, 'Add'))
+      ];
+    }, { label: 'Special requests' });
   }
 
   function tonightCard(id, s) {

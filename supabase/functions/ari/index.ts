@@ -6,6 +6,8 @@
 //   SHOW TIME            30 min before our band's set             → Artist + All
 //   DAY SHEET AVAILABLE  show day, once the day sheet is up       → everyone
 //   MERCH NUMBERS        a night's merch number arrives / changes → phones that asked
+//   DAY-OFF POLL         a poll goes up → everyone; 2 hours before it closes
+//                        (noon the day before) → everyone who hasn't voted
 //
 // Times on a day sheet are the venue's local time, so each show is read in
 // its own city's time zone. Every message goes out once (table ari_sent).
@@ -174,6 +176,34 @@ async function claim(tourId: string, showId: string, kind: string): Promise<bool
   return !error && Array.isArray(data) && data.length > 0;
 }
 
+// Day-off polls on the calendar: once when a poll goes up, and a last call
+// two hours before it closes to anyone who hasn't voted yet.
+async function runPolls(tours: { id: string; owner_id: string }[], now: Date): Promise<number> {
+  if (!tours.length) return 0;
+  const { data: polls } = await admin.from("day_polls").select("tour_id, date, closes_at, created_at")
+    .in("tour_id", tours.map((t) => t.id)).gt("closes_at", now.toISOString());
+  let sent = 0;
+  for (const p of polls ?? []) {
+    const t = tours.find((x) => x.id === p.tour_id);
+    if (!t) continue;
+    const closes = Date.parse(p.closes_at), made = Date.parse(p.created_at);
+    const tag = "poll-" + p.date + "-" + made;
+    const noon = Date.parse(p.date + "T12:00:00Z");
+    const day = new Date(noon).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" });
+    const before = new Date(noon - 86400e3).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+    if (await claim(t.id, tag, "pollopen")) {
+      sent += await push(await crewSubs(t.id, t.owner_id), `Day off ${day}: what should we do? Vote by noon ${before}.`, t.id);
+    }
+    if (closes - now.getTime() <= 2 * 3600e3 && now.getTime() - made > 3600e3 && await claim(t.id, tag, "pollremind")) {
+      const { data: votes } = await admin.from("day_votes").select("user_id").eq("tour_id", t.id).eq("date", p.date);
+      const voted = new Set((votes ?? []).map((v) => v.user_id));
+      const subs = (await crewSubs(t.id, t.owner_id)).filter((x) => !voted.has(x.user_id));
+      sent += await push(subs, `Last call: vote on ${day}'s day off before noon.`, t.id);
+    }
+  }
+  return sent;
+}
+
 async function runTour(tour: { id: string; owner_id: string; doc: Record<string, unknown> }, now: Date, fallbackTz: string) {
   const doc = isObj(tour.doc) ? tour.doc : {};
   if (doc.deletedAt) return 0;
@@ -283,5 +313,7 @@ Deno.serve(async (req) => {
     try { sent += await runTour(t as { id: string; owner_id: string; doc: Record<string, unknown> }, now, fallbackTz); }
     catch (_) { /* one tour's trouble never stops the rest */ }
   }
+  try { sent += await runPolls((tours ?? []) as { id: string; owner_id: string }[], now); }
+  catch (_) { /* the next minute tries again */ }
   return reply(200, { sent });
 });
