@@ -338,7 +338,10 @@ a.btn { text-decoration: none; }
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
   display: grid; grid-template-columns: repeat(6, 1fr);
-  padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+  /* No padding of its own: each tab reaches every edge of its column, down
+     through the strip over the home indicator, so no part of the bar is
+     dead to a thumb. */
+  padding: 0;
   /* Solid and on its own layer: iOS lets a blurred fixed bar drift during
      scroll, and a bar that moves is worse than a bar that shimmers. */
   background: var(--bg);
@@ -347,8 +350,9 @@ a.btn { text-decoration: none; }
 }
 .tabbar-b {
   appearance: none; border: 0; background: none; cursor: pointer;
-  display: grid; justify-items: center; gap: 3px; padding: 6px 2px 4px;
-  color: var(--ink-3); font: inherit;
+  display: grid; justify-items: center; align-content: start; gap: 3px;
+  padding: 12px 2px calc(10px + env(safe-area-inset-bottom, 0px));
+  color: var(--ink-3); font: inherit; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
 .tabbar-b span {
   font-size: 10px; font-weight: 650; letter-spacing: -.005em;

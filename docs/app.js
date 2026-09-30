@@ -3255,10 +3255,27 @@
       style: 'grid-template-columns: repeat(' + tabs.length + ', 1fr)' },
       tabs.map(function (t) {
         var on = t.view === current;
+        var goThere = function () { if (!on || (S.route.view || 'details') !== t.view) go({ name: 'tour', id: id, view: t.view }); };
+        var down = null;
         return h('button', {
           class: 'tabbar-b' + (on ? ' on' : ''), type: 'button',
           'aria-current': on ? 'page' : null,
-          onclick: function () { if (!on || (S.route.view || 'details') !== t.view) go({ name: 'tour', id: id, view: t.view }); }
+          // A clean tap goes the moment the finger lifts. iPhone can drop the
+          // click on a fixed bar right after a scroll; the click still serves
+          // a mouse or a keyboard.
+          ontouchstart: function (e) {
+            var p = e.changedTouches && e.changedTouches[0];
+            down = p ? { x: p.clientX, y: p.clientY, at: Date.now() } : null;
+          },
+          ontouchend: function (e) {
+            var p = e.changedTouches && e.changedTouches[0], d = down;
+            down = null;
+            if (!p || !d || Math.abs(p.clientX - d.x) > 14 || Math.abs(p.clientY - d.y) > 14 || Date.now() - d.at > 900) return;
+            e.preventDefault();
+            goThere();
+          },
+          ontouchcancel: function () { down = null; },
+          onclick: goThere
         }, icon(t.icon, 23), h('span', null, t.label));
       }));
   }
