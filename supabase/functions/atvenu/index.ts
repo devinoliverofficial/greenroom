@@ -89,7 +89,8 @@ Deno.serve(async (req) => {
     const inc = (s.income ?? {}) as Obj;
     const merch = cents(num(r.merch));
     const had = cents(num(inc.merch));
-    const cash = r.cash == null ? null : cents(num(r.cash));
+    // Cash paid out on the night reads below zero: nothing on hand.
+    const cash = r.cash == null ? null : Math.max(0, cents(num(r.cash)));
     // atVenu Register's card payout for the night, when the Settlement showed it.
     const cardDeposit = r.card_receipts == null ? null : cents(num(r.card_receipts) - num(r.card_fee));
 
@@ -104,7 +105,17 @@ Deno.serve(async (req) => {
       } else same += 1;
       continue;
     }
-    if (had > 0) { conflicts += 1; continue; }  // a human wrote a different number
+    // A different number already there: a person's stays (Ari asks about it
+    // when the settlement comes in). One the app logged from an older read
+    // gives way to a report that came in after it.
+    if (had > 0) {
+      const docImports = (doc.imports ?? {}) as Record<string, Obj>;
+      const older = Object.entries(docImports).filter(([k, v]) =>
+        k.startsWith("em-" + date + "-") && Math.abs(num((v ?? {}).total) - had) < 0.01);
+      const loggedAt = Math.max(0, ...older.map(([, v]) => num((v ?? {}).createdAt)));
+      const newer = older.length && Date.parse(String(r.received_at ?? "")) > loggedAt;
+      if (!newer) { conflicts += 1; continue; }
+    }
 
     const notes = (Array.isArray(r.notes) ? r.notes : []) as { label: string; value: string }[];
     const seen: Record<string, boolean> = {};

@@ -345,6 +345,24 @@
     eq(G.calc(t).out, before, 'still unchanged');
   });
 
+  test('atVenu: the band\u2019s number is picked by rule, never the gross', function () {
+    // Reading: a venue cut, and Total Due Artist printed after card fees.
+    var r = G.pickBandNumber({ income: { merch: 3974.5 }, totals: { gross: 5000, adjusted: 4566.15, dueArtist: 3823.67, dueVenue: 742.48 } });
+    eq(r.income.merch, 3823.67, 'what\u2019s due the artist');
+    // Worcester: the venue took nothing, no Total Due Artist line, the reader grabbed the gross.
+    r = G.pickBandNumber({ income: { merch: 3565 }, totals: { gross: 3565, adjusted: 3258.54, dueArtist: null, dueVenue: 0 } });
+    eq(r.income.merch, 3258.54, 'the adjusted gross when the venue took nothing');
+    // A venue cut with no line saying what\u2019s due: the reader\u2019s own number stays (Ari checks it).
+    r = G.pickBandNumber({ income: { merch: 2639.16 }, totals: { gross: 3683.5, adjusted: 3290.82, dueArtist: null, dueVenue: null } });
+    eq(r.income.merch, 2639.16, 'no guessing past a venue cut');
+    // Silver Spring: cash paid out on the night.
+    r = G.pickBandNumber({ income: { merch: 2899.52 }, cash: -235, notes: [] });
+    eq(r.cash, 0, 'nothing on hand');
+    eq(r.notes[0].label + ' ' + r.notes[0].value, 'Cash from show \u2212$235.00 (cash paid out)', 'and a note says what went out');
+    r = G.pickBandNumber({ income: { merch: 3258.54 }, cash: 375 });
+    eq(r.cash, 375, 'ordinary cash untouched');
+  });
+
   test('buyouts count only what the Artists got as income', function () {
     var show = { date: '2026-05-10', income: { buyouts: 60, guarantee: 1000 }, loggedAt: 1 };
     eq(G.buyoutIncome(show), 0, 'nobody ticked yet: nothing counts');

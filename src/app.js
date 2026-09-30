@@ -8818,16 +8818,20 @@
       '',
       'Reply with only a JSON object in this exact shape:',
       '{"reportType":"settlement","income":{"merch":null},"cash":null,"cards":{"receipts":null,"fee":null},"cardsBy":null,',
+      ' "totals":{"gross":null,"adjusted":null,"dueArtist":null,"dueVenue":null},',
       ' "notes":[{"label":"Merch per head","value":"$12.40"}]}',
       '',
       'Rules:',
       '- reportType: "settlement" when this is ONE show’s Settlement (sections like Credit Card/Cash, Gross Sales,',
       '  Settlement, Final Payment, Cash from Show). "tour_progress" when it covers several shows or the tour so far',
       '  (Tour Progress, tour-to-date, a summary across dates). Anything else: "other".',
-      '- merch: what the band keeps for the show — "Total Due Artist" (or "Net to Artist" / "Due to Artist").',
-      '  Only if no such line exists take "Total Gross" and add a note "Gross merch". Never compute it yourself.',
+      '- merch: what the band keeps for the show — "Total Due Artist" (or "Net to Artist" / "Due to Artist"). If no such',
+      '  line exists and the venue took no cut, the "Adjusted Gross" (the gross less card fees, sales tax and off-top',
+      '  costs). Only if neither is printed take "Total Gross" and add a note "Gross merch". Never compute it yourself.',
+      '- totals: the report\u2019s own printed lines, copied exactly, null when not printed: gross = "Total Gross",',
+      '  adjusted = "Adjusted Gross", dueArtist = "Total Due Artist", dueVenue = "Total Due Venue" (0 when the venue took nothing).',
       '- cash: the "Cash from Show" total — the cash the band holds at the end of the night after paying the venue',
-      '  any cash. If the venue collected the cash, 0. If there is no such line, null.',
+      '  any cash, copied with its sign (it can be below zero). If the venue collected the cash, 0. No such line: null.',
       '- cards.receipts: the "Total CC Receipts" (credit card sales). cards.fee: the credit card "Fee ($)" amount.',
       '- cardsBy: who collected the credit cards ("Credit Cards Collected By"): "artist" or "venue".',
       '- Never estimate a number that is not printed on the report.',
@@ -8887,6 +8891,8 @@
             toast('That file type isn’t supported — use a photo or a PDF.');
             return;
           }
+          // The band's number by rule, the same one the mailbox uses.
+          if (o.mode === 'atvenu') out = G.pickBandNumber(out);
           var r = G.normalizeSettlement(out);
           if (o.mode === 'atvenu' && r.reportType === 'tour_progress') {
             toast('That\u2019s a Tour Progress report (the tour so far). Upload the night\u2019s Settlement instead.');
@@ -8897,7 +8903,7 @@
             r.income = m != null ? { merch: m } : {};
             r.found = m != null ? 1 : 0;
             r.miscLabel = '';
-            r.notes = r.notes.filter(function (n) { return /merch|attendance|per head|fees|tax|paid to venue/i.test(n.label); });
+            r.notes = r.notes.filter(function (n) { return /merch|attendance|per head|fees|tax|paid to venue|cash/i.test(n.label); });
           }
           if (!r.found && !r.notes.length) {
             toast('Couldn’t read that sheet. Try a sharper photo.');

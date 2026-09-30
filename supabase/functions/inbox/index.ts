@@ -149,7 +149,7 @@ function printed(n: number, text: string): boolean {
 
 /* Ari, the tour manager who reads the paperwork so nobody else has to.
    Plain words, real numbers, no lecture. */
-function ariPrompt(body: string, where: string, merch: number, notes: { label: string; value: string }[], kept: number): string {
+function ariPrompt(body: string, where: string, merch: number, notes: { label: string; value: string }[], kept: number, replaced = 0): string {
   return [
     "You are Ari, the tour manager for a touring band. A merch settlement just came in for " + where + ".",
     "Explain it to the whole crew in a group chat — the drummer, the merch kid, the guitar tech.",
@@ -159,7 +159,9 @@ function ariPrompt(body: string, where: string, merch: number, notes: { label: s
       ? "The app did NOT change anything: $" + kept.toLocaleString("en-US") + " merch was already logged by hand for this night, " +
         "and the settlement says $" + merch.toLocaleString("en-US") + ". Say this plainly in one line so the tour manager can check which is right."
       : "What the app already logged: $" + merch.toLocaleString("en-US") + " merch (the artist's net — what the band keeps)" +
-        (notes.length ? " · " + notes.map((n) => n.label + " " + n.value).join(" · ") : "") + ".",
+        (notes.length ? " · " + notes.map((n) => n.label + " " + n.value).join(" · ") : "") + "." +
+        (replaced > 0 ? " It replaced $" + replaced.toLocaleString("en-US") + " that an earlier read of this settlement had logged." +
+          " Say that in one plain line." : ""),
     "",
     "Rules for your message:",
     "- Under 90 words. Short lines. No greeting, no sign-off, no emoji.",
@@ -245,7 +247,10 @@ Deno.serve(async (req) => {
   if (dueArtist > 0) merch = dueArtist;
   else if (adjusted > 0 && (dueVenue === 0 || !(merch > 0))) merch = adjusted;
   const cashRead = money(out.cash);
-  const cash = cashRead >= 0 ? Math.round(cashRead * 100) / 100 : NaN;
+  // Cash from the show can come out below zero: cash paid out that night (to
+  // the venue, say). Nothing is left on hand, and a note says what went out.
+  const cashOut = cashRead < 0 ? r2(-cashRead) : 0;
+  const cash = cashRead >= 0 ? r2(cashRead) : cashOut > 0 ? 0 : NaN;
   const reportType = /progress|tour/i.test(String(out.reportType ?? "")) ? "tour_progress"
     : /settle/i.test(String(out.reportType ?? "")) ? "settlement" : "unknown";
   const cardsIn = (out.cards ?? {}) as Record<string, unknown>;
@@ -269,6 +274,7 @@ Deno.serve(async (req) => {
     .map((n) => ({ label: String((n as Record<string, unknown>).label ?? "").slice(0, 40),
                    value: String((n as Record<string, unknown>).value ?? "").slice(0, 120) }))
     .filter((n) => n.label && n.value);
+  if (cashOut > 0) notes.push({ label: "Cash from show", value: "\u2212" + usd(cashOut) + " (cash paid out)" });
 
   // A settlement sent to the tour's own address names its tour outright.
   // Everything else falls back to matching the date across the live tours.
@@ -325,18 +331,49 @@ Deno.serve(async (req) => {
   const shows = doc.shows as Record<string, Record<string, unknown>>;
   const s = shows[hit.showId];
 
-  // Seen this settlement before? File it once.
   const stamp = "em-" + date + "-" + Math.round(merch * 100);
   const imports = (doc.imports ?? {}) as Record<string, unknown>;
-  if (imports[stamp]) { await logMail(mail.from, mail.subject, "duplicate", stamp); return ok({ status: "duplicate" }); }
+  const inc = (s.income ?? {}) as Record<string, unknown>;
+  const had = Math.round(Number(inc.merch ?? 0) * 100) / 100;
+  const where = String(s.city ?? s.venue ?? date);
+  // A number the app itself logged from an earlier read of this night's
+  // settlement, not one a person typed: a fresh read may replace it.
+  const appLogged = had > 0 && Object.entries(imports).some(([k, v]) =>
+    k.startsWith("em-" + date + "-") && k !== stamp &&
+    Math.abs(Number(((v ?? {}) as Record<string, unknown>).total ?? NaN) - had) < 0.01);
+
+  // Seen this settlement before? File it once, but fill in what the night is
+  // still missing (the cash, the card payout, the notes).
+  if (imports[stamp]) {
+    const filled: string[] = [];
+    if (Math.abs(had - merch) < 0.01) {
+      if (cash >= 0 && s.merchCash == null) { s.merchCash = Math.min(cash, merch); filled.push("cash on hand " + usd(Number(s.merchCash))); }
+      if (cardDeposit >= 0 && s.merchCardDeposit == null) { s.merchCardDeposit = cardDeposit; filled.push("card payout " + usd(cardDeposit)); }
+      const before = JSON.stringify(s.settlementNotes ?? []);
+      s.settlementNotes = mergedNotes(s.settlementNotes, notes);
+      if (JSON.stringify(s.settlementNotes) !== before) filled.push("the settlement notes");
+    }
+    if (!filled.length) { await logMail(mail.from, mail.subject, "duplicate", stamp); return ok({ status: "duplicate" }); }
+    const due = s.merchCardDeposit != null && Number(s.merchCardDeposit) >= 0 ? Number(s.merchCardDeposit)
+      : Math.round((merch - Number(s.merchCash ?? 0)) * 100) / 100;
+    if (s.merchReceived !== true) s.merchReceived = due > 0 ? false : true;
+    shows[hit.showId] = s;
+    doc.shows = shows;
+    const up0 = await admin.from("tours").update({ doc }).eq("id", hit.id);
+    if (up0.error) { await logMail(mail.from, mail.subject, "save_failed", up0.error.message); return ok({ status: "save_failed" }); }
+    await admin.from("notes").insert({
+      id: "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      tour_id: hit.id, day: "chat", author: "Ari", added_by: hit.owner,
+      body: `atVenu settlement for ${where} again: merch stays ${usd(merch)}. Filled in ${filled.join(", ")}.`,
+    });
+    await logMail(mail.from, mail.subject, "filled", hit.id + " " + filled.join(", "));
+    return ok({ status: "filled" });
+  }
   imports[stamp] = { createdAt: Date.now(), count: 1, total: merch, source: "atVenu email" };
   doc.imports = imports;
 
-  const inc = (s.income ?? {}) as Record<string, unknown>;
-  const had = Math.round(Number(inc.merch ?? 0) * 100) / 100;
   let note: string;
-  const where = String(s.city ?? s.venue ?? date);
-  if (had > 0 && had !== merch) {
+  if (had > 0 && had !== merch && !appLogged) {
     // A human already wrote a different number. Humans win; the chat hears about it.
     note = `atVenu settlement for ${where}: says $${merch.toLocaleString("en-US")} merch, but $${had.toLocaleString("en-US")} is already logged. I left it as is. Check which one is right.`;
   } else {
@@ -353,6 +390,7 @@ Deno.serve(async (req) => {
     s.settlementNotes = mergedNotes(s.settlementNotes, notes);
     const ph = notes.filter((n) => /per head/i.test(n.label))[0];
     note = `atVenu settlement for ${where}: $${merch.toLocaleString("en-US")} merch logged` +
+      (had > 0 && had !== merch ? ` (replacing ${usd(had)} from an earlier read)` : "") +
       (ph ? `, ${ph.value} per head` : "") + ". That's what the band keeps after the venue's cut.";
   }
   shows[hit.showId] = s;
@@ -366,7 +404,8 @@ Deno.serve(async (req) => {
   // One message in the chat: Ari reading the paperwork out loud. If Ari
   // can't speak, the plain filing line goes out under her name instead, so
   // the chat never stays silent about money that just landed.
-  const kept = had > 0 && had !== merch ? had : 0;
+  const kept = had > 0 && had !== merch && !appLogged ? had : 0;
+  const replaced = had > 0 && had !== merch && appLogged ? had : 0;
   const logged = kept > 0 ? kept : merch;
   // One id for her message, whichever version goes out, so her question
   // stays tied to it.
@@ -431,7 +470,7 @@ Deno.serve(async (req) => {
       // Opus thinks before it answers and thinking spends this budget too —
       // 400 bought a long think and an empty message.
       model: "claude-opus-5", max_tokens: 4000,
-      messages: [{ role: "user", content: ariPrompt(source, where, merch, notes, kept) }],
+      messages: [{ role: "user", content: ariPrompt(source, where, merch, notes, kept, replaced) }],
     });
     const raw = ari.content.filter((b) => b.type === "text")
       .map((b) => (b as { text: string }).text).join("").trim();

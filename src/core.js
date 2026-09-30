@@ -996,6 +996,28 @@
   // What the reader hands back from a promoter settlement, made safe: only
   // real income fields, only positive numbers, notes as short label/value
   // pairs. Nothing here is saved without the user looking at it first.
+  /* An atVenu read: the band's number is picked by rule from the printed
+     lines, never taken on faith. What's due the artist; if the venue took
+     nothing, the adjusted gross (the gross less card fees and tax). The gross
+     is never the band's number when a smaller one is printed. Cash from the
+     show below zero was cash paid out: nothing on hand, and a note says so. */
+  function pickBandNumber(out) {
+    var o = isObj(out) ? JSON.parse(JSON.stringify(out)) : {};
+    var n = function (v) { var m = String(v == null ? '' : v).replace(/[^0-9.\-]/g, ''); return m && m !== '-' ? Number(m) : NaN; };
+    var tt = isObj(o.totals) ? o.totals : {};
+    var due = n(tt.dueArtist), adj = n(tt.adjusted), venue = n(tt.dueVenue);
+    o.income = isObj(o.income) ? o.income : {};
+    var had = n(o.income.merch);
+    if (due > 0) o.income.merch = round(due * 100) / 100;
+    else if (adj > 0 && (venue === 0 || !(had > 0))) o.income.merch = round(adj * 100) / 100;
+    var cash = n(o.cash);
+    if (cash < 0) {
+      o.cash = 0;
+      o.notes = (Array.isArray(o.notes) ? o.notes : []).concat([{ label: 'Cash from show',
+        value: '\u2212$' + (round(-cash * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' (cash paid out)' }]);
+    }
+    return o;
+  }
   function normalizeSettlement(out) {
     var src = isObj(out) ? out : {};
     var incSrc = isObj(src.income) ? src.income : src;
@@ -1194,7 +1216,7 @@
 
     calc: calc, stateOf: stateOf, caption: caption,
     balanceSeries: balanceSeries, latestChange: latestChange,
-    normalizeSettlement: normalizeSettlement,
+    normalizeSettlement: normalizeSettlement, pickBandNumber: pickBandNumber,
     DS_AMENITIES: DS_AMENITIES, daySheetSections: daySheetSections, daySheetLines: daySheetLines, daySheetText: daySheetText,
     splitTime: splitTime, joinTime: joinTime, cleanTime: cleanTime,
     toCSV: toCSV, closeoutCSVs: closeoutCSVs,
