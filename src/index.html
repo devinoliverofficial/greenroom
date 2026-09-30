@@ -1463,6 +1463,33 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .rv-act .catpick select, .rv-act .catpick input { width: 100%; }
 .rv-add1 { flex: none; min-width: 64px; }
 .rv-aside { justify-self: start; font-size: 12.5px; color: var(--ink-3); }
+/* The charge review, compact: the same font as the tour dates (Inter, 600),
+   smaller type and tighter rows, so more charges fit on the screen. */
+.rv-sheet { font-family: var(--font); }
+.rv-sheet .sh-title { margin-bottom: 4px; font-size: 19px; letter-spacing: -.01em; }
+.rv-sheet .sh-sub { margin-bottom: 10px; font-size: 12.5px; line-height: 1.4; }
+.rv-sheet .rv-card { font-size: 11.5px; }
+.rv-sheet .rv-tools { padding: 8px 18px; margin-bottom: 8px; }
+.rv-sheet .rv-all { gap: 8px; font-size: 13px; font-weight: 600; }
+.rv-sheet .rv-check { width: 19px; height: 19px; }
+.rv-sheet .rv-row .rv-check { margin-top: 1px; }
+.rv-sheet .rv-addall { min-height: 34px; min-width: 84px; padding: 0 12px; font-size: 12.5px; border-radius: 10px; }
+.rv-sheet .rv-chips { gap: 6px; margin-top: 8px; }
+.rv-sheet .rv-chip { padding: 5px 10px; font-size: 12px; font-weight: 600; }
+.rv-sheet .review { gap: 7px; margin: 4px 0; }
+.rv-sheet .rv-row { gap: 9px; padding: 9px 10px; border-radius: 12px; }
+.rv-sheet .rv-fields { gap: 5px; }
+.rv-sheet .rv-head { gap: 8px; }
+.rv-sheet .rv-name { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.rv-sheet .rv-head .amt { font-family: var(--font); font-size: 14px; font-weight: 600; letter-spacing: -.02em; }
+.rv-sheet .rv-sub { gap: 6px; font-size: 11.5px; }
+.rv-sheet .rv-flag { font-size: 10px; padding: 1px 6px; }
+.rv-sheet .rv-act { gap: 6px; }
+.rv-sheet .rv-act select, .rv-sheet .rv-act .input.sm { height: 34px; font-size: 13px; padding: 0 9px; border-radius: 9px; }
+.rv-sheet .rv-add1 { min-height: 34px; min-width: 52px; padding: 0 12px; font-size: 12.5px; border-radius: 9px; }
+.rv-sheet .rv-aside { font-size: 11px; min-height: 0; }
+.rv-sheet .stack .btn { min-height: 44px; font-size: 14px; }
+.rv-sheet .btn.quiet.block { min-height: 40px; font-size: 13px; }
 .rv-check { flex: none; width: 22px; height: 22px; margin: 9px 0 0; accent-color: var(--brand); }
 .rv-fields { flex: 1; min-width: 0; display: grid; gap: 8px; }
 .rv-line { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr); gap: 8px; }

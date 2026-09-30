@@ -9391,7 +9391,8 @@
     }
     draw();
 
-    openSheet(function () {
+    openSheet(function (panel) {
+      panel.classList.add('rv-sheet');
       return [
         opts && opts.card ? h('p', { class: 'rv-card' }, (opts.steps > 1 ? 'Card ' + opts.step + ' of ' + opts.steps + ' · ' : '') +
           opts.card + ' · oldest first') : null,
