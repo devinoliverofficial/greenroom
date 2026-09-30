@@ -4947,8 +4947,12 @@
     var trashBtn = canEditTour(id) && lines.length ? h('button', {
       class: 'iconbtn sm ds-trash', type: 'button', 'aria-label': 'Clear this day sheet',
       onclick: function () { clearDaySheet(id, s, entry.date, off); } }, icon('trash', 18)) : null;
-    var placeEl = placeName || trashBtn ? h('div', { class: 'ds-venue-row' },
-      placeName ? h('div', { class: 'ds-venue' }, placeName) : null, trashBtn) : null;
+    // And a pencil in the other corner opens the editor.
+    var editBtn = canEditTour(id) ? h('button', {
+      class: 'iconbtn sm ds-pencil', type: 'button', 'aria-label': lines.length ? 'Edit this day sheet' : 'Fill in this day sheet',
+      onclick: function () { if (s) openDaySheetEditor(id, s.id); else openOffDaySheet(id, entry.date); } }, icon('edit', 18)) : null;
+    var placeEl = placeName || trashBtn || editBtn ? h('div', { class: 'ds-venue-row' },
+      editBtn, placeName ? h('div', { class: 'ds-venue' }, placeName) : null, trashBtn) : null;
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
