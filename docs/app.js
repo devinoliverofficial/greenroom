@@ -131,6 +131,7 @@
     moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>',
     check: '<path d="M4.5 12.5l5 5 10-11"/>',
+    deck: '<rect x="6.5" y="4" width="11" height="15" rx="2.2"/><path d="M4 7.5v10A2.5 2.5 0 0 0 6.5 20h8"/><path d="M9.5 9.5l1.6 1.6 3.2-3.4"/>',
     music: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
     up: '<path d="M12 19V5.5"/><path d="M6 11l6-6 6 6"/>',
     cash: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v.01M18 14.5v.01"/>',
@@ -761,6 +762,7 @@
       onclick: function () { closeSheet(); }
     }, icon('close')));
     content.forEach(function (c) { panel.append(c); });
+    pullToClose(panel);
     root.replaceChildren(h('div', { class: 'scrim', onclick: function () { closeSheet(); } }), panel);
     root.hidden = false;
     document.body.classList.add('locked');
@@ -770,6 +772,47 @@
       var af = panel.querySelector('[autofocus]');
       (af || panel).focus({ preventScroll: true });
     });
+  }
+  /* Pull a sheet down from the top to close it, like any phone sheet: when
+     it's scrolled to its top (or the pull starts on its top edge), a
+     downward drag carries it with the finger; far or fast enough and it
+     closes, otherwise it springs back. Scrolling, sideways strips and
+     fields are left alone. */
+  function pullToClose(panel) {
+    var y0 = null, dy = 0, t0 = 0, active = false;
+    panel.addEventListener('touchstart', function (e) {
+      y0 = null;
+      if (e.touches.length !== 1) return;
+      if (e.target.closest && e.target.closest('.rv-chips, input, select, textarea, .no-pull')) return;
+      var fromTop = e.touches[0].clientY - panel.getBoundingClientRect().top < 56;
+      if (panel.scrollTop > 0 && !fromTop) return;
+      y0 = e.touches[0].clientY; dy = 0; t0 = Date.now(); active = false;
+    }, { passive: true });
+    panel.addEventListener('touchmove', function (e) {
+      if (y0 == null) return;
+      dy = e.touches[0].clientY - y0;
+      if (!active) {
+        if (dy < -4) { y0 = null; return; }        // heading up: it's a scroll
+        if (dy < 8) return;
+        if (panel.scrollTop > 0 && e.touches[0].clientY - panel.getBoundingClientRect().top >= 56) { y0 = null; return; }
+        active = true;
+        panel.style.transition = 'none';
+      }
+      if (e.cancelable) e.preventDefault();
+      panel.style.transform = 'translateY(' + Math.max(0, dy) + 'px)';
+    }, { passive: false });
+    var end = function () {
+      if (y0 == null) return;
+      var flick = dy > 50 && Date.now() - t0 < 260;
+      y0 = null;
+      if (!active) return;
+      active = false;
+      panel.style.transition = '';
+      panel.style.transform = '';
+      if (dy > 110 || flick) closeSheet();
+    };
+    panel.addEventListener('touchend', end);
+    panel.addEventListener('touchcancel', end);
   }
   function closeSheet(immediate) {
     if (!sheet) return;
@@ -4438,11 +4481,18 @@
 
   function whatsNewBtn(tourId) {
     var st = taskState(tourId);
+    var n = st.tasks.length;
+    var sub = !n ? 'All caught up'
+      : st.fresh ? st.fresh + ' new' + (n > st.fresh ? ' \u00b7 ' + (n - st.fresh) + ' waiting' : '')
+      : plural(n, 'task') + ' waiting';
     return h('div', { class: 'wn-wrap' },
-      h('button', { class: 'btn block wn-big' + (st.glow ? ' on' : ' seen'), type: 'button',
-        'aria-label': 'New tour tasks' + (st.tasks.length ? ', ' + plural(st.tasks.length, 'task') : ', all caught up'),
+      h('button', { class: 'wn-big' + (st.glow ? ' on' : ' seen'), type: 'button',
+        'aria-label': 'New tour tasks, ' + sub,
         onclick: function () { openTaskDeck(tourId); } },
-        'NEW TOUR TASKS', st.glow && st.fresh ? h('span', { class: 'wn-count' }, String(st.fresh)) : null));
+        h('span', { class: 'wn-ic', 'aria-hidden': 'true' }, icon('deck', 20)),
+        h('span', { class: 'wn-txt' }, h('span', { class: 'wn-t' }, 'New tour tasks'), h('span', { class: 'wn-s' }, sub)),
+        n ? h('span', { class: 'wn-count' }, String(st.glow && st.fresh ? st.fresh : n)) : null,
+        icon('chevron', 18)));
   }
 
   /* The deck: one task at a time. Right (or "Handle now") goes there; left
