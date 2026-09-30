@@ -9459,10 +9459,13 @@
     var band = artistOf(base);
     var curTour = baseOff ? (band ? currentTourOf(band) : null) : { id: tourId, name: base.name || 'This tour' };
     var ups = band ? upcomingToursOf(band, tourId) : [];
-    var dests = [];
-    if (band) dests.push(['off', 'Off Tour']);
-    if (curTour) dests.push(['cur', 'Current Tour']);
-    if (ups.length) dests.push(['up', 'Upcoming Tour']);
+    // All three always show; one that can't be used right now is greyed out
+    // with the reason (no tour running today, or none coming up).
+    var dests = band ? [
+      ['off', 'Off Tour', ''],
+      ['cur', 'Current Tour', curTour ? '' : 'No tour is running today'],
+      ['up', 'Upcoming Tour', ups.length ? '' : 'No upcoming tours yet']
+    ] : [];
     rows.forEach(function (r) { r.pick = false; r.dest = baseOff ? 'off' : 'cur'; r.upTo = ups.length ? ups[0].id : null; });
     // The tour a charge lands on (null for the Off Tour book).
     var landsOn = function (r) {
@@ -9591,7 +9594,7 @@
     // Under the category: Log to Off Tour, Current Tour or Upcoming Tour (and
     // which one, when the band has more than one coming up).
     function destRow(r) {
-      if (dests.length < 2) return null;
+      if (!dests.length) return null;
       var upSel = ups.length ? h('select', { class: 'input sm rv-upsel', 'aria-label': 'Which upcoming tour',
         onchange: function (e) { r.upTo = e.target.value; } },
         ups.map(function (u) { return h('option', { value: u.id }, u.name + ' \u00b7 starts ' + dayMD(u.start)); })) : null;
@@ -9600,9 +9603,10 @@
         h('div', { class: 'rv-dest', role: 'group', 'aria-label': 'Log ' + r.merchant + ' to' },
           h('span', { class: 'rv-dlabel' }, 'Log to'),
           dests.map(function (d) {
-            return h('button', { class: 'rv-dpill' + (r.dest === d[0] ? ' on' : ''), type: 'button',
-              title: d[0] === 'cur' && curTour ? curTour.name : null,
+            return h('button', { class: 'rv-dpill' + (r.dest === d[0] ? ' on' : '') + (d[2] ? ' na' : ''), type: 'button',
+              title: d[2] || (d[0] === 'cur' && curTour ? curTour.name : null), 'aria-disabled': d[2] ? 'true' : null,
               onclick: function (e) {
+                if (d[2]) { toast(d[2]); return; }
                 r.dest = d[0];
                 Array.prototype.forEach.call(e.currentTarget.parentNode.querySelectorAll('.rv-dpill'), function (b) {
                   b.classList.toggle('on', b === e.currentTarget);
