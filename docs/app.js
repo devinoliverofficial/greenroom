@@ -5747,7 +5747,8 @@
             h('div', { class: 'row-label' },
               h('label', { for: 'inc-merch' }, 'Merch'),
               receivedBox('merch', 'Merch deposit')),
-            mkInput, avReader, avBtn));
+            // atVenu where Buyouts has Track; the amount lines up with the rest.
+            avReader, avBtn, mkInput));
           rows.push(avMenu);
           rows.push(h('div', { class: 'row mx-row' },
             h('label', { class: 'row-label', for: 'inc-merch-cash' }, 'Cash',
