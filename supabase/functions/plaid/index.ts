@@ -303,8 +303,14 @@ function sortTransactions(
     if (spent < 0 && !isCard) continue;
 
     const date = String(t.date);
-    const hits = toursOn(tours, date);
-    if (!hits.length) continue;
+    let hits = toursOn(tours, date);
+    // Between tours: the band's Off Tour book, from the day it logs from. With
+    // two bands' books there's no telling whose it is, so it waits for neither.
+    if (!hits.length) {
+      const books = tours.filter((x) => x.doc.kind === "offtour" && !x.doc.deletedAt && String(x.doc.offFrom ?? "9999") <= date);
+      if (books.length !== 1) continue;
+      hits = books;
+    }
     // Two tours logging the same day: the manager picks.
     const tour = hits.length === 1 ? hits[0] : null;
     const merchant = GRS.cleanMerchant(payee) || "Unknown";
@@ -702,6 +708,25 @@ function isCredit(a?: Account | null): boolean {
   return a ? (a.card ? a.card === "credit" : a.type === "creditCard") : false;
 }
 
+// Two docs for the same band (a tour, or the band's Off Tour book), not deleted.
+function sameBand(a: Obj | null | undefined, b: Obj | null | undefined): boolean {
+  if (!a || !b || a.deletedAt) return false;
+  const k = (d: Obj) => String(d.artist ?? "").trim().toLowerCase();
+  return !!k(a) && k(a) === k(b);
+}
+// The band's next tour: the soonest that hasn't started yet.
+function nextTourOf(band: { id: string; doc: Obj }[], exceptId: string): { id: string; doc: Obj } | null {
+  const today = G.ymd(new Date());
+  let best: { id: string; doc: Obj; start: string } | null = null;
+  for (const t of band) {
+    if (t.id === exceptId || t.doc.kind === "offtour") continue;
+    const st = String(G.tourStart(t.doc) ?? "");
+    if (!st || st <= today) continue;
+    if (!best || st < best.start) best = { ...t, start: st };
+  }
+  return best;
+}
+
 /* Who may work a tour's card charges: its owner, and a member with ALL
    ACCESS whose tour role is Tour Manager. Either one refreshes, sorts and
    files, and the other never has to do it again. Gives back the tour's owner
@@ -709,15 +734,24 @@ function isCredit(a?: Account | null): boolean {
 async function cardLead(uid: string, tourId: string): Promise<string | null> {
   if (!uid || !tourId) return null;
   const { data: t } = await admin.from("tours").select("owner_id, doc").eq("id", tourId).maybeSingle();
-  if (!t || ((t.doc ?? {}) as Obj).deletedAt) return null;
+  const doc = (t?.doc ?? {}) as Obj;
+  if (!t || doc.deletedAt) return null;
   if (t.owner_id === uid) return String(t.owner_id);
-  const { data: m } = await admin.from("members").select("role, tour_role, overrides")
-    .eq("tour_id", tourId).eq("user_id", uid).maybeSingle();
-  if (!m || m.role !== "editor") return null;
+  // The band's Off Tour book: the tour manager of any of the band's tours.
+  let ids = [tourId];
+  if (doc.kind === "offtour") {
+    const { data: band } = await admin.from("tours").select("id, doc").eq("owner_id", t.owner_id);
+    ids = (band ?? []).filter((b) => sameBand(b.doc as Obj, doc) && (b.doc as Obj)?.kind !== "offtour").map((b) => String(b.id));
+    if (!ids.length) return null;
+  }
+  const { data: ms } = await admin.from("members").select("role, tour_role, overrides")
+    .in("tour_id", ids).eq("user_id", uid);
   const { data: p } = await admin.from("profiles").select("tour_role").eq("user_id", uid).maybeSingle();
-  const ov = (m.overrides ?? {}) as Obj;
-  const role = String(ov.tourRole || p?.tour_role || m.tour_role || "").trim().toLowerCase();
-  return role === "tour manager" ? String(t.owner_id) : null;
+  const lead = (ms ?? []).some((m) => {
+    const ov = (m.overrides ?? {}) as Obj;
+    return m.role === "editor" && String(ov.tourRole || p?.tour_role || m.tour_role || "").trim().toLowerCase() === "tour manager";
+  });
+  return lead ? String(t.owner_id) : null;
 }
 
 // Only approved accounts that run a tour may connect cards.
@@ -828,7 +862,9 @@ Deno.serve(async (req) => {
       const owner = await cardLead(uid, tourId);
       if (!owner) return reply(403, { error: "not_allowed" });
       const { data: tr } = await admin.from("tours").select("doc").eq("id", tourId).maybeSingle();
-      const valid = new Set((G.chargeCategoriesFor((tr?.doc ?? {}) as Obj) as Obj[]).map((c) => String(c.key)));
+      const baseDoc = (tr?.doc ?? {}) as Obj;
+      const valid = new Set((G.chargeCategoriesFor(baseDoc) as Obj[]).map((c) => String(c.key)));
+      valid.delete("offdebt");
       const want = new Map<string, Obj>();
       for (const pk of ((Array.isArray(body.picks) ? body.picks : []) as Obj[]).slice(0, 500)) {
         const id = String(pk.id ?? "");
@@ -854,28 +890,65 @@ Deno.serve(async (req) => {
       const got = (await claim(pick(true), { status: "filed", tour_id: tourId }))
         .sort((a, b) => String(a.date).localeCompare(String(b.date)));
       const skipped = await claim(pick(false), { status: "skipped" });
-      let total = 0;
+      let total = 0, offTour = 0, upcoming = 0;
       if (got.length) {
+        // Where each goes: this tour; the band's Off Tour book (started if the
+        // band has none yet), plus a line under this tour's Off Tour Debt; or
+        // the band's next tour.
+        const baseOff = baseDoc.kind === "offtour";
+        const { data: bandRows } = await admin.from("tours").select("id, doc").eq("owner_id", owner);
+        const band = (bandRows ?? []).map((b) => ({ id: String(b.id), doc: (b.doc ?? {}) as Obj }))
+          .filter((b) => sameBand(b.doc, baseDoc));
+        let book = baseOff ? { id: tourId, doc: baseDoc } : band.find((b) => b.doc.kind === "offtour") ?? null;
+        const next = nextTourOf(band, tourId);
+        const wantsOff = got.some((r) => want.get(String(r.id))!.dest === "off");
+        if (wantsOff && !book && String(baseDoc.artist ?? "").trim()) {
+          const today = G.ymd(new Date());
+          const bid = "off" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          const bdoc = { kind: "offtour", artist: String(baseDoc.artist).trim(), name: "Off Tour", setupDone: true,
+            offFrom: today.slice(0, 8) + "01", createdAt: Date.now(), shows: {}, expenses: {}, charges: {} };
+          const made = await admin.from("tours").insert({ id: bid, owner_id: owner, doc: bdoc });
+          if (!made.error) book = { id: bid, doc: bdoc };
+        }
         const { data: f } = await admin.from("feed").select("accounts").eq("owner_id", owner).maybeSingle();
         const byName = new Map<string, Account>();
         for (const a of Object.values((f?.accounts ?? {}) as Record<string, Account>)) byName.set(a.name, a);
         const { data: me } = await admin.from("profiles").select("full_name, username").eq("user_id", uid).maybeSingle();
         const by = String(me?.full_name || me?.username || "").trim().slice(0, 60);
         const now = Date.now(), importId = "review-" + now;
-        const add: Obj = {};
+        const adds = new Map<string, Obj>();
+        const into = (tid: string, key: string, ch: Obj) => { const a = adds.get(tid) ?? {}; a[key] = ch; adds.set(tid, a); };
+        const landed = new Map<string, string>();
         got.forEach((r, i) => {
           const pk = want.get(String(r.id))!;
           const amount = Number(r.amount);
-          add["p" + r.id] = {
+          const ch: Obj = {
             date: String(r.date), posted: String(r.posted || r.date), merchant: String(r.merchant), amount, category: String(pk.category),
             accounted: !!pk.accounted, account: String(r.account || ""), importId, createdAt: now + i,
             paid: !isCredit(byName.get(String(r.account))), ...(by ? { by } : {}),
           };
+          const dest = String(pk.dest ?? (baseOff ? "off" : "tour"));
+          if (dest === "next" && next) { into(next.id, "p" + r.id, ch); landed.set(String(r.id), next.id); upcoming += 1; }
+          else if (dest === "off" && book && !baseOff) {
+            into(book.id, "p" + r.id, { ...ch, fromTour: tourId });
+            // Off-tour spending on this tour's card: the tour carries it as debt.
+            into(tourId, "p" + r.id, { ...ch, category: "offdebt", offTour: true, offCategory: String(pk.category) });
+            landed.set(String(r.id), book.id); offTour += 1;
+          } else { into(tourId, "p" + r.id, ch); landed.set(String(r.id), tourId); }
           if (!pk.accounted) total += amount;
         });
         total = Math.round(total * 100) / 100;
-        const imp: Obj = { [importId]: { createdAt: now, count: got.length, total, source: "Card feed" } };
-        const saved = await admin.rpc("file_charges", { t_id: tourId, add, imp });
+        let failed = false;
+        for (const [tid, add] of adds) {
+          const n = Object.keys(add).length;
+          const imp: Obj = { [importId]: { createdAt: now, count: n, total: Math.round(Object.values(add).reduce((x: number, c) => x + Number((c as Obj).amount), 0) * 100) / 100, source: "Card feed" } };
+          const saved = await admin.rpc("file_charges", { t_id: tid, add, imp });
+          if (saved.error) { failed = true; break; }
+        }
+        for (const [fid, tid] of landed) {
+          if (tid !== tourId) await admin.from("feed_items").update({ tour_id: tid }).eq("owner_id", owner).eq("id", fid);
+        }
+        const saved = { error: failed ? "save_failed" : null };
         if (saved.error) {
           // Put them back in the pile exactly as they were.
           for (const r of got) {
@@ -897,7 +970,7 @@ Deno.serve(async (req) => {
         }
       }
       return reply(200, {
-        ok: true, filed: got.length, skipped: skipped.length, total,
+        ok: true, filed: got.length, skipped: skipped.length, total, offTour, upcoming,
         already: want.size - got.length - skipped.length,
       });
     }

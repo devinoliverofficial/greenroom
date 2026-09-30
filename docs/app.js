@@ -1425,6 +1425,8 @@
     Object.keys(S.pending).forEach(function (id) {
       if (!S.tours.has(id)) entries.push([id, S.pending[id]]);
     });
+    // A band's Off Tour book rides with the tours but is never one of them.
+    entries = entries.filter(function (e) { return !isOffTour(e[1]); });
     if (!includeDeleted) {
       entries = entries.filter(function (e) { return !e[1].deletedAt; });
     }
@@ -1459,6 +1461,56 @@
   }
 
   function artistOf(t) { return String(t && t.artist || '').trim(); }
+
+  /* ============================== Off Tour ==============================
+     Each band's book of expenses between tours: a tour-shaped record
+     (kind 'offtour') with the band's name and no shows, so the Expenses
+     screens, the card feed and the money rules all work on it as they are.
+     The owner runs it; ALL ACCESS on any of the band's tours can see it. */
+  function isOffTour(t) { return !!(t && t.kind === 'offtour'); }
+  function offTourOf(artist) {
+    var key = String(artist || '').trim().toLowerCase(), hit = null;
+    var look = function (t, id) { if (!hit && isOffTour(t) && !t.deletedAt && artistOf(t).toLowerCase() === key) hit = id; };
+    S.tours.forEach(look);
+    Object.keys(S.pending).forEach(function (id) { look(S.pending[id], id); });
+    return hit;
+  }
+  function bandTours(artist) {
+    return allTourEntries().filter(function (e) { return artistOf(e[1]) === artist; });
+  }
+  function ownsBand(artist) {
+    if (S.mode !== 'db') return canWrite();
+    return bandTours(artist).some(function (e) { return tourRole(e[0]) === 'owner'; });
+  }
+  // Only the owner and ALL ACCESS see OFF TOUR; GA never does.
+  function canSeeOffTour(artist) {
+    if (S.mode !== 'db') return true;
+    if (offTourOf(artist)) return true;
+    return bandTours(artist).some(function (e) { var r = tourRole(e[0]); return r === 'owner' || r === 'editor'; });
+  }
+  async function ensureOffTour(artist) {
+    var id = offTourOf(artist);
+    if (id || !ownsBand(artist) || S.offMaking) return id;
+    S.offMaking = true;
+    id = newId();
+    var today = G.tourToday();
+    // It logs card charges from the first of this month on.
+    var ok = await api.create(id, { kind: 'offtour', artist: artist, name: 'Off Tour', setupDone: true,
+      offFrom: today.slice(0, 8) + '01', createdAt: Date.now(), shows: {}, expenses: {}, charges: {} });
+    S.offMaking = false;
+    return ok ? id : null;
+  }
+  // The band's next tour: the soonest one that hasn't started yet.
+  function nextTourOf(artist, exceptId) {
+    var today = G.tourToday(), best = null;
+    bandTours(artist).forEach(function (e) {
+      if (e[0] === exceptId) return;
+      var st = G.tourStart(e[1]);
+      if (!st || st <= today) return;
+      if (!best || st < best.start) best = { id: e[0], start: st, name: e[1].name || 'Next tour' };
+    });
+    return best;
+  }
 
   function homePill() {
     if (S.role === 'viewer' || S.writeRefused) return 'View only';
@@ -1736,11 +1788,27 @@
   }
 
   /* One artist's tours. */
+  function bandHead(name, sub) {
+    return h('div', { class: 'headband' },
+        h('header', { class: 'topbar' },
+          h('span', { class: 'top-side' },
+            h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
+              icon('back'), h('span', null, 'Artists'))),
+          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('span', { class: 'top-side right' },
+            h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
+              onclick: openSettingsSheet }, icon('more')))),
+        h('div', { class: 'band-row' },
+          h('h1', { class: 'band-name' }, name),
+          sub ? h('p', { class: 'band-sub' }, sub) : null));
+  }
   function viewArtist() {
     var name = S.route.artist || '';
+    if (S.route.view === 'off' && canSeeOffTour(name)) return viewOffTour(name);
     var entries = allTourEntries().filter(function (e) { return artistOf(e[1]) === name; });
     var pill = homePill();
-    return h('div', { class: 'page home' },
+    var tabs = artistTabs(name, 'tours');
+    return h('div', { class: 'page home' + (tabs ? ' has-tabs' : '') },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' },
@@ -1771,7 +1839,42 @@
             }, e[1].name || 'tour'));
           }))
         : emptyState('No tours here yet', 'Add ' + name + '’s first run.'),
-      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }));
+      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
+      tabs);
+  }
+
+  /* OFF TOUR: the band's spending between tours, on the same Expenses screen
+     a tour has (Projected, Spent, Paid), with the card feed's charges from
+     off the road to sort. The owner's first visit starts the book. */
+  function viewOffTour(name) {
+    var id = offTourOf(name);
+    if (!id && ownsBand(name) && canWrite()) ensureOffTour(name).then(function (made) { if (made) render(true); });
+    var t = id ? getTour(id) : null;
+    var body;
+    if (!t) {
+      body = ownsBand(name) ? h('p', { class: 'note', style: 'margin-top:24px' }, 'Starting the Off Tour book\u2026')
+        : emptyState('Nothing off tour yet', 'Once the tour manager starts ' + name + '\u2019s Off Tour book, it shows up here.');
+    } else {
+      body = [h('p', { class: 'note off-intro' }, 'What the band spends between tours. Card charges from off the road land here to sort; ' +
+        'anything for the next tour can go straight to it.'), tabExpenses(id, t, G.calc(t), { off: true })];
+    }
+    return h('div', { class: 'page home has-tabs exp-page off-page' },
+      bandHead(name, 'Off Tour'), dbBanner(), body, artistTabs(name, 'off'));
+  }
+  // Log by hand on the Off Tour book: pick a category, then the same sheet a tour uses.
+  function openOffLog(id) {
+    var cats = G.typedCategoriesFor(getTour(id)).filter(function (c) { return c.key !== 'offdebt' && c.key !== 'commission'; });
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Log an expense'),
+        h('p', { class: 'sh-sub' }, 'Pick where it goes.'),
+        h('div', { class: 'ledger' }, cats.map(function (c) {
+          return h('button', { class: 'row rowbtn', type: 'button', onclick: function () {
+            closeSheet(); setTimeout(function () { openCategorySheet(id, c.key); }, 320);
+          } }, h('span', { class: 'row-label' }, c.label), icon('chevron', 18));
+        }))
+      ];
+    }, { label: 'Log an expense' });
   }
 
   function startTour(artist) {
@@ -2315,7 +2418,10 @@
 
   /* The plan stays put in its column and what's actually been paid sits next
      to it, so over and under are there to read at a glance. */
-  function tabExpenses(id, t, c) {
+  function tabExpenses(id, t, c, o) {
+    var off = !!(o && o.off);
+    // The Off Tour book leaves out what only a tour has.
+    if (off) c = Object.assign({}, c, { lines: c.lines.filter(function (l) { return l.key !== 'offdebt' && l.key !== 'commission'; }) });
     var edit = canEditTour(id);
     var chev = edit ? h('span', { class: 'ex-chev', 'aria-hidden': 'true' }) : null;
     var head = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
@@ -2387,7 +2493,7 @@
       h('strong', { class: 'amt num ex-done' }, money(paidOutTotal)),
       chev ? chev.cloneNode() : null));
     var charges = G.rows(t && t.charges);
-    var baselineOffer = (canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
+    var baselineOffer = (!off && canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
       ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
           onclick: function () { openBaselinePicker(id); } },
           icon('copy', 18), 'Start from a previous tour’s budget')
@@ -2402,14 +2508,14 @@
           onFiles: function (files) { readStatement(id, files); }
         }) : null,
         h('button', { class: 'btn ghost tile', type: 'button',
-          onclick: function () { go({ name: 'tour', id: id, view: 'daybyday' }); } },
+          onclick: function () { if (off) openOffLog(id); else go({ name: 'tour', id: id, view: 'daybyday' }); } },
           icon('edit', 18), 'Log New Expense'),
-        cashLogEntry(id, t)),
+        off ? null : cashLogEntry(id, t)),
       h('div', { class: 'ledger' }, rows),
       canEditTour(id) ? h('p', { class: 'note' }, 'Tap a category to set what you expect it to cost and what you’ve already paid.') : null,
       // Debts logged before Credit card and Loan became plain categories still
       // count, so a tour that has them keeps its ledger; fresh tours never see it.
-      G.rows(t && t.debts).length ? [
+      !off && G.rows(t && t.debts).length ? [
         h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'What you owe going in'),
         debtSection(id, t, 'tab')
       ] : null,
@@ -3256,7 +3362,12 @@
       style: 'grid-template-columns: repeat(' + tabs.length + ', 1fr)' },
       tabs.map(function (t) {
         var on = t.view === current;
-        var goThere = function () { if (!on || (S.route.view || 'details') !== t.view) go({ name: 'tour', id: id, view: t.view }); };
+        return tabButton(on, t.label, t.icon, function () {
+          if (!on || (S.route.view || 'details') !== t.view) go({ name: 'tour', id: id, view: t.view });
+        });
+      }));
+  }
+  function tabButton(on, label, iconName, goThere) {
         var down = null;
         return h('button', {
           class: 'tabbar-b' + (on ? ' on' : ''), type: 'button',
@@ -3277,7 +3388,17 @@
           },
           ontouchcancel: function () { down = null; },
           onclick: goThere
-        }, icon(t.icon, 23), h('span', null, t.label));
+        }, icon(iconName, 23), h('span', null, label));
+  }
+  // The band page's two tabs: TOUR and OFF TOUR (the owner and ALL ACCESS only).
+  function artistTabs(name, current) {
+    if (!canSeeOffTour(name)) return null;
+    var tabs = [{ view: 'tours', label: 'TOUR', icon: 'tabmap' }, { view: 'off', label: 'OFF TOUR', icon: 'tabcost' }];
+    return h('nav', { class: 'tabbar band-tabs', 'aria-label': name + ' sections',
+      'data-sig': 'band|' + name + '|' + current, style: 'grid-template-columns: repeat(2, 1fr)' },
+      tabs.map(function (t) {
+        var on = t.view === current;
+        return tabButton(on, t.label, t.icon, function () { if (!on) go({ name: 'artist', artist: name, view: t.view }); });
       }));
   }
 
@@ -9244,10 +9365,20 @@
       return db.localeCompare(da);
     });
     var feed = !!(opts && opts.feed);
-    rows.forEach(function (r) { r.pick = false; });
+    // Where each charge goes. On a tour: this tour (the default), the band's
+    // Off Tour book (and this tour's Off Tour Debt), or the band's next tour.
+    // On the Off Tour book: Off Tour (the default) or the next tour.
+    var base = getTour(tourId) || {};
+    var baseOff = isOffTour(base);
+    var band = artistOf(base);
+    var upcoming = band ? nextTourOf(band, tourId) : null;
+    var dests = (baseOff ? [['off', 'Off Tour']] : [['tour', 'This tour'], ['off', 'Off Tour']])
+      .concat(upcoming ? [['next', 'Upcoming tour']] : []);
+    if (!band) dests = dests.filter(function (d) { return d[0] !== 'off'; });
+    rows.forEach(function (r) { r.pick = false; r.dest = baseOff ? 'off' : 'tour'; });
     var live = rows.slice();
     var busy = false;
-    var cats = G.chargeCategoriesFor(getTour(tourId)).filter(function (c) { return c.key !== 'commission'; });
+    var cats = G.chargeCategoriesFor(base).filter(function (c) { return c.key !== 'commission' && c.key !== 'offdebt'; });
 
     // Add these charges to the tour (keep), or set them aside (feed only).
     async function file(list, keep) {
@@ -9266,7 +9397,7 @@
           var B = window.GR_BACKEND, r = null;
           try {
             r = await B.feedCall('file', { tourId: tourId, picks: list.map(function (x) {
-              return { id: x.feedId, keep: keep, category: keep ? x.category : null, accounted: false };
+              return { id: x.feedId, keep: keep, category: keep ? x.category : null, accounted: false, dest: x.dest };
             }) });
           } catch (e) { r = null; }
           if (!r || !r.ok) {
@@ -9278,22 +9409,41 @@
           if (r.filed) bits.push(plural(r.filed, 'charge') + ' added, ' + G.moneyCents(r.total));
           if (r.skipped) bits.push(plural(r.skipped, 'charge') + ' set aside');
           if (r.already) bits.push(plural(r.already, 'charge') + ' already sorted by someone else');
-          said = bits.join(' · ');
+          if (r.offTour) bits.push(r.offTour + ' to Off Tour');
+          if (r.upcoming) bits.push(r.upcoming + ' to the upcoming tour');
+          said = bits.join(' \u00b7 ');
         } else {
-          var patch = {}, total = 0;
-          list.forEach(function (x, i) {
-            // Only ever these fields: no card numbers, no raw text, no file names.
-            patch[newId() + i] = { date: x.date, merchant: x.merchant, amount: G.num(x.amount), category: x.category,
-              accounted: false, importId: importId, createdAt: Date.now() + i };
-            total += G.num(x.amount);
-          });
-          var prev = (G.isObj(getTour(tourId).imports) ? getTour(tourId).imports : {})[importId];
-          var imports = {};
-          imports[importId] = { createdAt: prev ? prev.createdAt : Date.now(), count: (prev ? G.num(prev.count) : 0) + list.length,
-            total: (prev ? G.num(prev.total) : 0) + total, source: source };
-          if (!(await api.update(tourId, { charges: patch, imports: imports }))) return;
-          for (var i = 0; i < list.length; i++) await writeLabel(list[i].merchant, list[i].category);
-          said = plural(list.length, 'charge') + ' added, ' + G.moneyCents(total);
+          // A statement: each group goes where it was pointed.
+          var groups = { tour: [], off: [], next: [] };
+          list.forEach(function (x) { (groups[x.dest] || groups.tour).push(x); });
+          var total = 0;
+          var put = async function (where, xs, extra) {
+            if (!where || !xs.length) return true;
+            var patch = {}, sum = 0;
+            xs.forEach(function (x, k) {
+              // Only ever these fields: no card numbers, no raw text, no file names.
+              patch[newId() + k] = Object.assign({ date: x.date, merchant: x.merchant, amount: G.num(x.amount), category: x.category,
+                accounted: false, importId: importId, createdAt: Date.now() + k }, extra ? extra(x) : {});
+              sum += G.num(x.amount);
+            });
+            var wt = getTour(where) || {};
+            var had = (G.isObj(wt.imports) ? wt.imports : {})[importId];
+            var imports = {};
+            imports[importId] = { createdAt: had ? had.createdAt : Date.now(), count: (had ? G.num(had.count) : 0) + xs.length,
+              total: (had ? G.num(had.total) : 0) + sum, source: source };
+            return api.update(where, { charges: patch, imports: imports });
+          };
+          var offId = groups.off.length ? (baseOff ? tourId : await ensureOffTour(band)) : null;
+          if (groups.off.length && !offId) { toast('Only the tour manager can start the Off Tour book.'); return; }
+          if (!(await put(tourId, groups.tour))) return;
+          if (!(await put(offId, groups.off))) return;
+          // Off-tour spending on this tour's card: the tour carries it as Off Tour Debt.
+          if (!baseOff && !(await put(tourId, groups.off, function (x) { return { category: 'offdebt', offTour: true, offCategory: x.category }; }))) return;
+          if (!(await put(upcoming && upcoming.id, groups.next))) return;
+          for (var i = 0; i < list.length; i++) { await writeLabel(list[i].merchant, list[i].category); total += G.num(list[i].amount); }
+          said = plural(list.length, 'charge') + ' added, ' + G.moneyCents(total) +
+            (groups.off.length && !baseOff ? ' \u00b7 ' + groups.off.length + ' to Off Tour' : '') +
+            (groups.next.length ? ' \u00b7 ' + groups.next.length + ' to ' + upcoming.name : '');
         }
       } finally { busy = false; }
       live = live.filter(function (x) { return list.indexOf(x) < 0; });
@@ -9355,6 +9505,15 @@
           r.why ? h('span', { class: 'rv-flag' + (r.why === 'Refund' ? ' learned' : '') }, r.why) : null,
           (r.source === 'learned' && !r.why) ? h('span', { class: 'rv-flag learned' }, 'Learned') : null,
           r.source === 'suggested' ? h('span', { class: 'rv-flag' }, 'Suggested') : null),
+        dests.length > 1 ? h('div', { class: 'rv-dest', role: 'group', 'aria-label': 'Where ' + r.merchant + ' goes' },
+          dests.map(function (d) {
+            return h('button', { class: 'rv-dpill' + (r.dest === d[0] ? ' on' : ''), type: 'button',
+              title: d[0] === 'next' && upcoming ? upcoming.name : null,
+              onclick: function (e) {
+                r.dest = d[0];
+                Array.prototype.forEach.call(e.currentTarget.parentNode.children, function (b) { b.classList.toggle('on', b === e.currentTarget); });
+              } }, d[1]);
+          })) : null,
         h('div', { class: 'rv-act' }, sel,
           h('button', { class: 'btn sm primary rv-add1', type: 'button', onclick: function () { file([r], true); } }, 'Add')),
         feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false); } },
@@ -9560,7 +9719,7 @@
   }
 
   // A tour whose logging dates are set takes card charges between them.
-  function feedLogs(tourId) { return !!G.cardWindow(getTour(tourId)); }
+  function feedLogs(tourId) { var t = getTour(tourId); return isOffTour(t) || !!G.cardWindow(t); }
 
   function feedEntry(id) {
     var B = window.GR_BACKEND;

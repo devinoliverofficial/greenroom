@@ -22,6 +22,8 @@
     { key: 'supplies', label: 'Supplies' },
     // Debts ride as plain categories now — no separate "owed going in" ledger.
     { key: 'card', label: 'Credit card' },
+    // Off-tour spending that rode a tour's card: the tour carries it as debt.
+    { key: 'offdebt', label: 'Off Tour Debt' },
     { key: 'loan', label: 'Loan' },
     { key: 'interest', label: 'Interest charges' },
     // What the merch cost to make. Usually an advance that has to be earned back,

@@ -379,6 +379,8 @@
     myRole: async function (tourId) {
       var doc = cache.tours.get(tourId);
       if (doc && session && doc._ownerId === session.user.id) return 'owner';
+      // A band's Off Tour book: the database only hands it to ALL ACCESS.
+      if (doc && doc.kind === 'offtour') return 'editor';
       var q = await sb.from('members').select('role')
         .eq('tour_id', tourId).eq('user_id', session ? session.user.id : '').maybeSingle();
       return (q.data && q.data.role) || 'viewer';

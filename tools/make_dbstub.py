@@ -263,24 +263,37 @@ shim = r"""<script>
           mine: !window.__harness.asTM, items: F.items.filter(function (it) { return !it.tour_id || it.tour_id === body.tourId; }) });
       }
       if (action === 'file') {
-        var picks = body.picks || [], add = {}, filed = 0, skipped = 0, already = 0, total = 0, now = Date.now();
+        // Like the server: each charge where it's pointed (H.offTourId / H.nextTourId
+        // stand in for the band's Off Tour book and next tour).
+        var H = window.__harness;
+        var picks = body.picks || [], adds = {}, filed = 0, skipped = 0, already = 0, total = 0, now = Date.now(), offN = 0, nextN = 0;
+        var into = function (tid, key, ch) { adds[tid] = adds[tid] || {}; adds[tid][key] = ch; };
         picks.forEach(function (pk, i) {
           var it = F.items.filter(function (x) { return x.id === pk.id; })[0];
           if (!it) { already += 1; return; }
           F.items = F.items.filter(function (x) { return x.id !== pk.id; });
           if (!pk.keep) { skipped += 1; return; }
           var acct = F.accounts.filter(function (a) { return a.name === it.account; })[0];
-          add['p' + it.id] = { date: it.date, merchant: it.merchant, amount: it.amount, category: pk.category, accounted: !!pk.accounted,
+          var ch = { date: it.date, merchant: it.merchant, amount: it.amount, category: pk.category, accounted: !!pk.accounted,
             account: it.account, importId: 'review-' + now, createdAt: now + i, paid: !(acct && acct.type === 'creditCard'),
-            by: window.__harness.asTM ? 'Brent Allen' : 'Devin Oliver' };
+            by: H.asTM ? 'Brent Allen' : 'Devin Oliver' };
+          if (pk.dest === 'next' && H.nextTourId) { into(H.nextTourId, 'p' + it.id, ch); nextN += 1; }
+          else if (pk.dest === 'off' && H.offTourId && body.tourId !== H.offTourId) {
+            into(H.offTourId, 'p' + it.id, Object.assign({}, ch, { fromTour: body.tourId }));
+            into(body.tourId, 'p' + it.id, Object.assign({}, ch, { category: 'offdebt', offTour: true, offCategory: pk.category }));
+            offN += 1;
+          } else into(body.tourId, 'p' + it.id, ch);
           filed += 1; if (!pk.accounted) total += it.amount;
         });
-        window.__harness.filedPicks = (window.__harness.filedPicks || []).concat([picks]);
-        window.__harness.feedPush();
-        var imp = {}; imp['review-' + now] = { createdAt: now, count: filed, total: total, source: 'Card feed' };
+        H.filedPicks = (H.filedPicks || []).concat([picks]);
+        H.feedPush();
         return window.claude.use('db').then(function (db) {
-          return filed ? db.doc('tours/' + body.tourId).update({ charges: add, imports: imp }) : null;
-        }).then(function () { return { ok: true, filed: filed, skipped: skipped, already: already, total: Math.round(total * 100) / 100 }; });
+          return Promise.all(Object.keys(adds).map(function (tid) {
+            var imp = {}; imp['review-' + now] = { createdAt: now, count: Object.keys(adds[tid]).length, total: 0, source: 'Card feed' };
+            return db.doc('tours/' + tid).update({ charges: adds[tid], imports: imp });
+          }));
+        }).then(function () { return { ok: true, filed: filed, skipped: skipped, already: already, offTour: offN, upcoming: nextN,
+          total: Math.round(total * 100) / 100 }; });
       }
       // Plaid's shape: banks, accounts, test mode.
       // Plaid's hosted window: 'finish' says waiting until the harness sets plaidDone.
