@@ -739,6 +739,7 @@
     put(venue, 'Address', d.venueAddress);
     put(venue, 'Venue phone', d.venuePhone);
     put(venue, 'Wifi', d.wifi);
+    put(venue, 'Wifi password', d.wifiPass);
     put(venue, 'Parking', d.parking);
     var day = sec('schedule', 'Schedule');
     put(day, 'Lobby call', cleanTime(d.lobbyCall));
@@ -930,7 +931,7 @@
       var sheet = {
         loadIn: cleanStr(r.loadIn, 40), vip: cleanStr(r.vip, 90), doors: cleanStr(r.doors, 40),
         loadOut: cleanStr(r.loadOut, 40), lobbyCall: cleanStr(r.lobbyCall, 40), busCall: cleanStr(r.busCall, 40),
-        wifi: cleanStr(r.wifi, 90), parking: cleanStr(r.parking, 160),
+        wifi: cleanStr(r.wifi, 90), wifiPass: cleanStr(r.wifiPass, 90), parking: cleanStr(r.parking, 160),
         driveNext: cleanStr(r.driveNext, 60), notes: cleanStr(r.notes, 200),
         soundchecks: cleanPairList(r.soundchecks), setTimes: cleanPairList(r.setTimes)
       };
@@ -947,7 +948,7 @@
   function mergeDaySheet(existing, incoming) {
     var out = {};
     var ex = isObj(existing) ? existing : {};
-    ['loadIn', 'vip', 'doors', 'loadOut', 'lobbyCall', 'busCall', 'wifi', 'parking', 'driveNext', 'notes']
+    ['loadIn', 'vip', 'doors', 'loadOut', 'lobbyCall', 'busCall', 'wifi', 'wifiPass', 'parking', 'driveNext', 'notes']
       .forEach(function (k) { out[k] = incoming[k] || cleanStr(ex[k], 200); });
     out.soundchecks = incoming.soundchecks.length ? incoming.soundchecks : cleanPairList(ex.soundchecks);
     out.setTimes = incoming.setTimes.length ? incoming.setTimes : cleanPairList(ex.setTimes);
@@ -964,6 +965,7 @@
     };
     put('Hotel', d.hotel);
     put('Wifi', d.wifi);
+    put('Wifi password', d.wifiPass);
     put('Rooms', d.rooms);
     (Array.isArray(d.plans) ? d.plans : []).forEach(function (r) {
       if (!isObj(r)) return;

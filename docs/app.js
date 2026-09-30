@@ -218,6 +218,37 @@
     return wrap;
   }
 
+  /* Every half hour, as a list to pick from; the time box stays typeable for
+     anything in between. Runs from 6:00 AM around to 5:30 AM, the shape of a
+     show day. */
+  function openTimePicker(current, pick) {
+    var times = [];
+    for (var i = 0; i < 48; i++) {
+      var mins = (6 * 60 + i * 30) % 1440, hr = Math.floor(mins / 60), mm = mins % 60;
+      var a = hr < 12 ? 'AM' : 'PM', h12 = hr % 12 || 12;
+      times.push({ main: h12 + ':' + (mm ? '30' : '00'), ampm: a });
+    }
+    var cur = String(current || '').replace(/\s+/g, '').toUpperCase();
+    var grid = h('div', { class: 'tp-grid' }, times.map(function (x) {
+      var label = x.main + ' ' + x.ampm;
+      var on = cur === (x.main + x.ampm);
+      return h('button', { class: 'tp-b' + (on ? ' on' : ''), type: 'button', onclick: function () { close(); pick(x.main, x.ampm); } }, label);
+    }));
+    var pop = h('div', { class: 'pop', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Pick a time' },
+      h('div', { class: 'pop-card tp' },
+        h('div', { class: 'tp-title' }, 'Pick a time'),
+        grid,
+        h('button', { class: 'btn ghost block', type: 'button', style: 'margin-top:12px', onclick: function () { close(); } }, 'Cancel')));
+    function close() { pop.classList.remove('on'); setTimeout(function () { pop.remove(); }, 250); }
+    pop.addEventListener('click', function (e) { if (e.target === pop) close(); });
+    document.body.appendChild(pop);
+    requestAnimationFrame(function () {
+      pop.classList.add('on');
+      var sel = grid.querySelector('.tp-b.on') || grid.children[24];
+      if (sel) grid.scrollTop = sel.offsetTop - grid.clientHeight / 2 + sel.offsetHeight / 2;
+    });
+  }
+
   // Hold a row, then drag it into place, the way apps move on an iPhone.
   // A quick touch still types or taps as usual; moving before the hold lands
   // is a scroll. onDrop(from, to) gets the row's old and new spots.
@@ -3514,14 +3545,6 @@
       return emptyState('No dates yet', 'Once shows are on the run, today shows up here.');
     }
     var when = s ? 'Tonight' : (next ? 'Next show' : 'Last show');
-    var line = function (label, value, href) {
-      if (!value) return null;
-      return h('div', { class: 'ov-line' },
-        h('span', { class: 'ov-msg-k' }, label),
-        href
-          ? h('a', { class: 'ov-v ov-link', href: href, target: '_blank', rel: 'noopener' }, value)
-          : h('span', { class: 'ov-v' }, value));
-    };
     var quote = String(d.quote || '').trim();
     return [
       h('div', { class: 'ov-today' },
@@ -3550,8 +3573,6 @@
       d.presale ? h('div', { class: 'ov-presale' },
         h('span', { class: 'ov-msg-k' }, 'Pre-sale'),
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
-      h('div', { class: 'ov-lines' },
-        line('Doors', G.cleanTime(d.doors))),
       h('div', { class: 'cal-open' },
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
@@ -4801,6 +4822,7 @@
             target: '_blank', rel: 'noopener' }, address)) : null,
           textRow('Venue phone', d.venuePhone),
           textRow('Wifi', d.wifi),
+          textRow('Wifi password', d.wifiPass),
           textRow('Parking', d.parking)]),
         section('Schedule', [
           clockRow('Lobby call', d.lobbyCall),
@@ -4837,6 +4859,7 @@
             href: mapsHref(String(off.hotel).trim() + (off.city ? ', ' + off.city : '')) }, String(off.hotel).trim())));
       }
       offRow('Wifi', off.wifi);
+      offRow('Wifi password', off.wifiPass);
       offRow('Rooms', off.rooms);
       var planRows = (Array.isArray(off.plans) ? off.plans : []).filter(function (r) {
         return r && (String(r.label || '').trim() || String(r.time || '').trim());
@@ -4993,7 +5016,7 @@
     var t = getTour(tourId);
     var d0 = offDayFor(t, date);
     var f = {
-      city: d0.city || '', hotel: d0.hotel || '', wifi: d0.wifi || '',
+      city: d0.city || '', hotel: d0.hotel || '', wifi: d0.wifi || '', wifiPass: d0.wifiPass || '',
       rooms: d0.rooms || '', notes: d0.notes || '',
       plans: (Array.isArray(d0.plans) ? d0.plans : []).map(function (r) {
         return { label: r.label || '', time: r.time || '' }; })
@@ -5026,7 +5049,7 @@
         e.preventDefault();
         blurActive();
         var sheet = {
-          city: f.city.trim(), hotel: f.hotel.trim(), wifi: f.wifi.trim(),
+          city: f.city.trim(), hotel: f.hotel.trim(), wifi: f.wifi.trim(), wifiPass: f.wifiPass.trim(),
           rooms: f.rooms.trim(), notes: f.notes.trim(),
           plans: f.plans.filter(function (r) { return r.label.trim() || r.time.trim(); })
             .map(function (r) { return { label: r.label.trim(), time: r.time.trim() }; })
@@ -5045,8 +5068,9 @@
           field('City', textIn('city', 'Salt Lake City, UT')),
           field('Hotel', textIn('hotel', 'Hotel name and address')),
           h('div', { class: 'field-row' },
-            field('Wifi', textIn('wifi', 'Network / password')),
+            field('Wifi', textIn('wifi', 'Network name')),
             field('Rooms', textIn('rooms', 'Under D. Oliver'))),
+          field('Wifi password', textIn('wifiPass', 'Password')),
           field('Reservations & plans', plansHost),
           field('Anything else', textIn('notes', 'Optional')),
           h('div', { class: 'stack' },
@@ -5689,7 +5713,7 @@
       venueAddress: d0.venueAddress || '', venuePhone: d0.venuePhone || '',
       loadIn: d0.loadIn || '', vip: d0.vip || '', doors: d0.doors || '',
       loadOut: d0.loadOut || '', lobbyCall: d0.lobbyCall || '', busCall: d0.busCall || '',
-      wifi: d0.wifi || '', parking: d0.parking || '',
+      wifi: d0.wifi || '', wifiPass: d0.wifiPass || '', parking: d0.parking || '',
       driveNext: d0.driveNext || '', notes: d0.notes || '',
       soundchecks: (Array.isArray(d0.soundchecks) ? d0.soundchecks : []).map(function (r) {
         return { band: r.band || '', time: r.time || '' }; }),
@@ -5746,7 +5770,15 @@
           maxlength: 12, autocomplete: 'off', placeholder: ph || '6', 'aria-label': 'Time',
           oninput: function (e) { main = e.target.value; push(); } });
         var ap = ampmSwitch(ampm, function (v) { ampm = v; push(); });
-        return h('div', { class: 'time-in' }, num, ap);
+        var pickBtn = h('button', { class: 'time-pick', type: 'button', 'aria-label': 'Pick a time',
+          onclick: function () {
+            openTimePicker(G.joinTime(main, ampm), function (m, a) {
+              main = m; num.value = m;
+              Array.prototype.forEach.call(ap.children, function (b) { if (b.textContent === a) b.click(); });
+              push();
+            });
+          } }, icon('chevron', 16));
+        return h('div', { class: 'time-in' }, h('div', { class: 'time-box' }, num, pickBtn), ap);
       }
       function timeIn(key, ph, defAmpm) {
         return clockIn(function () { return f[key]; }, function (v) { f[key] = v; }, ph, defAmpm);
@@ -5800,7 +5832,7 @@
           venueAddress: f.venueAddress.trim(), venuePhone: f.venuePhone.trim(),
           loadIn: f.loadIn.trim(), vip: f.vip.trim(), doors: f.doors.trim(),
           loadOut: f.loadOut.trim(), lobbyCall: f.lobbyCall.trim(), busCall: f.busCall.trim(),
-          wifi: f.wifi.trim(), parking: f.parking.trim(),
+          wifi: f.wifi.trim(), wifiPass: f.wifiPass.trim(), parking: f.parking.trim(),
           driveNext: f.driveNext.trim(), notes: f.notes.trim(),
           soundchecks: clean(f.soundchecks), setTimes: clean(f.setTimes)
         };
@@ -5827,7 +5859,8 @@
             h('label', { class: 'field-label', for: 'ds-addr' }, 'Venue address'),
             Object.assign(textIn('venueAddress', '2115 Woodward Ave'), { id: 'ds-addr' }), addrNote),
           field('Venue phone', textIn('venuePhone', '(313) 961-5451')),
-          field('Wifi', textIn('wifi', 'Network / password')),
+          field('Wifi', textIn('wifi', 'Network name')),
+          field('Wifi password', textIn('wifiPass', 'Password')),
           field('Parking', textIn('parking', 'Load in off 4th St alley, bus on the north lot')),
           // The schedule, in the order the day happens.
           h('h3', { class: 'ds-sec-h' }, 'Schedule'),
