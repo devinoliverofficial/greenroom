@@ -404,8 +404,11 @@
     if (!card || !isObj(card.feed) || !parseDay(card.cutoff)) return 0;
     return rows(tour && tour.charges).reduce(function (t, ch) {
       if (ch.accounted || !ch.category || ch.account !== card.feed.name) return t;
-      if (upTo && !(ch.date && ch.date <= upTo)) return t;
-      return ch.date && ch.date <= card.cutoff ? t + num(ch.amount) : t;
+      // The bank's balance holds posted charges: a charge made before the
+      // balance was read but posted after it wasn't inside it yet.
+      var d = ch.posted || ch.date;
+      if (upTo && !(d && d <= upTo)) return t;
+      return d && d <= card.cutoff ? t + num(ch.amount) : t;
     }, 0);
   }
   function cardPaidOff(card) {

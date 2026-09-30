@@ -2273,7 +2273,8 @@
     var byCat = {}, since = 0, sinceN = 0;
     G.rows(t.charges).forEach(function (ch) {
       if (ch.accounted || !ch.category || ch.account !== card.feed.name) return;
-      if (ch.date && ch.date <= card.cutoff) byCat[ch.category] = (byCat[ch.category] || 0) + G.num(ch.amount);
+      var d = ch.posted || ch.date;
+      if (d && d <= card.cutoff) byCat[ch.category] = (byCat[ch.category] || 0) + G.num(ch.amount);
       else { since += G.num(ch.amount); sinceN += 1; }
     });
     var waiting = feedWaiting(id).filter(function (it) { return it.account === card.feed.name; }).length;
@@ -9231,15 +9232,16 @@
   }
 
   /* Review charges before they go on the tour, from the card feed (one card
-     at a time) or a statement, oldest first. Check charges, tap a category to
+     at a time) or a statement, newest first. Check charges, tap a category to
      sort them all at once, then ADD; or sort and Add each one on its own.
      From the feed, anything not added stays in the pile for later, and "Set
      aside" drops a charge that isn't the tour's. */
   function openImportReview(tourId, rows, source, opts) {
     var importId = newId();
+    // Newest charge at the top, oldest at the bottom.
     rows.sort(function (a, b) {
-      var da = G.parseDay(a.date) ? a.date : '9999', db = G.parseDay(b.date) ? b.date : '9999';
-      return da.localeCompare(db);
+      var da = G.parseDay(a.date) ? a.date : '0000', db = G.parseDay(b.date) ? b.date : '0000';
+      return db.localeCompare(da);
     });
     var feed = !!(opts && opts.feed);
     rows.forEach(function (r) { r.pick = false; });
@@ -9395,7 +9397,7 @@
       panel.classList.add('rv-sheet');
       return [
         opts && opts.card ? h('p', { class: 'rv-card' }, (opts.steps > 1 ? 'Card ' + opts.step + ' of ' + opts.steps + ' · ' : '') +
-          opts.card + ' · oldest first') : null,
+          opts.card + ' · newest first') : null,
         title,
         h('p', { class: 'sh-sub' }, feed
           ? 'Check charges and tap a category to sort them all, then ADD. Or sort and Add them one at a time. Anything you don’t add stays here for later.'

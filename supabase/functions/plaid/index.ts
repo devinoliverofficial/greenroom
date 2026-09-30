@@ -180,7 +180,10 @@ function asTx(t: Obj, accounts: Record<string, Account>): Obj {
   return {
     id: String(t.transaction_id), account_id: String(t.account_id), amount: Math.round(-amt * 1000),
     payee_name: String(t.merchant_name || t.name || ""), import_payee_name_original: String(t.name || ""),
-    date: String(t.date), deleted: false, transfer_account_id: transfer || payment ? "transfer" : null,
+    // The day the charge was made (what the card statement shows); the day it
+    // posted is kept for the balance math.
+    date: String(t.authorized_date || t.date), posted: String(t.date),
+    deleted: false, transfer_account_id: transfer || payment ? "transfer" : null,
     payment,
   };
 }
@@ -277,11 +280,11 @@ function sortTransactions(
     const watch = income.get(String(t.account_id));
     if (watch && !t.deleted && !t.transfer_account_id && Number(t.amount) > 0) {
       const raw = String(t.import_payee_name_original ?? t.payee_name ?? "").trim();
-      deposits.push({ id, date: String(t.date), amount: Math.round(Number(t.amount) / 10) / 100,
+      deposits.push({ id, date: String(t.posted || t.date), amount: Math.round(Number(t.amount) / 10) / 100,
         av: /^AV[A-Z0-9]/i.test(raw) || /\batvenu\b/i.test(raw), watch });
     }
     if (t.payment && !t.deleted && Number(t.amount) > 0) {
-      payments.push({ id, date: String(t.date), amount: Math.round(Number(t.amount) / 10) / 100, watch: String(t.account_id) });
+      payments.push({ id, date: String(t.posted || t.date), amount: Math.round(Number(t.amount) / 10) / 100, watch: String(t.account_id) });
     }
     if (known.has(id)) {
       if (t.deleted && known.get(id) === "waiting") dropped.push(id);
@@ -309,7 +312,8 @@ function sortTransactions(
     let category: string | null = FEES.test(payee) ? "interest" : GRS.learnedCategory(labels, merchant);
     if (category && tour && cats.indexOf(category) < 0) category = null;
 
-    const base = { id, owner_id: owner, tour_id: tour?.id ?? null, date, merchant, amount: spent, category, account: acct?.name ?? "" };
+    const posted = String(t.posted || date);
+    const base = { id, owner_id: owner, tour_id: tour?.id ?? null, date, posted, merchant, amount: spent, category, account: acct?.name ?? "" };
     const cutoff = tour ? G.preTourCutoff(tour.doc) : null;
     if (spent > 0 && cutoff && date <= cutoff) { items.push({ ...base, why: "Before the tour", status: "skipped" }); continue; }
     const twin = tour && spent > 0 && G.rows(tour.doc.charges).concat(G.rows(tour.doc.extras)).some((c: Obj) =>
@@ -332,7 +336,7 @@ function sortTransactions(
 
     const bucket = toFile.get(tour!.id) ?? { tour: tour!, charges: {}, total: 0, n: 0 };
     (bucket.charges as Obj)["p" + id] = {
-      date, merchant, amount: spent, category, accounted: false, account: acct?.name ?? "",
+      date, posted, merchant, amount: spent, category, accounted: false, account: acct?.name ?? "",
       importId: "cards-" + now, createdAt: now + bucket.n, paid: !isCredit(acct),
     };
     bucket.total += spent; bucket.n += 1;
@@ -490,6 +494,37 @@ async function markOwed(tours: Tour[], accounts: Record<string, Account>, banks:
   }
 }
 
+/* Charges already in the pile or on a tour show the day they were made, not
+   the day they posted: when the bank sends one again, its dates are brought
+   into line (only the dates; nothing else about it changes). */
+async function fixDates(owner: string, txs: Obj[], known: Map<string, string>, tours: Tour[]) {
+  const want = new Map<string, { date: string; posted: string }>();
+  for (const t of txs) {
+    if (t.deleted || !known.has(String(t.id)) || !G.parseDay(String(t.date))) continue;
+    want.set(String(t.id), { date: String(t.date), posted: String(t.posted || t.date) });
+  }
+  if (!want.size) return;
+  const ids = [...want.keys()];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await admin.from("feed_items").select("id, date, posted").eq("owner_id", owner).in("id", ids.slice(i, i + 200));
+    for (const r of data ?? []) {
+      const w = want.get(String(r.id))!;
+      if (String(r.date) === w.date && String(r.posted ?? "") === w.posted) continue;
+      await admin.from("feed_items").update({ date: w.date, posted: w.posted }).eq("owner_id", owner).eq("id", r.id);
+    }
+  }
+  for (const t of tours) {
+    const fixes: Obj = {};
+    for (const [cid, ch] of Object.entries((t.doc.charges ?? {}) as Record<string, Obj>)) {
+      const w = cid.startsWith("p") ? want.get(cid.slice(1)) : undefined;
+      if (!w || !ch || (String(ch.date) === w.date && String(ch.posted ?? "") === w.posted)) continue;
+      fixes[cid] = w;
+      ch.date = w.date; ch.posted = w.posted;
+    }
+    if (Object.keys(fixes).length) await admin.rpc("set_charge_dates", { t_id: t.id, fixes });
+  }
+}
+
 async function toursOf(owner: string): Promise<Tour[]> {
   const { data: tourRows } = await admin.from("tours").select("id, doc, updated_at").eq("owner_id", owner);
   const tours: Tour[] = [];
@@ -576,6 +611,7 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
       .eq("owner_id", feed.owner_id).in("id", ids.slice(i, i + 200));
     for (const s of seen ?? []) known.set(s.id, s.status);
   }
+  if (!TEST) await fixDates(feed.owner_id, txs, known, tours);
   const now = Date.now();
   const { items: rows, toFile, dropped, deposits, payments } =
     sortTransactions(txs, accounts, tours, labels, known, feed.owner_id, now, incomeAccounts(accounts));
@@ -811,7 +847,7 @@ Deno.serve(async (req) => {
         if (!ids.length) return [];
         const { data, error } = await admin.from("feed_items").update(patch)
           .eq("owner_id", owner).eq("status", "waiting").in("id", ids)
-          .select("id, date, merchant, amount, account");
+          .select("id, date, posted, merchant, amount, account");
         if (error) throw new PlaidError("save_failed");
         return (data ?? []) as Obj[];
       };
@@ -831,7 +867,7 @@ Deno.serve(async (req) => {
           const pk = want.get(String(r.id))!;
           const amount = Number(r.amount);
           add["p" + r.id] = {
-            date: String(r.date), merchant: String(r.merchant), amount, category: String(pk.category),
+            date: String(r.date), posted: String(r.posted || r.date), merchant: String(r.merchant), amount, category: String(pk.category),
             accounted: !!pk.accounted, account: String(r.account || ""), importId, createdAt: now + i,
             paid: !isCredit(byName.get(String(r.account))), ...(by ? { by } : {}),
           };

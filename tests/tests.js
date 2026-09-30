@@ -363,6 +363,19 @@
     eq(r.cash, 375, 'ordinary cash untouched');
   });
 
+  test('a card charge shows the day it was made; the posted day decides the balance', function () {
+    var card = { label: 'Gold', amount: 1000, kind: 'card', cutoff: '2026-09-14', breakdown: {}, feed: { name: 'Gold' } };
+    var t = { shows: {}, expenses: {}, crew: {}, commission: {}, extras: {}, debts: { c1: card },
+      charges: {
+        a: { date: '2026-09-13', posted: '2026-09-13', merchant: 'Hotel', amount: 200, category: 'hotels', account: 'Gold' },
+        // Made the 13th, posted the 15th: not in the balance read on the 14th.
+        b: { date: '2026-09-13', posted: '2026-09-15', merchant: 'Amazon', amount: 52.99, category: 'supplies', account: 'Gold' },
+        // An older charge with no posted day falls back to its date.
+        c: { date: '2026-09-10', merchant: 'Pilot', amount: 50, category: 'gas', account: 'Gold' } } };
+    near(G.cardMoved(card, t), 250, 'the hotel and the gas moved out of the balance; Amazon did not');
+    near(G.cardSummary(card, t).remainder, 750, 'what is still to sort');
+  });
+
   test('buyouts count only what the Artists got as income', function () {
     var show = { date: '2026-05-10', income: { buyouts: 60, guarantee: 1000 }, loggedAt: 1 };
     eq(G.buyoutIncome(show), 0, 'nobody ticked yet: nothing counts');
