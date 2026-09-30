@@ -6647,7 +6647,10 @@
 
   function cashLogEntry(id, t) {
     var sum = G.cashSummary(t);
-    return h('button', { class: 'btn ghost tile cash-entry', type: 'button',
+    // Glows red while any of the table's cash is still unaccounted for.
+    var owed = sum.took > 0 && sum.left > 0.004;
+    return h('button', { class: 'btn ghost tile cash-entry' + (owed ? ' owed' : ''), type: 'button',
+      'aria-label': 'Merch cash log' + (owed ? ', ' + money(sum.left) + ' not accounted for yet' : ''),
       onclick: function () { go({ name: 'tour', id: id, view: 'cashlog' }); } },
       icon('cash', 18), h('span', null, 'MERCH CASH LOG'),
       sum.took > 0 ? h('span', { class: 'ce-left num' + (sum.left > 0.004 ? ' neg' : ' pos') },
