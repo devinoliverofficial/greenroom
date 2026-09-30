@@ -100,6 +100,7 @@ function prompt(kind: "text" | "files", body: string): string {
     "",
     "Reply with only a JSON object in this exact shape:",
     '{"reportType":"settlement","show":{"date":"YYYY-MM-DD","venue":"","city":""},"income":{"merch":null},"cash":null,',
+    ' "totals":{"gross":null,"adjusted":null,"dueArtist":null,"dueVenue":null},',
     ' "cards":{"receipts":null,"fee":null},"cardsBy":null,"notes":[{"label":"Merch per head","value":"$12.40"}]}',
     "",
     "Rules:",
@@ -110,6 +111,9 @@ function prompt(kind: "text" | "files", body: string): string {
     '  line exists and the venue took no cut (0%, or nothing due to the venue), take the "Adjusted Gross" (the gross less',
     '  card fees, sales tax and off-top costs). Only if neither is printed take "Total Gross" and add a note "Gross merch".',
     '  Never compute it yourself. Never report the gross as merch when a smaller band number is printed.',
+    '- totals: the settlement\'s own printed lines, copied exactly, null when not printed: gross = "Total Gross" (Gross',
+    '  Sales), adjusted = "Adjusted Gross", dueArtist = "Total Due Artist" (or Net/Due to Artist), dueVenue = "Total Due',
+    '  Venue" (the venue\'s merch cut; 0 when the venue took nothing).',
     '- cash: the "Cash from Show" total — the cash the band holds at the end of the night after paying the venue any',
     '  cash. If the venue collected the cash, 0. If there is no such line, null.',
     '- cards.receipts: the "Total CC Receipts" (credit card sales). cards.fee: the credit card "Fee ($)" amount.',
@@ -230,7 +234,16 @@ Deno.serve(async (req) => {
   const out = jsonOut(res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join(""));
   const show = (out.show ?? {}) as Record<string, unknown>;
   const income = (out.income ?? {}) as Record<string, unknown>;
-  const merch = Math.round((money(income.merch) || 0) * 100) / 100;
+  // The band's number is picked by rule from the printed lines, not taken on
+  // faith: what's due the artist; if the venue took nothing, the adjusted
+  // gross. The gross is never the band's number when a smaller one is printed.
+  const totals = (out.totals ?? {}) as Record<string, unknown>;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const gross = r2(money(totals.gross) || 0), adjusted = r2(money(totals.adjusted) || 0);
+  const dueArtist = r2(money(totals.dueArtist) || 0), dueVenue = money(totals.dueVenue);
+  let merch = r2(money(income.merch) || 0);
+  if (dueArtist > 0) merch = dueArtist;
+  else if (adjusted > 0 && (dueVenue === 0 || !(merch > 0))) merch = adjusted;
   const cashRead = money(out.cash);
   const cash = cashRead >= 0 ? Math.round(cashRead * 100) / 100 : NaN;
   const reportType = /progress|tour/i.test(String(out.reportType ?? "")) ? "tour_progress"
@@ -366,8 +379,7 @@ Deno.serve(async (req) => {
   // this: the settlement's number and the rest of that night, worked out the
   // same way a clean filing would.
   let asked = "";
-  const ask = async (fix: number): Promise<string> => {
-    if (asked || !(fix > 0) || Math.abs(fix - logged) < 0.01) return asked;
+  const nightPatch = (fix: number): Record<string, unknown> => {
     const heldCash = cash >= 0 ? cash : typeof s.merchCash === "number" ? Number(s.merchCash) : NaN;
     const patch: Record<string, unknown> = { settlementNotes: mergedNotes(s.settlementNotes, notes) };
     if (heldCash >= 0) patch.merchCash = Math.min(heldCash, fix);
@@ -375,6 +387,29 @@ Deno.serve(async (req) => {
     else if (cardsByVenue) patch.merchCardDeposit = null;
     const due = cardDeposit >= 0 ? cardDeposit : Math.round((fix - Number(patch.merchCash ?? 0)) * 100) / 100;
     patch.received = !(due > 0);
+    return patch;
+  };
+  // The one mistake the app fixes on its own: it logged the gross as what
+  // the band keeps, and the settlement prints a smaller band number.
+  const selfFix = async (fix: number): Promise<boolean> => {
+    const patch = nightPatch(fix);
+    const inc2 = (s.income ?? {}) as Record<string, unknown>;
+    inc2.merch = fix;
+    s.income = inc2;
+    if ("merchCash" in patch) s.merchCash = patch.merchCash;
+    if ("merchCardDeposit" in patch) s.merchCardDeposit = patch.merchCardDeposit;
+    s.settlementNotes = patch.settlementNotes;
+    if (s.merchReceived !== true) s.merchReceived = patch.received;
+    shows[hit.showId] = s;
+    doc.shows = shows;
+    const again = await admin.from("tours").update({ doc }).eq("id", hit.id);
+    if (again.error) { await logMail(mail.from, mail.subject, "selffix_failed", again.error.message); return false; }
+    await logMail(mail.from, mail.subject, "selffixed", merch + " -> " + fix);
+    return true;
+  };
+  const ask = async (fix: number): Promise<string> => {
+    if (asked || !(fix > 0) || Math.abs(fix - logged) < 0.01) return asked;
+    const patch = nightPatch(fix);
     const put = await admin.from("ari_asks").insert({
       tour_id: hit.id, note_id: id, show_id: hit.showId, place: where, was: logged, fix, patch,
     });
@@ -405,7 +440,11 @@ Deno.serve(async (req) => {
     const said = raw.replace(/^[ \t]*KEEPS:.*$/gim, "").trim();
     const read = line && !/none/i.test(line[1]) ? money(line[1]) : NaN;
     const keeps = hasText && read > 0 && printed(read, mail.text) ? Math.round(read * 100) / 100 : NaN;
-    const q = await ask(keeps > 0 ? keeps : kept > 0 ? merch : NaN);
+    let fixed = "";
+    if (!kept && keeps > 0 && keeps < merch - 0.005 && gross > 0 && Math.abs(merch - gross) < 0.01 && await selfFix(keeps)) {
+      fixed = `\n\nI first logged ${usd(merch)}, which is the gross. I corrected it to ${usd(keeps)}, what the band keeps.`;
+    }
+    const q = fixed || await ask(keeps > 0 ? keeps : kept > 0 ? merch : NaN);
     // supabase-js hands back errors instead of throwing them, so a silent
     // Ari would otherwise look exactly like a happy one.
     const ins = said ? await say(id, said.slice(0, 1500) + q) : { error: null };

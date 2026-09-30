@@ -1242,8 +1242,10 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .row.total > span:first-child { flex: 1; font-weight: 700; }
 .row.total .amt { font-size: 19px; }
 /* Expenses: the plan and what's been paid, side by side. */
-.ex-proj, .ex-paid { flex: 0 0 70px; text-align: right; }
-.row.ex-row, .row.ex-head, .row.ex-total { gap: 8px; }
+.ex-proj, .ex-paid, .ex-done { flex: 0 0 62px; text-align: right; }
+.row.ex-row, .row.ex-head, .row.ex-total { gap: 6px; }
+.ex-row .amt, .ex-total .amt { font-size: 14px; }
+.ledger .amt.ex-done { color: var(--ink-2); }
 .ex-row .row-label { overflow-wrap: normal; }
 .ex-chev { flex: 0 0 18px; }
 .row.ex-head { min-height: 0; padding-top: 11px; padding-bottom: 9px;
@@ -1251,7 +1253,7 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .row.ex-head > span:first-child { flex: 1; }
 .ledger .amt.ex-paid { color: var(--ink); }
 .ledger .amt.ex-paid.over { color: var(--neg); }
-.row.ex-total .amt { font-size: 16px; }
+.row.ex-total .amt { font-size: 15px; }
 .row.total .hint { font-weight: 450; margin-top: 2px; }
 .row.rowbtn { width: 100%; appearance: none; border: 0; border-bottom: 1px solid var(--line-2); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .row.rowbtn:last-child { border-bottom: 0; }
