@@ -1415,10 +1415,14 @@
   function swipeable(card, onDelete, label, opts) {
     var o = opts || {};
     var OPEN = -(o.open || 92);
-    var wrap = h('div', { class: 'swipe-wrap' + (o.cls ? ' ' + o.cls : '') },
-      h('button', { class: 'swipe-del', type: 'button', 'aria-label': (o.text || 'Delete') + ' ' + label,
-        onclick: function () { onDelete(); } }, o.text || 'Delete'),
-      card);
+    var behind = o.actions
+      ? h('div', { class: 'swipe-acts' }, o.actions.map(function (a) {
+          return h('button', { class: 'swipe-act' + (a.cls ? ' ' + a.cls : ''), type: 'button',
+            'aria-label': a.text + ' ' + label, onclick: function () { a.onClick(); } }, a.text);
+        }))
+      : h('button', { class: 'swipe-del', type: 'button', 'aria-label': (o.text || 'Delete') + ' ' + label,
+          onclick: function () { onDelete(); } }, o.text || 'Delete');
+    var wrap = h('div', { class: 'swipe-wrap' + (o.cls ? ' ' + o.cls : '') }, behind, card);
     card.classList.add('swipe-card');
     var startX = 0, startY = 0, base = 0, dragging = false, horizontal = null;
     card.addEventListener('pointerdown', function (e) {
@@ -3616,6 +3620,8 @@
   function crewSection(tourId) {
     var B = window.GR_BACKEND;
     var owns = B.ownsTour && B.ownsTour(tourId);
+    // The tour manager and ALL ACCESS can edit someone or kick them off.
+    var manages = owns || tourRole(tourId) === 'editor';
     S.crewCache = S.crewCache || {};
     var cached = S.crewCache[tourId] || null;
     var list = h('div', { class: 'ledger crew-list crew-sym' },
@@ -3638,12 +3644,14 @@
       }
       list.replaceChildren.apply(list, rows.map(function (m) {
         var row = crewRow(m);
-        // Only the tour manager, and never on their own row: swipe left to
-        // kick someone off the tour.
-        if (!owns || m.owner || !m.invitedEmail) return row;
+        // The tour manager and ALL ACCESS, never on the Creator's row: swipe
+        // left to edit someone or kick them off the tour.
+        if (!manages || m.owner || !m.invitedEmail) return row;
         var who = m.name || m.username || m.email;
-        return swipeable(row, function () { kickOff(tourId, m.invitedEmail, who); }, who,
-          { text: 'Kick Off Tour', open: 138, cls: 'in-list kick' });
+        return swipeable(row, null, who, { open: 196, cls: 'in-list kick', actions: [
+          { text: 'Edit', cls: 'edit', onClick: function () { openCrewEdit(tourId, m); } },
+          { text: 'Kick Off Tour', cls: 'kick', onClick: function () { kickOff(tourId, m.invitedEmail, who); } }
+        ] });
       }));
       requestAnimationFrame(sizeColumns);
     }
@@ -3706,13 +3714,56 @@
       action: 'Kick Off Tour', danger: true,
       onConfirm: async function () {
         try {
-          await window.GR_BACKEND.uninvite(tourId, email);
+          var BK = window.GR_BACKEND;
+          await (BK.kickMember ? BK.kickMember(tourId, email) : BK.uninvite(tourId, email));
           forgetCrew(tourId);
           toast(who + ' is off the tour');
           return true;
         } catch (e) { toast('Couldn\u2019t do that. Try again.'); return false; }
       }
     });
+  }
+
+  /* Edit someone on the crew: their role on the tour, how to reach them, and
+     their access. Their login email never changes here. */
+  function openCrewEdit(tourId, m) {
+    var who = m.name || m.username || m.email;
+    var base = m.base || { tourRole: '', phone: '', email: m.invitedEmail };
+    var f = { tourRole: m.tourRole || '', phone: m.phone || '', email: m.email || '', access: m.role === 'editor' ? 'editor' : 'viewer' };
+    openSheet(function () {
+      var submit = async function (e) {
+        e.preventDefault();
+        blurActive();
+        // Only what differs from their own card is kept as an edit.
+        var ov = {};
+        ['tourRole', 'phone', 'email'].forEach(function (k) {
+          var v = String(f[k] || '').trim();
+          if (v && v !== String(base[k] || '').trim()) ov[k] = v;
+        });
+        try {
+          await window.GR_BACKEND.editMember(tourId, m.invitedEmail, f.access, ov);
+        } catch (x) { toast('Couldn\u2019t save that. Try again.'); return; }
+        forgetCrew(tourId);
+        closeSheet(); toast(who + ' updated'); render(true);
+      };
+      return [
+        h('h2', { class: 'sh-title' }, who),
+        h('p', { class: 'sh-sub' }, 'Their login stays ' + m.invitedEmail + '.'),
+        h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
+          field('Role', h('input', { class: 'input', type: 'text', value: f.tourRole, maxlength: 40, autocomplete: 'off',
+            placeholder: 'Role', oninput: function (e) { f.tourRole = e.target.value; } })),
+          field('Phone number', h('input', { class: 'input', type: 'tel', value: f.phone, maxlength: 40, autocomplete: 'off',
+            placeholder: 'Phone number', oninput: function (e) { f.phone = e.target.value; } })),
+          field('Email', h('input', { class: 'input', type: 'email', value: f.email, maxlength: 120, autocomplete: 'off',
+            placeholder: 'Email', oninput: function (e) { f.email = e.target.value; } })),
+          h('h3', { class: 'sh-h3' }, 'Access'),
+          segmented(['GA', 'ALL ACCESS'], f.access === 'editor' ? 1 : 0, function (i) { f.access = i ? 'editor' : 'viewer'; }, 'Access'),
+          h('p', { class: 'note' }, 'GA sees the shows, day sheets and guest list. ALL ACCESS also sees the money, and can edit or kick crew.'),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
+      ];
+    }, { label: 'Edit ' + who });
   }
 
   /* Inviting is its own sheet now — the Overview keeps one small button. */

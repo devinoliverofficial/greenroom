@@ -108,6 +108,19 @@ shim = r"""<script>
       return Promise.resolve(); },
     signOut: function () {},
     members: function () { return Promise.resolve(window.__harness.members); },
+    editMember: function (tourId, email, access, ov) {
+      window.__harness.edits = (window.__harness.edits || []).concat([[email, access, ov]]);
+      window.__harness.crew.forEach(function (c) {
+        if (c.invitedEmail !== email) return;
+        c.role = access; c.tourRole = ov.tourRole || c.tourRole; c.phone = ov.phone || c.phone; c.email = ov.email || c.email;
+      });
+      return Promise.resolve();
+    },
+    kickMember: function (tourId, email) {
+      window.__harness.kicked = (window.__harness.kicked || []).concat([email]);
+      window.__harness.crew = window.__harness.crew.filter(function (c) { return c.invitedEmail !== email; });
+      return Promise.resolve();
+    },
     invite: function (tourId, email, role, name, phone, extra) {
       window.__harness.invited.push([email, role, name, (extra || {}).tourRole || '']);
       window.__harness.members.push({ invited_email: email, role: role, display_name: name, user_id: null });

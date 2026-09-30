@@ -300,7 +300,7 @@
     /* The tour's phone book: everyone invited, plus the manager who owns it. */
     crew: async function (tourId) {
       var mq = await sb.from('members')
-        .select('invited_email, role, user_id, display_name, phone, tour_role')
+        .select('invited_email, role, user_id, display_name, phone, tour_role, overrides')
         .eq('tour_id', tourId).order('created_at');
       if (mq.error) throw mapError(mq.error);
       var rows = mq.data || [];
@@ -326,15 +326,23 @@
       }
       rows.forEach(function (r) {
         var pr = byId[r.user_id] || {};
+        // Their own card once they've signed up; what the invite said until
+        // then; and over both, whatever the tour manager or ALL ACCESS edited.
+        var base = {
+          email: pr.email || r.invited_email,
+          phone: pr.phone || r.phone || '',
+          tourRole: roleName(pr.tour_role || r.tour_role)
+        };
+        var ov = isObj(r.overrides) ? r.overrides : {};
         out.push({
           owner: false, role: r.role,
           name: pr.full_name || r.display_name || '',
           username: pr.username || '',
-          email: pr.email || r.invited_email,
+          email: ov.email || base.email,
           invitedEmail: r.invited_email,
-          phone: pr.phone || r.phone || '',
-          // Their own card once they've signed up; what the invite said until then.
-          tourRole: roleName(pr.tour_role || r.tour_role),
+          phone: ov.phone || base.phone,
+          tourRole: ov.tourRole || base.tourRole,
+          base: base,
           joined: !!r.user_id
         });
       });
@@ -439,6 +447,16 @@
         var out = await r.json();
         return out && out.status ? out.status : 'nomail';
       } catch (e) { return 'nomail'; }
+    },
+    // The tour manager and ALL ACCESS: someone's role, contact info and
+    // access, or off the tour. The database checks who's asking.
+    editMember: async function (tourId, email, access, overrides) {
+      var q = await sb.rpc('edit_member', { t_id: tourId, addr: email, new_access: access, ov: overrides || {} });
+      if (q.error) throw mapError(q.error);
+    },
+    kickMember: async function (tourId, email) {
+      var q = await sb.rpc('kick_member', { t_id: tourId, addr: email });
+      if (q.error) throw mapError(q.error);
     },
     uninvite: async function (tourId, email) {
       var q = await sb.from('members').delete()

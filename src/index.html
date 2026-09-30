@@ -1074,6 +1074,13 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .swipe-wrap.in-list .swipe-del { border-radius: 0; }
 .swipe-wrap.in-list .swipe-card { background: var(--surface); }
 .swipe-wrap.kick .swipe-del { width: 170px; padding-right: 18px; font-size: 14px; }
+/* Two doors behind a crew row: Edit, then Kick Off Tour. */
+.swipe-acts { position: absolute; top: 0; bottom: 0; right: 0; display: flex;
+  opacity: 0; transition: opacity .15s ease; pointer-events: none; }
+.swipe-wrap.revealed .swipe-acts { opacity: 1; pointer-events: auto; }
+.swipe-act { border: 0; padding: 0 16px; font-size: 14px; font-weight: 700; cursor: pointer; color: #fff; }
+.swipe-act.edit { width: 76px; background: var(--surface-2); color: var(--ink); }
+.swipe-act.kick { width: 120px; background: var(--neg); }
 
 /* The two-door tour menu */
 .opt-cards { display: grid; gap: 12px; margin-top: 6px; }
