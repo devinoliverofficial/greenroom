@@ -416,7 +416,7 @@
         if (!d.exists) return;
         var v = d.data();
         // When you last looked at something: yours alone, never a merchant label.
-        if (G.isObj(v) && v.kind === 'seen') { if (G.num(v.at) > G.num(seen[d.id])) seen[d.id] = G.num(v.at); return; }
+        if (G.isObj(v) && v.kind === 'seen') { if (G.num(v.at) >= seenShape(seen[d.id]).at) seen[d.id] = seenShape(v); return; }
         if (G.isObj(v) && (G.isObj(v.cats) || v.kind === 'crew' || v.kind === 'artistLogo' || v.kind === 'artist')) m[d.id] = v;
       });
       S.labels = m;
@@ -2303,12 +2303,22 @@
     if (src === 'image') return 'SCREENSHOT';
     return 'UNKNOWN';
   }
+  // Of what's spent in a category, what's already paid: debit, cash, check.
+  function paidPart(t, key) {
+    var n = 0;
+    G.rows(t && t.charges).forEach(function (ch) {
+      if (ch.category === key && ch.paid && !ch.accounted) n += G.num(ch.amount);
+    });
+    G.rows(t && t.cashLog).forEach(function (x) { if (x.category === key) n += G.num(x.amount); });
+    return Math.round(n * 100) / 100;
+  }
   function categoryEntries(t, key) {
     var out = [];
     G.rows(t && t.charges).forEach(function (ch) {
       if (ch.category !== key) return;
       out.push({ date: ch.date || '', label: ch.merchant || 'Charge', amount: G.num(ch.amount),
-        detail: [ch.account || '', ch.accounted ? 'already accounted for' : ''].filter(Boolean).join(' · '),
+        detail: [ch.account || '', ch.paid ? 'Paid' : 'Spent', ch.by ? 'sorted by ' + ch.by : '',
+          ch.accounted ? 'already accounted for' : ''].filter(Boolean).join(' · '),
         source: chargeSource(t, ch), chargeId: ch.id, counts: !ch.accounted });
     });
     G.rows(t && t.cashLog).forEach(function (x) {
@@ -2373,31 +2383,37 @@
       icon('card', 18), 'Logged Card Transactions' + (n ? ' (' + n + ')' : ''));
   }
   // A payment logged by hand: an entry of its own, dated, marked MANUAL.
-  function paidLogForm(id, key, label, after) {
+  // Spent: put on a credit card, still owed until the card is paid off.
+  // Paid: a debit card, cash or a check, so the money is already gone.
+  function paidLogForm(id, key, label, after, how) {
+    var paid = how === 'paid';
+    var word = paid ? 'paid' : 'spent';
     var f = { amount: 0, date: G.tourToday(), what: '' };
     var submit = async function (e) {
       e.preventDefault();
       blurActive();
-      if (!(f.amount > 0)) { toast('Enter how much was paid'); return; }
-      if (!G.parseDay(f.date)) { toast('Pick the day it was paid'); return; }
+      if (!(f.amount > 0)) { toast('Enter how much was ' + word); return; }
+      if (!G.parseDay(f.date)) { toast('Pick the day it was ' + word); return; }
       var patch = { charges: {} };
       patch.charges[newId()] = { date: f.date, merchant: f.what.trim() || label, amount: f.amount, category: key,
-        accounted: false, manual: true, createdAt: Date.now() };
+        accounted: false, manual: true, paid: paid, createdAt: Date.now() };
       if (await api.update(id, patch)) {
         delete S.drafts['exp:' + id];
-        toast(money(f.amount) + ' logged as spent'); render(true);
+        toast(money(f.amount) + ' logged as ' + word); render(true);
         if (after) after(); else closeSheet();
       }
     };
     return h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
-      field('How much was spent', moneyInput({ id: 'log-paid', value: 0, label: label + ' spent', nextId: 'log-what',
+      h('p', { class: 'note' }, paid ? 'Paid: a debit card, cash or a check. The money\u2019s already gone.'
+        : 'Spent: put on a credit card. It counts now and stays owed until the card is paid off.'),
+      field('How much was ' + word, moneyInput({ id: 'log-paid', value: 0, label: label + ' ' + word, nextId: 'log-what',
         onValue: function (v) { f.amount = v; } })),
       field('What was it for?', h('input', { class: 'input', type: 'text', id: 'log-what', maxlength: 60, autocomplete: 'off',
         placeholder: 'Optional, e.g. per diems', oninput: function (e) { f.what = e.target.value; } })),
-      field('Day it was paid', h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Day it was paid',
+      field('Day it was ' + word, h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Day it was ' + word,
         onchange: function (e) { f.date = e.target.value; } })),
       h('div', { class: 'stack' },
-        h('button', { class: 'btn primary block', type: 'submit' }, 'Log it as spent')));
+        h('button', { class: 'btn primary block', type: 'submit' }, 'Log it as ' + word)));
   }
 
   function openCategorySheet(id, key) {
@@ -2411,10 +2427,13 @@
     openSheet(function () {
       var readout = h('div', { class: 'preview' });
       var paid = G.num(line.paid);
+      var settled = paidPart(t, key);
       var p = rec.projected;
       readout.append(
         h('div', null, h('span', null, 'Projected'), h('strong', { class: 'num' }, p == null ? 'Not set' : money(p))),
         h('div', null, h('span', null, 'Spent so far'), h('strong', { class: 'num' }, money(paid))),
+        settled > 0 ? h('div', null, h('span', null, '\u21b3 of that, paid (debit, cash, check)'),
+          h('strong', { class: 'num' }, money(settled))) : null,
         p == null ? h('div', null, h('span', null, 'Counts as'), h('strong', { class: 'num' }, money(paid)))
           : paid > p ? h('div', null, h('span', null, 'Over by'), h('strong', { class: 'num neg' }, money(paid - p)))
           : h('div', null, h('span', null, 'Left to pay'), h('strong', { class: 'num' }, money(p - paid))));
@@ -2437,8 +2456,8 @@
               onValue: function (v) { f.projected = v > 0 ? v : null; }
             }), 'What you expect it to cost. What’s paid fills it up; it doesn’t add on top.'),
             h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' }, 'Save projection'))));
-        } else if (kind === 'paid') {
-          box.replaceChildren(paidLogForm(id, key, cat.label));
+        } else if (kind === 'spent' || kind === 'paid') {
+          box.replaceChildren(paidLogForm(id, key, cat.label, null, kind));
         } else box.replaceChildren();
       }
       draw();
@@ -2447,8 +2466,9 @@
         cat.note ? h('p', { class: 'sh-sub' }, cat.note) : null,
         readout,
         canWrite() ? [
-          h('h3', { class: 'sh-h3' }, 'Is this log projected or spent?'),
-          segmented(['Projected', 'Spent'], -1, function (i) { kind = i ? 'paid' : 'projected'; draw(); }, 'Projected or spent'),
+          h('h3', { class: 'sh-h3' }, 'Is this log projected, spent or paid?'),
+          segmented(['Projected', 'Spent', 'Paid'], -1, function (i) { kind = ['projected', 'spent', 'paid'][i]; draw(); },
+            'Projected, spent or paid'),
           box
         ] : null,
         loggedButton(id, key, function () { openCategorySheet(id, key); })
@@ -2547,13 +2567,13 @@
       return [
         h('h2', { class: 'sh-title' }, 'Pay ' + (p.name || 'crew')),
         h('p', { class: 'sh-sub' }, money(G.num(p.pay)) + ' for the tour' + (owed < G.num(p.pay) ? ' \u00b7 ' + money(owed) + ' still owed' : '') +
-          '. Logged under Crew as MANUAL.'),
+          '. Logged under Crew as MANUAL, paid (debit card, cash or check).'),
         h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
           e.preventDefault(); blurActive();
           if (!(f.amount > 0)) { toast('Enter how much you paid'); return; }
           var patch = { charges: {} };
           patch.charges[newId()] = { date: G.parseDay(f.date) ? f.date : G.tourToday(), merchant: (p.name || 'Crew') + ' \u2014 pay',
-            amount: f.amount, category: 'crew', accounted: false, manual: true, crewId: p.id, createdAt: Date.now() };
+            amount: f.amount, category: 'crew', accounted: false, manual: true, paid: true, crewId: p.id, createdAt: Date.now() };
           if (await api.update(id, patch)) {
             closeSheet(); toast(money(f.amount) + ' paid to ' + (p.name || 'crew')); render(true);
             setTimeout(function () { openCrewSheet(id); }, 250);
@@ -2626,16 +2646,16 @@
       }
       var kind = crewKind[id] || null;
       var ask = canWrite() ? [
-        h('h3', { class: 'sh-h3' }, 'Is this log projected or spent?'),
-        segmented(['Projected', 'Spent'], kind === 'projected' ? 0 : kind === 'paid' ? 1 : -1, function (i) {
-          crewKind[id] = i ? 'paid' : 'projected';
+        h('h3', { class: 'sh-h3' }, 'Is this log projected, spent or paid?'),
+        segmented(['Projected', 'Spent', 'Paid'], ['projected', 'spent', 'paid'].indexOf(kind), function (i) {
+          crewKind[id] = ['projected', 'spent', 'paid'][i];
           openCrewSheet(id);
-        }, 'Projected or paid'),
+        }, 'Projected, spent or paid'),
         kind === 'projected' ? h('div', { style: 'margin-top:14px' },
           benchRow,
           h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:16px',
             onclick: function () { openCrewPerson(id, null); } }, icon('plus', 18), 'Add someone')) : null,
-        kind === 'paid' ? paidLogForm(id, 'crew', 'Crew', function () { crewKind[id] = null; openCrewSheet(id); }) : null
+        kind === 'spent' || kind === 'paid' ? paidLogForm(id, 'crew', 'Crew', function () { crewKind[id] = null; openCrewSheet(id); }, kind) : null
       ] : null;
       return [
         h('h2', { class: 'sh-title' }, 'Crew'),
@@ -3835,14 +3855,16 @@
     ];
   }
 
-  /* ============================== What's new? ==============================
+  /* ============================ NEW TOUR TASKS ============================
      For the tour manager: the Creator, and whoever's tour role is Tour
-     Manager. Everything that wants a look, in one place: merch the mailbox
-     logged, special requests, merch cash not accounted for, new expenses,
-     money still to land, days off with no poll, new guests. It glows green
-     while there's something new since you last looked (or a new day with
-     things still open) and greys out once you've looked. Each person's look
-     is their own, kept with their account. */
+     Manager. Everything that wants a look, one card at a time, like a dating
+     app: swipe right to handle it now (it takes you there), left to deal with
+     it later. Anything new stays in the deck until it's swiped right; things
+     still open (a request with no answer, money still to land) stay until
+     they're done. The button glows green while something's new since you last
+     looked, or on a new day with tasks still waiting, and greys out once
+     you've looked. Each person's looks and "later" pile are their own, kept
+     with their account. */
   function seenKey() {
     var B = window.GR_BACKEND;
     var uid = S.mode === 'db' && B && B.uid ? B.uid() : '';
@@ -3852,14 +3874,18 @@
     if (!S.seen) { try { S.seen = JSON.parse(lsGet(seenKey()) || '{}') || {}; } catch (e) { S.seen = {}; } }
     return S.seen;
   }
+  function seenShape(v) {
+    if (typeof v === 'number') return { at: v, later: {} };
+    if (!G.isObj(v)) return { at: 0, later: {} };
+    return { at: G.num(v.at), later: G.isObj(v.later) ? v.later : {} };
+  }
   function wnKey(tourId) { return 'seen-wn-' + tourId; }
-  function wnSeen(tourId) { return G.num(seenMap()[wnKey(tourId)]); }
-  function wnMarkSeen(tourId) {
-    var at = Date.now();
-    seenMap()[wnKey(tourId)] = at;
+  function seenRec(tourId) { return seenShape(seenMap()[wnKey(tourId)]); }
+  function saveSeen(tourId, rec) {
+    seenMap()[wnKey(tourId)] = rec;
     lsSet(seenKey(), JSON.stringify(S.seen));
     if (S.mode === 'db' && store.db) {
-      Promise.resolve(store.db.doc('labels/' + wnKey(tourId)).set({ kind: 'seen', at: at }))
+      Promise.resolve(store.db.doc('labels/' + wnKey(tourId)).set({ kind: 'seen', at: rec.at, later: rec.later }))
         .catch(function () { /* this phone still remembers */ });
     }
   }
@@ -3874,172 +3900,326 @@
     });
   }
 
-  // What wants a look on this tour, and what's new since `since`.
-  function whatsNew(tourId, since) {
+  // Every task on the tour right now, most pressing first. `open` goes there.
+  function tourTasks(tourId, rec) {
     var t = getTour(tourId) || {};
     var B = window.GR_BACKEND, live = S.mode === 'db' && B;
-    var now = Date.now();
+    var now = Date.now(), since = rec.at, later = rec.later, week = now - 7 * 864e5;
     var shows = G.rows(t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
     var byDate = {};
     shows.forEach(function (x) { byDate[x.date] = x; });
     var imps = G.isObj(t.imports) ? t.imports : {};
     var when = function (v) { return typeof v === 'number' ? v : Date.parse(v) || 0; };
-    var d = { asks: [], merch: [], requests: [], cash: 0, spent: [], income: [], polls: [], guests: [] };
+    var place = function (x) { return dayMD(x.date) + ' · ' + (String(x.city || '').split(',')[0] || x.venue || 'Show'); };
+    var view = function (v) { return function () { go({ name: 'tour', id: tourId, view: v }); }; };
+    var onDay = function (v, date) {
+      return function () {
+        var got = overviewDays(getTour(tourId));
+        var i = got ? got.days.map(function (x) { return x.date; }).indexOf(date) : -1;
+        if (i >= 0) { S.dsIndex = i; S.dsTour = tourId; }
+        go({ name: 'tour', id: tourId, view: v });
+      };
+    };
+    // Something new: in the deck while it's new, or until it's swiped right.
+    var pending = function (key, at) { return at > week && (at > since || !!later[key]); };
+    var tasks = [];
 
     // Ari's questions, waiting on the tour manager.
     var asks = live && B.asksFor ? B.asksFor(tourId) : [];
-    d.asks = asks.filter(function (a) { return a.status === 'open'; });
-    // Merch the mailbox logged on its own (a night Ari is still asking about
-    // shows up there instead).
-    Object.keys(imps).forEach(function (k) {
-      var im = imps[k], date = (k.match(/^em-(\d{4}-\d{2}-\d{2})-/) || [])[1], x = date && byDate[date];
-      if (!x || !im || im.source !== 'atVenu email' || !(G.num(im.createdAt) > since)) return;
-      var ask = asks.filter(function (a) { return a.showId === x.id; }).pop();
-      if (ask && ask.status === 'open') return;
-      var logged = G.num(x.income && x.income.merch);
-      if (Math.abs(logged - G.num(im.total)) < 0.01 || (ask && ask.status === 'fixed')) d.merch.push({ show: x, amount: logged });
+    asks.filter(function (a) { return a.status === 'open'; }).forEach(function (a) {
+      tasks.push({ key: 'ask:' + a.id, standing: true, at: when(a.at), emoji: '🤖', title: 'Ari needs an answer',
+        main: a.place + ' merch', sub: 'Logged ' + G.moneyCents(a.was) + ' · the settlement says ' + G.moneyCents(a.fix),
+        open: view('chat') });
     });
-    // Special requests: every one still waiting on an answer, and any new one.
+    // Special requests: waiting on an answer, or answered since you looked.
     if (live && B.requestsFor) shows.forEach(function (x) {
       B.requestsFor(tourId, x.date).forEach(function (r) {
-        var fresh = when(r.at) > since;
-        if (r.status === 'pending' || fresh) d.requests.push({ show: x, r: r, fresh: fresh });
+        var at = when(r.at), open = r.status === 'pending', key = 'req:' + r.id;
+        if (!open && !pending(key, at)) return;
+        tasks.push({ key: key, standing: open, at: at, emoji: '🙋', title: 'Special request', main: r.body,
+          sub: [place(x), r.author, open ? 'Waiting for an answer' : r.status === 'accepted' ? 'Accepted' : 'Denied'].filter(Boolean).join(' · '),
+          open: function () { openRequests(tourId, x); } });
       });
     });
-    // Merch cash still not accounted for.
-    var cs = G.cashSummary(t);
-    if (cs.took > 0 && cs.left > 0.004) d.cash = cs.left;
-    // Expenses added since you looked (not ones filed only for the record).
+    // New expenses: what was logged, whoever sorted it, for both of you to see.
+    var cats = {};
+    G.chargeCategoriesFor(t).forEach(function (c) { cats[c.key] = c.label; });
+    var fresh = [];
     G.rows(t.charges).forEach(function (ch) {
       var im = ch.importId ? imps[ch.importId] : null;
       var at = G.num(ch.createdAt) || G.num(im && im.createdAt);
-      if (at > since && !ch.accounted && G.num(ch.amount) !== 0) d.spent.push(ch);
+      if (!ch.accounted && G.num(ch.amount) !== 0 && pending('exp:' + ch.id, at)) fresh.push({ ch: ch, at: at });
+    });
+    if (fresh.length) {
+      fresh.sort(function (a, b) { return String(a.ch.date).localeCompare(String(b.ch.date)); });
+      var total = fresh.reduce(function (n, x) { return n + G.num(x.ch.amount); }, 0);
+      var by = [];
+      fresh.forEach(function (x) { var w = x.ch.by || (x.ch.manual ? '' : 'the card feed'); if (w && by.indexOf(w) < 0) by.push(w); });
+      tasks.push({ key: 'exp', keys: fresh.map(function (x) { return 'exp:' + x.ch.id; }),
+        at: Math.max.apply(null, fresh.map(function (x) { return x.at; })), emoji: '🧾', title: 'New expenses',
+        main: plural(fresh.length, 'charge') + ' logged', amount: total,
+        sub: by.length ? 'Sorted by ' + by.join(' and ') : null,
+        lines: fresh.slice(0, 4).map(function (x) {
+          return (x.ch.merchant || 'Charge') + ' · ' + (cats[x.ch.category] || 'Not sorted') + ' · ' + G.moneyCents(x.ch.amount);
+        }).concat(fresh.length > 4 ? ['+ ' + (fresh.length - 4) + ' more'] : []),
+        open: function () { openNewCharges(tourId, fresh.map(function (x) { return x.ch; })); } });
+    }
+    // Merch the mailbox logged on its own (a night Ari is still asking about
+    // is her card instead).
+    Object.keys(imps).forEach(function (k) {
+      var im = imps[k], date = (k.match(/^em-(\d{4}-\d{2}-\d{2})-/) || [])[1], x = date && byDate[date];
+      if (!x || !im || im.source !== 'atVenu email' || !pending('merch:' + k, G.num(im.createdAt))) return;
+      var ask = asks.filter(function (a) { return a.showId === x.id; }).pop();
+      if (ask && ask.status === 'open') return;
+      var logged = G.num(x.income && x.income.merch);
+      if (!(Math.abs(logged - G.num(im.total)) < 0.01 || (ask && ask.status === 'fixed'))) return;
+      tasks.push({ key: 'merch:' + k, at: G.num(im.createdAt), emoji: '💰', title: 'Merch logged automatically',
+        main: place(x), amount: logged, sub: 'From the atVenu settlement', open: view('money') });
     });
     // Money a show still owes the band.
     shows.forEach(function (x) {
       var st = G.showMoneyState(x);
       if (st !== 'owed' && st !== 'partial') return;
-      var g = G.num(x.income && x.income.guarantee);
-      if (g > 0 && x.guaranteeReceived === false) d.income.push({ show: x, what: 'Guarantee', amount: g });
-      var md = G.merchDue(x);
-      if (md > 0 && x.merchReceived === false) d.income.push({ show: x, what: 'Merch deposit', amount: md });
+      var g = G.num(x.income && x.income.guarantee), md = G.merchDue(x);
+      if (g > 0 && x.guaranteeReceived === false) tasks.push({ key: 'inc:' + x.id + ':g', standing: true, at: 0,
+        emoji: '⏳', title: 'Income not received yet', main: 'Guarantee', amount: g, sub: place(x), open: view('money') });
+      if (md > 0 && x.merchReceived === false) tasks.push({ key: 'inc:' + x.id + ':m', standing: true, at: 0,
+        emoji: '⏳', title: 'Income not received yet', main: 'Merch deposit', amount: md, sub: place(x), open: view('money') });
     });
+    // Merch cash still not accounted for.
+    var cs = G.cashSummary(t);
+    if (cs.took > 0 && cs.left > 0.004) tasks.push({ key: 'cash', standing: true, at: 0, emoji: '💵', title: 'Merch cash',
+      main: 'Not accounted for yet', amount: cs.left, sub: 'Square it up in the Merch cash log', open: view('cashlog') });
     // Days off still ahead with no poll, while there's time to vote.
     var got = overviewDays(t);
     if (got && shows.length && live && B.pollFor) {
       var first = shows[0].date, last = shows[shows.length - 1].date;
       got.days.forEach(function (x) {
         if (x.show || x.date < first || x.date > last || isRehearsalDay(t, x.date)) return;
-        if (pollCloses(x.date).getTime() <= now) return;
-        if (!B.pollFor(tourId, x.date)) d.polls.push(x.date);
+        if (pollCloses(x.date).getTime() <= now || B.pollFor(tourId, x.date)) return;
+        tasks.push({ key: 'poll:' + x.date, standing: true, at: 0, emoji: '🗳️', title: 'Day off with no poll',
+          main: dayLong(x.date), sub: 'Voting closes noon the day before',
+          open: leadsTour(tourId) ? function () { openPollEditor(tourId, x.date, null); } : view('calendar') });
       });
     }
-    // New names on the guest list.
+    // New names on the guest list, a card per night.
     shows.forEach(function (x) {
+      var names = [], keys = [], newest = 0;
       guestsFor(t, tourId, x.id).forEach(function (g) {
-        if (when(g.at || g.createdAt) > since) d.guests.push({ show: x, g: g });
+        var at = when(g.at || g.createdAt);
+        if (!pending('guest:' + g.id, at)) return;
+        names.push([g.firstName, g.lastName].filter(Boolean).join(' ') + (G.num(g.qty) > 1 ? ' +' + (G.num(g.qty) - 1) : ''));
+        keys.push('guest:' + g.id);
+        newest = Math.max(newest, at);
       });
+      if (keys.length) tasks.push({ key: 'guests:' + x.id, keys: keys, at: newest, emoji: '🎟️',
+        title: 'New on the guest list', main: names.join(', '), sub: place(x), open: onDay('guests', x.date) });
     });
-    d.fresh = d.merch.length + d.guests.length + (d.spent.length ? 1 : 0) +
-      d.requests.filter(function (x) { return x.fresh; }).length +
-      d.asks.filter(function (a) { return when(a.at) > since; }).length;
-    d.open = d.asks.length + d.requests.filter(function (x) { return x.r.status === 'pending'; }).length +
-      (d.cash ? 1 : 0) + d.income.length + d.polls.length;
-    // Green while something's new, or on a new day with things still open.
-    d.glow = d.fresh > 0 || (d.open > 0 && (!since || G.ymd(new Date(since)) < G.ymd(new Date())));
-    return d;
+    tasks.forEach(function (c) { c.keys = c.keys || [c.key]; c.fresh = c.at > since; });
+    return tasks;
+  }
+  function taskState(tourId) {
+    var rec = seenRec(tourId), tasks = tourTasks(tourId, rec);
+    var fresh = tasks.filter(function (c) { return c.fresh; }).length;
+    // Green while something's new, or on a new day with tasks still waiting.
+    var glow = fresh > 0 || (tasks.length > 0 && (!rec.at || G.ymd(new Date(rec.at)) < G.ymd(new Date())));
+    return { tasks: tasks, fresh: fresh, glow: glow };
   }
 
   function whatsNewBtn(tourId) {
-    var d = whatsNew(tourId, wnSeen(tourId));
+    var st = taskState(tourId);
     return h('div', { class: 'wn-wrap' },
-      h('button', { class: 'crew-invite wn-btn' + (d.glow ? ' on' : ' seen'), type: 'button',
-        'aria-label': 'What\u2019s new' + (d.glow ? ', something to look at' : ', all looked at'),
-        onclick: function () { openWhatsNew(tourId); } },
-        'What\u2019s new?', d.glow && d.fresh ? h('span', { class: 'wn-count' }, String(d.fresh)) : null));
+      h('button', { class: 'btn block wn-big' + (st.glow ? ' on' : ' seen'), type: 'button',
+        'aria-label': 'New tour tasks' + (st.tasks.length ? ', ' + plural(st.tasks.length, 'task') : ', all caught up'),
+        onclick: function () { openTaskDeck(tourId); } },
+        'NEW TOUR TASKS', st.glow && st.fresh ? h('span', { class: 'wn-count' }, String(st.fresh)) : null));
   }
 
-  function openWhatsNew(tourId) {
-    var since = wnSeen(tourId);
-    var d = whatsNew(tourId, since);
-    var t = getTour(tourId) || {};
-    wnMarkSeen(tourId);
-    var place = function (x) { return dayMD(x.date) + ' \u00b7 ' + (String(x.city || '').split(',')[0] || x.venue || 'Show'); };
-    var then = function (fn) { return function () { closeSheet(); setTimeout(fn, 320); }; };
-    var view = function (v) { return then(function () { go({ name: 'tour', id: tourId, view: v }); }); };
-    var onDay = function (v, date) {
-      return then(function () {
-        var got = overviewDays(getTour(tourId));
-        var i = got ? got.days.map(function (x) { return x.date; }).indexOf(date) : -1;
-        if (i >= 0) { S.dsIndex = i; S.dsTour = tourId; }
-        go({ name: 'tour', id: tourId, view: v });
+  /* The deck: one task at a time. Right (or "Handle now") goes there; left
+     (or "Later") keeps it for later. Arrow keys work too. */
+  function openTaskDeck(tourId) {
+    var rec = seenRec(tourId);
+    var tasks = tourTasks(tourId, rec);
+    // Everything new waits in the deck until it's swiped right.
+    var held = Object.assign({}, rec.later);
+    tasks.forEach(function (c) { if (!c.standing) c.keys.forEach(function (k) { held[k] = c.at || Date.now(); }); });
+    saveSeen(tourId, { at: Date.now(), later: held });
+
+    var i = 0, deferred = 0, busy = false;
+    var count = h('span', { class: 'dk-count' });
+    var stage = h('div', { class: 'dk-stage' });
+    var acts = h('div', { class: 'dk-acts' },
+      h('button', { class: 'dk-act later', type: 'button', onclick: function () { decide(-1); } },
+        h('span', { class: 'dk-ico', 'aria-hidden': 'true' }, '✕'), 'Later'),
+      h('button', { class: 'dk-act now', type: 'button', onclick: function () { decide(1); } },
+        h('span', { class: 'dk-ico', 'aria-hidden': 'true' }, '✓'), 'Handle now'));
+    var hint = h('p', { class: 'dk-hint' }, 'Swipe right to handle it now · left for later');
+    var root = h('div', { class: 'deck', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New tour tasks', tabindex: '-1' },
+      h('div', { class: 'dk-top' },
+        h('button', { class: 'linkbtn dk-list', type: 'button', onclick: function () { close(); setTimeout(function () { openTaskList(tourId); }, 260); } }, 'List'),
+        h('div', { class: 'dk-head' }, h('span', { class: 'dk-title' }, 'NEW TOUR TASKS'), count),
+        h('button', { class: 'iconbtn dk-x', type: 'button', 'aria-label': 'Close', onclick: function () { close(); } }, icon('close'))),
+      stage, acts, hint);
+    function close() {
+      document.removeEventListener('keydown', onKey);
+      root.classList.remove('on');
+      document.body.classList.remove('locked');
+      setTimeout(function () { root.remove(); }, 260);
+      render(true);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') close();
+      else if (e.key === 'ArrowRight' && i < tasks.length) decide(1);
+      else if (e.key === 'ArrowLeft' && i < tasks.length) decide(-1);
+    }
+    function cardEl(c, back) {
+      return h('div', { class: 'dk-card' + (back ? ' back' : '') },
+        back ? null : [h('span', { class: 'dk-stamp now', 'aria-hidden': 'true' }, 'HANDLE NOW'),
+          h('span', { class: 'dk-stamp later', 'aria-hidden': 'true' }, 'LATER')],
+        h('div', { class: 'dk-emoji', 'aria-hidden': 'true' }, c.emoji),
+        h('div', { class: 'dk-kind' }, c.title, c.fresh ? h('span', { class: 'wn-new' }, 'New') : null),
+        h('div', { class: 'dk-main' }, c.main),
+        c.amount != null ? h('div', { class: 'dk-amt num' }, G.moneyCents(c.amount)) : null,
+        c.sub ? h('div', { class: 'dk-sub' }, c.sub) : null,
+        c.lines && c.lines.length ? h('ul', { class: 'dk-lines' }, c.lines.map(function (l) { return h('li', null, l); })) : null);
+    }
+    function show() {
+      busy = false;
+      stage.replaceChildren();
+      if (i >= tasks.length) {
+        count.textContent = '';
+        acts.hidden = true; hint.hidden = true;
+        stage.append(h('div', { class: 'dk-card dk-end' },
+          h('div', { class: 'dk-emoji', 'aria-hidden': 'true' }, '🤘'),
+          h('div', { class: 'dk-main' }, tasks.length ? 'That’s everything' : 'All caught up'),
+          h('div', { class: 'dk-sub' }, deferred ? plural(deferred, 'task') + ' saved for later. They’ll be here next time.'
+            : 'Nothing waiting on you.'),
+          h('div', { class: 'stack' },
+            tasks.length ? h('button', { class: 'btn quiet block', type: 'button',
+              onclick: function () { close(); setTimeout(function () { openTaskList(tourId); }, 260); } }, 'See the full list') : null,
+            h('button', { class: 'btn primary block', type: 'button', onclick: function () { close(); } }, 'Done'))));
+        return;
+      }
+      count.textContent = (i + 1) + ' of ' + tasks.length;
+      if (tasks[i + 1]) stage.append(cardEl(tasks[i + 1], true));
+      var top = cardEl(tasks[i], false);
+      stage.append(top);
+      drag(top);
+    }
+    function decide(dir) {
+      if (busy || i >= tasks.length) return;
+      busy = true;
+      var c = tasks[i];
+      var top = stage.querySelector('.dk-card:not(.back)');
+      if (top) {
+        top.style.transition = 'transform .28s ease, opacity .28s ease';
+        top.style.transform = 'translateX(' + (dir * 140) + '%) rotate(' + (dir * 16) + 'deg)';
+        top.style.opacity = '0';
+      }
+      if (dir > 0) {
+        // Handled: out of your later pile, and off to it.
+        var r2 = seenRec(tourId);
+        c.keys.forEach(function (k) { delete r2.later[k]; });
+        saveSeen(tourId, r2);
+        setTimeout(function () { close(); setTimeout(c.open, 280); }, 240);
+      } else {
+        deferred += 1; i += 1;
+        setTimeout(show, 260);
+      }
+    }
+    function drag(el) {
+      var x0 = null, dx = 0;
+      el.addEventListener('pointerdown', function (e) {
+        if (busy) return;
+        x0 = e.clientX; dx = 0;
+        try { el.setPointerCapture(e.pointerId); } catch (x) { /* fine */ }
+        el.style.transition = 'none';
       });
-    };
-    var row = function (label, hint, right, onclick, fresh) {
-      return h('button', { class: 'row wn-row', type: 'button', onclick: onclick },
-        h('span', { class: 'row-label' }, label, fresh ? h('span', { class: 'wn-new' }, 'New') : null,
-          hint ? h('span', { class: 'hint' }, hint) : null),
-        right != null ? h('span', { class: 'amt num' }, right) : null);
-    };
-    var sec = function (emoji, title, rows) {
-      rows = rows.filter(Boolean);
-      return rows.length ? h('section', { class: 'wn-sec' },
-        h('h3', { class: 'wn-h' }, h('span', { 'aria-hidden': 'true' }, emoji + ' '), title),
-        h('div', { class: 'ledger' }, rows)) : null;
-    };
-    var catLabel = {};
-    G.chargeCategoriesFor(t).forEach(function (c) { catLabel[c.key] = c.label; });
-    var spentBy = {}, spentTotal = 0;
-    d.spent.forEach(function (ch) {
-      var k = ch.category || '';
-      spentBy[k] = (spentBy[k] || 0) + G.num(ch.amount);
-      spentTotal += G.num(ch.amount);
+      el.addEventListener('pointermove', function (e) {
+        if (x0 == null) return;
+        dx = e.clientX - x0;
+        el.style.transform = 'translateX(' + dx + 'px) rotate(' + (dx / 20) + 'deg)';
+        el.style.setProperty('--now', String(Math.max(0, Math.min(1, dx / 90))));
+        el.style.setProperty('--later', String(Math.max(0, Math.min(1, -dx / 90))));
+      });
+      var up = function () {
+        if (x0 == null) return;
+        x0 = null;
+        if (dx > 90) decide(1);
+        else if (dx < -90) decide(-1);
+        else {
+          el.style.transition = 'transform .25s ease';
+          el.style.transform = '';
+          el.style.setProperty('--now', '0');
+          el.style.setProperty('--later', '0');
+        }
+      };
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+    }
+    document.body.appendChild(root);
+    document.body.classList.add('locked');
+    document.addEventListener('keydown', onKey);
+    show();
+    requestAnimationFrame(function () { root.classList.add('on'); root.focus({ preventScroll: true }); });
+  }
+
+  // The same tasks as a plain list, grouped, for a look at everything at once.
+  function openTaskList(tourId) {
+    var tasks = tourTasks(tourId, seenRec(tourId));
+    var groups = [], byTitle = {};
+    tasks.forEach(function (c) {
+      if (!byTitle[c.title]) { byTitle[c.title] = { emoji: c.emoji, title: c.title, list: [] }; groups.push(byTitle[c.title]); }
+      byTitle[c.title].list.push(c);
     });
-    var gname = function (g) {
-      var n = [g.firstName, g.lastName].filter(Boolean).join(' ') || 'A guest';
-      return n + (G.num(g.qty) > 1 ? ' +' + (G.num(g.qty) - 1) : '');
-    };
-    var sections = [
-      sec('\ud83e\udd16', 'Ari needs an answer', d.asks.map(function (a) {
-        return row(a.place + ' merch', 'Logged ' + G.moneyCents(a.was) + ' \u00b7 the settlement says ' + G.moneyCents(a.fix),
-          null, view('chat'));
-      })),
-      sec('\ud83d\udcb0', 'Merch logged automatically', d.merch.map(function (m) {
-        return row(place(m.show), 'From the atVenu settlement', G.moneyCents(m.amount), view('money'), true);
-      })),
-      sec('\ud83d\ude4b', 'Special requests', d.requests.map(function (x) {
-        var status = x.r.status === 'accepted' ? 'Accepted' : x.r.status === 'denied' ? 'Denied' : 'Waiting for an answer';
-        return row(x.r.body, [place(x.show), x.r.author, status].filter(Boolean).join(' \u00b7 '), null,
-          then(function () { openRequests(tourId, x.show); }), x.fresh);
-      })),
-      sec('\ud83d\udcb5', 'Merch cash', d.cash ? [row('Not accounted for yet', 'Open the Merch cash log to square it up',
-        G.moneyCents(d.cash), view('cashlog'))] : []),
-      sec('\ud83e\uddfe', 'New expenses', d.spent.length ? [row(plural(d.spent.length, 'charge') + ' added', null,
-        G.moneyCents(spentTotal), view('costs'), true)].concat(Object.keys(spentBy).sort(function (a, b) {
-          return spentBy[b] - spentBy[a];
-        }).map(function (k) {
-          return row(catLabel[k] || (k ? k : 'Not sorted yet'), null, G.moneyCents(spentBy[k]), view('costs'));
-        })) : []),
-      sec('\u23f3', 'Income not received yet', d.income.map(function (x) {
-        return row(x.what, place(x.show), G.moneyCents(x.amount), view('money'));
-      })),
-      sec('\ud83d\uddf3\ufe0f', 'Days off with no poll', d.polls.map(function (date) {
-        return row(dayLong(date), 'No poll yet', null,
-          leadsTour(tourId) ? then(function () { openPollEditor(tourId, date, null); }) : view('calendar'));
-      })),
-      sec('\ud83c\udf9f\ufe0f', 'New on the guest list', d.guests.map(function (x) {
-        return row(gname(x.g), [place(x.show), x.g.affiliation].filter(Boolean).join(' \u00b7 '), null, onDay('guests', x.show.date), true);
-      }))
-    ].filter(Boolean);
-    var last = since ? new Date(since) : null;
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, 'What\u2019s new?'),
-        h('p', { class: 'sh-sub' }, last ? 'Since you last looked, ' + dayMD(G.ymd(last)) + ' ' +
-          last.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'Everything that wants a look'),
-        sections.length ? sections : h('p', { class: 'note wn-clear' }, 'All caught up \ud83e\udd18')
+        h('h2', { class: 'sh-title' }, 'New tour tasks'),
+        h('p', { class: 'sh-sub' }, tasks.length ? plural(tasks.length, 'task') + ' · tap one to handle it' : 'All caught up'),
+        groups.map(function (g) {
+          return h('section', { class: 'wn-sec' },
+            h('h3', { class: 'wn-h' }, h('span', { 'aria-hidden': 'true' }, g.emoji), g.title),
+            h('div', { class: 'ledger' }, g.list.map(function (c) {
+              return h('button', { class: 'row wn-row', type: 'button', onclick: function () {
+                var r2 = seenRec(tourId);
+                c.keys.forEach(function (k) { delete r2.later[k]; });
+                saveSeen(tourId, r2);
+                closeSheet(); setTimeout(c.open, 320);
+              } },
+                h('span', { class: 'row-label' }, c.main, c.fresh ? h('span', { class: 'wn-new' }, 'New') : null,
+                  c.sub ? h('span', { class: 'hint' }, c.sub) : null),
+                c.amount != null ? h('span', { class: 'amt num' }, G.moneyCents(c.amount)) : null);
+            })));
+        }),
+        tasks.length ? null : h('p', { class: 'note wn-clear' }, 'Nothing waiting on you 🤘')
       ];
-    }, { label: 'What\u2019s new', onClose: function () { render(true); } });
+    }, { label: 'New tour tasks', onClose: function () { render(true); } });
+  }
+
+  // What was logged: every new charge, how it was paid and who sorted it.
+  function openNewCharges(tourId, list) {
+    var t = getTour(tourId) || {};
+    var cats = {};
+    G.chargeCategoriesFor(t).forEach(function (c) { cats[c.key] = c.label; });
+    var total = list.reduce(function (n, ch) { return n + G.num(ch.amount); }, 0);
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'New expenses'),
+        h('p', { class: 'sh-sub' }, plural(list.length, 'charge') + ' · ' + G.moneyCents(total) + ' · oldest first'),
+        h('div', { class: 'ledger' }, list.map(function (ch) {
+          return h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, ch.merchant || 'Charge',
+              h('span', { class: 'hint' }, [dayMD(ch.date), cats[ch.category] || 'Not sorted', ch.account || (ch.manual ? 'Logged by hand' : ''),
+                ch.paid ? 'Paid' : 'Spent', ch.by ? 'sorted by ' + ch.by : ''].filter(Boolean).join(' · '))),
+            h('span', { class: 'src-tag src-' + chargeSource(t, ch).toLowerCase() }, chargeSource(t, ch)),
+            h('span', { class: 'amt num' }, G.moneyCents(ch.amount)));
+        })),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button',
+            onclick: function () { closeSheet(); setTimeout(function () { go({ name: 'tour', id: tourId, view: 'costs' }); }, 320); } },
+            'Open Expenses'))
+      ];
+    }, { label: 'New expenses' });
   }
 
   function kickOff(tourId, email, who) {
@@ -8859,7 +9039,7 @@
       }
       var chosen = rows.filter(function (r) { return r.keep; });
       if (!chosen.length && !feed) { toast('Pick at least one charge'); return; }
-      if (feed) { await saveFeed(chosen); return; }
+      if (feed) { await saveFeed(); return; }
 
       var patch = {};
       var total = 0;
@@ -8882,44 +9062,35 @@
       render(true);
     }
 
-    async function saveFeed(chosen) {
+    async function saveFeed() {
       var B = window.GR_BACKEND;
-      var left = rows.filter(function (r) { return !r.keep; });
-      var total = 0;
-      if (chosen.length) {
-        var patch = {};
-        chosen.forEach(function (r, i) {
-          patch['p' + r.feedId] = {
-            date: r.date, merchant: r.merchant, amount: G.num(r.amount),
-            category: r.category, accounted: !!r.accounted, account: r.account || '',
-            importId: importId, createdAt: Date.now() + i
-          };
-          if (!r.accounted) total += G.num(r.amount);
-        });
-        var imports = {};
-        imports[importId] = { createdAt: Date.now(), count: chosen.length, total: total, source: 'Card feed' };
-        if (!(await api.update(tourId, { charges: patch, imports: imports }))) return;
-        for (var i = 0; i < chosen.length; i++) await writeLabel(chosen[i].merchant, chosen[i].category);
+      var picks = rows.map(function (r) {
+        return { id: r.feedId, keep: !!r.keep, category: r.keep ? r.category : null, accounted: !!r.accounted };
+      });
+      var r = null;
+      try { r = await B.feedCall('file', { tourId: tourId, picks: picks }); } catch (e) { r = null; }
+      if (!r || !r.ok) {
+        toast(r && r.error === 'not_allowed' ? 'Only the tour manager can sort card charges.' : 'Couldn\u2019t save that. Try again.');
+        return;
       }
-      try {
-        await B.feedMark(chosen.map(function (r) { return r.feedId; }), { status: 'filed', tour_id: tourId });
-        await B.feedMark(left.map(function (r) { return r.feedId; }), { status: 'skipped' });
-      } catch (e) {
-        toast('Saved on the tour, but the pile didn\u2019t update. Pull to refresh.');
-      }
+      if (S.pile && S.pile[tourId] && S.pile[tourId].lead) await loadPile(tourId);
+      var said = [];
+      if (r.filed) said.push(plural(r.filed, 'charge') + ' added, ' + G.moneyCents(r.total));
+      if (r.skipped) said.push(r.skipped + ' set aside');
+      if (r.already) said.push(plural(r.already, 'charge') + ' already sorted by someone else');
       closeSheet();
-      toast(chosen.length
-        ? plural(chosen.length, 'charge') + ' added, ' + G.moneyCents(total) + (left.length ? ' \u00b7 ' + left.length + ' set aside' : '')
-        : plural(left.length, 'charge') + ' set aside');
+      toast(said.join(' \u00b7 ') || 'Nothing to save');
       render(true);
+      if (opts && opts.next) setTimeout(opts.next, 380);
     }
 
     openSheet(function () {
       var saveBtn = h('button', { class: 'btn primary block', type: 'button', onclick: save }, '');
       function refresh() {
         var c = counts();
-        saveBtn.textContent = c.n ? 'Add ' + plural(c.n, 'charge') + ' · ' + G.moneyCents(c.total)
-          : (feed ? 'Set ' + (rows.length === 1 ? 'it' : 'all ' + rows.length) + ' aside' : 'Pick the charges to add');
+        saveBtn.textContent = (c.n ? 'Add ' + plural(c.n, 'charge') + ' · ' + G.moneyCents(c.total)
+          : (feed ? 'Set ' + (rows.length === 1 ? 'it' : 'all ' + rows.length) + ' aside' : 'Pick the charges to add')) +
+          (opts && opts.next ? ' \u2192 next card' : '');
         saveBtn.disabled = !c.n && !feed;
       }
 
@@ -9018,6 +9189,8 @@
         h('h2', { class: 'sh-title' }, feed
           ? plural(rows.length, 'card charge') + (rows.length === 1 ? ' needs' : ' need') + ' a look'
           : 'Found ' + plural(rows.length, 'charge')),
+        opts && opts.card ? h('p', { class: 'rv-card' }, (opts.steps > 1 ? 'Card ' + opts.step + ' of ' + opts.steps + ' \u00b7 ' : '') +
+          opts.card + ' \u00b7 oldest first') : null,
         h('p', { class: 'sh-sub' }, feed
           ? 'From the card feed. Tick the ones that belong to this tour. Anything you leave unticked is set aside for good.'
           : 'Tick the ones that belong to this tour. Nothing you leave unticked is saved.'),
@@ -9040,6 +9213,8 @@
   function feedSince() { return S.feed && S.feed.row && S.feed.row.since ? dayMD(S.feed.row.since) : 'the feed started'; }
 
   function feedWaiting(tourId) {
+    var P = S.pile && S.pile[tourId];
+    if (P && P.lead) return P.items || [];
     if (!S.feed) return [];
     return S.feed.items.filter(function (it) { return !it.tour_id || it.tour_id === tourId; });
   }
@@ -9178,7 +9353,8 @@
 
   function feedEntry(id) {
     var B = window.GR_BACKEND;
-    if (!canEditTour(id) || !S.feed) return null;
+    if (!canEditTour(id)) return tmFeedEntry(id);
+    if (!S.feed) return null;
     // Only accounts on the approved list ever get this far without a feed.
     if (S.feed.connectOnly) {
       if (S.mode !== 'db' || !B || !B.feedCall) return null;
@@ -9211,6 +9387,56 @@
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)));
   }
 
+  /* The tour manager (ALL ACCESS, tour role Tour Manager) works the owner's
+     card charges: the same Refresh, the same pile. Whoever sorts a charge
+     first files it, and it's gone from the other one's pile. */
+  async function loadPile(tourId) {
+    var B = window.GR_BACKEND;
+    var r = null;
+    S.pile = S.pile || {};
+    S.pileBusy = S.pileBusy || {};
+    S.pileBusy[tourId] = true;
+    try { r = await B.feedCall('pile', { tourId: tourId }); } catch (e) { r = null; }
+    S.pileBusy[tourId] = false;
+    S.pile[tourId] = r && r.ok
+      ? { lead: !r.mine && !!r.connected && !!r.switchedOn, items: r.items || [], lastRun: r.lastRun, at: Date.now() }
+      : { lead: false, items: [], at: Date.now() };
+    return S.pile[tourId];
+  }
+  function tmFeedEntry(id) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || !B.feedCall || !leadsTour(id)) return null;
+    var P = S.pile && S.pile[id];
+    if ((!P || Date.now() - P.at > 120e3) && !(S.pileBusy && S.pileBusy[id])) {
+      loadPile(id).then(function (np) { if (np.lead || (P && P.lead)) render(true); });
+    }
+    if (!P || !P.lead) return null;
+    var n = (P.items || []).length;
+    var label = h('span', null, 'Refresh Card Expenses');
+    var refreshBtn = h('button', { class: 'btn quiet glow feed-refresh', type: 'button',
+      onclick: function () { tmRefresh(id, refreshBtn, label); } }, icon('refresh', 18), label);
+    return h('div', { class: 'feed-entry' },
+      n ? h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:10px',
+        onclick: function () { openFeedReview(id); } },
+        icon('card', 18), plural(n, 'card charge') + (n === 1 ? ' needs' : ' need') + ' a look') : null,
+      h('div', { class: 'feed-bar' }, refreshBtn),
+      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(P.lastRun)));
+  }
+  async function tmRefresh(id, btn, label) {
+    var B = window.GR_BACKEND;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    label.textContent = 'Checking the cards\u2026';
+    var r = null;
+    try { r = await B.feedCall('sync', { force: true, tourId: id }); } catch (e) { r = null; }
+    await loadPile(id);
+    btn.disabled = false;
+    label.textContent = 'Refresh Card Expenses';
+    if (r && r.ok && feedWaiting(id).length) { openFeedReview(id); return; }
+    toast(feedResult(r));
+    render(true);
+  }
+
   /* Refresh: ask the bank to check now, read anything new, then take the next
      step: charges that need a look open straight away; otherwise a word on
      what came in. A bank that wants a sign-in opens the settings. */
@@ -9236,10 +9462,27 @@
     else toast(feedResult(r));
   }
 
-  function openFeedReview(tourId) {
+  function openFeedReview(tourId, done) {
+    var cards = [];
+    feedWaiting(tourId).slice().sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); })
+      .forEach(function (it) { var k = it.account || ''; if (cards.indexOf(k) < 0) cards.push(k); });
+    if (!cards.length) { toast('Nothing waiting'); return; }
+    var i = done || 0;
+    var next = function () {
+      if (i >= cards.length) return;
+      var card = cards[i];
+      var here = feedRows(tourId).filter(function (r) { return (r.account || '') === card; });
+      i += 1;
+      if (!here.length) { next(); return; }
+      openImportReview(tourId, here, 'Card feed', { feed: true, card: card || 'Card',
+        step: i, steps: cards.length, next: i < cards.length ? next : null });
+    };
+    next();
+  }
+  function feedRows(tourId) {
     var valid = {};
     G.chargeCategoriesFor(getTour(tourId)).forEach(function (c) { valid[c.key] = true; });
-    var rows = feedWaiting(tourId).map(function (it) {
+    return feedWaiting(tourId).map(function (it) {
       var cat = it.category && valid[it.category] ? it.category : '';
       var amt = G.num(it.amount);
       return {
@@ -9250,8 +9493,6 @@
         keep: amt > 0 && it.why !== 'Maybe already in'
       };
     });
-    if (!rows.length) { toast('Nothing waiting'); return; }
-    openImportReview(tourId, rows, 'Card feed', { feed: true });
   }
 
   /* Each account, as it arrives: credit card or debit card, then expenses or

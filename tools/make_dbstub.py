@@ -254,6 +254,34 @@ shim = r"""<script>
     feedCall: function (action, body) {
       var F = window.__harness.feed;
       window.__harness.calls.push([action, JSON.parse(JSON.stringify(body || {}))]);
+      // The shared pile (owner or tour manager) and filing it once, like the server.
+      if (action === 'pile') {
+        if (window.__harness.pileDenied) return Promise.resolve({ error: 'not_allowed' });
+        var cards = {};
+        F.accounts.forEach(function (a) { cards[a.name] = a.type === 'creditCard' ? 'credit' : 'debit'; });
+        return Promise.resolve({ ok: true, connected: true, switchedOn: !!F.row.switched_on, lastRun: F.row.last_run, cards: cards,
+          mine: !window.__harness.asTM, items: F.items.filter(function (it) { return !it.tour_id || it.tour_id === body.tourId; }) });
+      }
+      if (action === 'file') {
+        var picks = body.picks || [], add = {}, filed = 0, skipped = 0, already = 0, total = 0, now = Date.now();
+        picks.forEach(function (pk, i) {
+          var it = F.items.filter(function (x) { return x.id === pk.id; })[0];
+          if (!it) { already += 1; return; }
+          F.items = F.items.filter(function (x) { return x.id !== pk.id; });
+          if (!pk.keep) { skipped += 1; return; }
+          var acct = F.accounts.filter(function (a) { return a.name === it.account; })[0];
+          add['p' + it.id] = { date: it.date, merchant: it.merchant, amount: it.amount, category: pk.category, accounted: !!pk.accounted,
+            account: it.account, importId: 'review-' + now, createdAt: now + i, paid: !(acct && acct.type === 'creditCard'),
+            by: window.__harness.asTM ? 'Brent Allen' : 'Devin Oliver' };
+          filed += 1; if (!pk.accounted) total += it.amount;
+        });
+        window.__harness.filedPicks = (window.__harness.filedPicks || []).concat([picks]);
+        window.__harness.feedPush();
+        var imp = {}; imp['review-' + now] = { createdAt: now, count: filed, total: total, source: 'Card feed' };
+        return window.claude.use('db').then(function (db) {
+          return filed ? db.doc('tours/' + body.tourId).update({ charges: add, imports: imp }) : null;
+        }).then(function () { return { ok: true, filed: filed, skipped: skipped, already: already, total: Math.round(total * 100) / 100 }; });
+      }
       // Plaid's shape: banks, accounts, test mode.
       // Plaid's hosted window: 'finish' says waiting until the harness sets plaidDone.
       if (action === 'link') { window.__harness.plaidDone = null; return Promise.resolve({ ok: true, url: 'about:blank#plaid-harness', test: true }); }

@@ -333,7 +333,7 @@ function sortTransactions(
     const bucket = toFile.get(tour!.id) ?? { tour: tour!, charges: {}, total: 0, n: 0 };
     (bucket.charges as Obj)["p" + id] = {
       date, merchant, amount: spent, category, accounted: false, account: acct?.name ?? "",
-      importId: "cards-" + now, createdAt: now + bucket.n,
+      importId: "cards-" + now, createdAt: now + bucket.n, paid: !isCredit(acct),
     };
     bucket.total += spent; bucket.n += 1;
     toFile.set(tour!.id, bucket);
@@ -655,6 +655,30 @@ async function addBank(uid: string, pub: string, name: string): Promise<string> 
   return institution;
 }
 
+// A credit card's charges are spent but still owed; a debit card's (or a
+// bank account's) are paid, the money already gone.
+function isCredit(a?: Account | null): boolean {
+  return a ? (a.card ? a.card === "credit" : a.type === "creditCard") : false;
+}
+
+/* Who may work a tour's card charges: its owner, and a member with ALL
+   ACCESS whose tour role is Tour Manager. Either one refreshes, sorts and
+   files, and the other never has to do it again. Gives back the tour's owner
+   (the charges come from their bank connection), or null. */
+async function cardLead(uid: string, tourId: string): Promise<string | null> {
+  if (!uid || !tourId) return null;
+  const { data: t } = await admin.from("tours").select("owner_id, doc").eq("id", tourId).maybeSingle();
+  if (!t || ((t.doc ?? {}) as Obj).deletedAt) return null;
+  if (t.owner_id === uid) return String(t.owner_id);
+  const { data: m } = await admin.from("members").select("role, tour_role, overrides")
+    .eq("tour_id", tourId).eq("user_id", uid).maybeSingle();
+  if (!m || m.role !== "editor") return null;
+  const { data: p } = await admin.from("profiles").select("tour_role").eq("user_id", uid).maybeSingle();
+  const ov = (m.overrides ?? {}) as Obj;
+  const role = String(ov.tourRole || p?.tour_role || m.tour_role || "").trim().toLowerCase();
+  return role === "tour manager" ? String(t.owner_id) : null;
+}
+
 // Only approved accounts that run a tour may connect cards.
 async function mayConnect(uid: string): Promise<boolean> {
   const { data: ok } = await admin.from("ynab_allowed").select("owner_id").eq("owner_id", uid).maybeSingle();
@@ -732,6 +756,124 @@ Deno.serve(async (req) => {
     if (server || !uid) return reply(401, { error: "not_signed_in" });
     if (!Deno.env.get("PLAID_CLIENT_ID") || !Deno.env.get("PLAID_SECRET") || !Deno.env.get("PLAID_TOKEN_KEY")) {
       return reply(200, { ok: false, status: "not_set_up" });
+    }
+
+    // A tour's card charges waiting for a look, for its owner or its tour
+    // manager: one pile, whoever gets to it first.
+    if (action === "pile") {
+      const tourId = String(body.tourId ?? "");
+      const owner = await cardLead(uid, tourId);
+      if (!owner) return reply(403, { error: "not_allowed" });
+      const { data: f } = await admin.from("feed").select("accounts, switched_on, last_run, source")
+        .eq("owner_id", owner).maybeSingle();
+      if (!f || f.source !== "plaid") return reply(200, { ok: true, connected: false, items: [] });
+      const { data: rows } = await admin.from("feed_items")
+        .select("id, tour_id, date, merchant, amount, category, account, why")
+        .eq("owner_id", owner).eq("status", "waiting").order("date");
+      const cards: Obj = {};
+      for (const a of Object.values((f.accounts ?? {}) as Record<string, Account>)) cards[a.name] = isCredit(a) ? "credit" : "debit";
+      return reply(200, {
+        ok: true, connected: true, switchedOn: !!f.switched_on, lastRun: f.last_run, cards, mine: owner === uid,
+        items: (rows ?? []).filter((r) => !r.tour_id || r.tour_id === tourId),
+      });
+    }
+
+    // File a tour's charges, once. Only charges still waiting move, so when
+    // the owner and the tour manager sort the same pile, the first one to save
+    // wins and the other is told those were already done. The amounts, dates
+    // and merchants come from the bank's copy, never from the phone.
+    if (action === "file") {
+      const tourId = String(body.tourId ?? "");
+      const owner = await cardLead(uid, tourId);
+      if (!owner) return reply(403, { error: "not_allowed" });
+      const { data: tr } = await admin.from("tours").select("doc").eq("id", tourId).maybeSingle();
+      const valid = new Set((G.chargeCategoriesFor((tr?.doc ?? {}) as Obj) as Obj[]).map((c) => String(c.key)));
+      const want = new Map<string, Obj>();
+      for (const pk of ((Array.isArray(body.picks) ? body.picks : []) as Obj[]).slice(0, 500)) {
+        const id = String(pk.id ?? "");
+        if (!id) continue;
+        if (pk.keep && !valid.has(String(pk.category ?? ""))) return reply(400, { error: "bad_category" });
+        want.set(id, pk);
+      }
+      if (!want.size) return reply(200, { ok: true, filed: 0, skipped: 0, already: 0, total: 0 });
+      const { data: cand } = await admin.from("feed_items").select("id, tour_id")
+        .eq("owner_id", owner).eq("status", "waiting").in("id", [...want.keys()]);
+      const was = new Map<string, string | null>();
+      for (const r of cand ?? []) if (!r.tour_id || r.tour_id === tourId) was.set(String(r.id), r.tour_id ?? null);
+      const pick = (keep: boolean) => [...want.values()]
+        .filter((pk) => !!pk.keep === keep && was.has(String(pk.id))).map((pk) => String(pk.id));
+      const claim = async (ids: string[], patch: Obj): Promise<Obj[]> => {
+        if (!ids.length) return [];
+        const { data, error } = await admin.from("feed_items").update(patch)
+          .eq("owner_id", owner).eq("status", "waiting").in("id", ids)
+          .select("id, date, merchant, amount, account");
+        if (error) throw new PlaidError("save_failed");
+        return (data ?? []) as Obj[];
+      };
+      const got = (await claim(pick(true), { status: "filed", tour_id: tourId }))
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      const skipped = await claim(pick(false), { status: "skipped" });
+      let total = 0;
+      if (got.length) {
+        const { data: f } = await admin.from("feed").select("accounts").eq("owner_id", owner).maybeSingle();
+        const byName = new Map<string, Account>();
+        for (const a of Object.values((f?.accounts ?? {}) as Record<string, Account>)) byName.set(a.name, a);
+        const { data: me } = await admin.from("profiles").select("full_name, username").eq("user_id", uid).maybeSingle();
+        const by = String(me?.full_name || me?.username || "").trim().slice(0, 60);
+        const now = Date.now(), importId = "review-" + now;
+        const add: Obj = {};
+        got.forEach((r, i) => {
+          const pk = want.get(String(r.id))!;
+          const amount = Number(r.amount);
+          add["p" + r.id] = {
+            date: String(r.date), merchant: String(r.merchant), amount, category: String(pk.category),
+            accounted: !!pk.accounted, account: String(r.account || ""), importId, createdAt: now + i,
+            paid: !isCredit(byName.get(String(r.account))), ...(by ? { by } : {}),
+          };
+          if (!pk.accounted) total += amount;
+        });
+        total = Math.round(total * 100) / 100;
+        const imp: Obj = { [importId]: { createdAt: now, count: got.length, total, source: "Card feed" } };
+        const saved = await admin.rpc("file_charges", { t_id: tourId, add, imp });
+        if (saved.error) {
+          // Put them back in the pile exactly as they were.
+          for (const r of got) {
+            await admin.from("feed_items").update({ status: "waiting", tour_id: was.get(String(r.id)) ?? null })
+              .eq("owner_id", owner).eq("id", r.id);
+          }
+          return reply(200, { ok: false, status: "save_failed" });
+        }
+        // Learn each merchant for the owner's feed, so it files itself next time.
+        const keys = [...new Set(got.map((r) => String(GRS.normMerchant(r.merchant) || "")).filter(Boolean))];
+        if (keys.length) {
+          const labels: Obj = {};
+          const { data: have } = await admin.from("labels").select("id, doc").eq("owner_id", owner).in("id", keys);
+          for (const l of have ?? []) labels[l.id] = l.doc;
+          for (const r of got) GRS.learnLabel(labels, r.merchant, want.get(String(r.id))!.category);
+          await admin.from("labels").upsert(keys.filter((k) => labels[k]).map((k) => ({
+            owner_id: owner, id: k, doc: labels[k], updated_at: new Date().toISOString(),
+          })), { onConflict: "owner_id,id" });
+        }
+      }
+      return reply(200, {
+        ok: true, filed: got.length, skipped: skipped.length, total,
+        already: want.size - got.length - skipped.length,
+      });
+    }
+
+    // The tour manager's Refresh: the tour owner's cards, read the same way.
+    if (action === "sync" && body.tourId) {
+      const owner = await cardLead(uid, String(body.tourId));
+      if (!owner) return reply(403, { error: "not_allowed" });
+      if (owner !== uid) {
+        const { data: of } = await admin.from("feed").select("*").eq("owner_id", owner).maybeSingle();
+        const f = of as Feed | null;
+        if (!f || f.source !== "plaid" || !f.switched_on) return reply(200, { ok: false, status: "not_connected" });
+        // One refresh a minute between the two of them.
+        const last = f.last_run ? Date.parse(f.last_run) : 0;
+        if (Date.now() - last < 60_000) return reply(200, { ok: true, status: "recent" });
+        return reply(200, await syncFeed(f, { refresh: !!body.force }));
+      }
     }
 
     // Open Plaid's connect window: a one-time pass for this manager, as a
