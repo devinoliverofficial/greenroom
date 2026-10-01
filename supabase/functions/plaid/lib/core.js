@@ -355,8 +355,32 @@
     return String(a.merchant || '').localeCompare(String(b.merchant || ''));
   }
 
+  /* Crew are mostly paid a rate: by the week, the day or the month. Their
+     total for the tour is that rate times how long the tour runs (rehearsals
+     included when they're set; part of a week or month counts as a whole
+     one), unless a total was typed over it (payTyped). Paid any other way
+     ("other": installments, a flat fee), the total is whatever was typed. */
+  function tourDays(tour) {
+    var a = tourStart(tour), b = tourEnd(tour);
+    if (!a || !b) return 0;
+    if (parseDay(tour.rehearsalStart) && tour.rehearsalStart < a) a = tour.rehearsalStart;
+    return Math.max(0, daysBetween(a, b)) + 1;
+  }
+  function payPeriods(tour, per) {
+    var d = tourDays(tour);
+    if (!d) return 0;
+    if (per === 'day') return d;
+    if (per === 'week') return Math.ceil(d / 7);
+    if (per === 'month') return Math.max(1, Math.ceil(d / 30));
+    return 0;
+  }
+  function crewPay(tour, p) {
+    var rate = num(p && p.rate), n = payPeriods(tour, p && p.per);
+    if (p && !p.payTyped && rate > 0 && n > 0) return round(rate * n * 100) / 100;
+    return num(p && p.pay);
+  }
   function crewProjection(tour) {
-    return rows(tour && tour.crew).reduce(function (t, p) { return t + num(p.pay); }, 0);
+    return rows(tour && tour.crew).reduce(function (t, p) { return t + crewPay(tour, p); }, 0);
   }
 
   /* ---------------- Commission ---------------- */
@@ -1247,7 +1271,7 @@
 
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, tourDays: tourDays,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

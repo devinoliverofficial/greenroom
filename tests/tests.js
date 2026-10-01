@@ -645,6 +645,31 @@
     near(s[1].net, 1000, 'the show pulls it into the green');
   });
 
+  test('crew pay: a rate times the tour\u2019s length, unless a total was typed over it', function () {
+    var t = {
+      expenses: {}, debts: {}, commission: {}, extras: {},
+      shows: keyed([{ date: '2026-10-05', city: 'Detroit, MI' }, { date: '2026-11-06', city: 'Chicago, IL' }]),   // 33 days
+      crew: keyed([
+        { name: 'Weekly', per: 'week', rate: 1500 },                        // 5 weeks (part of a week counts)
+        { name: 'Daily', per: 'day', rate: 100 },                           // 33 days
+        { name: 'Monthly', per: 'month', rate: 4000 },                      // 2 months
+        { name: 'Flat', per: 'other', rate: 0, pay: 2500 },                 // installments: the typed total
+        { name: 'Agreed', per: 'week', rate: 1500, pay: 7000, payTyped: true },  // typed over the worked-out total
+        { name: 'Old', pay: 900 }])                                         // before rates existed
+    };
+    eq(G.tourDays(t), 33, 'tour length');
+    var by = {};
+    G.rows(t.crew).forEach(function (p) { by[p.name] = G.crewPay(t, p); });
+    eq(by.Weekly, 7500, 'weekly'); eq(by.Daily, 3300, 'daily'); eq(by.Monthly, 8000, 'monthly');
+    eq(by.Flat, 2500, 'other'); eq(by.Agreed, 7000, 'typed over'); eq(by.Old, 900, 'plain total');
+    near(G.crewProjection(t), 7500 + 3300 + 8000 + 2500 + 7000 + 900, 'the projection adds them up');
+    // Rehearsals stretch the tour; a tour with no dates leaves a rate with nothing to multiply.
+    t.rehearsalStart = '2026-09-28';
+    eq(G.tourDays(t), 40, 'rehearsals count');
+    eq(G.crewPay(t, { per: 'week', rate: 1500 }), 9000, '6 weeks with rehearsals');
+    eq(G.crewPay({ shows: {} }, { per: 'week', rate: 1500, pay: 0 }), 0, 'no dates yet');
+  });
+
   test('the chart starts the day the tour does; what was spent before is in its first point', function () {
     var t = {
       expenses: { bus: { projected: 4000, paid: 0 } },

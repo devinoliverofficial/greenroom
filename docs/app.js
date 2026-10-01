@@ -2759,9 +2759,9 @@
   /* Edit an entry logged by hand: a payment (credit, debit or cash), a merch
      cash entry, or a category's typed-in total. The amount, the details, the
      day, how it was paid, and the category, if it went under the wrong one. */
-  function openManualEdit(id, key, r, back) {
+  function openManualEdit(id, key, r, back, ret) {
     var t = getTour(id);
-    var again = function () { setTimeout(function () { openLoggedSheet(id, key, back); }, 260); };
+    var again = function () { setTimeout(ret || function () { openLoggedSheet(id, key, back); }, 260); };
     var ch = r.chargeId ? (t.charges || {})[r.chargeId] : null;
     var cl = r.cashId ? (t.cashLog || {})[r.cashId] : null;
     if (!r.typed && !ch && !cl) { toast('That entry isn\u2019t there anymore.'); return; }
@@ -2798,7 +2798,7 @@
           delete S.drafts['exp:' + id];
           toast('Saved');
           render(true);
-          if (f.category !== key) { closeSheet(); } else again();
+          if (f.category !== key && !ret) { closeSheet(); } else again();
         }
       };
       return [
@@ -3139,43 +3139,21 @@
   /* ============================== Crew ============================== */
 
   // What's been logged as paid to one crew member (their Pay button).
+  function crewPayments(t, p) {
+    var out = [];
+    G.rows(t && t.charges).forEach(function (ch) {
+      if (ch.crewId === p.id && !ch.accounted) out.push({ chargeId: ch.id, date: ch.date || '', amount: G.num(ch.amount),
+        how: ch.cash ? 'Cash' : ch.paid ? 'Debit' : 'Credit', label: ch.merchant || 'Pay', source: 'MANUAL', counts: true });
+    });
+    G.rows(t && t.cashLog).forEach(function (x) {
+      if (x.crewId === p.id) out.push({ cashId: x.id, date: x.date || '', amount: G.num(x.amount),
+        how: 'Cash \u00b7 merch cash', label: x.label || 'Pay', source: 'MANUAL', counts: true });
+    });
+    return out.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+  }
   function crewPaidTo(t, p) {
-    return G.rows(t && t.charges).reduce(function (a, ch) {
-      return ch.crewId === p.id && !ch.accounted ? a + G.num(ch.amount) : a;
-    }, 0);
+    return Math.round(crewPayments(t, p).reduce(function (a, x) { return a + x.amount; }, 0) * 100) / 100;
   }
-  // Payday: one tap logs a crew member's pay under Crew, marked MANUAL
-  // (crew is paid from an account Greenroom doesn't see). The amount starts
-  // at what's still owed to them and can be changed.
-  function openCrewPay(id, p) {
-    var t = getTour(id);
-    var owed = Math.max(0, G.num(p.pay) - crewPaidTo(t, p));
-    var f = { amount: owed || G.num(p.pay), date: G.tourToday() };
-    openSheet(function () {
-      return [
-        h('h2', { class: 'sh-title' }, 'Pay ' + (p.name || 'crew')),
-        h('p', { class: 'sh-sub' }, money(G.num(p.pay)) + ' for the tour' + (owed < G.num(p.pay) ? ' \u00b7 ' + money(owed) + ' still owed' : '') +
-          '. Logged under Crew as MANUAL, as debit (debit card, cash or check).'),
-        h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
-          e.preventDefault(); blurActive();
-          if (!(f.amount > 0)) { toast('Enter how much you paid'); return; }
-          var patch = { charges: {} };
-          patch.charges[newId()] = { date: G.parseDay(f.date) ? f.date : G.tourToday(), merchant: (p.name || 'Crew') + ' \u2014 pay',
-            amount: f.amount, category: 'crew', accounted: false, manual: true, paid: true, crewId: p.id, createdAt: Date.now() };
-          if (await api.update(id, patch)) {
-            closeSheet(); toast(money(f.amount) + ' paid to ' + (p.name || 'crew')); render(true);
-            setTimeout(function () { openCrewSheet(id); }, 250);
-          }
-        } },
-          field('Amount', moneyInput({ id: 'cp-amt', value: f.amount, label: 'Amount paid', last: true, onValue: function (v) { f.amount = v; } })),
-          field('Day paid', h('input', { class: 'input', type: 'date', value: f.date, onchange: function (e) { f.date = e.target.value; } })),
-          h('div', { class: 'stack' },
-            h('button', { class: 'btn primary block', type: 'submit' }, 'Log payment'),
-            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } }, 'Back to crew')))
-      ];
-    }, { label: 'Pay ' + (p.name || 'crew'), cls: 'cat-sheet' });
-  }
-
   var crewKind = {};
   function openCrewSheet(id, fresh) {
     if (fresh) crewKind[id] = null;
@@ -3188,26 +3166,21 @@
       var paidCrew = linePaid(G.calc(t), 'crew');
 
       var list = crew.length
-        ? h('div', { class: 'ledger' },
+        ? h('div', { class: 'ledger cw-list' },
             crew.map(function (p) {
-              var got = crewPaidTo(t, p);
-              var sub = [p.title || 'No title', got > 0 ? money(got) + ' of ' + money(G.num(p.pay)) + ' paid' : ''].filter(Boolean).join(' \u00b7 ');
-              return canWrite()
-                ? h('div', { class: 'row cp-row' },
-                    h('button', { class: 'cp-main', type: 'button', onclick: function () { openCrewPerson(id, p); } },
-                      h('div', { class: 'row-label' }, p.name || 'Crew', h('span', { class: 'hint' + (got >= G.num(p.pay) && got > 0 ? ' done' : '') }, sub)),
-                      h('span', { class: 'amt num' }, money(G.num(p.pay)))),
-                    h('button', { class: 'btn sm quiet cp-pay', type: 'button', 'aria-label': 'Pay ' + (p.name || 'crew'),
-                      onclick: function () { openCrewPay(id, p); } }, 'Pay'))
-                : h('div', { class: 'row' },
-                    h('div', { class: 'row-label' }, p.name || 'Crew',
-                      h('span', { class: 'hint' }, p.title || 'No title')),
-                    h('span', { class: 'amt num' }, money(G.num(p.pay))));
+              var got = crewPaidTo(t, p), pay = G.crewPay(t, p);
+              var sub = [p.title || 'No title', got > 0 ? money(got) + ' of ' + money(pay) + ' paid' : ''].filter(Boolean).join(' \u00b7 ');
+              return h('div', { class: 'row cw-row' },
+                h('div', { class: 'row-label' }, p.name || 'Crew',
+                  h('span', { class: 'hint' + (got >= pay && got > 0 ? ' done' : '') }, sub)),
+                canWrite() ? h('button', { class: 'btn sm quiet cw-edit', type: 'button', 'aria-label': 'Edit ' + (p.name || 'crew'),
+                  onclick: function () { openCrewPayEdit(id, p.id); } }, 'Edit') : null,
+                h('span', { class: 'amt num' }, pay > 0 ? money(pay) : '\u2014'));
             }),
             h('div', { class: 'row total' },
               h('span', null, 'Crew projection'), h('strong', { class: 'amt num' }, money(total))))
         : emptyState('No crew yet', canWrite()
-            ? 'Add everyone out with you and what they’re paid for the whole tour. The total becomes your crew projection.'
+            ? 'Add everyone out with you. What each one is paid adds up to your crew projection.'
             : 'No crew has been added.');
 
       var onTour = {};
@@ -3232,18 +3205,6 @@
           h('button', { class: 'linkbtn', type: 'button', style: 'min-height:32px',
             onclick: function () { openRosterManager(id); } }, 'Manage saved crew'));
       }
-      var kind = crewKind[id] || null;
-      var ask = canWrite() ? [
-        segmented(['Projection', 'Credit', 'Debit', 'Cash'], ['projected', 'spent', 'paid', 'cash'].indexOf(kind), function (i) {
-          crewKind[id] = ['projected', 'spent', 'paid', 'cash'][i];
-          openCrewSheet(id);
-        }, 'Projection, credit, debit or cash'),
-        kind === 'projected' ? h('div', { style: 'margin-top:14px' },
-          benchRow,
-          h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:16px',
-            onclick: function () { openCrewPerson(id, null); } }, icon('plus', 18), 'Add someone')) : null,
-        kind === 'spent' || kind === 'paid' || kind === 'cash' ? paidLogForm(id, 'crew', 'Crew', function () { crewKind[id] = null; openCrewSheet(id); }, kind) : null
-      ] : null;
       // People already on the tour (invited before this) who aren't listed yet.
       var onTour = ((S.crewCache && S.crewCache[id] && S.crewCache[id].rows) || []).filter(function (m) {
         var nm = m.name || m.username || '';
@@ -3260,11 +3221,13 @@
         } }, icon('plus', 18), 'Add ' + onTour.map(function (m) { return (m.name || m.username).split(' ')[0]; }).join(', ') + ' from the tour') : null;
       return [
         h('h2', { class: 'sh-title' }, 'Crew'),
-        h('p', { class: 'sh-sub' }, 'Each person’s pay is their total for the tour.' +
-          (paidCrew > 0 ? ' Spent so far: ' + money(paidCrew) + ' of ' + money(total) + '.' : '')),
-        ask,
+        h('p', { class: 'sh-sub' }, paidCrew > 0 ? 'Paid so far: ' + money(paidCrew) + ' of ' + money(total) + '.'
+          : 'Everyone on the tour and what they\u2019re paid. Tap Edit to set someone\u2019s pay and log payments.'),
+        list,
         addOnTour,
-        h('div', { style: 'margin-top:18px' }, list),
+        canWrite() ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:12px',
+          onclick: function () { openCrewPerson(id, null); } }, icon('plus', 18), 'Add someone') : null,
+        benchRow ? h('div', { style: 'margin-top:16px' }, benchRow) : null,
         loggedButton(id, 'crew', function () { openCrewSheet(id); })
       ];
     }
@@ -3302,9 +3265,9 @@
   function openCrewPerson(id, person) {
     var f = {
       name: person ? person.name || '' : '',
-      title: person ? person.title || '' : '',
-      pay: person ? G.num(person.pay) : 0
+      title: person ? person.title || '' : ''
     };
+    var backTo = function () { if (person) openCrewPayEdit(id, person.id); else openCrewSheet(id); };
     openSheet(function () {
       var titleInput;
       var nameInput = h('input', {
@@ -3324,7 +3287,8 @@
         var name = f.name.trim();
         if (!name) { toast('Add a name so you know who this is'); nameInput.focus(); return; }
         blurActive();
-        var row = { name: name, title: f.title.trim(), pay: f.pay };
+        var row = { name: name, title: f.title.trim() };
+        if (!person) row.pay = 0;
         var patch = {};
         if (person) patch[person.id] = row;
         else { row.createdAt = Date.now(); patch[newId()] = row; }
@@ -3350,30 +3314,26 @@
               setTimeout(function () { if (!sheet) openCrewSheet(id); }, 250);
             };
           } else {
-            toast(person ? 'Crew saved' : 'Added ' + name);
-            openCrewSheet(id);
+            toast(person ? 'Saved' : 'Added ' + name);
+            backTo();
           }
         }
       };
       return [
-        h('h2', { class: 'sh-title' }, person ? 'Edit crew' : 'Add crew'),
+        h('h2', { class: 'sh-title' }, person ? 'Name & role' : 'Add someone'),
         h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
           field('Name', nameInput),
           field('Title', titleInput),
           chips,
-          field('Pay for the tour', moneyInput({
-            id: 'crew-pay', value: f.pay, label: 'Pay for the whole tour', last: true,
-            onValue: function (v) { f.pay = v; }
-          })),
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, person ? 'Save' : 'Add to crew'),
-            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } }, 'Back to crew'),
+            h('button', { class: 'btn ghost block', type: 'button', onclick: backTo }, 'Back'),
             person ? h('button', {
               class: 'btn danger block', type: 'button',
               onclick: function () {
                 confirmSheet({
                   title: 'Remove ' + (person.name || 'this person') + '?',
-                  body: money(G.num(person.pay)) + ' comes off the crew projection.',
+                  body: money(G.crewPay(getTour(id), person)) + ' comes off the crew projection.',
                   action: 'Remove', danger: true,
                   onConfirm: async function () {
                     var patch = {}; patch[person.id] = null;
@@ -3385,7 +3345,196 @@
               }
             }, 'Remove from crew') : null))
       ];
-    }, { label: person ? 'Edit crew' : 'Add crew', cls: 'cat-sheet' });
+    }, { label: person ? 'Name & role' : 'Add someone', cls: 'cat-sheet' });
+  }
+
+  var PAY_PER = [['week', 'Weekly', 'week', 'weeks'], ['day', 'Daily', 'day', 'days'], ['month', 'Monthly', 'month', 'months'], ['other', 'Other', '', '']];
+  function payPlanText(t, p) {
+    var row = PAY_PER.filter(function (x) { return x[0] === p.per; })[0];
+    var n = G.payPeriods(t, p.per), rate = G.num(p.rate);
+    if (!row || p.per === 'other' || !(rate > 0)) return '';
+    if (!n) return money(rate) + ' a ' + row[2] + '. Add the tour\u2019s dates and the total works itself out.';
+    return money(rate) + ' a ' + row[2] + ' \u00d7 ' + n + ' ' + (n === 1 ? row[2] : row[3]) + ' = ' + money(rate * n);
+  }
+  // What they've been paid against their total, the same three lines everywhere.
+  function crewReadout(t, p) {
+    var pay = G.crewPay(t, p), got = crewPaidTo(t, p);
+    return h('div', { class: 'preview' },
+      h('div', null, h('span', null, 'Total projection'), h('strong', { class: 'num' }, pay > 0 ? money(pay) : 'Not set')),
+      h('div', null, h('span', null, 'Paid so far'), h('strong', { class: 'num' }, money(got))),
+      got > pay && pay > 0 ? h('div', null, h('span', null, 'Over by'), h('strong', { class: 'num neg' }, money(got - pay)))
+        : h('div', null, h('span', null, 'Left to pay'), h('strong', { class: 'num' }, money(Math.max(0, pay - got)))));
+  }
+
+  /* Edit one person: their total projection, and Payments. */
+  function openCrewPayEdit(id, pid) {
+    openSheet(function () {
+      var t = getTour(id);
+      var p = G.rows(t && t.crew).filter(function (x) { return x.id === pid; })[0];
+      if (!p) return [h('h2', { class: 'sh-title' }, 'Crew'), emptyState('Not on the crew anymore', null)];
+      var worked = G.crewPay(t, Object.assign({}, p, { payTyped: false }));
+      var plan = payPlanText(t, p);
+      var planned = !!plan && G.payPeriods(t, p.per) > 0;
+      var f = { pay: G.crewPay(t, p) };
+      var save = async function (e) {
+        e.preventDefault(); blurActive();
+        var patch = {};
+        // A total typed over the worked-out one is kept as typed.
+        patch[pid] = { pay: f.pay, payTyped: planned ? Math.abs(f.pay - worked) > 0.004 : false };
+        if (await api.update(id, { crew: patch })) {
+          delete S.drafts['exp:' + id];
+          toast('Total saved'); render(true); openCrewPayEdit(id, pid);
+        }
+      };
+      return [
+        h('h2', { class: 'sh-title' }, p.name || 'Crew'),
+        h('p', { class: 'sh-sub' }, p.title || 'No title'),
+        crewReadout(t, p),
+        h('form', { class: 'sh-form', novalidate: true, onsubmit: save },
+          field('Total projection', moneyInput({ id: 'cw-total', value: f.pay, label: 'Total projection for the tour', last: true,
+            onValue: function (v) { f.pay = v; } }),
+            planned ? (p.payTyped ? 'You typed this over the worked-out total (' + plan + ').' : 'Worked out: ' + plan + '. Type over it if you agreed something different.')
+              : 'What they\u2019re paid for the whole tour. Set a weekly, daily or monthly rate under Payments and it works itself out.'),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save total'),
+            planned && p.payTyped ? h('button', { class: 'btn ghost block', type: 'button', onclick: async function () {
+              var patch = {}; patch[pid] = { payTyped: false };
+              if (await api.update(id, { crew: patch })) { toast('Back to the worked-out total'); render(true); openCrewPayEdit(id, pid); }
+            } }, 'Use the worked-out total (' + money(worked) + ')') : null)),
+        h('div', { class: 'stack cw-more' },
+          h('button', { class: 'btn quiet block', type: 'button', onclick: function () { openCrewPayments(id, pid); } },
+            icon('cash', 18), 'Payments'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewPerson(id, p); } }, 'Name & role'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } }, 'Back to crew'))
+      ];
+    }, { label: 'Edit crew', cls: 'cat-sheet' });
+  }
+
+  /* Payments: how they're paid (weekly, daily, monthly, or some other way:
+     installments, a flat fee) and their rate, then each payment, logged by
+     hand as it's made. */
+  function openCrewPayments(id, pid, keep) {
+    var st = keep || { per: null, rate: null, how: 'paid', amount: null, date: G.tourToday(), merch: null };
+    openSheet(function () {
+      var t = getTour(id);
+      var p = G.rows(t && t.crew).filter(function (x) { return x.id === pid; })[0];
+      if (!p) return [h('h2', { class: 'sh-title' }, 'Payments'), emptyState('Not on the crew anymore', null)];
+      if (st.per == null) st.per = p.per || 'week';
+      if (st.rate == null) st.rate = G.num(p.rate);
+      var again = function () { openCrewPayments(id, pid, st); };
+      var perRow = PAY_PER.filter(function (x) { return x[0] === st.per; })[0];
+      var planLine = h('p', { class: 'note proj-preview' });
+      var saveBtn = h('button', { class: 'btn primary block', type: 'button' }, 'Save pay plan');
+      // The button shows once there's something to save.
+      var showPlan = function () {
+        planLine.textContent = st.per === 'other'
+          ? 'Installments, a flat fee, anything else: log each payment as you make it. Their total is set under Edit.'
+          : (payPlanText(t, { per: st.per, rate: st.rate }) || 'Type the rate and the total works itself out.');
+        var changed = st.per !== p.per || (st.per !== 'other' && Math.abs(G.num(st.rate) - G.num(p.rate)) > 0.004);
+        saveBtn.hidden = !changed || (st.per !== 'other' && !(st.rate > 0));
+      };
+      showPlan();
+      var savePlan = async function () {
+        blurActive();
+        if (st.per !== 'other' && !(st.rate > 0)) { toast('Type the ' + perRow[1].toLowerCase() + ' rate'); return; }
+        var patch = {};
+        patch[pid] = { per: st.per, rate: st.per === 'other' ? 0 : st.rate, payTyped: false };
+        // Paid some other way: the total they had stays as the typed total.
+        if (st.per === 'other') patch[pid].pay = G.crewPay(t, p);
+        if (await api.update(id, { crew: patch })) {
+          delete S.drafts['exp:' + id];
+          st.amount = null;
+          toast('Pay plan saved'); render(true); again();
+        }
+      };
+
+      // The payment being logged: one period's pay to start, or what's left.
+      var left = Math.max(0, G.crewPay(t, p) - crewPaidTo(t, p));
+      if (st.amount == null) st.amount = G.num(p.rate) > 0 && p.per !== 'other' ? G.num(p.rate) : left;
+      saveBtn.onclick = savePlan;
+      var pick = function (v) { st.merch = v; yes.checked = v === true; no.checked = v === false; };
+      var yes = h('input', { type: 'checkbox', class: 'rv-check', checked: st.merch === true, onchange: function (e) { pick(e.target.checked ? true : null); } });
+      var no = h('input', { type: 'checkbox', class: 'rv-check', checked: st.merch === false, onchange: function (e) { pick(e.target.checked ? false : null); } });
+      // Cash asks where it came from; the question shows only for cash.
+      var cashAsk = h('fieldset', { class: 'yn-ask', hidden: st.how !== 'cash' },
+        h('legend', null, 'Deduct from Merch Cash Log?'),
+        h('label', { class: 'yn-opt' }, yes, h('span', null, 'Yes')),
+        h('label', { class: 'yn-opt' }, no, h('span', null, 'No')));
+      var logIt = async function (e) {
+        e.preventDefault(); blurActive();
+        if (!(st.amount > 0)) { toast('Enter how much you paid'); return; }
+        if (!G.parseDay(st.date)) { toast('Pick the day it was paid'); return; }
+        if (st.how === 'cash' && st.merch == null) { toast('Deduct from the Merch Cash Log? Tick Yes or No'); return; }
+        var label = (p.name || 'Crew') + ' \u2014 pay', patch;
+        if (st.how === 'cash' && st.merch) {
+          patch = { cashLog: {} };
+          patch.cashLog[newId()] = { date: st.date, amount: st.amount, label: label, category: 'crew', crewId: pid, createdAt: Date.now() };
+        } else {
+          patch = { charges: {} };
+          patch.charges[newId()] = { date: st.date, merchant: label, amount: st.amount, category: 'crew', accounted: false,
+            manual: true, paid: st.how !== 'spent', cash: st.how === 'cash', crewId: pid, createdAt: Date.now() };
+        }
+        if (await api.update(id, patch)) {
+          delete S.drafts['exp:' + id];
+          toast(money(st.amount) + ' paid to ' + (p.name || 'crew'));
+          st.amount = null; st.merch = null;
+          render(true); again();
+        }
+      };
+      var paid = crewPayments(t, p);
+      return [
+        h('h2', { class: 'sh-title' }, 'Payments'),
+        h('p', { class: 'sh-sub' }, (p.name || 'Crew') + (p.title ? ' \u00b7 ' + p.title : '')),
+        crewReadout(t, p),
+
+        h('h3', { class: 'sh-h3' }, 'How are they paid?'),
+        segmented(PAY_PER.map(function (x) { return x[1]; }), PAY_PER.map(function (x) { return x[0]; }).indexOf(st.per), function (i) {
+          st.per = PAY_PER[i][0]; again();
+        }, 'Weekly, daily, monthly or other'),
+        st.per !== 'other' ? h('div', { class: 'sh-form', style: 'margin-top:10px' },
+          field(perRow[1] + ' rate', moneyInput({ id: 'cw-rate', value: st.rate, label: perRow[1] + ' rate', last: true,
+            onValue: function (v) { st.rate = v; showPlan(); } }))) : null,
+        planLine,
+        saveBtn,
+
+        h('h3', { class: 'sh-h3 cw-h' }, 'Log a payment'),
+        h('form', { class: 'sh-form', novalidate: true, onsubmit: logIt },
+          segmented(['Credit', 'Debit', 'Cash'], ['spent', 'paid', 'cash'].indexOf(st.how), function (i) {
+            st.how = ['spent', 'paid', 'cash'][i]; cashAsk.hidden = st.how !== 'cash';
+          }, 'Credit, debit or cash'),
+          field('How much', moneyInput({ id: 'cw-amt', value: st.amount, label: 'Amount paid', last: true,
+            onValue: function (v) { st.amount = v; } })),
+          field('Day paid', h('input', { class: 'input', type: 'date', value: st.date, 'aria-label': 'Day paid',
+            onchange: function (e) { st.date = e.target.value; } })),
+          cashAsk,
+          h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' }, 'Log payment'))),
+
+        h('h3', { class: 'sh-h3 cw-h' }, 'Payments so far'),
+        paid.length ? h('div', { class: 'ledger logged' }, paid.map(function (r) {
+          var line = h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, r.date ? dayLong(r.date) : 'No date', h('span', { class: 'hint' }, r.how)),
+            h('span', { class: 'amt num' }, money(r.amount)));
+          return swipeRow(line, [
+            h('button', { class: 'sw-edit', type: 'button', onclick: function () { openManualEdit(id, 'crew', r, null, again); } },
+              icon('edit', 16), 'Edit'),
+            h('button', { class: 'sw-undo', type: 'button', onclick: function () {
+              confirmSheet({ title: 'Delete this payment?', body: money(r.amount) + ' goes back to what\u2019s left to pay.',
+                action: 'Delete', danger: true,
+                onConfirm: async function () {
+                  var patch = r.cashId ? { cashLog: {} } : { charges: {} };
+                  (patch.cashLog || patch.charges)[r.cashId || r.chargeId] = null;
+                  var ok = await api.update(id, patch);
+                  if (ok) { toast('Deleted'); setTimeout(again, 250); }
+                  return ok;
+                } });
+            } }, icon('trash', 16), 'Delete')]);
+        })) : h('p', { class: 'note' }, 'No payments logged yet.'),
+        paid.length ? h('p', { class: 'note sw-hint', style: 'margin-top:8px' }, 'Swipe a payment left to edit or delete it.') : null,
+
+        h('div', { class: 'stack', style: 'margin-top:16px' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewPayEdit(id, pid); } }, 'Back'))
+      ];
+    }, { label: 'Payments', cls: 'cat-sheet' });
   }
 
   /* ============================== Debt ============================== */
