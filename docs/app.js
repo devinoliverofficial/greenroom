@@ -2512,36 +2512,41 @@
 
   /* The plan stays put in its column and what's actually been paid sits next
      to it, so over and under are there to read at a glance. */
-  /* Up top on Expenses: money in against what's spent, on one scale, with the
-     spending split into credit, debit and cash (the chart's own totals).
-     The Off Tour book has no income, so it shows the spending alone. */
-  function expenseSummary(c, tot, off) {
+  /* Up top on Expenses: Income over Expenses, on one scale, each bar in
+     colours. Income: guarantees (with any back end), merch, everything else.
+     Expenses: crew, bus, each linked card by its name, commission, the merch
+     bill, everything else. The Off Tour book has no income: expenses alone. */
+  function expenseSummary(c, expParts, off) {
+    var by = G.isObj(c.incomeBy) ? c.incomeBy : {};
+    var guar = Math.max(0, G.num(by.guarantee) + G.num(by.backend)), merch = Math.max(0, G.num(by.merch));
     var income = Math.max(0, G.num(c.income));
-    var parts = [['Credit', tot.credit, 'cr'], ['Debit', tot.debit, 'db'], ['Cash', tot.cash, 'ca']].map(function (x) {
-      return { label: x[0], v: Math.max(0, Math.round(G.num(x[1]) * 100) / 100), cls: x[2] };
-    });
-    var spent = Math.round(parts.reduce(function (n, x) { return n + x.v; }, 0) * 100) / 100;
+    var incParts = [{ label: 'Guarantees', v: guar, cls: 'guar' }, { label: 'Merch', v: merch, cls: 'merch' },
+      { label: 'Other', v: Math.max(0, income - guar - merch), cls: 'inother' }];
+    var r2 = function (v) { return Math.round(v * 100) / 100; };
+    expParts = expParts.map(function (x) { return { label: x.label, v: r2(x.v), cls: x.cls }; });
+    var spent = r2(expParts.reduce(function (n, x) { return n + x.v; }, 0));
     if (!(income > 0) && !(spent > 0)) return null;
     var scale = Math.max(income, spent, 1);
     var w = function (v) { return 'width:' + Math.max(0, Math.min(100, v / scale * 100)).toFixed(2) + '%'; };
-    var net = Math.round((income - spent) * 100) / 100;
-    var line = function (label, amount, bar) {
+    var net = r2(income - spent);
+    var block = function (label, amount, parts) {
       return h('div', { class: 'xs-line' },
         h('div', { class: 'xs-top' }, h('span', { class: 'xs-k' }, label), h('strong', { class: 'xs-v num' }, money(amount))),
-        h('div', { class: 'xs-track' }, bar));
+        h('div', { class: 'xs-track' }, amount > 0 ? h('div', { class: 'xs-bar segs', style: w(amount) },
+          parts.filter(function (x) { return x.v > 0; }).map(function (x) {
+            return h('i', { class: 'xs-seg ' + x.cls, style: 'flex-grow:' + x.v });
+          })) : null),
+        h('div', { class: 'xs-key' }, parts.map(function (x) {
+          return h('span', { class: 'xs-key-i' + (x.v > 0 ? '' : ' zero') }, h('i', { class: 'xs-dot ' + x.cls }), x.label + ' ', h('b', { class: 'num' }, money(x.v)));
+        })));
     };
+    var say = function (parts) { return parts.map(function (x) { return x.label + ' ' + money(x.v); }).join(', '); };
     return h('section', { class: 'xs-card', role: 'img',
-      'aria-label': (off ? '' : money(income) + ' in. ') + money(spent) + ' spent: ' +
-        parts.map(function (x) { return money(x.v) + ' ' + x.label.toLowerCase(); }).join(', ') +
+      'aria-label': (off ? '' : 'Income ' + money(income) + ': ' + say(incParts) + '. ') +
+        'Expenses ' + money(spent) + ': ' + say(expParts) +
         (off ? '' : '. ' + money(Math.abs(net)) + (net >= 0 ? ' ahead' : ' behind') + ' so far') + '.' },
-      off ? null : line('Money in', income, income > 0 ? h('div', { class: 'xs-bar in', style: w(income) }) : null),
-      line('Spent', spent, spent > 0 ? h('div', { class: 'xs-bar segs', style: w(spent) },
-        parts.filter(function (x) { return x.v > 0; }).map(function (x) {
-          return h('i', { class: 'xs-seg ' + x.cls, style: 'flex-grow:' + x.v });
-        })) : null),
-      h('div', { class: 'xs-key' }, parts.map(function (x) {
-        return h('span', { class: 'xs-key-i' }, h('i', { class: 'xs-dot ' + x.cls }), x.label + ' ', h('b', { class: 'num' }, money(x.v)));
-      })),
+      off ? null : block('Income', income, incParts),
+      block('Expenses', spent, expParts),
       off ? null : h('div', { class: 'xs-net ' + (net >= 0 ? 'pos' : 'neg') },
         money(Math.abs(net)) + (net >= 0 ? ' ahead so far' : ' behind so far')));
   }
@@ -2560,20 +2565,23 @@
     // Debit: money that's gone, paid by debit card, cash or check, and on a
     // card's own line the payments made to the card company (the splashes).
     var paidOutTotal = 0, creditTotal = 0;
+    // What each row comes to (its credit + debit + cash), for the bars up top.
+    var byRow = {}, rowKey = '';
+    var tally = function (v) { byRow[rowKey] = (byRow[rowKey] || 0) + v; };
     var paidCell = function (v) {
       v = Math.round(G.num(v) * 100) / 100;
-      paidOutTotal += v;
+      paidOutTotal += v; tally(v);
       return h('span', { class: 'amt num ex-done', 'aria-label': 'Debit ' + money(v) }, v > 0.004 ? money(v) : '\u2014');
     };
     var cashTotal = 0;
     var cashCell = function (v) {
       v = Math.round(G.num(v) * 100) / 100;
-      cashTotal += v;
+      cashTotal += v; tally(v);
       return h('span', { class: 'amt num ex-cash', 'aria-label': 'Cash ' + money(v) }, v > 0.004 ? money(v) : '\u2014');
     };
     var creditCell = function (v, over) {
       v = Math.round(G.num(v) * 100) / 100;
-      creditTotal += v;
+      creditTotal += v; tally(v);
       return h('span', { class: 'amt num ex-paid' + (over ? ' over' : ''), 'aria-label': 'Credit ' + money(v) },
         Math.abs(v) > 0.004 ? money(v) : '\u2014');
     };
@@ -2583,6 +2591,8 @@
     var commSet = G.commissionLines(comm).some(function (cl) { return G.num(comm[cl.key].value) > 0; });
     var feedCards = G.cardDebts(t).filter(function (d) { return G.isObj(d.feed); });
     var lineRow = function (l) {
+      // "Credit card (other)" is not a linked card: it counts under Other.
+      rowKey = l.label === 'Credit card (other)' ? 'card-other' : l.key;
       var hint = lineHint(l);
       var unset = l.projected == null || (l.key === 'commission' && !l.projected && !commSet);
       var inner = [
@@ -2636,8 +2646,17 @@
     entries.forEach(function (e) { e.owed = Math.round(owedOn(e.l) * 100) / 100; e.spent = G.num(e.l.paid); e.proj = G.num(e.l.projected); });
     entries.sort(function (a, b) { return (b.owed - a.owed) || (b.spent - a.spent) || (b.proj - a.proj) || (a.i - b.i); });
     var rows = [];
-    feedCards.forEach(function (card) { rows.push(cardRow(id, t, card, paidCell, creditCell, cashCell)); });
+    feedCards.forEach(function (card) { rowKey = 'feed:' + card.id; rows.push(cardRow(id, t, card, paidCell, creditCell, cashCell)); });
     entries.forEach(function (e) { rows.push(lineRow(e.l)); });
+    // The bars' Expenses segments: crew, bus, each linked card by its name,
+    // commission, the merch bill, and everything else together.
+    var named = [['Crew', 'crew', 'crew'], ['Bus', 'bus', 'bus']]
+      .concat(feedCards.map(function (card) { return [cardBank(card) || card.label || 'Card', 'feed:' + card.id, 'lcard']; }))
+      .concat([['Commission', 'commission', 'comm'], ['Merch bill', 'merch', 'mbill']]);
+    var spentAll = Object.keys(byRow).reduce(function (n, k) { return n + Math.max(0, byRow[k]); }, 0);
+    var expParts = named.map(function (x) { return { label: x[0], v: Math.max(0, byRow[x[1]] || 0), cls: x[2] }; });
+    expParts.push({ label: 'Other', cls: 'other',
+      v: Math.max(0, spentAll - expParts.reduce(function (n, x) { return n + x.v; }, 0)) });
     var projTotal = 0, paidTotal = 0;
     c.lines.forEach(function (l) { projTotal += l.projected || 0; paidTotal += l.paid; });
     rows.unshift(head);
@@ -2656,7 +2675,7 @@
           icon('copy', 18), 'Start from a previous tour’s budget')
       : null;
     return [
-      expenseSummary(c, { credit: creditTotal, debit: paidOutTotal, cash: cashTotal }, off),
+      expenseSummary(c, expParts, off),
       feedEntry(id),
       baselineOffer,
       off ? null : h('div', { class: 'mini-stack' }, cashLogEntry(id, t)),

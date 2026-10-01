@@ -1895,7 +1895,7 @@ tr.st-balls .st-cell { color: var(--pos); cursor: default; }
 /* Crew rows: tap the name to edit, Pay to log a payment. */
 /* Top of Expenses: money in against spent, one scale; spent split credit | debit | cash. */
 .xs-card { margin: 4px 0 16px; padding: 14px 14px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; }
-.xs-line + .xs-line { margin-top: 12px; }
+.xs-line + .xs-line { margin-top: 16px; }
 .xs-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
 .xs-k { font-family: var(--font); font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 .xs-v { font-family: var(--font); font-size: 15px; font-weight: 700; color: var(--ink); }
@@ -1907,10 +1907,19 @@ tr.st-balls .st-cell { color: var(--pos); cursor: default; }
 .xs-seg:first-child { border-radius: 5px 0 0 5px; }
 .xs-seg:last-child { border-radius: 0 5px 5px 0; }
 .xs-seg:only-child { border-radius: 5px; }
-.xs-seg.cr, .xs-dot.cr { background: var(--neg); }
-.xs-seg.db, .xs-dot.db { background: var(--ink); }
-.xs-seg.ca, .xs-dot.ca { background: var(--part); }
-.xs-key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; font-family: var(--font); font-size: 12px; font-weight: 600; color: var(--ink-2); }
+/* Checked pair by pair (OKLab, normal and colour-blind vision) on the card's
+   surface: neighbours in each bar are 12+ apart, every pair 9.7+. */
+.xs-seg.guar, .xs-dot.guar { background: #CCF80A; }
+.xs-seg.merch, .xs-dot.merch { background: #1FA85A; }
+.xs-seg.inother, .xs-dot.inother { background: #B9BEA8; }
+.xs-seg.crew, .xs-dot.crew { background: #5AA9FF; }
+.xs-seg.bus, .xs-dot.bus { background: #FFD23F; }
+.xs-seg.lcard, .xs-dot.lcard { background: #FF5F57; }
+.xs-seg.comm, .xs-dot.comm { background: #2ED3B7; }
+.xs-seg.mbill, .xs-dot.mbill { background: #F1F4E3; }
+.xs-seg.other, .xs-dot.other { background: #626750; }
+.xs-key-i.zero { opacity: .5; }
+.xs-key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-family: var(--font); font-size: 12px; font-weight: 600; color: var(--ink-2); }
 .xs-key-i { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .xs-key-i b { color: var(--ink); font-weight: 700; }
 .xs-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
