@@ -753,7 +753,7 @@
     var root = $('#sheet-root');
     var prevFocus = document.activeElement;
     var panel = h('div', {
-      class: 'sheet', role: 'dialog', 'aria-modal': 'true',
+      class: 'sheet' + (o.cls ? ' ' + o.cls : ''), role: 'dialog', 'aria-modal': 'true',
       'aria-label': o.label || 'Dialog', tabindex: '-1'
     });
     var content = flatten([build(panel)]).filter(Boolean);
@@ -1935,7 +1935,7 @@
           } }, h('span', { class: 'row-label' }, c.label), icon('chevron', 18));
         }))
       ];
-    }, { label: 'Log an expense' });
+    }, { label: 'Log an expense', cls: 'cat-sheet' });
   }
 
   function startTour(artist) {
@@ -2489,7 +2489,7 @@
           } }, icon('card', 18), 'Sort ' + plural(waiting, 'charge') + ' from this card') : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
       ];
-    }, { label: card.label || 'Credit card' });
+    }, { label: card.label || 'Credit card', cls: 'cat-sheet' });
   }
 
   /* The plan stays put in its column and what's actually been paid sits next
@@ -2576,14 +2576,6 @@
       h('strong', { class: 'amt num ex-paid' }, money(creditTotal)),
       h('strong', { class: 'amt num ex-done' }, money(paidOutTotal)),
       chev ? chev.cloneNode() : null));
-    // What the two columns mean, and the tour's real spending in one number
-    // (a card payment pays off credit, so it isn't spending twice).
-    var key = h('p', { class: 'note ex-key' },
-      h('b', null, 'Credit'), ' went on a credit card. ', h('b', null, 'Debit'), ' was paid by debit card, cash or check, ' +
-      'plus payments made on the cards. ',
-      h('span', { class: 'ex-spent' + (projTotal > 0 && paidTotal > projTotal ? ' over' : '') }, 'Spent so far: ' + money(paidTotal) +
-        (projTotal > 0 ? (paidTotal > projTotal ? ' \u00b7 ' + money(paidTotal - projTotal) + ' over the projection'
-          : ' \u00b7 ' + money(projTotal - paidTotal) + ' left of the projection') : '')));
     var charges = G.rows(t && t.charges);
     var baselineOffer = (!off && canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
       ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
@@ -2591,8 +2583,8 @@
           icon('copy', 18), 'Start from a previous tour’s budget')
       : null;
     return [
-      baselineOffer,
       feedEntry(id),
+      baselineOffer,
       h('div', { class: 'btnrow tiles' },
         canEditTour(id) ? fileControl({
           label: 'Import Card Statements', icon: 'card', cls: 'btn ghost tile',
@@ -2603,19 +2595,8 @@
           onclick: function () { if (off) openOffLog(id); else go({ name: 'tour', id: id, view: 'daybyday' }); } },
           icon('edit', 18), 'Log New Expense'),
         off ? null : cashLogEntry(id, t)),
-      h('div', { class: 'ledger' }, rows),
-      key,
-      canEditTour(id) ? h('p', { class: 'note' }, 'Tap a category to set what you expect it to cost and what you’ve already paid.') : null,
-      // Debts logged before Credit card and Loan became plain categories still
-      // count, so a tour that has them keeps its ledger; fresh tours never see it.
-      !off && G.rows(t && t.debts).length ? [
-        h('h3', { class: 'sh-h3', style: 'margin-top:26px' }, 'What you owe going in'),
-        debtSection(id, t, 'tab')
-      ] : null,
-      charges.length ? h('button', {
-        class: 'btn quiet block', type: 'button', style: 'margin-top:14px',
-        onclick: function () { openChargesSheet(id); }
-      }, icon('card', 18), plural(charges.length, 'card charge')) : null
+      // The chart says it all: nothing under the Total.
+      h('div', { class: 'ledger' }, rows)
     ];
   }
 
@@ -2704,7 +2685,7 @@
             back ? 'Back' : 'Close'))
       ];
     }
-    openSheet(build, { label: 'Logged Card Transactions' });
+    openSheet(build, { label: 'Logged Card Transactions', cls: 'cat-sheet' });
   }
   function loggedButton(id, key, back) {
     var n = categoryEntries(getTour(id), key).length;
@@ -2753,6 +2734,7 @@
     var line = G.calc(t).lines.filter(function (l) { return l.key === key; })[0] || { paid: 0 };
     var f = { projected: rec.projected };
     var kind = null;
+    var pmode = rec.projected != null && G.num(rec.projected) > 0 ? 'add' : 'set';
 
     openSheet(function () {
       var readout = h('div', { class: 'preview' });
@@ -2771,21 +2753,58 @@
       var box = h('div');
       function draw() {
         if (kind === 'projected') {
-          box.replaceChildren(h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
-            e.preventDefault();
-            blurActive();
-            var patch = { expenses: {} };
-            patch.expenses[key] = { projected: f.projected };
-            if (await api.update(id, patch)) {
-              delete S.drafts['exp:' + id];
-              closeSheet(); toast(cat.label + ' projection saved'); render(true);
-            }
-          } },
-            field('Projected for the whole tour', moneyInput({
-              id: 'cat-proj', value: f.projected, label: cat.label + ' projected cost', placeholder: '—', last: true,
-              onValue: function (v) { f.projected = v > 0 ? v : null; }
-            }), 'What you expect it to cost. What’s paid fills it up; it doesn’t add on top.'),
-            h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' }, 'Save projection'))));
+          // A projection grows as the tour goes (the merch bill, say): add to
+          // it, or change the whole total. Every change is kept, so it's
+          // always clear how the number got where it is.
+          var had = rec.projected != null ? G.num(rec.projected) : 0;
+          var amt = null;
+          var preview = h('p', { class: 'note proj-preview' });
+          var showPreview = function () {
+            if (pmode === 'add') preview.textContent = amt > 0 ? money(had) + ' + ' + money(amt) + ' = ' + money(had + amt)
+              : 'Now ' + money(had) + '. Type how much to add.';
+            else preview.textContent = had > 0 ? 'Now ' + money(had) + '. What you type replaces it.' : '';
+          };
+          var input = moneyInput({
+            id: 'cat-proj', value: null, label: cat.label + (pmode === 'add' ? ' amount to add' : ' projected cost'),
+            placeholder: '\u2014', last: true, onValue: function (v) { amt = v > 0 ? v : null; showPreview(); }
+          });
+          showPreview();
+          var history = G.rows(G.isObj(t.projLog) ? t.projLog[key] : null).sort(function (a, b) { return G.num(b.at) - G.num(a.at); });
+          box.replaceChildren(
+            had > 0 ? segmented(['Add to it', 'Change the total'], pmode === 'add' ? 0 : 1, function (i) {
+              pmode = i ? 'set' : 'add'; draw();
+            }, 'Add to the projection or change the total') : null,
+            h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
+              e.preventDefault();
+              blurActive();
+              if (pmode === 'add' && !(amt > 0)) { toast('Type how much to add'); return; }
+              var next = pmode === 'add' ? Math.round((had + amt) * 100) / 100 : (amt > 0 ? amt : null);
+              var patch = { expenses: {}, projLog: {} };
+              patch.expenses[key] = { projected: next };
+              patch.projLog[key] = {};
+              patch.projLog[key][newId()] = { at: Date.now(), by: myName() || '', add: pmode === 'add' ? amt : null, total: next };
+              if (await api.update(id, patch)) {
+                delete S.drafts['exp:' + id];
+                closeSheet();
+                toast(pmode === 'add' ? '+' + money(amt) + ' \u00b7 ' + cat.label + ' now projected at ' + money(next)
+                  : cat.label + ' projection ' + (next ? 'set to ' + money(next) : 'cleared'));
+                render(true);
+              }
+            } },
+              field(pmode === 'add' ? 'Add to the projection' : 'Projected for the whole tour', input,
+                'What you expect it to cost. What\u2019s spent fills it up; it doesn\u2019t add on top.'),
+              preview,
+              h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' },
+                pmode === 'add' ? 'Add to the projection' : 'Save projection'))),
+            history.length ? h('div', { class: 'proj-log' },
+              h('h3', { class: 'wn-h' }, 'How the projection got here'),
+              h('div', { class: 'ledger' }, history.slice(0, 8).map(function (x) {
+                var when = x.at ? dayMD(G.ymd(new Date(x.at))) : '';
+                return h('div', { class: 'row' },
+                  h('span', { class: 'row-label' }, x.add ? '+' + money(G.num(x.add)) : (x.total ? 'Set to ' + money(G.num(x.total)) : 'Cleared'),
+                    h('span', { class: 'hint' }, [when, x.by].filter(Boolean).join(' \u00b7 '))),
+                  h('span', { class: 'amt num' }, x.total ? money(G.num(x.total)) : '\u2014'));
+              }))) : null);
         } else if (kind === 'spent' || kind === 'paid') {
           box.replaceChildren(paidLogForm(id, key, cat.label, null, kind));
         } else box.replaceChildren();
@@ -2803,7 +2822,7 @@
         ] : null,
         loggedButton(id, key, function () { openCategorySheet(id, key); })
       ];
-    }, { label: cat.label });
+    }, { label: cat.label, cls: 'cat-sheet' });
   }
 
   function openCommissionSheet(id) {
@@ -2875,7 +2894,7 @@
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save commission'),
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
       ];
-    }, { label: 'Commission' });
+    }, { label: 'Commission', cls: 'cat-sheet' });
   }
 
   /* ============================== Crew ============================== */
@@ -2915,7 +2934,7 @@
             h('button', { class: 'btn primary block', type: 'submit' }, 'Log payment'),
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } }, 'Back to crew')))
       ];
-    }, { label: 'Pay ' + (p.name || 'crew') });
+    }, { label: 'Pay ' + (p.name || 'crew'), cls: 'cat-sheet' });
   }
 
   var crewKind = {};
@@ -2987,16 +3006,31 @@
             onclick: function () { openCrewPerson(id, null); } }, icon('plus', 18), 'Add someone')) : null,
         kind === 'spent' || kind === 'paid' ? paidLogForm(id, 'crew', 'Crew', function () { crewKind[id] = null; openCrewSheet(id); }, kind) : null
       ] : null;
+      // People already on the tour (invited before this) who aren't listed yet.
+      var onTour = ((S.crewCache && S.crewCache[id] && S.crewCache[id].rows) || []).filter(function (m) {
+        var nm = m.name || m.username || '';
+        return !m.owner && nm && !NOT_CREW.test(String(m.tourRole || '')) && !crewListed(t, nm, m.invitedEmail || m.email);
+      });
+      var addOnTour = onTour.length && canEditTour(id) ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:12px',
+        onclick: async function () {
+          for (var i = 0; i < onTour.length; i++) {
+            var m = onTour[i];
+            await addToCrewExpenses(id, m.name || m.username, m.tourRole, m.invitedEmail || m.email);
+          }
+          toast(plural(onTour.length, 'person') .replace('persons', 'people') + ' added to Crew \u2014 fill in their pay');
+          setTimeout(function () { openCrewSheet(id); }, 250);
+        } }, icon('plus', 18), 'Add ' + onTour.map(function (m) { return (m.name || m.username).split(' ')[0]; }).join(', ') + ' from the tour') : null;
       return [
         h('h2', { class: 'sh-title' }, 'Crew'),
         h('p', { class: 'sh-sub' }, 'Each person’s pay is their total for the tour.' +
           (paidCrew > 0 ? ' Spent so far: ' + money(paidCrew) + ' of ' + money(total) + '.' : '')),
         ask,
+        addOnTour,
         h('div', { style: 'margin-top:18px' }, list),
         loggedButton(id, 'crew', function () { openCrewSheet(id); })
       ];
     }
-    openSheet(build, { label: 'Crew' });
+    openSheet(build, { label: 'Crew', cls: 'cat-sheet' });
   }
 
   function openRosterManager(tourId) {
@@ -3113,7 +3147,7 @@
               }
             }, 'Remove from crew') : null))
       ];
-    }, { label: person ? 'Edit crew' : 'Add crew' });
+    }, { label: person ? 'Edit crew' : 'Add crew', cls: 'cat-sheet' });
   }
 
   /* ============================== Debt ============================== */
@@ -4276,7 +4310,7 @@
       h('div', { class: 'sec-head', style: 'margin-top:30px;text-align:center' },
         h('h2', { class: 'sec-title hdr' }, 'Crew')),
       list,
-      (owns || moneyLead(tourId)) ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
+      manages ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
         h('button', { class: 'crew-invite', type: 'button',
           onclick: function () { openInviteSheet(tourId); } },
           h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew')) : null,
@@ -4705,7 +4739,7 @@
             onclick: function () { closeSheet(); setTimeout(function () { go({ name: 'tour', id: tourId, view: 'costs' }); }, 320); } },
             'Open Expenses'))
       ];
-    }, { label: 'New expenses' });
+    }, { label: 'New expenses', cls: 'cat-sheet' });
   }
 
   function kickOff(tourId, email, who) {
@@ -7951,11 +7985,34 @@
     }, { label: 'Share this tour' });
   }
 
+  /* Someone invited onto the tour lands under Crew on the Expenses tab, their
+     pay left to fill in. The band, friends and family aren't crew costs, and
+     someone already listed (same name or email) isn't added twice. */
+  var NOT_CREW = /^\s*(artist|band|friend|family member)\s*$/i;
+  function crewListed(t, name, email) {
+    var nm = String(name || '').trim().toLowerCase(), em = String(email || '').trim().toLowerCase();
+    return G.rows(t && t.crew).some(function (c) {
+      return (nm && String(c.name || '').trim().toLowerCase() === nm) || (em && String(c.email || '').trim().toLowerCase() === em);
+    });
+  }
+  async function addToCrewExpenses(tourId, name, tourRole, email) {
+    var t = getTour(tourId);
+    var nm = String(name || '').trim();
+    if (!t || !nm || NOT_CREW.test(String(tourRole || '')) || crewListed(t, nm, email)) return false;
+    var patch = { crew: {} };
+    patch.crew[newId()] = { name: nm, title: String(tourRole || '').trim(), pay: 0,
+      email: String(email || '').trim().toLowerCase(), createdAt: Date.now() };
+    return api.update(tourId, patch);
+  }
+
   /* Real invites (the GitHub Pages build): the tour manager runs the guest
      list; everyone else just sees who's on it. */
   function peopleSection(tourId) {
     var B = window.GR_BACKEND;
     var owns = B.ownsTour(tourId);
+    // The creator and everyone with ALL ACCESS invite, and take back invites.
+    // (leadsTour: the form below has its own "tourRole" for the person being invited.)
+    var runs = owns || leadsTour(tourId);
     var list = h('div', { class: 'ledger' },
       h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading…')));
 
@@ -7972,7 +8029,7 @@
               !m.user_id ? h('span', { class: 'crew-sub pending' }, (shown ? ' \u00b7 ' : '') + 'Pending') : null)),
           h('span', { class: 'role-tag' + (m.role === 'editor' ? ' aa' : '') },
             m.role === 'editor' ? 'ALL ACCESS' : 'GA'),
-          owns ? h('button', {
+          runs ? h('button', {
             class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + m.invited_email,
             onclick: async function () {
               try { await B.uninvite(tourId, m.invited_email); forgetCrew(tourId); toast('Removed'); refresh(); }
@@ -8001,6 +8058,7 @@
               try {
                 var status = await B.invite(tourId, p.email, p.role, p.name, p.phone,
                   { tourRole: p.tourRole || '' });
+                await addToCrewExpenses(tourId, p.name || who, p.tourRole, p.email);
                 afterInvite(tourId, who);
                 if (status === 'existing') setTimeout(function () { toast(who + ' already has an account — the tour is in it now'); }, 1700);
               } catch (e) { addBtn.disabled = false; toast('Couldn\u2019t invite them. Try again.'); }
@@ -8021,7 +8079,7 @@
     function refresh() {
       B.members(tourId).then(function (rows) {
         renderMembers(rows);
-        if (owns && B.pastCrew) {
+        if (runs && B.pastCrew) {
           B.pastCrew().then(function (people) { renderPast(people, rows); })
             .catch(function () { past.replaceChildren(); });
         }
@@ -8033,7 +8091,7 @@
     refresh();
 
     var form = null;
-    if (owns) {
+    if (runs) {
       // Everything about them is typed here, so their sign-up is just a
       // username and a password: name, email, their role, and their access.
       var role = 'viewer';
@@ -8069,6 +8127,7 @@
           try {
             var status = await B.invite(tourId, email, role, name, String(phoneI.value || '').trim(),
               { first: first, last: last, tourRole: tourRole });
+            await addToCrewExpenses(tourId, name, tourRole, email);
             afterInvite(tourId, name);
             if (status === 'existing') setTimeout(function () { toast(first + ' already has an account \u2014 the tour is in it now'); }, 1700);
             else if (status !== 'sent') setTimeout(function () { toast('The email didn\u2019t go out, but ' + first + ' can still sign up in Greenroom with ' + email); }, 1700);
@@ -9655,7 +9714,7 @@
       addTop.textContent = picked.length ? 'ADD ' + picked.length + ' · ' + G.moneyCents(total) : 'ADD';
       addTop.disabled = !picked.length;
       title.textContent = feed
-        ? plural(live.length, 'card charge') + (live.length === 1 ? ' needs' : ' need') + ' a look'
+        ? plural(live.length, 'new charge')
         : 'Found ' + plural(live.length, 'charge');
     }
 
@@ -9902,7 +9961,7 @@
     if (r.guaranteesIn) bits.push('guarantee landed for ' + plural(r.guaranteesIn, 'show'));
     if (r.paidOff) bits.push(money(r.paidOff) + ' paid on the cards');
     if (r.filed) bits.push(plural(r.filed, 'charge') + ' filed');
-    if (r.waiting) bits.push(r.waiting + ' need' + (r.waiting === 1 ? 's' : '') + ' a look');
+    if (r.waiting) bits.push(plural(r.waiting, 'new charge'));
     return bits.length ? bits.join(' \u00b7 ') : 'Nothing new on the cards';
   }
 
@@ -9935,14 +9994,14 @@
       onclick: function () { if (feedLogs(id)) refreshCards(id, refreshBtn, label); else openFeedSheet(id); } },
       icon('refresh', 18), label);
     return h('div', { class: 'feed-entry' },
-      n ? h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:10px',
-        onclick: function () { openFeedReview(id); } },
-        icon('card', 18), plural(n, 'card charge') + (n === 1 ? ' needs' : ' need') + ' a look') : null,
       h('div', { class: 'feed-bar' },
         refreshBtn,
         h('button', { class: 'btn quiet glow feed-gear', type: 'button', 'aria-label': 'Card feed settings',
           onclick: function () { openFeedSheet(id); } }, icon('gear', 20))),
-      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)));
+      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)),
+      n ? h('button', { class: 'btn primary block feed-new', type: 'button',
+        onclick: function () { openFeedReview(id); } },
+        icon('card', 18), plural(n, 'new charge')) : null);
   }
 
   /* The tour manager (ALL ACCESS, tour role Tour Manager) works the owner's
@@ -9974,11 +10033,11 @@
     var refreshBtn = h('button', { class: 'btn quiet glow feed-refresh', type: 'button',
       onclick: function () { tmRefresh(id, refreshBtn, label); } }, icon('refresh', 18), label);
     return h('div', { class: 'feed-entry' },
-      n ? h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:10px',
-        onclick: function () { openFeedReview(id); } },
-        icon('card', 18), plural(n, 'card charge') + (n === 1 ? ' needs' : ' need') + ' a look') : null,
       h('div', { class: 'feed-bar' }, refreshBtn),
-      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(P.lastRun)));
+      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(P.lastRun)),
+      n ? h('button', { class: 'btn primary block feed-new', type: 'button',
+        onclick: function () { openFeedReview(id); } },
+        icon('card', 18), plural(n, 'new charge')) : null);
   }
   async function tmRefresh(id, btn, label) {
     var B = window.GR_BACKEND;
