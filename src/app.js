@@ -5637,14 +5637,15 @@
     return h('div', { class: 'ci-wrap' }, h('button', { class: 'ci-btn' + (done ? ' done' : ''), type: 'button', disabled: done,
       onclick: async function (e) {
         e.currentTarget.disabled = true;
-        try { await B.checkIn(id, date); hornSplash(date); }
+        try { await B.checkIn(id, date); hornSplash('Checked in!', dayMD(date)); }
         catch (x) { e.currentTarget.disabled = false; toast('Couldn’t check in. Try again.'); return; }
         render(true);
       } }, done ? '✅ Checked in' : 'Check In'));
   }
 
-  /* Checking in: a big 🤘 pops and rocks, and throws a ring of smaller ones. */
-  function hornSplash(date) {
+  /* Checking in, and logging card charges: a big 🤘 pops and rocks, and
+     throws a ring of smaller ones, with the words under it. */
+  function hornSplash(big, sub) {
     var bits = [];
     if (!reduced()) for (var i = 0; i < 12; i++) {
       var a = (i / 12) * Math.PI * 2 + Math.random() * 0.4, r = 115 + Math.random() * 75;
@@ -5655,8 +5656,8 @@
     var el = h('div', { class: 'splash-note horns', role: 'status', 'aria-live': 'polite' },
       h('div', { class: 'sn-card' },
         h('span', { class: 'hs-horn', 'aria-hidden': 'true' }, '🤘', bits),
-        h('div', { class: 'sn-big' }, 'Checked in!'),
-        h('div', { class: 'sn-sub' }, dayMD(date))));
+        h('div', { class: 'sn-big' }, big),
+        sub ? h('div', { class: 'sn-sub' }, sub) : null));
     document.body.appendChild(el);
     requestAnimationFrame(function () { el.classList.add('on'); });
     setTimeout(function () {
@@ -9853,7 +9854,7 @@
         }
       }
       busy = true;
-      var said = '';
+      var said = '', addedN = 0;
       try {
         if (feed) {
           var B = window.GR_BACKEND, r = null;
@@ -9869,6 +9870,7 @@
           }
           if (S.pile && S.pile[tourId] && S.pile[tourId].lead) await loadPile(tourId);
           var bits = [];
+          addedN = r.filed || 0;
           if (r.filed) bits.push(plural(r.filed, 'charge') + ' added, ' + G.moneyCents(r.total));
           if (r.skipped) bits.push(plural(r.skipped, 'charge') + ' set aside');
           if (r.already) bits.push(plural(r.already, 'charge') + ' already sorted by someone else');
@@ -9908,6 +9910,7 @@
           if (!baseOff && !(await put(tourId, offs, function (x) { return { category: 'offdebt', offTour: true, offCategory: x.category }; }))) return;
           for (var i = 0; i < list.length; i++) { await writeLabel(list[i].merchant, list[i].category); total += G.num(list[i].amount); }
           var away = tids.filter(function (x) { return x !== tourId; });
+          addedN = list.length;
           said = plural(list.length, 'charge') + ' added, ' + G.moneyCents(total) +
             (offs.length && !baseOff ? ' \u00b7 ' + offs.length + ' to Off Tour' : '') +
             (away.length ? ' \u00b7 ' + away.map(function (x) { return byTour[x].length + ' to ' + nameOf(x); }).join(', ') : '');
@@ -9916,7 +9919,8 @@
       live = live.filter(function (x) { return list.indexOf(x) < 0; });
       // Everything the search found is sorted: the search clears, the rest comes back.
       if (query && !live.some(shown)) { query = ''; search.value = ''; }
-      toast(said);
+      if (keep && addedN) { topCat = null; markChips(); hornSplash('Expenses Logged', said); }
+      else toast(said);
       render(true);
       if (!live.length) {
         closeSheet();
@@ -9947,11 +9951,20 @@
       onchange: function (e) { live.filter(shown).forEach(function (r) { r.pick = e.target.checked; }); draw(); } });
     var addTop = h('button', { class: 'btn primary sm rv-addall', type: 'button',
       onclick: function () { file(live.filter(function (r) { return r.pick; }), true); } }, 'ADD');
+    var topCat = null;
+    var markChips = function () {
+      Array.prototype.forEach.call(chips.children, function (b) {
+        var on = b.dataset.key === topCat;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+    };
     var chips = h('div', { class: 'rv-chips', role: 'group', 'aria-label': 'Sort the checked charges' }, cats.map(function (c) {
-      return h('button', { class: 'rv-chip', type: 'button', onclick: function () {
+      return h('button', { class: 'rv-chip', type: 'button', 'data-key': c.key, 'aria-pressed': 'false', onclick: function () {
         var picked = live.filter(function (r) { return r.pick; });
         if (!picked.length) { toast('Check the charges first, then tap a category'); return; }
         picked.forEach(function (r) { r.category = c.key; r.source = 'chosen'; });
+        topCat = c.key; markChips();
         draw();
         toast(plural(picked.length, 'charge') + ' → ' + c.label);
       } }, c.label);

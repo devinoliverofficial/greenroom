@@ -1530,6 +1530,8 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .rv-chip { flex: none; appearance: none; border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
   color: var(--ink); font: inherit; font-size: 13px; font-weight: 650; padding: 7px 12px; cursor: pointer; }
 .rv-chip:active { background: var(--pos-soft); border-color: var(--pos); color: var(--pos); }
+/* The category picked at the top stays green. */
+.rv-chip.on, .rv-sheet .rv-chip.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); font-weight: 700; }
 .rv-act { display: flex; align-items: center; gap: 8px; }
 .rv-act .catpick { flex: 1; min-width: 0; }
 .rv-act .catpick select, .rv-act .catpick input { width: 100%; }
