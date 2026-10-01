@@ -2512,6 +2512,40 @@
 
   /* The plan stays put in its column and what's actually been paid sits next
      to it, so over and under are there to read at a glance. */
+  /* Up top on Expenses: money in against what's spent, on one scale, with the
+     spending split into credit, debit and cash (the chart's own totals).
+     The Off Tour book has no income, so it shows the spending alone. */
+  function expenseSummary(c, tot, off) {
+    var income = Math.max(0, G.num(c.income));
+    var parts = [['Credit', tot.credit, 'cr'], ['Debit', tot.debit, 'db'], ['Cash', tot.cash, 'ca']].map(function (x) {
+      return { label: x[0], v: Math.max(0, Math.round(G.num(x[1]) * 100) / 100), cls: x[2] };
+    });
+    var spent = Math.round(parts.reduce(function (n, x) { return n + x.v; }, 0) * 100) / 100;
+    if (!(income > 0) && !(spent > 0)) return null;
+    var scale = Math.max(income, spent, 1);
+    var w = function (v) { return 'width:' + Math.max(0, Math.min(100, v / scale * 100)).toFixed(2) + '%'; };
+    var net = Math.round((income - spent) * 100) / 100;
+    var line = function (label, amount, bar) {
+      return h('div', { class: 'xs-line' },
+        h('div', { class: 'xs-top' }, h('span', { class: 'xs-k' }, label), h('strong', { class: 'xs-v num' }, money(amount))),
+        h('div', { class: 'xs-track' }, bar));
+    };
+    return h('section', { class: 'xs-card', role: 'img',
+      'aria-label': (off ? '' : money(income) + ' in. ') + money(spent) + ' spent: ' +
+        parts.map(function (x) { return money(x.v) + ' ' + x.label.toLowerCase(); }).join(', ') +
+        (off ? '' : '. ' + money(Math.abs(net)) + (net >= 0 ? ' ahead' : ' behind') + ' so far') + '.' },
+      off ? null : line('Money in', income, income > 0 ? h('div', { class: 'xs-bar in', style: w(income) }) : null),
+      line('Spent', spent, spent > 0 ? h('div', { class: 'xs-bar segs', style: w(spent) },
+        parts.filter(function (x) { return x.v > 0; }).map(function (x) {
+          return h('i', { class: 'xs-seg ' + x.cls, style: 'flex-grow:' + x.v });
+        })) : null),
+      h('div', { class: 'xs-key' }, parts.map(function (x) {
+        return h('span', { class: 'xs-key-i' }, h('i', { class: 'xs-dot ' + x.cls }), x.label + ' ', h('b', { class: 'num' }, money(x.v)));
+      })),
+      off ? null : h('div', { class: 'xs-net ' + (net >= 0 ? 'pos' : 'neg') },
+        money(Math.abs(net)) + (net >= 0 ? ' ahead so far' : ' behind so far')));
+  }
+
   function tabExpenses(id, t, c, o) {
     var off = !!(o && o.off);
     if (!off) syncCrew(id);
@@ -2622,6 +2656,7 @@
           icon('copy', 18), 'Start from a previous tour’s budget')
       : null;
     return [
+      expenseSummary(c, { credit: creditTotal, debit: paidOutTotal, cash: cashTotal }, off),
       feedEntry(id),
       baselineOffer,
       off ? null : h('div', { class: 'mini-stack' }, cashLogEntry(id, t)),

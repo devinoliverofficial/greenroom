@@ -1900,6 +1900,30 @@ tr.st-balls .st-cell { color: var(--pos); cursor: default; }
 .owed-cards .oc-at { flex-basis: 100%; font-size: 12px; color: var(--ink-3); }
 
 /* Crew rows: tap the name to edit, Pay to log a payment. */
+/* Top of Expenses: money in against spent, one scale; spent split credit | debit | cash. */
+.xs-card { margin: 4px 0 16px; padding: 14px 14px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; }
+.xs-line + .xs-line { margin-top: 12px; }
+.xs-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.xs-k { font-family: var(--font); font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.xs-v { font-family: var(--font); font-size: 15px; font-weight: 700; color: var(--ink); }
+.xs-track { height: 14px; border-radius: 5px; background: color-mix(in oklab, var(--ink), transparent 93%); overflow: hidden; }
+.xs-bar { height: 100%; border-radius: 5px; min-width: 4px; }
+.xs-bar.in { background: var(--pos); }
+.xs-bar.segs { display: flex; gap: 2px; background: none; }
+.xs-seg { display: block; flex: 1 1 0; min-width: 3px; height: 100%; }
+.xs-seg:first-child { border-radius: 5px 0 0 5px; }
+.xs-seg:last-child { border-radius: 0 5px 5px 0; }
+.xs-seg:only-child { border-radius: 5px; }
+.xs-seg.cr, .xs-dot.cr { background: var(--neg); }
+.xs-seg.db, .xs-dot.db { background: var(--ink); }
+.xs-seg.ca, .xs-dot.ca { background: var(--part); }
+.xs-key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; font-family: var(--font); font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.xs-key-i { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.xs-key-i b { color: var(--ink); font-weight: 700; }
+.xs-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+.xs-net { margin-top: 8px; font-family: var(--font); font-size: 12.5px; font-weight: 700; }
+.xs-net.pos { color: var(--pos); }
+.xs-net.neg { color: var(--neg); }
 /* Crew: name, Edit, total. */
 .row.cw-row { gap: 10px; }
 .cw-row .row-label { flex: 1; min-width: 0; }
