@@ -1891,13 +1891,6 @@ tr.st-balls .st-cell { color: var(--pos); cursor: default; }
 }
 @media (prefers-reduced-motion: reduce) { .btn.tile.cash-entry.owed { animation: none; } }
 
-/* Budget: Owed on cards, under the big number. */
-.owed-cards { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 12px 2px 4px; padding: 12px 14px; border-radius: 16px;
-  background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
-.owed-cards .oc-l { font-size: 14px; font-weight: 650; }
-.owed-cards .oc-v { margin-left: auto; font-family: var(--font); font-size: 18px; font-weight: 800; color: var(--neg); }
-.owed-cards.clear .oc-v { color: var(--pos); }
-.owed-cards .oc-at { flex-basis: 100%; font-size: 12px; color: var(--ink-3); }
 
 /* Crew rows: tap the name to edit, Pay to log a payment. */
 /* Top of Expenses: money in against spent, one scale; spent split credit | debit | cash. */
@@ -1924,6 +1917,13 @@ tr.st-balls .st-cell { color: var(--pos); cursor: default; }
 .xs-net { margin-top: 8px; font-family: var(--font); font-size: 12.5px; font-weight: 700; }
 .xs-net.pos { color: var(--pos); }
 .xs-net.neg { color: var(--neg); }
+/* Budget: each show is date, city, Log income in the middle, its total on the right. */
+.show-row.inc-row { grid-template-columns: 42px minmax(0, 1fr) auto minmax(58px, auto); gap: 10px; cursor: default; }
+.inc-row .inc-btn { min-height: 32px; padding: 0 12px; font-size: 12.5px; white-space: nowrap; }
+.inc-row .inc-total { justify-self: end; text-align: right; font-family: var(--font); font-size: 14px; font-weight: 700; }
+.inc-row .inc-total.quiet { color: var(--ink-3); font-weight: 600; }
+.budget-page .show-row.inc-row .city { white-space: normal; overflow-wrap: anywhere; font-size: 15px; }
+.tonight.inc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(58px, auto); align-items: center; gap: 10px; }
 /* Crew: name, Edit, total. */
 .row.cw-row { gap: 10px; }
 .cw-row .row-label { flex: 1; min-width: 0; }

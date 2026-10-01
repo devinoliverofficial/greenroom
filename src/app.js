@@ -4517,7 +4517,6 @@
             onclick: function () { openCloseout(id); } }, 'Tour closeout')) : null;
       })(),
       heroNode(t, id),
-      owedOnCards(t),
       h('div', { class: 'shows-panel' }, body),
       tourTabs(id, 'money'));
   }
@@ -5499,8 +5498,6 @@
       rowsOut = shows.map(function (s) { return showRow(id, s, today); });
     }
     return [
-      canEditTour(id) ? h('button', { class: 'btn quiet glow block add-more', type: 'button',
-        onclick: function () { openAddShowsMenu(id); } }, icon('plus', 18), 'ADD MORE SHOWS') : null,
       tonight ? tonightCard(id, tonight) : null,
       shows.length
         ? [h('p', { class: 'count-line' }, logged + ' of ' + plural(shows.length, 'show') + ' logged'),
@@ -5528,21 +5525,25 @@
     // The city says where the night's money stands: red, none of it has
     // landed; orange, part of it has; green, everything logged is in.
     var money_ = G.showMoneyState(s);
-    var right;
-    if (s.loggedAt) right = h('span', { class: 'amt num' }, money(G.showIncomeTotal(s)));
-    else if (isToday) right = h('span', { class: 'tag attn' }, 'Tonight');
-    else if (s.date < today) right = h('span', { class: 'tag attn' }, 'Log income');
-    else right = h('span', { class: 'tag quiet' }, 'Upcoming');
     var owedWhat = [];
     if (money_ === 'owed' || money_ === 'partial') {
       if (G.num(s.income && s.income.guarantee) > 0 && s.guaranteeReceived === false) owedWhat.push('guarantee');
       if (G.merchDue(s) > 0 && s.merchReceived === false) owedWhat.push('merch deposit');
     }
-    return h('li', null, h('button', {
-      class: 'show-row' + (isToday ? ' is-today' : '') + (money_ ? ' ' + money_ : ''), type: 'button',
-      'aria-label': owedWhat.length ? (s.city || 'Show') + ': waiting on the ' + owedWhat.join(' and ') : null,
-      onclick: function () { if (canEditTour(id)) openIncome(id, s.id); }
-    }, dateBlock(s.date), whereBlock(s), right));
+    // Log income is always there, in the middle; a night that's been played
+    // and isn't logged yet gets the bright one. The night's total sits on
+    // the right.
+    var due = !s.loggedAt && s.date && s.date <= today;
+    var log = canEditTour(id) ? h('button', { class: 'btn sm inc-btn ' + (due ? 'primary' : 'quiet'), type: 'button',
+      'aria-label': 'Log income for ' + (s.city || 'this show'),
+      onclick: function () { openIncome(id, s.id); } }, 'Log income') : h('span');
+    var total = h('span', { class: 'amt num inc-total' + (s.loggedAt ? '' : ' quiet'),
+      'aria-label': s.loggedAt ? 'Income ' + money(G.showIncomeTotal(s)) : 'Not logged yet' },
+      s.loggedAt ? money(G.showIncomeTotal(s)) : '\u2014');
+    return h('li', null, h('div', {
+      class: 'show-row inc-row' + (isToday ? ' is-today' : '') + (money_ ? ' ' + money_ : ''), role: 'group',
+      'aria-label': owedWhat.length ? (s.city || 'Show') + ': waiting on the ' + owedWhat.join(' and ') : (s.city || 'Show')
+    }, dateBlock(s.date), whereBlock(s), log, total));
   }
 
   /* ============================== Crew Stats ==============================
@@ -5861,6 +5862,8 @@
         tourTopbar(t, id, 'calendar'),
         h('h1', { class: 'tour-title' }, 'Calendar')),
       dbBanner(),
+      canEditTour(id) ? h('button', { class: 'btn quiet glow block add-more', type: 'button',
+        onclick: function () { openAddShowsMenu(id); } }, icon('plus', 18), 'ADD MORE SHOWS') : null,
       rowsOut.length
         ? [h('p', { class: 'count-line' }, 'Special requests on show days · a vote on days off'),
            pastBtn ? h('div', { class: 'cal-past-wrap' + (S.calPast[id] ? ' open' : '') }, pastBtn) : null,
@@ -6125,42 +6128,18 @@
     }, { label: 'Special requests' });
   }
 
-  /* Owed on cards: what the card company is still owed on the credit cards
-     the feed reads, from the bank at the last refresh. Its own number: it
-     never changes what the tour spent. */
-  function owedOnCards(t) {
-    var cards = G.cardDebts(t).filter(function (c) { return G.isObj(c.feed); });
-    if (!cards.length) return null;
-    var total = 0, at = null;
-    cards.forEach(function (c) {
-      var sm = G.cardSummary(c, t);
-      total += sm.owed;
-      if (G.isObj(c.owedNow) && c.owedNow.at && (!at || c.owedNow.at > at)) at = c.owedNow.at;
-    });
-    var when = at ? new Date(at) : null;
-    return h('div', { class: 'owed-cards' + (total > 0 ? '' : ' clear') },
-      h('span', { class: 'oc-l' }, h('span', { 'aria-hidden': 'true' }, '\ud83d\udcb3 '), 'Owed on cards'),
-      h('span', { class: 'oc-v num' }, total > 0 ? money(total) : 'Paid off'),
-      when ? h('span', { class: 'oc-at' }, 'as of ' + dayMD(G.ymd(when)) + ' ' + when.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })) : null);
-  }
-
   function tonightCard(id, s) {
-    var action;
-    if (s.loggedAt) {
-      action = h('button', { class: 'btn ghost sm', type: 'button', onclick: function () { openIncome(id, s.id); } },
-        money(G.showIncomeTotal(s)));
-    } else if (canEditTour(id)) {
-      action = h('button', { class: 'btn primary sm', type: 'button', onclick: function () { openIncome(id, s.id); } },
-        'Log income');
-    } else {
-      action = h('span', { class: 'tag attn' }, 'Not logged yet');
-    }
-    return h('div', { class: 'tonight' },
+    // Log income in the middle, always; tonight's total on the right.
+    var log = canEditTour(id) ? h('button', { class: 'btn sm inc-btn ' + (s.loggedAt ? 'quiet' : 'primary'), type: 'button',
+      onclick: function () { openIncome(id, s.id); } }, 'Log income')
+      : (s.loggedAt ? h('span') : h('span', { class: 'tag attn' }, 'Not logged yet'));
+    return h('div', { class: 'tonight inc-row' },
       h('div', { class: 'tn-text' },
         h('div', { class: 'tn-label' }, 'Tonight'),
         h('div', { class: 'tn-city' }, s.city || 'Show'),
         s.venue ? h('div', { class: 'venue' }, s.venue) : null),
-      action);
+      log,
+      h('span', { class: 'amt num inc-total' + (s.loggedAt ? '' : ' quiet') }, s.loggedAt ? money(G.showIncomeTotal(s)) : '\u2014'));
   }
 
   /* ============================== Day sheet ==============================
