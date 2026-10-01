@@ -2572,10 +2572,15 @@
         }
       }, inner, icon('chevron', 18));
     };
-    var rows = [];
-    c.lines.forEach(function (l) {
-      if (l.key !== 'card' || !feedCards.length) { rows.push(lineRow(l)); return; }
-      feedCards.forEach(function (card) { rows.push(cardRow(id, t, card, paidCell, creditCell, cashCell)); });
+    // The order: the cards linked to the app first. Then every category by
+    // what's owed on credit, the most first; then by what's been spent; then
+    // by what's projected. Untouched ones keep their usual order at the end.
+    var owedOn = function (l) {
+      return l.key === 'commission' ? 0 : Math.max(0, l.creditOut != null ? l.creditOut : l.paid - paidPart(t, l.key));
+    };
+    var entries = [];
+    c.lines.forEach(function (l, i) {
+      if (l.key !== 'card' || !feedCards.length) { entries.push({ l: l, i: i }); return; }
       // Anything else under Credit card (a card typed in by hand, or a charge
       // sorted there) keeps a line of its own.
       var inCards = feedCards.reduce(function (n, card) { return n + G.cardSummary(card, t).remainder; }, 0);
@@ -2583,7 +2588,7 @@
       var otherPaid = debitPart(t, 'card') + cashPart(t, 'card') + G.cardDebts(t).filter(function (d) { return !G.isObj(d.feed); })
         .reduce(function (n, d) { return n + G.cardSummary(d, t).paidOff; }, 0);
       if (rest > 0.004 || l.projected != null || otherPaid > 0.004) {
-        rows.push(lineRow(Object.assign({}, l, {
+        entries.push({ i: i, l: Object.assign({}, l, {
           label: 'Credit card (other)', paid: Math.max(0, rest),
           cards: (l.cards || []).filter(function (r) { return !r.feed; }),
           over: l.projected != null ? Math.max(0, rest - l.projected) : 0,
@@ -2591,9 +2596,14 @@
           cashOut: cashPart(t, 'card'),
           creditOut: Math.max(0, rest) - paidPart(t, 'card'),
           left: l.projected != null ? Math.max(0, l.projected - Math.max(0, rest)) : l.left
-        })));
+        }) });
       }
     });
+    entries.forEach(function (e) { e.owed = Math.round(owedOn(e.l) * 100) / 100; e.spent = G.num(e.l.paid); e.proj = G.num(e.l.projected); });
+    entries.sort(function (a, b) { return (b.owed - a.owed) || (b.spent - a.spent) || (b.proj - a.proj) || (a.i - b.i); });
+    var rows = [];
+    feedCards.forEach(function (card) { rows.push(cardRow(id, t, card, paidCell, creditCell, cashCell)); });
+    entries.forEach(function (e) { rows.push(lineRow(e.l)); });
     var projTotal = 0, paidTotal = 0;
     c.lines.forEach(function (l) { projTotal += l.projected || 0; paidTotal += l.paid; });
     rows.unshift(head);
@@ -2666,7 +2676,7 @@
     G.rows(t && t.cashLog).forEach(function (x) {
       if (x.category !== key) return;
       out.push({ date: x.date || '', label: x.note || x.label || 'Merch cash', amount: G.num(x.amount),
-        detail: 'Merch cash', source: 'MANUAL', counts: true });
+        detail: 'Merch cash', source: 'MANUAL', cashId: x.id, counts: true });
     });
     (G.cardPaidDetail(t)[key] || []).forEach(function (r) {
       out.push({ date: '', label: r.label + (r.feed ? ' balance' : r.leftover ? ' (left over going in)' : ' going in'),
@@ -2746,6 +2756,73 @@
     setTimeout(function () { openImportReview(home, [row], 'Card feed', { feed: true, card: row.account || 'Card' }); }, 340);
   }
 
+  /* Edit an entry logged by hand: a payment (credit, debit or cash), a merch
+     cash entry, or a category's typed-in total. The amount, the details, the
+     day, how it was paid, and the category, if it went under the wrong one. */
+  function openManualEdit(id, key, r, back) {
+    var t = getTour(id);
+    var again = function () { setTimeout(function () { openLoggedSheet(id, key, back); }, 260); };
+    var ch = r.chargeId ? (t.charges || {})[r.chargeId] : null;
+    var cl = r.cashId ? (t.cashLog || {})[r.cashId] : null;
+    if (!r.typed && !ch && !cl) { toast('That entry isn\u2019t there anymore.'); return; }
+    var cats = G.chargeCategoriesFor(t).filter(function (c) { return c.key !== 'commission' && c.key !== 'offdebt'; });
+    var f = {
+      amount: r.typed ? r.amount : G.num((ch || cl).amount),
+      what: r.typed ? '' : String(ch ? ch.merchant || '' : cl.label || cl.note || ''),
+      date: r.typed ? '' : String((ch || cl).date || ''),
+      how: ch ? (ch.cash ? 'cash' : ch.paid ? 'paid' : 'spent') : null,
+      category: key
+    };
+    openSheet(function () {
+      var sel = h('select', { class: 'input', 'aria-label': 'Category', onchange: function (e) { f.category = e.target.value; } },
+        cats.map(function (c) { return h('option', { value: c.key }, c.label); }));
+      sel.value = f.category;
+      var submit = async function (e) {
+        e.preventDefault();
+        blurActive();
+        if (!(f.amount > 0)) { toast('Enter how much it was'); return; }
+        var patch;
+        if (r.typed) { patch = { expenses: {} }; patch.expenses[key] = { paid: f.amount }; }
+        else {
+          if (!G.parseDay(f.date)) { toast('Pick the day'); return; }
+          if (ch) {
+            patch = { charges: {} };
+            patch.charges[r.chargeId] = { amount: f.amount, merchant: f.what.trim() || ch.merchant || 'Charge', date: f.date,
+              category: f.category, paid: f.how !== 'spent', cash: f.how === 'cash' };
+          } else {
+            patch = { cashLog: {} };
+            patch.cashLog[r.cashId] = { amount: f.amount, label: f.what.trim() || cl.label || 'Cash', date: f.date, category: f.category };
+          }
+        }
+        if (await api.update(id, patch)) {
+          delete S.drafts['exp:' + id];
+          toast('Saved');
+          render(true);
+          if (f.category !== key) { closeSheet(); } else again();
+        }
+      };
+      return [
+        h('h2', { class: 'sh-title' }, 'Edit this entry'),
+        h('p', { class: 'sh-sub' }, r.typed ? 'A total typed in by hand.' : cl ? 'From the merch cash log.' : 'Logged by hand.'),
+        h('form', { class: 'sh-form', novalidate: true, onsubmit: submit },
+          ch ? segmented(['Credit', 'Debit', 'Cash'], ['spent', 'paid', 'cash'].indexOf(f.how), function (i) {
+            f.how = ['spent', 'paid', 'cash'][i];
+          }, 'Credit, debit or cash') : null,
+          field('How much', moneyInput({ id: 'me-amt', value: f.amount, label: 'Amount', nextId: r.typed ? null : 'me-what',
+            onValue: function (v) { f.amount = v; } })),
+          r.typed ? null : [
+            field('Expense details', h('input', { class: 'input', type: 'text', id: 'me-what', maxlength: 60, autocomplete: 'off',
+              value: f.what, oninput: function (e) { f.what = e.target.value; } })),
+            field('Day', h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Day',
+              onchange: function (e) { f.date = e.target.value; } })),
+            field('Category', h('div', { class: 'sel-wrap' }, sel, icon('chevron', 16)))],
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); again(); } }, 'Cancel')))
+      ];
+    }, { label: 'Edit this entry', cls: 'cat-sheet' });
+  }
+
   function openLoggedSheet(id, key, back) {
     function build() {
       var t = getTour(id);
@@ -2754,14 +2831,22 @@
       var total = list.reduce(function (a, r) { return r.counts ? a + r.amount : a; }, 0);
       var lead = S.mode === 'db' && moneyLead(id);
       var slides = function (r) { return lead && r.source === 'PLAID' && /^p/.test(String(r.chargeId || '')); };
-      var anySlide = list.some(slides);
+      // Logged by hand (a payment, a merch cash entry, a typed-in total): Edit or Delete.
+      var mine = function (r) { return canWrite() && canEditTour(id) && (r.typed || r.cashId || (r.chargeId && r.source === 'MANUAL')); };
+      var anySlide = list.some(function (r) { return slides(r) || mine(r); });
       return [
         h('h2', { class: 'sh-title' }, 'Logged Card Transactions'),
         h('p', { class: 'sh-sub' }, cat.label + ' · ' + plural(list.length, 'entry').replace('entrys', 'entries') + ' · ' + money(total)),
-        anySlide ? h('p', { class: 'note sw-hint' }, 'Logged one wrong? Swipe it left to Edit or Undo.') : null,
+        anySlide ? h('p', { class: 'note sw-hint' }, 'Logged one wrong? Swipe it left to fix it.') : null,
         list.length ? h('div', { class: 'ledger logged' }, list.map(function (r) {
-          var removable = canWrite() && (r.typed || (r.chargeId && r.source === 'MANUAL'));
-          var line = logRow(r, removable);
+          var line = logRow(r);
+          if (mine(r)) {
+            return swipeRow(line, [
+              h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit ' + r.label,
+                onclick: function () { openManualEdit(id, key, r, back); } }, icon('edit', 16), 'Edit'),
+              h('button', { class: 'sw-undo', type: 'button', 'aria-label': 'Delete ' + r.label,
+                onclick: function () { removeEntry(r); } }, icon('trash', 16), 'Delete')]);
+          }
           if (!slides(r)) return line;
           var ch = (t.charges || {})[r.chargeId];
           ch = Object.assign({ id: r.chargeId }, ch || {});
@@ -2785,27 +2870,27 @@
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { if (back) back(); else closeSheet(); } },
             back ? 'Back' : 'Close'))
       ];
-      function logRow(r, removable) {
-          return h('div', { class: 'row' },
-            h('div', { class: 'row-label' }, r.label,
-              h('span', { class: 'hint' }, [r.date ? dayMD(r.date) : '', r.detail].filter(Boolean).join(' · '))),
-            h('span', { class: 'src-tag src-' + r.source.toLowerCase() }, r.source),
-            h('span', { class: 'amt num' + (r.counts ? '' : ' quiet') }, money(r.amount)),
-            removable ? h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + r.label,
-              onclick: function () {
-                confirmSheet({
-                  title: 'Remove this?', body: money(r.amount) + ' comes off ' + cat.label + '.',
-                  action: 'Remove', danger: true,
-                  onConfirm: async function () {
-                    var patch;
-                    if (r.typed) { patch = { expenses: {} }; patch.expenses[key] = { paid: 0 }; }
-                    else { patch = { charges: {} }; patch.charges[r.chargeId] = null; }
-                    var ok = await api.update(id, patch);
-                    if (ok) { toast('Removed'); setTimeout(function () { openLoggedSheet(id, key, back); }, 250); }
-                    return ok;
-                  }
-                });
-              } }, icon('trash', 16)) : null);
+      function logRow(r) {
+        return h('div', { class: 'row' },
+          h('div', { class: 'row-label' }, r.label,
+            h('span', { class: 'hint' }, [r.date ? dayMD(r.date) : '', r.detail].filter(Boolean).join(' \u00b7 '))),
+          h('span', { class: 'src-tag src-' + r.source.toLowerCase() }, r.source),
+          h('span', { class: 'amt num' + (r.counts ? '' : ' quiet') }, money(r.amount)));
+      }
+      function removeEntry(r) {
+        confirmSheet({
+          title: 'Delete this?', body: money(r.amount) + ' comes off ' + cat.label + '.',
+          action: 'Delete', danger: true,
+          onConfirm: async function () {
+            var patch;
+            if (r.typed) { patch = { expenses: {} }; patch.expenses[key] = { paid: 0 }; }
+            else if (r.cashId) { patch = { cashLog: {} }; patch.cashLog[r.cashId] = null; }
+            else { patch = { charges: {} }; patch.charges[r.chargeId] = null; }
+            var ok = await api.update(id, patch);
+            if (ok) { toast('Deleted'); setTimeout(function () { openLoggedSheet(id, key, back); }, 250); }
+            return ok;
+          }
+        });
       }
     }
     openSheet(build, { label: 'Logged Card Transactions', cls: 'cat-sheet' });

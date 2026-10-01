@@ -13,7 +13,11 @@ shim = r"""<script>
     t1: { name: 'Harness run', artist: 'I See Stars', setupDone: true, setupStep: 5, createdAt: 1,
       // Real-tour-sized numbers, so the Expenses Total row is tested at full width.
       expenses: { bus: { projected: 85000 }, hotels: { projected: 23400 }, food: { projected: 12500 },
-        gas: { projected: 9800 }, flights: { projected: 18250 } }, commission: {}, crew: {}, debts: {}, extras: {},
+        gas: { projected: 9800 }, flights: { projected: 18250 } }, commission: {}, crew: {},
+      // A card linked to the app: its row leads the Expenses chart.
+      debts: { d1: { id: 'd1', label: 'Business Gold Card \u2013 1008', amount: 3200, kind: 'card', breakdown: {},
+        cutoff: ymd(new Date(today.getTime() - 20 * 864e5)), feed: { name: 'Business Gold Card \u2013 1008', bank: 'American Express' }, createdAt: 1 } },
+      extras: {},
       charges: { c1: { id: 'c1', date: ymd(today), merchant: 'Prevost', amount: 21456.78, category: 'bus', manual: true, paid: false },
         c2: { id: 'c2', date: ymd(today), merchant: 'Marriott', amount: 4560, category: 'hotels', manual: true, paid: true },
         c3: { id: 'c3', date: ymd(today), merchant: 'Delta', amount: 6890, category: 'flights', manual: true, paid: false },
