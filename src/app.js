@@ -2609,12 +2609,37 @@
       return h('div', { class: 'xs-head ' + cls }, h('span', { class: 'xs-k' }, label), h('strong', { class: 'xs-v num' }, money(amount)));
     };
     var say = function (parts) { return parts.map(function (x) { return x.label + ' ' + money(x.v); }).join(', '); };
+    // The words on the right run shorter than the room kept for them, which
+    // left the picture sitting to the left. Once it's on the page, measure
+    // what's actually drawn (totals, bars, labels) and slide the lot so the
+    // space either side is equal. The last answer is kept, so a redraw
+    // starts in the right place.
+    var kind = off ? 'off' : 'on';
+    var body = h('div', { class: 'xs-body' },
+      h('div', { class: 'xs-heads' }, off ? null : head('Income', income, 'in'), head('Expenses', spent, 'out')),
+      svg);
+    var slide = function (pct) { body.style.transform = pct ? 'translateX(' + pct.toFixed(2) + '%)' : ''; };
+    S.xsShift = S.xsShift || {};
+    slide(S.xsShift[kind] || 0);
+    var centre = function () {
+      if (!body.isConnected) return;
+      slide(0);
+      var box = body.getBoundingClientRect(), lo = Infinity, hi = -Infinity;
+      if (!box.width) return;
+      Array.prototype.forEach.call(body.querySelectorAll('.xs-head > *, text, .xs-n, .xs-trunk'), function (n) {
+        var r = n.getBoundingClientRect();
+        if (r.width) { lo = Math.min(lo, r.left); hi = Math.max(hi, r.right); }
+      });
+      if (hi > lo) S.xsShift[kind] = ((box.right - hi) - (lo - box.left)) / 2 / box.width * 100;
+      slide(S.xsShift[kind] || 0);
+    };
+    requestAnimationFrame(centre);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(centre);
     return h('section', { class: 'xs-card' + (off ? ' solo' : ''), role: 'img',
       'aria-label': (off ? '' : 'Income ' + money(income) + ': ' + say(incParts) + '. ') +
         'Expenses ' + money(spent) + ': ' + say(expParts) +
         (off ? '' : '. ' + gap + (net >= 0 ? ' ahead' : ' behind') + ' so far') + '.' },
-      h('div', { class: 'xs-heads' }, off ? null : head('Income', income, 'in'), head('Expenses', spent, 'out')),
-      svg);
+      body);
   }
 
   function tabExpenses(id, t, c, o) {
