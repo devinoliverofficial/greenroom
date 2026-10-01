@@ -2618,16 +2618,20 @@
   }
   // Of what's spent in a category, what's already paid: debit, cash, check.
   // Debit: paid by debit card or check. Cash: what the merch cash log spent
-  // in this category. Both are money already gone (paidPart is the two).
+  // in this category, plus cash logged by hand that didn't come out of it.
+  // Both are money already gone (paidPart is the two).
   function debitPart(t, key) {
     var n = 0;
     G.rows(t && t.charges).forEach(function (ch) {
-      if (ch.category === key && ch.paid && !ch.accounted) n += G.num(ch.amount);
+      if (ch.category === key && ch.paid && !ch.cash && !ch.accounted) n += G.num(ch.amount);
     });
     return Math.round(n * 100) / 100;
   }
   function cashPart(t, key) {
     var n = 0;
+    G.rows(t && t.charges).forEach(function (ch) {
+      if (ch.category === key && ch.cash && !ch.accounted) n += G.num(ch.amount);
+    });
     G.rows(t && t.cashLog).forEach(function (x) { if (x.category === key) n += G.num(x.amount); });
     return Math.round(n * 100) / 100;
   }
@@ -2637,7 +2641,7 @@
     G.rows(t && t.charges).forEach(function (ch) {
       if (ch.category !== key) return;
       out.push({ date: ch.date || '', label: ch.merchant || 'Charge', amount: G.num(ch.amount),
-        detail: [ch.account || '', ch.paid ? 'Debit' : 'Credit', ch.by ? 'sorted by ' + ch.by : '',
+        detail: [ch.account || '', ch.cash ? 'Cash' : ch.paid ? 'Debit' : 'Credit', ch.by ? 'sorted by ' + ch.by : '',
           ch.accounted ? 'already accounted for' : ''].filter(Boolean).join(' · '),
         source: chargeSource(t, ch), chargeId: ch.id, counts: !ch.accounted });
     });
@@ -2703,37 +2707,67 @@
       icon('card', 18), 'Logged Card Transactions' + (n ? ' (' + n + ')' : ''));
   }
   // A payment logged by hand: an entry of its own, dated, marked MANUAL.
+  // Each one adds to what's been spent.
   // Credit: put on a credit card, still owed until the card is paid off.
-  // Debit: a debit card, cash or a check, so the money is already gone.
+  // Debit: a debit card or a check, so the money is already gone.
+  // Cash: gone too. It can come out of the merch cash log (then it's an
+  // entry there, and that log's "left" goes down) or from anywhere else.
   function paidLogForm(id, key, label, after, how) {
-    var paid = how === 'paid';
+    var cash = how === 'cash';
+    var paid = how === 'paid' || cash;
+    var kindWord = cash ? 'cash' : paid ? 'debit' : 'credit';
     var word = paid ? 'paid' : 'charged';
-    var f = { amount: 0, date: G.tourToday(), what: '' };
+    var t0 = getTour(id);
+    // The Off Tour book has no merch cash log to take it from.
+    var asks = cash && !(t0 && t0.kind === 'offtour');
+    var f = { amount: 0, date: G.tourToday(), what: '', merch: null };
+    var yes = null, no = null;
     var submit = async function (e) {
       e.preventDefault();
       blurActive();
       if (!(f.amount > 0)) { toast('Enter how much was ' + word); return; }
       if (!G.parseDay(f.date)) { toast('Pick the day it was ' + word); return; }
-      var patch = { charges: {} };
-      patch.charges[newId()] = { date: f.date, merchant: f.what.trim() || label, amount: f.amount, category: key,
-        accounted: false, manual: true, paid: paid, createdAt: Date.now() };
+      if (asks && f.merch == null) { toast('Deduct from the Merch Cash Log? Tick Yes or No'); return; }
+      var patch;
+      if (asks && f.merch) {
+        patch = { cashLog: {} };
+        patch.cashLog[newId()] = { date: f.date, amount: f.amount, label: f.what.trim() || label, category: key, createdAt: Date.now() };
+      } else {
+        patch = { charges: {} };
+        patch.charges[newId()] = { date: f.date, merchant: f.what.trim() || label, amount: f.amount, category: key,
+          accounted: false, manual: true, paid: paid, cash: cash || undefined, createdAt: Date.now() };
+      }
       if (await api.update(id, patch)) {
         delete S.drafts['exp:' + id];
-        toast(money(f.amount) + ' logged as ' + (paid ? 'debit' : 'credit')); render(true);
+        toast(money(f.amount) + ' logged as ' + kindWord + (asks && f.merch ? ' \u00b7 taken from the merch cash log' : ''));
+        render(true);
         if (after) after(); else closeSheet();
       }
     };
+    var pick = function (v) {
+      f.merch = v;
+      yes.checked = v === true; no.checked = v === false;
+    };
+    if (asks) {
+      yes = h('input', { type: 'checkbox', class: 'rv-check', onchange: function (e) { pick(e.target.checked ? true : null); } });
+      no = h('input', { type: 'checkbox', class: 'rv-check', onchange: function (e) { pick(e.target.checked ? false : null); } });
+    }
     return h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
-      h('p', { class: 'note' }, paid ? 'Debit: a debit card, cash or a check. The money\u2019s already gone.'
+      h('p', { class: 'note' }, cash ? 'Cash: paid in cash. The money\u2019s already gone.'
+        : paid ? 'Debit: a debit card or a check. The money\u2019s already gone.'
         : 'Credit: put on a credit card. It counts now and stays owed until the card is paid off.'),
       field('How much was ' + word, moneyInput({ id: 'log-paid', value: 0, label: label + ' ' + word, nextId: 'log-what',
         onValue: function (v) { f.amount = v; } })),
-      field('What was it for?', h('input', { class: 'input', type: 'text', id: 'log-what', maxlength: 60, autocomplete: 'off',
+      field('Expense details', h('input', { class: 'input', type: 'text', id: 'log-what', maxlength: 60, autocomplete: 'off',
         placeholder: 'Optional, e.g. per diems', oninput: function (e) { f.what = e.target.value; } })),
       field('Day it was ' + word, h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Day it was ' + word,
         onchange: function (e) { f.date = e.target.value; } })),
+      asks ? h('fieldset', { class: 'yn-ask' },
+        h('legend', null, 'Deduct from Merch Cash Log?'),
+        h('label', { class: 'yn-opt' }, yes, h('span', null, 'Yes')),
+        h('label', { class: 'yn-opt' }, no, h('span', null, 'No'))) : null,
       h('div', { class: 'stack' },
-        h('button', { class: 'btn primary block', type: 'submit' }, 'Log it as ' + (paid ? 'debit' : 'credit'))));
+        h('button', { class: 'btn primary block', type: 'submit' }, 'Log it as ' + kindWord)));
   }
 
   function openCategorySheet(id, key) {
@@ -2775,15 +2809,15 @@
             else preview.textContent = had > 0 ? 'Now ' + money(had) + '. What you type replaces it.' : '';
           };
           var input = moneyInput({
-            id: 'cat-proj', value: null, label: cat.label + (pmode === 'add' ? ' amount to add' : ' projected cost'),
+            id: 'cat-proj', value: null, label: cat.label + (pmode === 'add' ? ' amount to add' : ' new total'),
             placeholder: '\u2014', last: true, onValue: function (v) { amt = v > 0 ? v : null; showPreview(); }
           });
           showPreview();
           var history = G.rows(G.isObj(t.projLog) ? t.projLog[key] : null).sort(function (a, b) { return G.num(b.at) - G.num(a.at); });
           box.replaceChildren(
-            had > 0 ? segmented(['Add to it', 'Change the total'], pmode === 'add' ? 0 : 1, function (i) {
+            had > 0 ? segmented(['Add to total', 'New total'], pmode === 'add' ? 0 : 1, function (i) {
               pmode = i ? 'set' : 'add'; draw();
-            }, 'Add to the projection or change the total') : null,
+            }, 'Add to the total or type a new total') : null,
             h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
               e.preventDefault();
               blurActive();
@@ -2801,11 +2835,11 @@
                 render(true);
               }
             } },
-              field(pmode === 'add' ? 'Add to the projection' : 'Projected for the whole tour', input,
+              field(pmode === 'add' ? 'Amount to add' : had > 0 ? 'New total' : 'Projection for the whole tour', input,
                 'What you expect it to cost. What\u2019s spent fills it up; it doesn\u2019t add on top.'),
               preview,
               h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' },
-                pmode === 'add' ? 'Add to the projection' : 'Save projection'))),
+                pmode === 'add' ? 'Add to total' : had > 0 ? 'Save new total' : 'Save projection'))),
             history.length ? h('div', { class: 'proj-log' },
               h('h3', { class: 'wn-h' }, 'How the projection got here'),
               h('div', { class: 'ledger' }, history.slice(0, 8).map(function (x) {
@@ -2815,7 +2849,7 @@
                     h('span', { class: 'hint' }, [when, x.by].filter(Boolean).join(' \u00b7 '))),
                   h('span', { class: 'amt num' }, x.total ? money(G.num(x.total)) : '\u2014'));
               }))) : null);
-        } else if (kind === 'spent' || kind === 'paid') {
+        } else if (kind === 'spent' || kind === 'paid' || kind === 'cash') {
           box.replaceChildren(paidLogForm(id, key, cat.label, null, kind));
         } else box.replaceChildren();
       }
@@ -2825,9 +2859,8 @@
         cat.note ? h('p', { class: 'sh-sub' }, cat.note) : null,
         readout,
         canWrite() ? [
-          h('h3', { class: 'sh-h3' }, 'Is this log projected, credit or debit?'),
-          segmented(['Projected', 'Credit', 'Debit'], -1, function (i) { kind = ['projected', 'spent', 'paid'][i]; draw(); },
-            'Projected, credit or debit'),
+          segmented(['Projection', 'Credit', 'Debit', 'Cash'], -1, function (i) { kind = ['projected', 'spent', 'paid', 'cash'][i]; draw(); },
+            'Projection, credit, debit or cash'),
           box
         ] : null,
         loggedButton(id, key, function () { openCategorySheet(id, key); })
@@ -3005,16 +3038,15 @@
       }
       var kind = crewKind[id] || null;
       var ask = canWrite() ? [
-        h('h3', { class: 'sh-h3' }, 'Is this log projected, credit or debit?'),
-        segmented(['Projected', 'Credit', 'Debit'], ['projected', 'spent', 'paid'].indexOf(kind), function (i) {
-          crewKind[id] = ['projected', 'spent', 'paid'][i];
+        segmented(['Projection', 'Credit', 'Debit', 'Cash'], ['projected', 'spent', 'paid', 'cash'].indexOf(kind), function (i) {
+          crewKind[id] = ['projected', 'spent', 'paid', 'cash'][i];
           openCrewSheet(id);
-        }, 'Projected, credit or debit'),
+        }, 'Projection, credit, debit or cash'),
         kind === 'projected' ? h('div', { style: 'margin-top:14px' },
           benchRow,
           h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:16px',
             onclick: function () { openCrewPerson(id, null); } }, icon('plus', 18), 'Add someone')) : null,
-        kind === 'spent' || kind === 'paid' ? paidLogForm(id, 'crew', 'Crew', function () { crewKind[id] = null; openCrewSheet(id); }, kind) : null
+        kind === 'spent' || kind === 'paid' || kind === 'cash' ? paidLogForm(id, 'crew', 'Crew', function () { crewKind[id] = null; openCrewSheet(id); }, kind) : null
       ] : null;
       // People already on the tour (invited before this) who aren't listed yet.
       var onTour = ((S.crewCache && S.crewCache[id] && S.crewCache[id].rows) || []).filter(function (m) {
@@ -4740,7 +4772,7 @@
           return h('div', { class: 'row' },
             h('div', { class: 'row-label' }, ch.merchant || 'Charge',
               h('span', { class: 'hint' }, [dayMD(ch.date), cats[ch.category] || 'Not sorted', ch.account || (ch.manual ? 'Logged by hand' : ''),
-                ch.paid ? 'Debit' : 'Credit', ch.by ? 'sorted by ' + ch.by : ''].filter(Boolean).join(' · '))),
+                ch.cash ? 'Cash' : ch.paid ? 'Debit' : 'Credit', ch.by ? 'sorted by ' + ch.by : ''].filter(Boolean).join(' · '))),
             h('span', { class: 'src-tag src-' + chargeSource(t, ch).toLowerCase() }, chargeSource(t, ch)),
             h('span', { class: 'amt num' }, G.moneyCents(ch.amount)));
         })),
