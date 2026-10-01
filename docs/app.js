@@ -111,6 +111,7 @@
     tabstats: '<path d="M8 4h8v5a4 4 0 0 1-8 0V4z"/><path d="M8 6H5.5a2.5 2.5 0 0 0 2.6 3.6M16 6h2.5a2.5 2.5 0 0 1-2.6 3.6M12 13v4M8.5 20.5h7M10 17h4"/>',
     tabchat: '<path d="M21 11.5c0 3.6-4 6.5-9 6.5-1.1 0-2.1-.13-3-.37L4 20l1.5-3.4C4.1 15.4 3 13.6 3 11.5 3 7.9 7 5 12 5s9 2.9 9 6.5z"/>',
     bell: '<path d="M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16l-2-3z"/><path d="M10.5 21a2.2 2.2 0 0 0 3 0"/>',
+    search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
     calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
     phone: '<path d="M6.5 3h3l1.5 4-2 1.5a12 12 0 0 0 5.5 5.5l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3z"/>',
@@ -9913,6 +9914,8 @@
         }
       } finally { busy = false; }
       live = live.filter(function (x) { return list.indexOf(x) < 0; });
+      // Everything the search found is sorted: the search clears, the rest comes back.
+      if (query && !live.some(shown)) { query = ''; search.value = ''; }
       toast(said);
       render(true);
       if (!live.length) {
@@ -9922,8 +9925,26 @@
     }
 
     var title = h('h2', { class: 'sh-title' });
+    // Search: "uber" shows every Uber charge (an amount works too). Check
+    // all, the categories and ADD only touch what's showing; a charge the
+    // search hides is unchecked, so nothing out of sight gets added.
+    var query = '';
+    var shown = function (r) {
+      if (!query) return true;
+      if (String(r.merchant || '').toLowerCase().indexOf(query) >= 0) return true;
+      var num = query.replace(/[$,\s]/g, '');
+      return /^\d+(\.\d*)?$/.test(num) && G.num(r.amount).toFixed(2).indexOf(num) === 0;
+    };
+    var search = h('input', { class: 'input rv-search', type: 'search', placeholder: 'Search, e.g. Uber',
+      'aria-label': 'Search the charges', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
+      oninput: function (e) {
+        query = String(e.target.value || '').trim().toLowerCase();
+        live.forEach(function (r) { if (!shown(r)) r.pick = false; });
+        draw();
+      } });
+    var found = h('p', { class: 'rv-found', 'aria-live': 'polite' });
     var allBox = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check all',
-      onchange: function (e) { live.forEach(function (r) { r.pick = e.target.checked; }); draw(); } });
+      onchange: function (e) { live.filter(shown).forEach(function (r) { r.pick = e.target.checked; }); draw(); } });
     var addTop = h('button', { class: 'btn primary sm rv-addall', type: 'button',
       onclick: function () { file(live.filter(function (r) { return r.pick; }), true); } }, 'ADD');
     var chips = h('div', { class: 'rv-chips', role: 'group', 'aria-label': 'Sort the checked charges' }, cats.map(function (c) {
@@ -9936,6 +9957,8 @@
       } }, c.label);
     }));
     var tools = h('div', { class: 'rv-tools' },
+      live.length > 1 ? h('div', { class: 'rv-find' }, icon('search', 16), search) : null,
+      found,
       h('div', { class: 'rv-bar' },
         h('label', { class: 'rv-all' }, allBox, h('span', null, 'Check all')),
         addTop),
@@ -9945,8 +9968,12 @@
     function refreshBar() {
       var picked = live.filter(function (r) { return r.pick; });
       var total = picked.reduce(function (n, r) { return n + G.num(r.amount); }, 0);
-      allBox.checked = live.length > 0 && picked.length === live.length;
-      allBox.indeterminate = picked.length > 0 && picked.length < live.length;
+      var vis = live.filter(shown);
+      allBox.checked = vis.length > 0 && vis.every(function (r) { return r.pick; });
+      allBox.indeterminate = picked.length > 0 && !allBox.checked;
+      var m = vis.reduce(function (n, r) { return n + G.num(r.amount); }, 0);
+      found.textContent = query ? (vis.length ? plural(vis.length, 'match') .replace('matchs', 'matches') + ' \u00b7 ' + G.moneyCents(m) : 'Nothing matches \u201c' + query + '\u201d') : '';
+      found.hidden = !query;
       addTop.textContent = picked.length ? 'ADD ' + picked.length + ' · ' + G.moneyCents(total) : 'ADD';
       addTop.disabled = !picked.length;
       title.textContent = feed
@@ -10008,9 +10035,9 @@
     // (already inside a card balance going in), wait folded away.
     var openBefore = false, openDup = false;
     function draw() {
-      var main = live.filter(function (r) { return !r.duplicate && !r.preCutoff; });
-      var before = live.filter(function (r) { return r.preCutoff && !r.duplicate; });
-      var dup = live.filter(function (r) { return r.duplicate; });
+      var main = live.filter(function (r) { return !r.duplicate && !r.preCutoff && shown(r); });
+      var before = live.filter(function (r) { return r.preCutoff && !r.duplicate && shown(r); });
+      var dup = live.filter(function (r) { return r.duplicate && shown(r); });
       var kids = [h('div', { class: 'review' }, main.map(chargeRow))];
       if (before.length) {
         var t2 = getTour(tourId);
