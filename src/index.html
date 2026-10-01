@@ -1293,7 +1293,7 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 /* Credit and Debit read in white, in the tour dates' font. */
 .exp-page .ledger .amt.ex-paid, .exp-page .ledger .amt.ex-done { color: var(--ink); font-family: var(--font); font-weight: 600; }
 .exp-page .ledger .amt.ex-paid.over { color: var(--neg); }
-.exp-page .ex-row .row-label { font-size: 13px; font-weight: 600; }
+.exp-page .ex-row .row-label { font-size: 12.5px; font-weight: 600; }
 .exp-page .ex-row .row-label .hint { font-size: 12px; }
 .exp-page .row.ex-row { min-height: 56px; padding-top: 10px; padding-bottom: 10px; }
 .proj-preview { margin: 4px 0 10px; font-weight: 600; color: var(--pos); }
@@ -1311,6 +1311,13 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .row.ex-head { color: var(--ink); font-family: var(--font); font-size: 10.5px; font-weight: 600; letter-spacing: -.01em; text-transform: none; }
 .row.ex-head .ex-chev { flex: 0 0 12px; width: 12px; }
 .exp-page .ledger .row.ex-head { font-size: 11.5px; }
+/* The Total under the chart: two by two, with room. */
+.exp-page .row.ex-total.ext-block { display: block; min-height: 0; padding: 12px 14px 14px; }
+.ext-title { margin-bottom: 8px; font-family: var(--font); font-size: 13px; font-weight: 700; color: var(--ink); }
+.ext-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; }
+.ext-cell { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.ext-k { font-family: var(--font); font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.exp-page .ext-cell .amt { font-family: var(--font); font-size: 15px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
 .row.ex-head .ex-proj, .row.ex-head .ex-paid, .row.ex-head .ex-done, .row.ex-head .ex-cash { display: flex; justify-content: center; overflow: visible; }
 .ledger .amt.ex-paid { color: var(--ink); }
 .ledger .amt.ex-paid.over { color: var(--neg); }

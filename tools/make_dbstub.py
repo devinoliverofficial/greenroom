@@ -11,7 +11,12 @@ shim = r"""<script>
   var ymd = function (d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
   var tours = {
     t1: { name: 'Harness run', artist: 'I See Stars', setupDone: true, setupStep: 5, createdAt: 1,
-      expenses: {}, commission: {}, crew: {}, debts: {}, extras: {}, charges: {}, imports: {},
+      // Real-tour-sized numbers, so the Expenses Total row is tested at full width.
+      expenses: { bus: { projected: 85000 }, hotels: { projected: 23400 }, food: { projected: 12500 },
+        gas: { projected: 9800 }, flights: { projected: 18250 } }, commission: {}, crew: {}, debts: {}, extras: {},
+      charges: { c1: { id: 'c1', date: ymd(today), merchant: 'Prevost', amount: 21456.78, category: 'bus', manual: true, paid: false },
+        c2: { id: 'c2', date: ymd(today), merchant: 'Marriott', amount: 4560, category: 'hotels', manual: true, paid: true },
+        c3: { id: 'c3', date: ymd(today), merchant: 'Delta', amount: 6890, category: 'flights', manual: true, paid: false } }, imports: {},
       bands: ['Opener Band', 'I See Stars'],
       shows: { s1: { id: 's1', date: ymd(today), city: 'Austin, TX', venue: 'Mohawk',
         daySheet: { doors: '7:00 PM', venueAddress: '912 Red River St, Austin, TX 78701' } },

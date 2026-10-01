@@ -2580,13 +2580,17 @@
     var projTotal = 0, paidTotal = 0;
     c.lines.forEach(function (l) { projTotal += l.projected || 0; paidTotal += l.paid; });
     rows.unshift(head);
-    rows.push(h('div', { class: 'row total ex-total' },
-      h('span', null, 'Total'),
-      h('strong', { class: 'amt num glow ex-proj' }, money(projTotal)),
-      h('strong', { class: 'amt num ex-paid' }, money(creditTotal)),
-      h('strong', { class: 'amt num ex-done' }, money(paidOutTotal)),
-      h('strong', { class: 'amt num ex-cash' }, money(cashTotal)),
-      chev ? chev.cloneNode() : null));
+    // The totals get room of their own, two by two, each number beside its
+    // name: tour-sized totals don't fit side by side in the columns.
+    var totCell = function (label, v, cls) {
+      return h('div', { class: 'ext-cell' }, h('span', { class: 'ext-k' }, label),
+        h('strong', { class: 'amt num' + (cls ? ' ' + cls : '') }, money(v)));
+    };
+    rows.push(h('div', { class: 'row total ex-total ext-block' },
+      h('div', { class: 'ext-title' }, 'Total'),
+      h('div', { class: 'ext-grid' },
+        totCell('Projected', projTotal, 'glow'), totCell('Credit', creditTotal),
+        totCell('Debit', paidOutTotal), totCell('Cash', cashTotal))));
     var charges = G.rows(t && t.charges);
     var baselineOffer = (!off && canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
       ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
@@ -2777,7 +2781,8 @@
     var line = G.calc(t).lines.filter(function (l) { return l.key === key; })[0] || { paid: 0 };
     var f = { projected: rec.projected };
     var kind = null;
-    var pmode = rec.projected != null && G.num(rec.projected) > 0 ? 'add' : 'set';
+    // Add to total, or New total: always both, even at $0.
+    var pmode = 'add';
 
     openSheet(function () {
       var readout = h('div', { class: 'preview' });
@@ -2806,7 +2811,7 @@
           var showPreview = function () {
             if (pmode === 'add') preview.textContent = amt > 0 ? money(had) + ' + ' + money(amt) + ' = ' + money(had + amt)
               : 'Now ' + money(had) + '. Type how much to add.';
-            else preview.textContent = had > 0 ? 'Now ' + money(had) + '. What you type replaces it.' : '';
+            else preview.textContent = 'Now ' + money(had) + '. What you type replaces it.';
           };
           var input = moneyInput({
             id: 'cat-proj', value: null, label: cat.label + (pmode === 'add' ? ' amount to add' : ' new total'),
@@ -2815,9 +2820,9 @@
           showPreview();
           var history = G.rows(G.isObj(t.projLog) ? t.projLog[key] : null).sort(function (a, b) { return G.num(b.at) - G.num(a.at); });
           box.replaceChildren(
-            had > 0 ? segmented(['Add to total', 'New total'], pmode === 'add' ? 0 : 1, function (i) {
+            segmented(['Add to total', 'New total'], pmode === 'add' ? 0 : 1, function (i) {
               pmode = i ? 'set' : 'add'; draw();
-            }, 'Add to the total or type a new total') : null,
+            }, 'Add to the total or type a new total'),
             h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
               e.preventDefault();
               blurActive();
@@ -2835,11 +2840,11 @@
                 render(true);
               }
             } },
-              field(pmode === 'add' ? 'Amount to add' : had > 0 ? 'New total' : 'Projection for the whole tour', input,
+              field(pmode === 'add' ? 'Amount to add' : 'New total', input,
                 'What you expect it to cost. What\u2019s spent fills it up; it doesn\u2019t add on top.'),
               preview,
               h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' },
-                pmode === 'add' ? 'Add to total' : had > 0 ? 'Save new total' : 'Save projection'))),
+                pmode === 'add' ? 'Add to total' : 'Save new total'))),
             history.length ? h('div', { class: 'proj-log' },
               h('h3', { class: 'wn-h' }, 'How the projection got here'),
               h('div', { class: 'ledger' }, history.slice(0, 8).map(function (x) {
