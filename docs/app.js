@@ -7610,6 +7610,11 @@
     G.INCOME_FIELDS.forEach(function (f) {
       draft[f.key] = G.num(G.isObj(s.income) ? s.income[f.key] : 0);
     });
+    // Taxes withheld come out of the guarantee. The full guarantee is what's
+    // typed; what's logged (and counted everywhere) is the guarantee less the
+    // tax, with the tax kept beside it.
+    var tax = Math.max(0, G.num(s.taxWithheld));
+    var gross = draft.guarantee + tax;
     var miscLabel = String((G.isObj(s.income) && s.income.miscLabel) || '');
     // Who has their buyout (only the Artists' count as income).
     var track = G.isObj(s.buyoutTrack) ? JSON.parse(JSON.stringify(s.buyoutTrack)) : null;
@@ -7638,7 +7643,8 @@
             G.INCOME_FIELDS.map(function (f) {
               return h('div', { class: 'row' },
                 h('div', { class: 'row-label' }, f.label,
-                  f.key === 'misc' && miscLabel ? h('span', { class: 'hint' }, miscLabel) : null),
+                  f.key === 'misc' && miscLabel ? h('span', { class: 'hint' }, miscLabel) : null,
+                  f.key === 'guarantee' && tax > 0 ? h('span', { class: 'hint' }, 'After ' + money(tax) + ' taxes withheld') : null),
                 h('span', { class: 'amt num' }, money(draft[f.key])));
             }),
             h('div', { class: 'row total' },
@@ -7684,6 +7690,7 @@
           merchCash: draft.merch > 0 && merchCash > 0 ? merchCash : null,
           merchCardDeposit: draft.merch > 0 && merchCardDeposit != null ? merchCardDeposit : null,
           guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
+          taxWithheld: tax > 0 && gross > 0 ? Math.min(tax, gross) : null,
           // All-cash merch has no deposit to wait for.
           merchReceived: draft.merch > 0 ? (due > 0 ? !!recv.merch : true) : null };
         if (!(draft.merch > 0 && due > 0 && recv.merch)) {
@@ -7767,6 +7774,7 @@
       readerResult = (function () { return function (r) {
           Object.keys(r.income).forEach(function (k) {
             draft[k] = r.income[k];
+            if (k === 'guarantee') { gross = G.num(r.income[k]); syncGuarantee(); }
             var el = document.getElementById('inc-' + k);
             if (el) el.value = r.income[k] ? (Math.round(r.income[k] * 100) / 100)
               .toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
@@ -7828,15 +7836,32 @@
           : money(counted) + ' counts as income \u00b7 ' + (paid === 1 ? '1 person' : paid + ' people') + ' paid';
       }
       updateBuyouts();
+      // Under the guarantee: the taxes withheld, and what's left to log.
+      var netAmt = h('span', { class: 'amt num mx-val known' }, '');
+      var netHint = h('span', { class: 'hint' }, '');
+      var netRow = h('div', { class: 'row mx-row' },
+        h('div', { class: 'row-label' }, 'Guarantee logged', netHint), netAmt);
+      function syncGuarantee() {
+        draft.guarantee = Math.max(0, Math.round((gross - tax) * 100) / 100);
+        netRow.hidden = !(tax > 0);
+        netAmt.textContent = money(draft.guarantee);
+        netHint.textContent = tax > gross ? 'The taxes are more than the guarantee' : money(gross) + ' less ' + money(tax) + ' withheld';
+      }
+      var taxInput = moneyInput({
+        id: 'inc-tax', value: tax, label: 'Taxes withheld', nextId: 'inc-backend',
+        onValue: function (v) { tax = Math.max(0, v); syncGuarantee(); refresh(); }
+      });
+      syncGuarantee();
       var rows = [];
       fields.forEach(function (f, i) {
         var mkInput = moneyInput({
-          id: 'inc-' + f.key, value: draft[f.key], label: f.label,
-          nextId: f.key === 'misc' ? 'inc-misc-label'
+          id: 'inc-' + f.key, value: f.key === 'guarantee' ? gross : draft[f.key], label: f.label,
+          nextId: f.key === 'guarantee' ? 'inc-tax' : f.key === 'misc' ? 'inc-misc-label'
             : (i < fields.length - 1 ? 'inc-' + fields[i + 1].key : null),
           last: i === fields.length - 1,
           onValue: function (v) {
-            draft[f.key] = v; syncMisc(); refresh();
+            if (f.key === 'guarantee') { gross = v; syncGuarantee(); } else draft[f.key] = v;
+            syncMisc(); refresh();
             if (f.key === 'merch') updateDeposit();
             if (f.key === 'buyouts') updateBuyouts();
           }
@@ -7916,6 +7941,11 @@
               h('label', { for: 'inc-guarantee' }, f.label),
               receivedBox('guarantee', 'Guarantee')),
             mkInput));
+          rows.push(h('div', { class: 'row mx-row' },
+            h('label', { class: 'row-label', for: 'inc-tax' }, 'Taxes withheld',
+              h('span', { class: 'hint' }, 'Taken out of the guarantee, if any')),
+            taxInput));
+          rows.push(netRow);
         } else {
           rows.push(h('div', { class: 'row' },
             h('label', { class: 'row-label', for: 'inc-' + f.key }, f.label),
