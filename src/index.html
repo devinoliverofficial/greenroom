@@ -1893,42 +1893,52 @@ tr.st-balls .st-cell { color: var(--pos); cursor: default; }
 
 
 /* Crew rows: tap the name to edit, Pay to log a payment. */
-/* Top of Expenses: money in against spent, one scale; spent split credit | debit | cash. */
-.xs-card { margin: 4px 0 16px; padding: 14px 14px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; }
-.xs-line + .xs-line { margin-top: 16px; }
-.xs-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
-.xs-k { font-family: var(--font); font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
-.xs-v { font-family: var(--font); font-size: 15px; font-weight: 700; color: var(--ink); }
-.xs-track { height: 14px; border-radius: 5px; background: color-mix(in oklab, var(--ink), transparent 93%); overflow: hidden; }
-.xs-bar { height: 100%; border-radius: 5px; min-width: 4px; }
-.xs-bar.in { background: var(--pos); }
-.xs-bar.segs { display: flex; gap: 2px; background: none; }
-.xs-seg { display: block; flex: 1 1 0; min-width: 3px; height: 100%; }
-.xs-seg:first-child { border-radius: 5px 0 0 5px; }
-.xs-seg:last-child { border-radius: 0 5px 5px 0; }
-.xs-seg:only-child { border-radius: 5px; }
+/* Top of Expenses: the flow. Income sources on the left, one trunk, and
+   where it went on the right. The picture is drawn 300 units wide, so the
+   two totals up top sit at the same fractions: Income ends at its bar's
+   right edge (78 / 300), Expenses starts at its bar's left edge (166 / 300). */
+.xs-card { margin: 4px 0 16px; padding: 14px 12px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; }
+.xs-heads { display: flex; align-items: flex-end; margin-bottom: 8px; }
+.xs-head { display: flex; flex-direction: column; gap: 1px; white-space: nowrap; }
+.xs-head.in { flex: 0 0 26%; align-items: flex-end; }
+.xs-head.out { margin-left: 29.33%; }
+.xs-card.solo .xs-head.out { margin-left: 2.67%; }
+.xs-k { font-family: var(--font); font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); }
+.xs-v { font-family: var(--font); font-size: 19px; font-weight: 700; line-height: 1.1; color: var(--ink); }
+.xs-flow { display: block; overflow: visible; font-family: var(--font); -webkit-tap-highlight-color: transparent; }
+.xs-flow .xs-t { font-size: 10.5px; font-weight: 600; fill: var(--ink); }
+.xs-flow .xs-a { font-size: 10.5px; font-weight: 400; fill: var(--ink-2); font-variant-numeric: tabular-nums; }
+.xs-flow .xs-trunk { fill: var(--ink); }
+.xs-flow .xs-rb { opacity: .28; transition: opacity .18s ease; }
+.xs-flow .xs-hit { fill: transparent; cursor: pointer; }
+.xs-flow .xs-p { transition: opacity .18s ease; }
 /* Income in greens, Expenses in reds. Six reds only stay apart if a dark
-   one sits beside a light one, so the shades alternate along the bar:
+   one sits beside a light one, so the shades alternate down the column:
    checked pair by pair (OKLab, normal and colour-blind vision), neighbours
    are 15.8+ apart. Shades that aren't neighbours are closer (7.7+), which is
-   why every segment's name and amount is in the legend under the bar. */
-.xs-seg.guar, .xs-dot.guar { background: #CCF80A; }
-.xs-seg.merch, .xs-dot.merch { background: #1FA85A; }
-.xs-seg.inother, .xs-dot.inother { background: #C9F2D0; }
-.xs-seg.crew, .xs-dot.crew { background: #E63B31; }
-.xs-seg.bus, .xs-dot.bus { background: #FFC2B8; }
-.xs-seg.lcard, .xs-dot.lcard { background: #FF6B61; }
-.xs-seg.comm, .xs-dot.comm { background: #FFE9E4; }
-.xs-seg.mbill, .xs-dot.mbill { background: #C42B22; }
-.xs-seg.other, .xs-dot.other { background: #FF9A8F; }
-.xs-key-i.zero { opacity: .5; }
-.xs-key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-family: var(--font); font-size: 12px; font-weight: 600; color: var(--ink-2); }
-.xs-key-i { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.xs-key-i b { color: var(--ink); font-weight: 700; }
-.xs-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
-.xs-net { margin-top: 8px; font-family: var(--font); font-size: 12.5px; font-weight: 700; }
-.xs-net.pos { color: var(--pos); }
-.xs-net.neg { color: var(--neg); }
+   why every part carries its own name and amount right beside it. */
+.xs-p.guar .xs-n, .xs-p.guar .xs-rb { fill: #CCF80A; }
+.xs-p.merch .xs-n, .xs-p.merch .xs-rb { fill: #1FA85A; }
+.xs-p.inother .xs-n, .xs-p.inother .xs-rb { fill: #C9F2D0; }
+.xs-p.crew .xs-n, .xs-p.crew .xs-rb { fill: #E63B31; }
+.xs-p.bus .xs-n, .xs-p.bus .xs-rb { fill: #FFC2B8; }
+.xs-p.lcard .xs-n, .xs-p.lcard .xs-rb { fill: #FF6B61; }
+.xs-p.comm .xs-n, .xs-p.comm .xs-rb { fill: #FFE9E4; }
+.xs-p.mbill .xs-n, .xs-p.mbill .xs-rb { fill: #C42B22; }
+.xs-p.other .xs-n, .xs-p.other .xs-rb { fill: #FF9A8F; }
+/* What's left over, or the shortfall: the one part whose words take its colour. */
+.xs-p.ahead .xs-n, .xs-p.ahead .xs-rb { fill: var(--pos); }
+.xs-p.behind .xs-n, .xs-p.behind .xs-rb { fill: var(--neg); }
+.xs-p.net .xs-t, .xs-p.net .xs-a { font-weight: 700; }
+.xs-p.ahead .xs-t, .xs-p.ahead .xs-a { fill: var(--pos); }
+.xs-p.behind .xs-t, .xs-p.behind .xs-a { fill: var(--neg); }
+/* Tap one and the rest step back. */
+.xs-flow.pick .xs-p:not(.on) { opacity: .3; }
+.xs-flow .xs-p.on .xs-rb { opacity: .6; }
+@keyframes xs-in { from { opacity: 0; } to { opacity: 1; } }
+/* Held only until it starts: once eased in, a part answers to the tap rule above. */
+.xs-flow.anim .xs-p { animation: xs-in .45s ease-out backwards; }
+@media (prefers-reduced-motion: reduce) { .xs-flow.anim .xs-p { animation: none; } .xs-flow .xs-p, .xs-flow .xs-rb { transition: none; } }
 /* Budget: each show is date, city, Log income in the middle, its total on the right. */
 .show-row.inc-row { grid-template-columns: 42px minmax(0, 1fr) auto minmax(58px, auto); gap: 10px; cursor: default; }
 .inc-row .inc-btn { min-height: 32px; padding: 0 12px; font-size: 12.5px; white-space: nowrap; }

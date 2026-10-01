@@ -668,6 +668,7 @@
     // OVERVIEW always opens on today's show, not wherever you last flipped to.
     if (route.name === 'tour' && route.view === 'details') S.dsIndex = null;
     S.route = route;
+    S.xsAt = null; // the Expenses flow eases in afresh each time you arrive
     S.focusOnRender = true;
     window.scrollTo(0, 0);
     render(true);
@@ -2512,10 +2513,14 @@
 
   /* The plan stays put in its column and what's actually been paid sits next
      to it, so over and under are there to read at a glance. */
-  /* Up top on Expenses: Income over Expenses, on one scale, each bar in
-     colours. Income: guarantees (with any back end), merch, everything else.
-     Expenses: crew, bus, each linked card by its name, commission, the merch
-     bill, everything else. The Off Tour book has no income: expenses alone. */
+  /* Up top on Expenses: a flow. Income comes in on the left by source
+     (guarantees with any back end, merch, everything else), runs through one
+     trunk, and fans out on the right into where it went: crew, bus, each
+     linked card by its name, commission, the merch bill, everything else, and
+     what's left over (Ahead). Spent more than came in, and the shortfall
+     joins the left as Behind, so both sides always add up to the same height.
+     Each side's total sits on top of its bar. The Off Tour book has no
+     income: the trunk fans straight out into its expenses. */
   function expenseSummary(c, expParts, off) {
     var by = G.isObj(c.incomeBy) ? c.incomeBy : {};
     var guar = Math.max(0, G.num(by.guarantee) + G.num(by.backend)), merch = Math.max(0, G.num(by.merch));
@@ -2526,29 +2531,90 @@
     expParts = expParts.map(function (x) { return { label: x.label, v: r2(x.v), cls: x.cls }; });
     var spent = r2(expParts.reduce(function (n, x) { return n + x.v; }, 0));
     if (!(income > 0) && !(spent > 0)) return null;
-    var scale = Math.max(income, spent, 1);
-    var w = function (v) { return 'width:' + Math.max(0, Math.min(100, v / scale * 100)).toFixed(2) + '%'; };
     var net = r2(income - spent);
-    var block = function (label, amount, parts) {
-      return h('div', { class: 'xs-line' },
-        h('div', { class: 'xs-top' }, h('span', { class: 'xs-k' }, label), h('strong', { class: 'xs-v num' }, money(amount))),
-        h('div', { class: 'xs-track' }, amount > 0 ? h('div', { class: 'xs-bar segs', style: w(amount) },
-          parts.filter(function (x) { return x.v > 0; }).map(function (x) {
-            return h('i', { class: 'xs-seg ' + x.cls, style: 'flex-grow:' + x.v });
-          })) : null),
-        h('div', { class: 'xs-key' }, parts.map(function (x) {
-          return h('span', { class: 'xs-key-i' + (x.v > 0 ? '' : ' zero') }, h('i', { class: 'xs-dot ' + x.cls }), x.label + ' ', h('b', { class: 'num' }, money(x.v)));
-        })));
+    var some = function (x) { return x.v > 0; };
+    var left = off ? [] : incParts.filter(some);
+    // Ahead / Behind reads as the two totals up top subtract, to the dollar.
+    var gap = money(Math.abs(Math.round(income) - Math.round(spent)));
+    if (!off && net < 0) left.push({ label: 'Behind', v: -net, cls: 'behind', say: gap });
+    var right = expParts.filter(some);
+    if (!off && net > 0) right.push({ label: 'Ahead', v: net, cls: 'ahead', say: gap });
+
+    // Drawn 300 wide and scaled to the card. A part's bar is true to size;
+    // its slot is never shorter than its label, so small ones stay readable.
+    // Off Tour has one side only, so it stands just tall enough for its parts.
+    var W = 300, TRUNK = off ? Math.min(184, Math.max(72, right.length * 30)) : 184, PAD = 6;
+    var XL = off ? 0 : 70, XM = off ? 8 : 118, XR = off ? 96 : 166, BAR = 8;
+    var column = function (parts, minSlot, gap) {
+      var sum = parts.reduce(function (n, x) { return n + x.v; }, 0) || 1, y = 0, at = 0;
+      parts.forEach(function (x) {
+        x.t0 = at; at += x.v / sum * TRUNK; x.t1 = at;          // where it meets the trunk
+        x.h = Math.max(1.5, x.v / sum * TRUNK);
+        x.slot = Math.max(x.h, minSlot); x.s0 = y; y += x.slot + gap;
+      });
+      return parts.length ? y - gap : 0;
+    };
+    var hl = column(left, 27, 5), hr = column(right, 13.5, 4);
+    var H = Math.max(hl, hr, TRUNK) + PAD * 2, trunkY = (H - TRUNK) / 2;
+    // The parts ease in once, on arriving. The page redraws as data lands, so
+    // each redraw picks the easing up where the last one left it.
+    if (!S.xsAt) S.xsAt = Date.now();
+    var since = Date.now() - S.xsAt;
+    var NS = 'http://www.w3.org/2000/svg';
+    var s = function (tag, attrs, kids) {
+      var n = document.createElementNS(NS, tag);
+      Object.keys(attrs || {}).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+      (kids || []).forEach(function (k) { if (k != null) n.appendChild(typeof k === 'string' ? document.createTextNode(k) : k); });
+      return n;
+    };
+    var f = function (v) { return v.toFixed(1); };
+    var ribbon = function (xa, a0, a1, xb, b0, b1) {
+      var cx = f((xa + xb) / 2);
+      return 'M' + f(xa) + ' ' + f(a0) + ' C' + cx + ' ' + f(a0) + ' ' + cx + ' ' + f(b0) + ' ' + f(xb) + ' ' + f(b0) +
+        ' L' + f(xb) + ' ' + f(b1) + ' C' + cx + ' ' + f(b1) + ' ' + cx + ' ' + f(a1) + ' ' + f(xa) + ' ' + f(a1) + ' Z';
+    };
+    var short = function (name) { name = String(name || ''); return name.length > 12 ? name.slice(0, 11).trim() + '…' : name; };
+    var part = function (x, i, side, top) {
+      var slot0 = top + x.s0, y0 = slot0 + (x.slot - x.h) / 2, y1 = y0 + x.h, mid = slot0 + x.slot / 2;
+      var net = x.cls === 'ahead' || x.cls === 'behind';
+      var g = s('g', { class: 'xs-p ' + x.cls + (net ? ' net' : ''), style: 'animation-delay:' + (i * 45 - since) + 'ms' });
+      if (side === 'in') {
+        g.appendChild(s('path', { class: 'xs-rb', d: ribbon(XL + BAR, y0, y1, XM, trunkY + x.t0, trunkY + x.t1) }));
+        g.appendChild(s('rect', { class: 'xs-n', x: XL, y: f(y0), width: BAR, height: f(x.h), rx: 2 }));
+        g.appendChild(s('text', { class: 'xs-t', x: XL - 6, y: f(mid - 1.5), 'text-anchor': 'end' }, [short(x.label)]));
+        g.appendChild(s('text', { class: 'xs-a', x: XL - 6, y: f(mid + 10.5), 'text-anchor': 'end' }, [x.say || money(x.v)]));
+        g.appendChild(s('rect', { class: 'xs-hit', x: 0, y: f(slot0), width: XM, height: f(x.slot) }));
+      } else {
+        g.appendChild(s('path', { class: 'xs-rb', d: ribbon(XM + BAR, trunkY + x.t0, trunkY + x.t1, XR, y0, y1) }));
+        g.appendChild(s('rect', { class: 'xs-n', x: XR, y: f(y0), width: BAR, height: f(x.h), rx: 2 }));
+        g.appendChild(s('text', { class: 'xs-t', x: XR + BAR + 6, y: f(mid + 3.8) },
+          [short(x.label) + ' ', s('tspan', { class: 'xs-a' }, [x.say || money(x.v)])]));
+        g.appendChild(s('rect', { class: 'xs-hit', x: XM + BAR, y: f(slot0 - 2), width: W - XM - BAR, height: f(x.slot + 4) }));
+      }
+      return g;
+    };
+    var svg = s('svg', { class: 'xs-flow' + (since < 1200 ? ' anim' : ''), viewBox: '0 0 ' + W + ' ' + f(H), width: '100%', 'aria-hidden': 'true' });
+    left.forEach(function (x, i) { svg.appendChild(part(x, i, 'in', (H - hl) / 2)); });
+    svg.appendChild(s('rect', { class: 'xs-trunk', x: XM, y: f(trunkY), width: BAR, height: TRUNK, rx: 2 }));
+    right.forEach(function (x, i) { svg.appendChild(part(x, left.length + i, 'out', (H - hr) / 2)); });
+    // Tap a part and the rest step back; tap it again, or anywhere else, to let go.
+    svg.addEventListener('click', function (e) {
+      var g = e.target.closest ? e.target.closest('.xs-p') : null, was = g && g.classList.contains('on');
+      Array.prototype.forEach.call(svg.querySelectorAll('.xs-p.on'), function (n) { n.classList.remove('on'); });
+      if (g && !was) g.classList.add('on');
+      svg.classList.toggle('pick', !!(g && !was));
+    });
+
+    var head = function (label, amount, cls) {
+      return h('div', { class: 'xs-head ' + cls }, h('span', { class: 'xs-k' }, label), h('strong', { class: 'xs-v num' }, money(amount)));
     };
     var say = function (parts) { return parts.map(function (x) { return x.label + ' ' + money(x.v); }).join(', '); };
-    return h('section', { class: 'xs-card', role: 'img',
+    return h('section', { class: 'xs-card' + (off ? ' solo' : ''), role: 'img',
       'aria-label': (off ? '' : 'Income ' + money(income) + ': ' + say(incParts) + '. ') +
         'Expenses ' + money(spent) + ': ' + say(expParts) +
-        (off ? '' : '. ' + money(Math.abs(net)) + (net >= 0 ? ' ahead' : ' behind') + ' so far') + '.' },
-      off ? null : block('Income', income, incParts),
-      block('Expenses', spent, expParts),
-      off ? null : h('div', { class: 'xs-net ' + (net >= 0 ? 'pos' : 'neg') },
-        money(Math.abs(net)) + (net >= 0 ? ' ahead so far' : ' behind so far')));
+        (off ? '' : '. ' + gap + (net >= 0 ? ' ahead' : ' behind') + ' so far') + '.' },
+      h('div', { class: 'xs-heads' }, off ? null : head('Income', income, 'in'), head('Expenses', spent, 'out')),
+      svg);
   }
 
   function tabExpenses(id, t, c, o) {
