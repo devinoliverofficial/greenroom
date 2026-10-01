@@ -3247,7 +3247,7 @@
       // People already on the tour (invited before this) who aren't listed yet.
       var onTour = ((S.crewCache && S.crewCache[id] && S.crewCache[id].rows) || []).filter(function (m) {
         var nm = m.name || m.username || '';
-        return !m.owner && nm && !NOT_CREW.test(String(m.tourRole || '')) && !crewListed(t, nm, m.invitedEmail || m.email);
+        return nm && !NOT_CREW.test(String(m.tourRole || '')) && !crewListed(t, nm, m.invitedEmail || m.email);
       });
       var addOnTour = onTour.length && canEditTour(id) ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:12px',
         onclick: async function () {
@@ -8277,10 +8277,11 @@
     }, { label: 'Share this tour' });
   }
 
-  /* Someone invited onto the tour lands under Crew on the Expenses tab, their
-     pay left to fill in. The band, friends and family aren't crew costs, and
-     someone already listed (same name or email) isn't added twice. */
-  var NOT_CREW = /^\s*(artist|band|friend|family member)\s*$/i;
+  /* Everyone on the tour lands under Crew on the Expenses tab, their pay
+     left to fill in: the crew, the band, and whoever started the tour. Only
+     friends and family (guests, not paid) are left out, and someone already
+     listed (same name or email) isn't added twice. */
+  var NOT_CREW = /^\s*(friend|family member)\s*$/i;
   function crewListed(t, name, email) {
     var nm = String(name || '').trim().toLowerCase(), em = String(email || '').trim().toLowerCase();
     return G.rows(t && t.crew).some(function (c) {
@@ -8321,7 +8322,7 @@
       rows.forEach(function (m) {
         var nm = String(m.name || m.username || '').trim(), em = m.invitedEmail || m.email;
         var k = crewSeenKey(nm, em);
-        if (m.owner || !nm || NOT_CREW.test(String(m.tourRole || '')) || seen[k]) return;
+        if (!nm || NOT_CREW.test(String(m.tourRole || '')) || seen[k]) return;
         patch.crewSeen[k] = true;
         if (crewListed(t, nm, em)) return;
         patch.crew[newId()] = { name: nm, title: String(m.tourRole || '').trim(), pay: 0,
