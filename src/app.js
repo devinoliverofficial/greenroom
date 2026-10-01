@@ -1746,6 +1746,8 @@
         h('h2', { class: 'sh-title' }, 'Settings'),
         who ? h('p', { class: 'sh-sub' }, 'Signed in as ' + who) : null,
         h('div', { class: 'stack' },
+          // On the Off Tour page, its card settings are here too.
+          S.route && S.route.view === 'off' && offTourOf(S.route.artist || '') ? cardMenuItem(offTourOf(S.route.artist || '')) : null,
           h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { closeSheet(); openTrash(); } },
             icon('trash', 18), 'Recently deleted' + (trashed ? ' (' + trashed + ')' : '')),
@@ -4587,10 +4589,12 @@
       h('button', { class: 'wn-big' + (st.glow ? ' on' : ' seen'), type: 'button',
         'aria-label': 'New tour tasks, ' + sub,
         onclick: function () { openTaskDeck(tourId); } },
-        h('span', { class: 'wn-ic', 'aria-hidden': 'true' }, icon('deck', 20)),
-        h('span', { class: 'wn-txt' }, h('span', { class: 'wn-t' }, 'New tour tasks'), h('span', { class: 'wn-s' }, sub)),
-        n ? h('span', { class: 'wn-count' }, String(st.glow && st.fresh ? st.fresh : n)) : null,
-        icon('chevron', 18)));
+        // Two sides of equal width, so the words sit dead centre under Invite crew.
+        h('span', { class: 'wn-side' }, h('span', { class: 'wn-ic', 'aria-hidden': 'true' }, icon('deck', 20))),
+        h('span', { class: 'wn-txt' }, h('span', { class: 'wn-t' }, 'NEW TOUR TASKS'), h('span', { class: 'wn-s' }, sub)),
+        h('span', { class: 'wn-side r' },
+          n ? h('span', { class: 'wn-count' }, String(st.glow && st.fresh ? st.fresh : n)) : null,
+          icon('chevron', 18))));
   }
 
   /* The deck: one task at a time. Right (or "Handle now") goes there; left
@@ -8449,7 +8453,8 @@
     }
     if (!db && !canEditTour(tourId)) return null;
     var off = db && S.pushOn === false;
-    return h('div', { class: 'chat-tools' },
+    // Its own corner cell (not a second chat-tools grid, which pushed it in).
+    return h('div', { class: 'ct-side ct-bell' },
       h('button', { class: 'iconbtn bell-btn', type: 'button',
         'aria-label': 'Tour alerts' + (off ? ' (not on for this phone)' : ''),
         onclick: function () { openAlertsMenu(tourId); } },
@@ -8726,6 +8731,16 @@
     wrap.scrollTop = 0;
   }
 
+  // The card settings live here (the creator's): the feed's choices once a
+  // card is in, or adding one before that.
+  function cardMenuItem(id) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !createdTour(id) || !S.feed || !B || !B.feedCall) return null;
+    var ready = !S.feed.connectOnly && !!(S.feed.row && S.feed.row.switched_on);
+    return h('button', { class: 'btn ghost block', type: 'button',
+      onclick: function () { if (S.feed.connectOnly) connectCards(id); else openFeedSheet(id); } },
+      icon(ready ? 'gear' : 'card', 18), ready ? 'Card settings' : 'Add card info');
+  }
   function openTourMenu(id) {
     var t = getTour(id);
     if (!t) return;
@@ -8736,6 +8751,7 @@
         h('div', { class: 'stack' },
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openShare(id); } },
             icon('share', 18), 'Share this tour'),
+          cardMenuItem(id),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openRename(id); } },
             icon('edit', 18), 'Name and artist'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } },
@@ -10093,20 +10109,20 @@
     if (!createdTour(id)) return tmFeedEntry(id);
     if (!S.feed) return null;
     // Only accounts on the approved list ever get this far without a feed.
+    // Until a card is in (connected and set up), the one button adds it.
+    var addCard = function (go_) {
+      return h('div', { class: 'feed-entry' }, h('div', { class: 'feed-bar' },
+        h('button', { class: 'btn quiet glow feed-refresh', type: 'button', onclick: go_ },
+          icon('card', 18), h('span', null, 'Add Card Info'))));
+    };
     if (S.feed.connectOnly) {
       if (S.mode !== 'db' || !B || !B.feedCall) return null;
-      return h('button', { class: 'btn ghost block feed-entry', type: 'button',
-        onclick: function () { connectCards(id); } },
-        icon('card', 18), 'Connect the cards');
+      return addCard(function () { connectCards(id); });
     }
     var row = S.feed.row || {};
-    if (!row.switched_on) {
-      // Connected but not set up yet: the one time the choices are asked.
-      return h('button', { class: 'btn ghost block feed-entry', type: 'button',
-        onclick: function () { openFeedSheet(id); } },
-        icon('card', 18), 'Set up the card feed');
-    }
-    // Set up: one button does the rest. The gear holds the choices.
+    // Connected but not set up yet: the one time the choices are asked.
+    if (!row.switched_on) return addCard(function () { openFeedSheet(id); });
+    // Set up: one button does the rest. The choices are in the tour menu.
     var n = feedWaiting(id).length;
     var label = h('span', null, 'Refresh Card Expenses');
     // A tour without logging dates yet gets asked for them first.
@@ -10114,10 +10130,7 @@
       onclick: function () { if (feedLogs(id)) refreshCards(id, refreshBtn, label); else openFeedSheet(id); } },
       icon('refresh', 18), label);
     return h('div', { class: 'feed-entry' },
-      h('div', { class: 'feed-bar' },
-        refreshBtn,
-        h('button', { class: 'btn quiet glow feed-gear', type: 'button', 'aria-label': 'Card feed settings',
-          onclick: function () { openFeedSheet(id); } }, icon('gear', 20))),
+      h('div', { class: 'feed-bar' }, refreshBtn),
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)),
       n ? h('button', { class: 'btn primary feed-new', type: 'button',
         onclick: function () { openFeedReview(id); } },
