@@ -2737,11 +2737,11 @@
         amount: r.amount, detail: r.feed ? 'Still under Credit card' : 'Card balance going into the tour',
         source: r.feed ? 'PLAID' : 'MANUAL', counts: true });
     });
-    // The booking agent's cut on each guarantee that came by agency deposit.
+    // Each guarantee the booking agent holds as an advance (agency deposit).
     if (key === 'commission') {
       G.calc(t).agencyShows.forEach(function (x) {
-        out.push({ date: x.date, label: 'Booking agent \u00b7 ' + String(x.city).split(',')[0], amount: x.amount,
-          detail: 'Taken out of the agency deposit', source: 'AGENCY', counts: true });
+        out.push({ date: x.date, label: 'Agency advance \u00b7 ' + String(x.city).split(',')[0], amount: x.amount,
+          detail: 'Guarantee held by the booking agent', source: 'AGENCY', counts: true });
       });
     }
     var typed = G.num((G.normExpenses(t && t.expenses)[key] || {}).paid);
@@ -3132,24 +3132,30 @@
     openSheet(function () {
       var readout = h('div', { class: 'preview' });
       function refresh() {
+        var agentNow = 0;
         var kids = G.commissionLines(d.commission).map(function (line) {
           var v = G.commissionLine(line, d.commission[line.key], base.income, base.guarantees, base.incomeBy);
+          if (line.key === 'agent') agentNow = v;
           return h('div', null, h('span', null, line.label), h('strong', { class: 'num' }, money(v)));
         });
         kids.push(h('div', null, h('span', null, 'Commission so far'),
           h('strong', { class: 'num' }, money(G.commissionTotal(d.commission, base.income, base.guarantees, base.incomeBy)))));
         // The booking agent's cut on guarantees that came by agency deposit is already paid.
-        var agencyList = G.agencyPaid(d.commission, base.shows);
-        var viaAgency = agencyList.reduce(function (n, x) { return n + x.amount; }, 0);
-        if (viaAgency > 0) {
-          kids.push(h('div', null, h('span', null, '\u21b3 Paid by agency deposits'),
-            h('strong', { class: 'num' }, money(viaAgency))));
-          // Which shows: each one's share came out of its deposit.
+        // Guarantees that came by agency deposit: the booking agent holds all
+        // of each one as an advance on their commission for the whole tour.
+        var agencyList = G.agencyAdvance(base.shows);
+        var held = agencyList.reduce(function (n, x) { return n + x.amount; }, 0);
+        if (held > 0) {
+          kids.push(h('div', null, h('span', null, '\u21b3 Held by the booking agent (advance)'),
+            h('strong', { class: 'num' }, money(held))));
           agencyList.forEach(function (x) {
             kids.push(h('div', { class: 'pv-sub' },
               h('span', null, String(x.city).split(',')[0] + (x.date ? ' \u00b7 ' + dayMD(x.date) : '')),
               h('span', { class: 'num' }, money(x.amount))));
           });
+          kids.push(held >= agentNow
+            ? h('div', null, h('span', null, 'Advance not earned yet'), h('strong', { class: 'num' }, money(held - agentNow)))
+            : h('div', null, h('span', null, 'Still owed to the booking agent'), h('strong', { class: 'num' }, money(agentNow - held))));
         }
         readout.replaceChildren.apply(readout, kids);
       }
@@ -7862,6 +7868,8 @@
           : money(counted) + ' counts as income \u00b7 ' + (paid === 1 ? '1 person' : paid + ' people') + ' paid';
       }
       updateBuyouts();
+      // The note under Paid by, filled in where the boxes are built.
+      var sayAgency = function () {};
       // Under the guarantee: the taxes withheld, and what's left to log.
       var netAmt = h('span', { class: 'amt num mx-val known' }, '');
       var netHint = h('span', { class: 'hint' }, '');
@@ -7872,6 +7880,7 @@
         netRow.hidden = !(tax > 0);
         netAmt.textContent = money(draft.guarantee);
         netHint.textContent = tax > gross ? 'The taxes are more than the guarantee' : money(gross) + ' less ' + money(tax) + ' withheld';
+        sayAgency();
       }
       var taxInput = moneyInput({
         id: 'inc-tax', value: tax, label: 'Taxes withheld', nextId: 'inc-backend',
@@ -7974,16 +7983,14 @@
           rows.push(netRow);
           // Paid by: one of the three (tap the ticked one again to clear it).
           var boxes = [];
-          // An agency deposit arrives with the booking agent's commission
-          // already taken out: that show's share is marked paid.
+          // An agency deposit: the booking agent holds the whole guarantee as
+          // an advance on their commission for the tour. It counts as income
+          // received (the agent has it) and as commission paid.
           var agencyNote = h('p', { class: 'hint gp-note' });
-          var sayAgency = function () {
-            var rule = G.normCommission((getTour(id) || t).commission).agent;
-            var pct = rule.mode === 'pct' && G.num(rule.value) > 0;
+          sayAgency = function () {
             agencyNote.hidden = paidBy !== 'agency';
-            agencyNote.textContent = pct
-              ? 'The booking agent\u2019s ' + G.num(rule.value) + '% on this show is marked as paid: it came out of the deposit.'
-              : 'Set the booking agent\u2019s percentage under Commission on the Expenses tab, and this show\u2019s share gets marked as paid.';
+            agencyNote.textContent = 'The booking agent holds this whole guarantee' + (draft.guarantee > 0 ? ' (' + money(draft.guarantee) + ')' : '') +
+              ' as an advance on their commission for the tour. It counts as commission already paid.';
           };
           sayAgency();
           rows.push(h('div', { class: 'row gp-row' },
@@ -7993,6 +8000,12 @@
                 onchange: function (e) {
                   paidBy = e.target.checked ? x[0] : null;
                   boxes.forEach(function (o) { o.checked = o === cb && !!paidBy; });
+                  // Held by the agency is received: the agent has it.
+                  if (paidBy === 'agency') {
+                    recv.guarantee = true;
+                    var rb = document.getElementById('rcv-guarantee');
+                    if (rb) rb.checked = true;
+                  }
                   sayAgency(); refresh();
                 } });
               boxes.push(cb);

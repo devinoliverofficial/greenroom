@@ -272,7 +272,9 @@
      is in hand and the rest is on its way) but the show isn't settled until
      the deposit lands. Shows logged before the Received boxes existed carry
      no flags and read as received, exactly as they always counted. */
-  function guaranteeIn(show) { return !show || show.guaranteeReceived !== false; }
+  // A guarantee paid by agency deposit is in too: it was paid, to the agent,
+  // who holds it against their commission.
+  function guaranteeIn(show) { return !show || show.guaranteePaidBy === 'agency' || show.guaranteeReceived !== false; }
   // What should land in the bank for a night's merch. atVenu Register pays the
   // card sales less processing fees, two business days after the show; when
   // the Settlement shows those card figures, that is the deposit to expect.
@@ -292,7 +294,7 @@
     if (!show || !show.loggedAt) return null;
     var inc = isObj(show.income) ? show.income : {};
     var parts = [];
-    if (num(inc.guarantee) > 0) parts.push(show.guaranteeReceived !== false);
+    if (num(inc.guarantee) > 0) parts.push(guaranteeIn(show));
     if (merchDue(show) > 0) parts.push(show.merchReceived !== false);
     var got = parts.filter(Boolean).length;
     if (got === parts.length) return 'settled';
@@ -412,22 +414,14 @@
     return (num(rule.value) / 100) * basis;
   }
 
-  /* A guarantee paid by agency deposit reaches the band with the booking
-     agent's commission already taken out of it, so that show's share of the
-     agent's commission counts as paid. Only a percentage deal can be split
-     show by show; a guarantee that hasn't come in yet has nothing taken. */
-  function agencyPaid(commission, shows) {
-    var rule = normCommission(commission).agent;
-    if (!rule || rule.mode !== 'pct' || !(num(rule.value) > 0)) return [];
+  /* A guarantee paid by agency deposit never reaches the band: the booking
+     agent holds all of it as an advance on their commission for the whole
+     tour. So the whole guarantee counts as commission already paid to the
+     agent, and their percentage works the advance off as the tour goes. */
+  function agencyAdvance(shows) {
     return (shows || []).filter(function (s) { return s && s.guaranteePaidBy === 'agency'; }).map(function (s) {
-      var inc = isObj(s.income) ? s.income : {}, by = {};
-      INCOME_FIELDS.forEach(function (f) {
-        by[f.key] = f.key === 'guarantee' && !guaranteeIn(s) ? 0 : f.key === 'buyouts' ? buyoutIncome(s) : num(inc[f.key]);
-      });
-      var basis = commissionBase(rule, by);
-      if (basis == null) basis = by.guarantee;
       return { showId: s.id, city: s.city || 'Show', date: s.date || '',
-        amount: round(num(rule.value) / 100 * basis * 100) / 100 };
+        amount: round(num(isObj(s.income) ? s.income.guarantee : 0) * 100) / 100 };
     }).filter(function (x) { return x.amount > 0; });
   }
 
@@ -641,17 +635,23 @@
     });
 
     var commissionProjected = commissionTotal(tour && tour.commission, income, guarantees, incomeBy);
-    // Logged commission payments, plus the booking agent's cut on every
-    // guarantee that came by agency deposit (already taken out of it).
-    var agencyShows = agencyPaid(tour && tour.commission, shows);
-    var agencyTotal = agencyShows.reduce(function (t, x) { return t + x.amount; }, 0);
-    var commissionPaid = (chargedTo.commission || 0) + agencyTotal;
-    var commissionEffective = Math.max(commissionProjected, commissionPaid);
+    // What the booking agent has earned so far, and what they hold as an
+    // advance (every guarantee that came by agency deposit, all of it). The
+    // advance is out of the band's hands whether or not it's earned yet, so
+    // the agent's commission counts as at least what's held; everyone else's
+    // commission is still owed on top of it.
+    var agentOwed = commissionLine(COMMISSION_LINES.filter(function (l) { return l.key === 'agent'; })[0],
+      normCommission(tour && tour.commission).agent, income, guarantees, incomeBy);
+    var agencyShows = agencyAdvance(shows);
+    var advance = agencyShows.reduce(function (t, x) { return t + x.amount; }, 0);
+    var commissionCommitted = (commissionProjected - agentOwed) + Math.max(agentOwed, advance);
+    var commissionPaid = (chargedTo.commission || 0) + advance;
+    var commissionEffective = Math.max(commissionCommitted, commissionPaid);
     lines.push({
       key: 'commission', label: 'Commission',
-      projected: commissionProjected, paid: commissionPaid, effective: commissionEffective,
-      left: Math.max(0, commissionProjected - commissionPaid),
-      over: Math.max(0, commissionPaid - commissionProjected)
+      projected: commissionCommitted, paid: commissionPaid, effective: commissionEffective,
+      left: Math.max(0, commissionCommitted - commissionPaid),
+      over: Math.max(0, commissionPaid - commissionCommitted)
     });
 
     // Only loans and gear payments live here: a card's balance already counts
@@ -670,7 +670,7 @@
       shows: shows, allShows: allShows, income: income, guarantees: guarantees, incomeBy: incomeBy,
       lines: lines, fixed: fixed,
       commission: commissionEffective, commissionProjected: commissionProjected,
-      agencyShows: agencyShows, agencyPaid: agencyTotal,
+      agencyShows: agencyShows, agencyAdvance: advance, agentOwed: agentOwed,
       debt: debt, dayByDay: dayByDay, out: out, net: income - out,
       coverage: out > 0 ? income / out : (income > 0 ? 1 : 0)
     };
@@ -1295,7 +1295,7 @@
 
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, tourDays: tourDays, agencyPaid: agencyPaid,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

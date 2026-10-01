@@ -645,31 +645,36 @@
     near(s[1].net, 1000, 'the show pulls it into the green');
   });
 
-  test('agency deposit: the booking agent\u2019s cut on that show counts as paid', function () {
+  test('agency deposit: the agent holds that whole guarantee as an advance on the tour\u2019s commission', function () {
     var t = {
       expenses: {}, crew: {}, debts: {}, extras: {}, charges: {},
       commission: { agent: { mode: 'pct', value: 10, base: { guarantee: true } }, management: { mode: 'pct', value: 15, base: { guarantee: true, merch: true } } },
       shows: keyed([
-        { date: '2026-10-05', city: 'Detroit, MI', loggedAt: 1, income: { guarantee: 5000, merch: 1000 }, guaranteePaidBy: 'agency' },
-        { date: '2026-10-06', city: 'Chicago, IL', loggedAt: 1, income: { guarantee: 4000 }, guaranteePaidBy: 'check' },
-        { date: '2026-10-07', city: 'Toledo, OH', loggedAt: 1, income: { guarantee: 3000 }, guaranteePaidBy: 'agency', guaranteeReceived: false }])
+        // Not ticked Received, but the agency has it: it's in.
+        { date: '2026-10-05', city: 'Detroit, MI', loggedAt: 1, income: { guarantee: 8000, merch: 1000 }, guaranteePaidBy: 'agency', guaranteeReceived: false },
+        { date: '2026-10-06', city: 'Chicago, IL', loggedAt: 1, income: { guarantee: 4000 }, guaranteePaidBy: 'check' }])
     };
     var c = G.calc(t);
     var line = c.lines.filter(function (l) { return l.key === 'commission'; })[0];
-    // Agent: 10% of the $9,000 in (Toledo's isn't in yet). Management: 15% of $10,000.
-    near(line.projected, 900 + 1500, 'commission owed');
-    near(c.agencyPaid, 500, 'only Detroit: 10% of its $5,000');
-    eq(c.agencyShows.length, 1, 'one agency show counts'); eq(c.agencyShows[0].city, 'Detroit, MI', 'which one');
-    near(line.paid, 500, 'counts as paid');
-    near(line.left, 1900, 'what\u2019s left to pay');
-    var before = c.out;
-    // Marking it paid never changes what the tour costs.
-    t.shows[Object.keys(t.shows)[1]].guaranteePaidBy = 'agency';
-    near(G.calc(t).out, before, 'the tour costs the same');
-    near(G.calc(t).agencyPaid, 900, 'Chicago\u2019s cut is paid too');
-    // A flat fee can\u2019t be split by show.
-    t.commission.agent = { mode: 'flat', value: 2000 };
-    eq(G.calc(t).agencyPaid, 0, 'flat deal: nothing marked');
+    near(c.income, 13000, 'the held guarantee is income');
+    eq(G.showMoneyState(t.shows.r0), 'settled', 'and not shown as owed');
+    near(c.agentOwed, 1200, 'the agent has earned 10% of $12,000');
+    near(c.agencyAdvance, 8000, 'and holds all of Detroit\u2019s $8,000');
+    eq(c.agencyShows.length, 1, 'one agency show'); eq(c.agencyShows[0].city, 'Detroit, MI', 'which one');
+    // Management's 15% of $13,000 is owed on top of what the agent holds.
+    near(line.paid, 8000, 'the advance counts as commission paid');
+    near(line.projected, 1950 + 8000, 'commission counts as at least what\u2019s held');
+    near(line.left, 1950, 'management is still owed');
+    // As the tour earns, the agent's 10% works the advance off, then passes it.
+    t.shows.r2 = { date: '2026-10-07', city: 'Toledo, OH', loggedAt: 1, income: { guarantee: 100000 }, guaranteePaidBy: 'direct' };
+    c = G.calc(t);
+    line = c.lines.filter(function (l) { return l.key === 'commission'; })[0];
+    near(c.agentOwed, 11200, 'the agent has now earned more than the advance');
+    near(line.projected, 16950 + 11200, 'so commission is simply what\u2019s earned');
+    near(line.left, 16950 + 11200 - 8000, 'less the advance already held');
+    // A check or a direct deposit holds nothing back.
+    t.shows.r0.guaranteePaidBy = 'check'; t.shows.r0.guaranteeReceived = true;
+    eq(G.calc(t).agencyAdvance, 0, 'no advance');
   });
 
   test('crew pay: a rate times the tour\u2019s length, unless a total was typed over it', function () {
