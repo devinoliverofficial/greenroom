@@ -1280,13 +1280,13 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 /* Expenses: the plan and what's been paid, side by side. */
 /* Projected, Credit, Debit and Cash: four columns of exactly the same width,
    evenly spaced, each number centred under its heading. */
-.ex-proj, .ex-paid, .ex-done, .ex-cash { flex: 0 0 55px; width: 55px; min-width: 0; text-align: center; }
-.row.ex-row, .row.ex-head, .row.ex-total { gap: 4px; }
-.exp-page .row.ex-row, .exp-page .row.ex-head, .exp-page .row.ex-total { padding-left: 10px; padding-right: 8px; }
+.ex-proj, .ex-paid, .ex-done, .ex-cash { flex: 0 0 59px; width: 59px; min-width: 0; text-align: center; }
+.row.ex-row, .row.ex-head, .row.ex-total { gap: 3px; }
+.exp-page .row.ex-row, .exp-page .row.ex-head, .exp-page .row.ex-total { padding-left: 8px; padding-right: 5px; }
 .row.ex-head .ex-proj, .row.ex-head .ex-paid, .row.ex-head .ex-done, .row.ex-head .ex-cash { text-align: center; white-space: nowrap; }
 .exp-page .ledger .amt.ex-cash { color: var(--ink); font-family: var(--font); font-weight: 600; }
 .exp-page .ex-row .amt, .exp-page .ex-total .amt { font-size: 12.5px; letter-spacing: -.02em; }
-.ex-chev, .ex-row > svg, .ex-row > .ic { flex: 0 0 12px; width: 12px; }
+.ex-chev, .ex-row > svg, .ex-row > .ic { flex: 0 0 9px; width: 9px; overflow: visible; }
 /* "X new charges" and the merch cash log: small, centred, the same size, one under the other. */
 .btn.feed-new { display: flex; width: 220px; min-height: 40px; margin: 4px auto 8px; padding: 0 14px; font-size: 14px; border-radius: 12px; }
 .mini-stack { display: flex; justify-content: center; margin: 0 0 16px; }
@@ -1300,7 +1300,7 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 /* Credit and Debit read in white, in the tour dates' font. */
 .exp-page .ledger .amt.ex-paid, .exp-page .ledger .amt.ex-done { color: var(--ink); font-family: var(--font); font-weight: 600; }
 .exp-page .ledger .amt.ex-paid.over { color: var(--neg); }
-.exp-page .ex-row .row-label { font-size: 12.5px; font-weight: 600; }
+.exp-page .ex-row .row-label { font-size: 12px; font-weight: 600; }
 .exp-page .ex-row .row-label .hint { font-size: 12px; }
 .exp-page .row.ex-row { min-height: 56px; padding-top: 10px; padding-bottom: 10px; }
 .proj-preview { margin: 4px 0 10px; font-weight: 600; color: var(--pos); }
@@ -1310,21 +1310,19 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .ex-spent { display: block; margin-top: 4px; color: var(--ink); font-weight: 700; }
 .ex-spent.over { color: var(--neg); }
 .ex-row .row-label { overflow-wrap: normal; }
-.ex-chev { flex: 0 0 12px; }
+.ex-chev { flex: 0 0 9px; }
 .row.ex-head { min-height: 0; padding-top: 11px; padding-bottom: 9px;
   font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
 .row.ex-head > span:first-child { flex: 1; }
 /* Credit and Debit (and Projected) in white, in the tour dates' font. */
 .row.ex-head { color: var(--ink); font-family: var(--font); font-size: 10.5px; font-weight: 600; letter-spacing: -.01em; text-transform: none; }
-.row.ex-head .ex-chev { flex: 0 0 12px; width: 12px; }
+.row.ex-head .ex-chev { flex: 0 0 9px; width: 9px; }
 .exp-page .ledger .row.ex-head { font-size: 11.5px; }
-/* The Total under the chart: two by two, with room. */
-.exp-page .row.ex-total.ext-block { display: block; min-height: 0; padding: 12px 14px 14px; }
-.ext-title { margin-bottom: 8px; font-family: var(--font); font-size: 13px; font-weight: 700; color: var(--ink); }
-.ext-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; }
-.ext-cell { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
-.ext-k { font-family: var(--font); font-size: 12px; font-weight: 600; color: var(--ink-2); }
-.exp-page .ext-cell .amt { font-family: var(--font); font-size: 15px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+/* The Total: one straight line, each number under its column, a size that
+   leaves room between them even at tour-sized totals. */
+.exp-page .ledger .row.ex-total { padding-top: 14px; padding-bottom: 14px; }
+.exp-page .ledger .row.ex-total .amt { font-family: var(--font); font-size: 12px; font-weight: 700; letter-spacing: -.02em; overflow: visible; }
+.exp-page .ledger .row.ex-total > span:first-child { font-size: 13px; }
 .row.ex-head .ex-proj, .row.ex-head .ex-paid, .row.ex-head .ex-done, .row.ex-head .ex-cash { display: flex; justify-content: center; overflow: visible; }
 .ledger .amt.ex-paid { color: var(--ink); }
 .ledger .amt.ex-paid.over { color: var(--neg); }

@@ -2582,17 +2582,14 @@
     var projTotal = 0, paidTotal = 0;
     c.lines.forEach(function (l) { projTotal += l.projected || 0; paidTotal += l.paid; });
     rows.unshift(head);
-    // The totals get room of their own, two by two, each number beside its
-    // name: tour-sized totals don't fit side by side in the columns.
-    var totCell = function (label, v, cls) {
-      return h('div', { class: 'ext-cell' }, h('span', { class: 'ext-k' }, label),
-        h('strong', { class: 'amt num' + (cls ? ' ' + cls : '') }, money(v)));
-    };
-    rows.push(h('div', { class: 'row total ex-total ext-block' },
-      h('div', { class: 'ext-title' }, 'Total'),
-      h('div', { class: 'ext-grid' },
-        totCell('Projected', projTotal, 'glow'), totCell('Credit', creditTotal),
-        totCell('Debit', paidOutTotal), totCell('Cash', cashTotal))));
+    // One straight line, each total under its column.
+    rows.push(h('div', { class: 'row total ex-total' },
+      h('span', null, 'Total'),
+      h('strong', { class: 'amt num glow ex-proj' }, money(projTotal)),
+      h('strong', { class: 'amt num ex-paid' }, money(creditTotal)),
+      h('strong', { class: 'amt num ex-done' }, money(paidOutTotal)),
+      h('strong', { class: 'amt num ex-cash' }, money(cashTotal)),
+      chev ? chev.cloneNode() : null));
     var charges = G.rows(t && t.charges);
     var baselineOffer = (!off && canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
       ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
