@@ -664,7 +664,41 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
   await admin.from("feed").update({
     accounts, last_run: new Date().toISOString(), last_status: problems[0] ?? "ok",
   }).eq("owner_id", feed.owner_id);
+  if (!problems.length) await reorderOnce(feed.owner_id, items);
   return { ok: !problems.length, status: problems[0] ?? "ok", filed, waiting, merchPaid: paid, guaranteesIn, paidOff };
+}
+
+/* Once: the bank's order, read fresh from the start, and every waiting
+   charge takes its place in it (within a day, the order the card's own app
+   shows). It reads only; nothing is filed, moved or saved but that place.
+   The order kept from the first read slipped for a charge whose date was
+   corrected after it arrived. If the bank is busy, it tries next time. */
+async function reorderOnce(owner: string, items: Item[]) {
+  const { data: f } = await admin.from("feed").select("ordered_at").eq("owner_id", owner).maybeSingle();
+  if (!f || f.ordered_at) return;
+  const ids: string[] = [];
+  try {
+    for (const item of items) {
+      const token = await unseal(item.token_enc);
+      let cursor = "";
+      for (let page = 0; page < 40; page++) {
+        const j = await plaidCall("/transactions/sync", { access_token: token, count: 500, ...(cursor ? { cursor } : {}) });
+        for (const t of (j.added ?? []) as Obj[]) if (!t.pending) ids.push(String(t.transaction_id));
+        cursor = String(j.next_cursor ?? "");
+        if (!j.has_more) break;
+      }
+    }
+  } catch { return; }
+  if (!ids.length) return;
+  const base = (4e12 - Date.now()) * 1000;
+  const pos = new Map(ids.map((id, i) => [id, i]));
+  const { data: waiting } = await admin.from("feed_items").select("id").eq("owner_id", owner).eq("status", "waiting");
+  for (const r of waiting ?? []) {
+    const i = pos.get(String(r.id));
+    if (i == null) continue;
+    await admin.from("feed_items").update({ seq: base + i }).eq("owner_id", owner).eq("id", r.id);
+  }
+  await admin.from("feed").update({ ordered_at: new Date().toISOString() }).eq("owner_id", owner);
 }
 
 /* ---------------- Requests ---------------- */

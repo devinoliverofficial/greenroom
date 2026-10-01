@@ -4543,7 +4543,7 @@
         if (pollCloses(x.date).getTime() <= now || B.pollFor(tourId, x.date)) return;
         tasks.push({ key: 'poll:' + x.date, standing: true, at: 0, emoji: '🗳️', title: 'Day off with no poll',
           main: dayLong(x.date), sub: 'Voting closes noon the day before',
-          open: leadsTour(tourId) ? function () { openPollEditor(tourId, x.date, null); } : view('calendar') });
+          open: moneyLead(tourId) ? function () { openPollEditor(tourId, x.date, null); } : view('calendar') });
       });
     }
     // New names on the guest list, a card per night.
@@ -5504,16 +5504,17 @@
         'Special requests')));
   }
   /* A day off's poll button, the same on the Calendar and the day sheet:
-     Create poll for the tour manager until there is one. Then Vote for
-     everyone: green and pulsing until you vote, steady white with a white
-     🤘 once you have, and Results once it's closed. */
+     Create poll for the tour manager only (the creator, or whoever's tour
+     role is Tour Manager) until there is one. Then Vote for everyone, ALL
+     ACCESS included: green and pulsing until you vote, steady white with a
+     white 🤘 once you have, and Results once it's closed. */
   function pollBtn(id, date) {
     var B = window.GR_BACKEND;
     var poll = B && B.pollFor ? B.pollFor(id, date) : null;
     var closed = poll && Date.parse(poll.closesAt) <= Date.now();
     var mine = poll && B.uid ? B.votesFor(id, date).filter(function (v) { return v.userId === B.uid(); })[0] : null;
     var cls = 'cal-btn vote', kids;
-    if (!poll && leadsTour(id)) kids = ['Create poll'];
+    if (!poll && moneyLead(id)) kids = ['Create poll'];
     else if (!poll) { cls += ' idle'; kids = ['Vote']; }
     else if (mine) { cls += ' voted'; kids = ['Vote ', h('span', { class: 'horns', 'aria-hidden': 'true' }, '\ud83e\udd18')]; }
     else if (closed) kids = ['Results'];
@@ -5596,7 +5597,7 @@
     var B = window.GR_BACKEND;
     var poll = B && B.pollFor ? B.pollFor(id, date) : null;
     if (!poll) {
-      if (leadsTour(id)) openPollEditor(id, date, null);
+      if (moneyLead(id)) openPollEditor(id, date, null);
       else toast('No poll for ' + dayMD(date) + ' yet. The tour manager posts the options.');
       return;
     }
@@ -5633,7 +5634,7 @@
               h('span', { class: 'hint' }, who.length ? who.map(function (v) { return v.name || 'Someone'; }).join(', ') : 'No votes yet')),
             h('span', { class: 'amt num' }, String(n)));
         })),
-        leadsTour(id) ? h('div', { class: 'stack' },
+        moneyLead(id) ? h('div', { class: 'stack' },
           !closed ? h('button', { class: 'btn quiet block', type: 'button',
             onclick: function () { openPollEditor(id, date, p); } }, 'Edit options') : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () {
