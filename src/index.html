@@ -1541,6 +1541,10 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .rv-chip { flex: none; appearance: none; border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
   color: var(--ink); font: inherit; font-size: 13px; font-weight: 650; padding: 7px 12px; cursor: pointer; }
 .rv-chip:active { background: var(--pos-soft); border-color: var(--pos); color: var(--pos); }
+/* "+" at the front of the categories: add one that isn't there. */
+.rv-chip.rv-plus { min-width: 34px; font-size: 16px; font-weight: 700; line-height: 1; color: var(--pos); border-color: color-mix(in oklab, var(--pos), transparent 55%); }
+.rv-newrow { display: flex; align-items: center; gap: 8px; width: 100%; }
+.rv-newrow .rv-newcat { flex: 1; min-width: 0; }
 /* The category picked at the top stays green. */
 .rv-chip.on, .rv-sheet .rv-chip.on { background: var(--brand); border-color: var(--brand); color: var(--on-brand); font-weight: 700; }
 .rv-act { display: flex; align-items: center; gap: 8px; }

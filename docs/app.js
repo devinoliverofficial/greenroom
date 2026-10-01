@@ -9856,7 +9856,6 @@
     var nameOf = function (id2) { var x = getTour(id2); return (x && x.name) || 'the tour'; };
     var live = rows.slice();
     var busy = false;
-    var cats = G.chargeCategoriesFor(base).filter(function (c) { return c.key !== 'commission' && c.key !== 'offdebt'; });
 
     // Add these charges to the tour (keep), or set them aside (feed only).
     async function file(list, keep) {
@@ -9972,23 +9971,65 @@
     var addTop = h('button', { class: 'btn primary sm rv-addall', type: 'button',
       onclick: function () { file(live.filter(function (r) { return r.pick; }), true); } }, 'ADD');
     var topCat = null;
+    var chips = h('div', { class: 'rv-chips', role: 'group', 'aria-label': 'Sort the checked charges' });
     var markChips = function () {
       Array.prototype.forEach.call(chips.children, function (b) {
+        if (!b.dataset || !b.dataset.key) return;
         var on = b.dataset.key === topCat;
         b.classList.toggle('on', on);
         b.setAttribute('aria-pressed', String(on));
       });
     };
-    var chips = h('div', { class: 'rv-chips', role: 'group', 'aria-label': 'Sort the checked charges' }, cats.map(function (c) {
-      return h('button', { class: 'rv-chip', type: 'button', 'data-key': c.key, 'aria-pressed': 'false', onclick: function () {
-        var picked = live.filter(function (r) { return r.pick; });
-        if (!picked.length) { toast('Check the charges first, then tap a category'); return; }
-        picked.forEach(function (r) { r.category = c.key; r.source = 'chosen'; });
-        topCat = c.key; markChips();
-        draw();
-        toast(plural(picked.length, 'charge') + ' → ' + c.label);
-      } }, c.label);
-    }));
+    var applyCat = function (key, label) {
+      var picked = live.filter(function (r) { return r.pick; });
+      if (!picked.length) { toast('Check the charges first, then tap a category'); return; }
+      picked.forEach(function (r) { r.category = key; r.source = 'chosen'; });
+      topCat = key; markChips();
+      draw();
+      toast(plural(picked.length, 'charge') + ' \u2192 ' + label);
+    };
+    // "+" first, then every category the tour has (its own included).
+    function buildChips() {
+      var list = G.chargeCategoriesFor(getTour(tourId) || base).filter(function (c) { return c.key !== 'commission' && c.key !== 'offdebt'; });
+      chips.replaceChildren.apply(chips, [h('button', { class: 'rv-chip rv-plus', type: 'button', 'aria-label': 'Add a category',
+        onclick: growChip }, '+')].concat(list.map(function (c) {
+        return h('button', { class: 'rv-chip', type: 'button', 'data-key': c.key, 'aria-pressed': 'false',
+          onclick: function () { applyCat(c.key, c.label); } }, c.label);
+      })));
+      markChips();
+    }
+    // "+": a category that isn't there yet. Name it and it's a category on
+    // the tour everywhere (Expenses too); checked charges go straight under it.
+    function growChip() {
+      var inp = h('input', { class: 'input sm rv-newcat', type: 'text', maxlength: 30, autocomplete: 'off',
+        placeholder: 'New category, e.g. Security', 'aria-label': 'New category name',
+        onkeydown: function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          if (e.key === 'Escape') buildChips();
+        } });
+      async function commit() {
+        var label = String(inp.value || '').trim();
+        var key = G.slugCategory(label);
+        if (!label || !key) { buildChips(); return; }
+        var clash = G.chargeCategoriesFor(getTour(tourId)).filter(function (c) {
+          return c.key === key || c.label.toLowerCase() === label.toLowerCase();
+        })[0];
+        if (clash) { key = clash.key; label = clash.label; }
+        else {
+          var patch = { extraCats: {} };
+          patch.extraCats[key] = label;
+          if (!(await api.update(tourId, patch))) { buildChips(); return; }
+        }
+        buildChips();
+        if (live.some(function (r) { return r.pick; })) applyCat(key, label);
+        else { draw(); toast('\u201c' + label + '\u201d is a category now. Check charges, then tap it.'); }
+      }
+      chips.replaceChildren(h('div', { class: 'rv-newrow' }, inp,
+        h('button', { class: 'btn sm primary', type: 'button', onclick: commit }, 'Add'),
+        h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Cancel', onclick: buildChips }, icon('close', 16))));
+      setTimeout(function () { inp.focus(); }, 30);
+    }
+    buildChips();
     var tools = h('div', { class: 'rv-tools' },
       live.length > 1 ? h('div', { class: 'rv-find' }, icon('search', 16), search) : null,
       found,
