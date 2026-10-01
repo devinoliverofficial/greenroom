@@ -5503,28 +5503,30 @@
         onclick: function () { openRequests(id, s); } },
         'Special requests')));
   }
+  /* A day off's poll button, the same on the Calendar and the day sheet:
+     Create poll for the tour manager until there is one. Then Vote for
+     everyone: green and pulsing until you vote, steady white with a white
+     🤘 once you have, and Results once it's closed. */
+  function pollBtn(id, date) {
+    var B = window.GR_BACKEND;
+    var poll = B && B.pollFor ? B.pollFor(id, date) : null;
+    var closed = poll && Date.parse(poll.closesAt) <= Date.now();
+    var mine = poll && B.uid ? B.votesFor(id, date).filter(function (v) { return v.userId === B.uid(); })[0] : null;
+    var cls = 'cal-btn vote', kids;
+    if (!poll && leadsTour(id)) kids = ['Create poll'];
+    else if (!poll) { cls += ' idle'; kids = ['Vote']; }
+    else if (mine) { cls += ' voted'; kids = ['Vote ', h('span', { class: 'horns', 'aria-hidden': 'true' }, '\ud83e\udd18')]; }
+    else if (closed) kids = ['Results'];
+    else { cls += ' on'; kids = ['Vote']; }
+    return h('button', { class: cls, type: 'button', 'aria-label': (mine ? 'Voted' : kids[0]) + ', day off ' + dayMD(date),
+      onclick: function () { openPoll(id, date); } }, kids);
+  }
   function calOffRow(id, t, date, travel) {
     var off = offDayFor(t, date);
     var reh = isRehearsalDay(t, date);
     var right;
     if (reh || travel) right = h('span', { class: 'tag quiet' }, reh ? 'Rehearsal' : 'Travel');
-    else {
-      var B = window.GR_BACKEND;
-      var poll = B && B.pollFor ? B.pollFor(id, date) : null;
-      var closed = poll && Date.parse(poll.closesAt) <= Date.now();
-      var mine = poll && B.uid ? B.votesFor(id, date).filter(function (v) { return v.userId === B.uid(); })[0] : null;
-      // Create poll for the tour manager until there is one. Then Vote for
-      // everyone: green and pulsing until you vote, steady white with a
-      // white 🤘 once you have.
-      var cls = 'cal-btn vote', kids;
-      if (!poll && leadsTour(id)) kids = ['Create poll'];
-      else if (!poll) { cls += ' idle'; kids = ['Vote']; }
-      else if (mine) { cls += ' voted'; kids = ['Vote ', h('span', { class: 'horns', 'aria-hidden': 'true' }, '\ud83e\udd18')]; }
-      else if (closed) kids = ['Results'];
-      else { cls += ' on'; kids = ['Vote']; }
-      right = h('button', { class: cls, type: 'button', 'aria-label': (mine ? 'Voted' : kids[0]) + ', day off ' + dayMD(date),
-        onclick: function () { openPoll(id, date); } }, kids);
-    }
+    else right = pollBtn(id, date);
     return h('li', null, h('div', { class: 'show-row is-off cal-row' },
       dateBlock(date),
       h('div', { class: 'where' },
@@ -6060,11 +6062,23 @@
     var placeEl = placeName || trashBtn || editBtn ? h('div', { class: 'ds-venue-row' },
       editBtn, placeName ? h('div', { class: 'ds-venue' }, placeName) : null, trashBtn) : null;
 
+    // A day off with nothing decided yet: the same poll as the Calendar,
+    // Create poll for the tour manager, Vote for everyone else. Once the
+    // tour manager fills the day sheet in, the plan's made and it goes.
+    var pollRow = null;
+    var B = window.GR_BACKEND;
+    if (!s && !lines.length && B && B.pollFor && !isRehearsalDay(t, entry.date)) {
+      var showDays = days.filter(function (x) { return x.show; });
+      var inRun = showDays.length && entry.date > showDays[0].date && entry.date < showDays[showDays.length - 1].date;
+      if (inRun) pollRow = h('div', { class: 'ds-poll' }, pollBtn(id, entry.date));
+    }
+
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
     // Check In sits right under the venue's name.
-    if (only === 'sheet') return [rail, placeEl, checkInBtn(id, entry.date, lines.length > 0), body, editRow, copyBtn];
-    return [hero, rail, editRow, body, guestBtn, copyBtn];
+    if (only === 'sheet') return [rail, placeEl, checkInBtn(id, entry.date, lines.length > 0), body, pollRow, editRow, copyBtn];
+
+    return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn];
   }
 
   function clearDaySheet(tourId, show, date, off) {
