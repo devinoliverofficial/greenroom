@@ -610,7 +610,19 @@
     if (code === 'quota_exceeded') { toast('Storage is full. Delete an old tour to make room.'); return; }
     if (code === 'resource_exhausted') { toast('Saving too fast. Wait a moment, then try again.'); return; }
     if (code === 'invalid_argument') { toast('That change couldn’t be saved.'); return; }
-    toast('Couldn’t save. Check your connection and try again.');
+    saveFailed('tour', e);
+  }
+
+  /* A save that couldn't go: say why plainly (most often it's the phone's
+     connection, and the app has already tried again), and keep a note of it
+     to look at later. */
+  var NO_SIGNAL = 'No connection right now, so that didn\u2019t save. Try again when you have signal.';
+  function saveFailed(place, e) {
+    var B = window.GR_BACKEND;
+    var offline = (e && (e.code === 'offline' || e.error === 'offline')) || (B && B.netTrouble && B.netTrouble());
+    // Card calls keep their own note.
+    if (B && B.noteError && !/^cards:/.test(place)) B.noteError(place, e);
+    toast(offline ? NO_SIGNAL : 'Couldn\u2019t save that. Try again.');
   }
 
   var api = {
@@ -2710,7 +2722,8 @@
     var B = window.GR_BACKEND, r = null;
     try { r = await B.feedCall('unfile', { tourId: id, id: chargeId }); } catch (e) { r = null; }
     if (!r || !r.ok) {
-      toast(r && r.error === 'not_allowed' ? 'Only the tour manager can undo card charges.' : 'Couldn\u2019t undo that. Try again.');
+      toast(r && r.error === 'not_allowed' ? 'Only the tour manager can undo card charges.'
+        : r && r.error === 'offline' ? NO_SIGNAL : 'Couldn\u2019t undo that. Try again.');
       return null;
     }
     S.pile = {};   // the tour manager's pile reads again
@@ -4918,7 +4931,7 @@
         });
         try {
           await window.GR_BACKEND.editMember(tourId, m.invitedEmail, f.access, ov);
-        } catch (x) { toast('Couldn\u2019t save that. Try again.'); return; }
+        } catch (x) { saveFailed('crew edit', x); return; }
         forgetCrew(tourId);
         closeSheet(); toast(who + ' updated'); render(true);
       };
@@ -5331,7 +5344,7 @@
           if (!take) throw new Error('nothing');
           await B.removeStat(take.id);
         }
-      } catch (x) { toast(x && x.message === 'nothing' ? 'You can only take back ones you added.' : 'Couldn\u2019t save that. Try again.'); }
+      } catch (x) { if (x && x.message === 'nothing') toast('You can only take back ones you added.'); else saveFailed('crew stats', x); }
       pend[key] = (pend[key] || 0) - (up ? 1 : -1);
       if (S.route && S.route.view === 'stats') redraw();
     });
@@ -9865,11 +9878,16 @@
             }) });
           } catch (e) { r = null; }
           if (!r || !r.ok) {
-            toast(r && r.error === 'not_allowed' ? 'Only the tour manager can sort card charges.' : 'Couldn’t save that. Try again.');
+            if (r && r.error === 'not_allowed') toast('Only the tour manager can sort card charges.');
+            else saveFailed('cards:file', r);
             return;
           }
           if (S.pile && S.pile[tourId] && S.pile[tourId].lead) await loadPile(tourId);
           var bits = [];
+          if (r.retried && keep && !r.filed && r.already) {
+            r.filed = r.already; r.already = 0;
+            r.total = Math.round(list.reduce(function (n, x) { return n + G.num(x.amount); }, 0) * 100) / 100;
+          }
           addedN = r.filed || 0;
           if (r.filed) bits.push(plural(r.filed, 'charge') + ' added, ' + G.moneyCents(r.total));
           if (r.skipped) bits.push(plural(r.skipped, 'charge') + ' set aside');
@@ -10486,7 +10504,7 @@
               } });
             } catch (x) { r = null; }
             btn.disabled = false;
-            if (!r || !r.ok) { toast('Couldn\u2019t save that. Try again.'); return; }
+            if (!r || !r.ok) { saveFailed('cards:setup', r); return; }
             if (!last) openAccountQuestions(list, i + 1, tourId);
             else openFeedSheet(tourId);
           } }, last ? 'Done' : 'Next'),

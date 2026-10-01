@@ -177,8 +177,63 @@
   function mapError(e) {
     var msg = String(e && e.message || '');
     if (/permission|policy|denied|42501/i.test(msg)) return err('permission');
-    if (/network|fetch/i.test(msg)) return err('unavailable');
+    if (/network|fetch|load failed|connection/i.test(msg)) return err('offline');
     return err('unavailable');
+  }
+
+  /* On the road a phone drops its signal all the time, and an iPhone that
+     has been asleep can fail its first request outright ("Load failed")
+     before it ever leaves the phone. A request that gets no answer at all is
+     tried again, twice, after a short wait. (A request the server answered,
+     even with an error, is never repeated.) */
+  var lastNetFail = 0;
+  function sturdyFetch(input, init) {
+    var tries = 0;
+    function go() {
+      return fetch(input, init).catch(function (e) {
+        if (init && init.signal && init.signal.aborted) throw e;
+        tries += 1;
+        if (init) init.__retried = true;
+        if (tries > 2) { lastNetFail = Date.now(); throw e; }
+        return new Promise(function (res) { setTimeout(res, tries === 1 ? 500 : 1500); }).then(go);
+      });
+    }
+    return go();
+  }
+
+  /* When something still can't be saved: what it was and why (never the
+     money itself), kept for a look later. Sent now if it can be, otherwise
+     the next time the app is back online. */
+  var ERR_KEY = 'gr-save-errors';
+  function noteError(place, e) {
+    var row = { place: String(place || '').slice(0, 60),
+      code: String((e && (e.code || e.status || e.error)) || '').slice(0, 60),
+      detail: String((e && e.message) || (typeof e === 'string' ? e : '') || '').slice(0, 200),
+      offline: navigator.onLine === false || Date.now() - lastNetFail < 8000,
+      ua: String(navigator.userAgent || '').slice(0, 160), at: new Date().toISOString() };
+    var q = [];
+    try { q = JSON.parse(localStorage.getItem(ERR_KEY) || '[]'); } catch (x) { q = []; }
+    q.push(row);
+    try { localStorage.setItem(ERR_KEY, JSON.stringify(q.slice(-30))); } catch (x) { /* fine */ }
+    flushErrors();
+  }
+  var flushing = false;
+  async function flushErrors() {
+    if (flushing || !sb || !session) return;
+    var q = [];
+    try { q = JSON.parse(localStorage.getItem(ERR_KEY) || '[]'); } catch (x) { q = []; }
+    if (!q.length) return;
+    flushing = true;
+    try {
+      var r = await sb.from('app_errors').insert(q);
+      if (!r.error) { try { localStorage.removeItem(ERR_KEY); } catch (x) { /* fine */ } }
+    } catch (x) { /* next time */ }
+    flushing = false;
+  }
+
+  function newRowId() {
+    try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* older phones */ }
+    return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
   }
 
   /* ---------------- The sample capability ---------------- */
@@ -208,7 +263,9 @@
     for (var attempt = 0; attempt < 2; attempt++) {
       var headers = { 'Content-Type': 'application/json', apikey: cfg.anonKey,
         Authorization: 'Bearer ' + await freshToken(attempt > 0) };
-      res = await fetch(cfg.url + '/functions/v1/' + name, Object.assign({}, init, { headers: headers }));
+      var go = Object.assign({}, init, { headers: headers });
+      res = await sturdyFetch(cfg.url + '/functions/v1/' + name, go);
+      if (go.__retried) res.__retried = true;
       if (res.status !== 401) break;
     }
     return res;
@@ -278,6 +335,10 @@
   /* ---------------- People (invites), used by the Share sheet ---------------- */
 
   window.GR_BACKEND = {
+    // A save that couldn't go: kept for a look later. And whether the
+    // phone's connection is the likely reason.
+    noteError: noteError,
+    netTrouble: function () { return navigator.onLine === false || Date.now() - lastNetFail < 8000; },
     email: function () { return session && session.user ? session.user.email : null; },
     username: function () {
       var m = session && session.user ? session.user.user_metadata : null;
@@ -521,8 +582,9 @@
       await refetch();
     },
     addRequest: async function (tourId, date, body) {
-      var q = await sb.from('day_requests').insert({ tour_id: tourId, date: date, body: String(body || '').trim().slice(0, 300) });
-      if (q.error) throw mapError(q.error);
+      var q = await sb.from('day_requests').insert({ id: newRowId(), tour_id: tourId, date: date, body: String(body || '').trim().slice(0, 300) });
+      // Already there: a repeat of one that got through.
+      if (q.error && q.error.code !== '23505') throw mapError(q.error);
       await refetch();
     },
     // The tour manager (or ALL ACCESS) answers: 'accepted', 'denied', or back to 'pending'.
@@ -547,7 +609,10 @@
     // Stats save fast: the row goes straight into what this phone knows,
     // without reloading everything (live updates bring everyone else's).
     addStat: async function (tourId, person, stat) {
-      var q = await sb.from('crew_stats').insert({ tour_id: tourId, person: person, stat: stat }).select('*');
+      var rid = newRowId();
+      var q = await sb.from('crew_stats').insert({ id: rid, tour_id: tourId, person: person, stat: stat }).select('*');
+      // Already there: a repeat of one that got through.
+      if (q.error && q.error.code === '23505') { await refetch(); return rid; }
       if (q.error) throw mapError(q.error);
       var row = q.data && q.data[0];
       if (row && !cache.stats.some(function (x) { return x.id === row.id; })) cache.stats.push(row);
@@ -718,13 +783,23 @@
       loadFeed(true);
     },
     feedCall: async function (action, body) {
-      var r = await callFn('plaid', {
-        method: 'POST',
-        body: JSON.stringify(Object.assign({ action: action }, body || {}))
-      });
+      var r;
+      try {
+        r = await callFn('plaid', {
+          method: 'POST',
+          body: JSON.stringify(Object.assign({ action: action }, body || {}))
+        });
+      } catch (e) {
+        // No answer at all, even after trying again: the phone's connection.
+        noteError('cards:' + action, e);
+        return { error: 'offline' };
+      }
       var out = {};
       try { out = await r.json(); } catch (e) { out = {}; }
       if (!r.ok && !out.error) out.error = 'unavailable';
+      // Tried again after no answer: the first one may have got through.
+      if (r.__retried) out.retried = true;
+      if (out.error || out.ok === false) noteError('cards:' + action, { code: out.error || out.status, message: 'http ' + r.status });
       // Wait for the fresh pile, so the app can act on what just came in.
       if (action !== 'status') await loadFeed(false);
       return out;
@@ -1106,8 +1181,20 @@
       // one can stay held after the app sleeps, and every sign-in call behind
       // it (signing out, even starting up) waits forever.
       auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true,
-        lock: mod.processLock || undefined }
+        lock: mod.processLock || undefined },
+      global: { fetch: sturdyFetch }
     });
+    // Back from the background: freshen the sign-in and wake the connection
+    // before the first tap needs it, and send any saves that couldn't go.
+    var hiddenAt = 0;
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+      if (hiddenAt && Date.now() - hiddenAt > 30e3) {
+        freshToken(false).then(function () { flushErrors(); }).catch(function () { /* next tap tries */ });
+      }
+      hiddenAt = 0;
+    });
+    window.addEventListener('online', function () { flushErrors(); });
     var got = await sb.auth.getSession();
     session = got.data ? got.data.session : null;
     var note = '';
