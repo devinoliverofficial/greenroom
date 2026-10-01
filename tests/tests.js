@@ -645,6 +645,33 @@
     near(s[1].net, 1000, 'the show pulls it into the green');
   });
 
+  test('agency deposit: the booking agent\u2019s cut on that show counts as paid', function () {
+    var t = {
+      expenses: {}, crew: {}, debts: {}, extras: {}, charges: {},
+      commission: { agent: { mode: 'pct', value: 10, base: { guarantee: true } }, management: { mode: 'pct', value: 15, base: { guarantee: true, merch: true } } },
+      shows: keyed([
+        { date: '2026-10-05', city: 'Detroit, MI', loggedAt: 1, income: { guarantee: 5000, merch: 1000 }, guaranteePaidBy: 'agency' },
+        { date: '2026-10-06', city: 'Chicago, IL', loggedAt: 1, income: { guarantee: 4000 }, guaranteePaidBy: 'check' },
+        { date: '2026-10-07', city: 'Toledo, OH', loggedAt: 1, income: { guarantee: 3000 }, guaranteePaidBy: 'agency', guaranteeReceived: false }])
+    };
+    var c = G.calc(t);
+    var line = c.lines.filter(function (l) { return l.key === 'commission'; })[0];
+    // Agent: 10% of the $9,000 in (Toledo's isn't in yet). Management: 15% of $10,000.
+    near(line.projected, 900 + 1500, 'commission owed');
+    near(c.agencyPaid, 500, 'only Detroit: 10% of its $5,000');
+    eq(c.agencyShows.length, 1, 'one agency show counts'); eq(c.agencyShows[0].city, 'Detroit, MI', 'which one');
+    near(line.paid, 500, 'counts as paid');
+    near(line.left, 1900, 'what\u2019s left to pay');
+    var before = c.out;
+    // Marking it paid never changes what the tour costs.
+    t.shows[Object.keys(t.shows)[1]].guaranteePaidBy = 'agency';
+    near(G.calc(t).out, before, 'the tour costs the same');
+    near(G.calc(t).agencyPaid, 900, 'Chicago\u2019s cut is paid too');
+    // A flat fee can\u2019t be split by show.
+    t.commission.agent = { mode: 'flat', value: 2000 };
+    eq(G.calc(t).agencyPaid, 0, 'flat deal: nothing marked');
+  });
+
   test('crew pay: a rate times the tour\u2019s length, unless a total was typed over it', function () {
     var t = {
       expenses: {}, debts: {}, commission: {}, extras: {},

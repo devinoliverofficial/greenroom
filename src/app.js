@@ -2737,6 +2737,13 @@
         amount: r.amount, detail: r.feed ? 'Still under Credit card' : 'Card balance going into the tour',
         source: r.feed ? 'PLAID' : 'MANUAL', counts: true });
     });
+    // The booking agent's cut on each guarantee that came by agency deposit.
+    if (key === 'commission') {
+      G.calc(t).agencyShows.forEach(function (x) {
+        out.push({ date: x.date, label: 'Booking agent \u00b7 ' + String(x.city).split(',')[0], amount: x.amount,
+          detail: 'Taken out of the agency deposit', source: 'AGENCY', counts: true });
+      });
+    }
     var typed = G.num((G.normExpenses(t && t.expenses)[key] || {}).paid);
     if (typed > 0) out.push({ date: '', label: 'Paid (typed in)', amount: typed, detail: 'One total, typed in by hand',
       source: 'MANUAL', typed: true, counts: true });
@@ -3131,6 +3138,19 @@
         });
         kids.push(h('div', null, h('span', null, 'Commission so far'),
           h('strong', { class: 'num' }, money(G.commissionTotal(d.commission, base.income, base.guarantees, base.incomeBy)))));
+        // The booking agent's cut on guarantees that came by agency deposit is already paid.
+        var agencyList = G.agencyPaid(d.commission, base.shows);
+        var viaAgency = agencyList.reduce(function (n, x) { return n + x.amount; }, 0);
+        if (viaAgency > 0) {
+          kids.push(h('div', null, h('span', null, '\u21b3 Paid by agency deposits'),
+            h('strong', { class: 'num' }, money(viaAgency))));
+          // Which shows: each one's share came out of its deposit.
+          agencyList.forEach(function (x) {
+            kids.push(h('div', { class: 'pv-sub' },
+              h('span', null, String(x.city).split(',')[0] + (x.date ? ' \u00b7 ' + dayMD(x.date) : '')),
+              h('span', { class: 'num' }, money(x.amount))));
+          });
+        }
         readout.replaceChildren.apply(readout, kids);
       }
       var ledger = h('div', { class: 'ledger' });
@@ -7726,7 +7746,7 @@
           })));
       }
       function currentFlags() {
-        return { guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
+        return { guaranteePaidBy: gross > 0 ? paidBy : null, guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
           merchReceived: draft.merch > 0 ? !!recv.merch : null, merchCash: merchCash,
           merchCardDeposit: merchCardDeposit, buyoutTrack: track };
       }
@@ -7954,6 +7974,18 @@
           rows.push(netRow);
           // Paid by: one of the three (tap the ticked one again to clear it).
           var boxes = [];
+          // An agency deposit arrives with the booking agent's commission
+          // already taken out: that show's share is marked paid.
+          var agencyNote = h('p', { class: 'hint gp-note' });
+          var sayAgency = function () {
+            var rule = G.normCommission((getTour(id) || t).commission).agent;
+            var pct = rule.mode === 'pct' && G.num(rule.value) > 0;
+            agencyNote.hidden = paidBy !== 'agency';
+            agencyNote.textContent = pct
+              ? 'The booking agent\u2019s ' + G.num(rule.value) + '% on this show is marked as paid: it came out of the deposit.'
+              : 'Set the booking agent\u2019s percentage under Commission on the Expenses tab, and this show\u2019s share gets marked as paid.';
+          };
+          sayAgency();
           rows.push(h('div', { class: 'row gp-row' },
             h('span', { class: 'row-label' }, 'Paid by'),
             h('div', { class: 'gp-opts', role: 'group', 'aria-label': 'How the guarantee is paid' }, PAID_BY.map(function (x) {
@@ -7961,10 +7993,12 @@
                 onchange: function (e) {
                   paidBy = e.target.checked ? x[0] : null;
                   boxes.forEach(function (o) { o.checked = o === cb && !!paidBy; });
+                  sayAgency(); refresh();
                 } });
               boxes.push(cb);
               return h('label', { class: 'yn-opt' }, cb, h('span', null, x[1]));
-            }))));
+            })),
+            agencyNote));
         } else {
           rows.push(h('div', { class: 'row' },
             h('label', { class: 'row-label', for: 'inc-' + f.key }, f.label),

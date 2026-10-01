@@ -412,6 +412,25 @@
     return (num(rule.value) / 100) * basis;
   }
 
+  /* A guarantee paid by agency deposit reaches the band with the booking
+     agent's commission already taken out of it, so that show's share of the
+     agent's commission counts as paid. Only a percentage deal can be split
+     show by show; a guarantee that hasn't come in yet has nothing taken. */
+  function agencyPaid(commission, shows) {
+    var rule = normCommission(commission).agent;
+    if (!rule || rule.mode !== 'pct' || !(num(rule.value) > 0)) return [];
+    return (shows || []).filter(function (s) { return s && s.guaranteePaidBy === 'agency'; }).map(function (s) {
+      var inc = isObj(s.income) ? s.income : {}, by = {};
+      INCOME_FIELDS.forEach(function (f) {
+        by[f.key] = f.key === 'guarantee' && !guaranteeIn(s) ? 0 : f.key === 'buyouts' ? buyoutIncome(s) : num(inc[f.key]);
+      });
+      var basis = commissionBase(rule, by);
+      if (basis == null) basis = by.guarantee;
+      return { showId: s.id, city: s.city || 'Show', date: s.date || '',
+        amount: round(num(rule.value) / 100 * basis * 100) / 100 };
+    }).filter(function (x) { return x.amount > 0; });
+  }
+
   function commissionTotal(commission, income, guarantees, incomeBy) {
     var c = normCommission(commission);
     return commissionLines(c).reduce(function (t, line) {
@@ -622,7 +641,11 @@
     });
 
     var commissionProjected = commissionTotal(tour && tour.commission, income, guarantees, incomeBy);
-    var commissionPaid = chargedTo.commission || 0;
+    // Logged commission payments, plus the booking agent's cut on every
+    // guarantee that came by agency deposit (already taken out of it).
+    var agencyShows = agencyPaid(tour && tour.commission, shows);
+    var agencyTotal = agencyShows.reduce(function (t, x) { return t + x.amount; }, 0);
+    var commissionPaid = (chargedTo.commission || 0) + agencyTotal;
     var commissionEffective = Math.max(commissionProjected, commissionPaid);
     lines.push({
       key: 'commission', label: 'Commission',
@@ -647,6 +670,7 @@
       shows: shows, allShows: allShows, income: income, guarantees: guarantees, incomeBy: incomeBy,
       lines: lines, fixed: fixed,
       commission: commissionEffective, commissionProjected: commissionProjected,
+      agencyShows: agencyShows, agencyPaid: agencyTotal,
       debt: debt, dayByDay: dayByDay, out: out, net: income - out,
       coverage: out > 0 ? income / out : (income > 0 ? 1 : 0)
     };
@@ -1271,7 +1295,7 @@
 
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, tourDays: tourDays,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, tourDays: tourDays, agencyPaid: agencyPaid,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 
