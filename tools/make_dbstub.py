@@ -14,7 +14,15 @@ shim = r"""<script>
       expenses: {}, commission: {}, crew: {}, debts: {}, extras: {}, charges: {}, imports: {},
       bands: ['Opener Band', 'I See Stars'],
       shows: { s1: { id: 's1', date: ymd(today), city: 'Austin, TX', venue: 'Mohawk',
-        daySheet: { doors: '7:00 PM', venueAddress: '912 Red River St, Austin, TX 78701' } } } }
+        daySheet: { doors: '7:00 PM', venueAddress: '912 Red River St, Austin, TX 78701' } },
+        // Two nights already played and one ahead, for the Calendar's past days.
+        s0: { id: 's0', date: ymd(new Date(today.getTime() - 4 * 864e5)), city: 'Dallas, TX', venue: 'Granada',
+          loggedAt: 1, income: { guarantee: 1500, merch: 900 }, merchCash: 400 },
+        s00: { id: 's00', date: ymd(new Date(today.getTime() - 2 * 864e5)), city: 'Houston, TX', venue: 'White Oak' },
+        s2: { id: 's2', date: ymd(new Date(today.getTime() + 3 * 864e5)), city: 'Phoenix, AZ', venue: 'Crescent' } },
+      // Merch cash spent on food and gas: the Expenses tab's Cash column.
+      cashLog: { k1: { id: 'k1', date: ymd(new Date(today.getTime() - 3 * 864e5)), category: 'food', amount: 120, note: 'Catering run' },
+        k2: { id: 'k2', date: ymd(new Date(today.getTime() - 3 * 864e5)), category: 'gas', amount: 85.5, note: 'Fill up' } } }
   };
   var subs = [];
   // Same merge-write as the real backend: nested objects merge.

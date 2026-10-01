@@ -1271,13 +1271,21 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .row.total > span:first-child { flex: 1; font-weight: 700; }
 .row.total .amt { font-size: 19px; }
 /* Expenses: the plan and what's been paid, side by side. */
-/* Projected, Credit and Debit: three columns of exactly the same width,
+/* Projected, Credit, Debit and Cash: four columns of exactly the same width,
    evenly spaced, each number centred under its heading. */
-.ex-proj, .ex-paid, .ex-done { flex: 0 0 68px; width: 68px; min-width: 0; text-align: center; }
-.row.ex-row, .row.ex-head, .row.ex-total { gap: 6px; }
-.exp-page .row.ex-row, .exp-page .row.ex-head, .exp-page .row.ex-total { padding-left: 12px; padding-right: 10px; }
-.row.ex-head .ex-proj, .row.ex-head .ex-paid, .row.ex-head .ex-done { text-align: center; white-space: nowrap; }
-.ex-chev, .ex-row > svg, .ex-row > .ic { flex: 0 0 14px; width: 14px; }
+.ex-proj, .ex-paid, .ex-done, .ex-cash { flex: 0 0 55px; width: 55px; min-width: 0; text-align: center; }
+.row.ex-row, .row.ex-head, .row.ex-total { gap: 4px; }
+.exp-page .row.ex-row, .exp-page .row.ex-head, .exp-page .row.ex-total { padding-left: 10px; padding-right: 8px; }
+.row.ex-head .ex-proj, .row.ex-head .ex-paid, .row.ex-head .ex-done, .row.ex-head .ex-cash { text-align: center; white-space: nowrap; }
+.exp-page .ledger .amt.ex-cash { color: var(--ink); font-family: var(--font); font-weight: 600; }
+.exp-page .ex-row .amt, .exp-page .ex-total .amt { font-size: 12.5px; letter-spacing: -.02em; }
+.ex-chev, .ex-row > svg, .ex-row > .ic { flex: 0 0 12px; width: 12px; }
+/* "X new charges" and the merch cash log: small, centred, the same size, one under the other. */
+.btn.feed-new { display: flex; width: 220px; min-height: 40px; margin: 4px auto 8px; padding: 0 14px; font-size: 14px; border-radius: 12px; }
+.mini-stack { display: flex; justify-content: center; margin: 0 0 16px; }
+.mini-stack .cash-entry { display: inline-flex; flex-direction: row; align-items: center; justify-content: center; gap: 7px;
+  width: 220px; min-height: 40px; height: auto; padding: 0 12px; font-size: 12px; white-space: nowrap; border-radius: 12px; }
+.mini-stack .cash-entry .ce-left { margin-left: 2px; }
 /* A long category name breaks on its own line instead of running under the numbers. */
 .exp-page .ex-row .row-label { min-width: 0; -webkit-hyphens: auto; hyphens: auto; overflow-wrap: break-word; }
 .ex-row .amt, .ex-total .amt { font-size: 14px; }
@@ -1285,7 +1293,7 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 /* Credit and Debit read in white, in the tour dates' font. */
 .exp-page .ledger .amt.ex-paid, .exp-page .ledger .amt.ex-done { color: var(--ink); font-family: var(--font); font-weight: 600; }
 .exp-page .ledger .amt.ex-paid.over { color: var(--neg); }
-.exp-page .ex-row .row-label { font-size: 14px; font-weight: 600; }
+.exp-page .ex-row .row-label { font-size: 13px; font-weight: 600; }
 .exp-page .ex-row .row-label .hint { font-size: 12px; }
 .exp-page .row.ex-row { min-height: 56px; padding-top: 10px; padding-bottom: 10px; }
 .proj-preview { margin: 4px 0 10px; font-weight: 600; color: var(--pos); }
@@ -1295,14 +1303,15 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .ex-spent { display: block; margin-top: 4px; color: var(--ink); font-weight: 700; }
 .ex-spent.over { color: var(--neg); }
 .ex-row .row-label { overflow-wrap: normal; }
-.ex-chev { flex: 0 0 18px; }
+.ex-chev { flex: 0 0 12px; }
 .row.ex-head { min-height: 0; padding-top: 11px; padding-bottom: 9px;
   font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
 .row.ex-head > span:first-child { flex: 1; }
 /* Credit and Debit (and Projected) in white, in the tour dates' font. */
-.row.ex-head { color: var(--ink); font-family: var(--font); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
-.row.ex-head .ex-chev { flex: 0 0 14px; width: 14px; }
-.row.ex-head .ex-proj, .row.ex-head .ex-paid, .row.ex-head .ex-done { display: flex; justify-content: center; overflow: visible; }
+.row.ex-head { color: var(--ink); font-family: var(--font); font-size: 10.5px; font-weight: 600; letter-spacing: -.01em; text-transform: none; }
+.row.ex-head .ex-chev { flex: 0 0 12px; width: 12px; }
+.exp-page .ledger .row.ex-head { font-size: 11.5px; }
+.row.ex-head .ex-proj, .row.ex-head .ex-paid, .row.ex-head .ex-done, .row.ex-head .ex-cash { display: flex; justify-content: center; overflow: visible; }
 .ledger .amt.ex-paid { color: var(--ink); }
 .ledger .amt.ex-paid.over { color: var(--neg); }
 .row.ex-total .amt { font-size: 15px; }
@@ -1538,7 +1547,7 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .cat-sheet .sh-h3 { margin: 14px 0 6px; font-size: 13px; font-weight: 700; color: var(--ink-2); }
 .cat-sheet .seg-b { min-height: 30px; padding: 0 12px; font-size: 13px; font-weight: 650; }
 .cat-sheet .seg { margin-bottom: 8px; }
-.feed-new { margin: 2px 0 12px; }
+.btn.feed-new { margin: 4px auto 8px; }
 .cat-sheet .field { margin-bottom: 10px; }
 .cat-sheet .field-label { margin-bottom: 4px; font-size: 12.5px; font-weight: 650; }
 .cat-sheet .field .hint, .cat-sheet .note { font-size: 12px; }
@@ -1655,6 +1664,14 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 /* Day sheet sits in one straight column on every row: the last column is a
    fixed width, whatever button (or tag) is in it. */
 .show-row.cal-row { grid-template-columns: 42px minmax(0, 1fr) auto 108px; gap: 8px; }
+/* Days already done: greyed like a day off, the whole row. */
+.show-row.is-past.cal-row { opacity: .45; }
+.show-row.is-past.cal-row .city { font-weight: 500; color: var(--ink-2); }
+.show-row.is-past.cal-row.is-off .date, .show-row.is-past.cal-row.is-off .where, .show-row.is-past.cal-row.is-off .tag { opacity: 1; }
+.cal-past-wrap { display: flex; justify-content: center; margin: 2px 0 10px; }
+.cal-past { gap: 6px; }
+.cal-past > .ic { display: inline-flex; transform: rotate(90deg); transition: transform .2s; }
+.cal-past-wrap.open .cal-past > .ic { transform: rotate(-90deg); }
 .show-row.cal-row > :last-child { justify-self: end; }
 .cal-row .where { min-width: 0; }
 .cal-row .where .city, .cal-row .where .venue { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }

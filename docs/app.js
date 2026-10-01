@@ -2407,7 +2407,7 @@
     var b = String((G.isObj(card.feed) && card.feed.bank) || (G.isObj(card.owedNow) && card.owedNow.bank) || '').trim();
     return /^american express$/i.test(b) ? 'AMEX' : b;
   }
-  function cardRow(id, t, card, paidCell, creditCell) {
+  function cardRow(id, t, card, paidCell, creditCell, cashCell) {
     var sm = G.cardSummary(card, t);
     var bank = cardBank(card);
     var inner = [
@@ -2418,7 +2418,8 @@
           ' \u00b7 ' + (sm.owed > 0 ? money(sm.owed) + ' owed' : 'paid off'))),
       h('span', { class: 'amt num glow ex-proj', 'aria-label': 'Projected not set' }, '\u2014'),
       creditCell(sm.remainder),
-      paidCell(sm.paidOff)
+      paidCell(sm.paidOff),
+      cashCell(0)
     ];
     if (!canSeeMoney(id)) return h('div', { class: 'row ex-row cc-row' }, inner);
     return h('button', { class: 'row rowbtn ex-row cc-row', type: 'button',
@@ -2496,13 +2497,14 @@
      to it, so over and under are there to read at a glance. */
   function tabExpenses(id, t, c, o) {
     var off = !!(o && o.off);
+    if (!off) syncCrew(id);
     // The Off Tour book leaves out what only a tour has.
     if (off) c = Object.assign({}, c, { lines: c.lines.filter(function (l) { return l.key !== 'offdebt' && l.key !== 'commission'; }) });
     var edit = canEditTour(id);
     var chev = edit ? h('span', { class: 'ex-chev', 'aria-hidden': 'true' }) : null;
     var head = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
       h('span', null, ''), h('span', { class: 'ex-proj' }, 'Projected'), h('span', { class: 'ex-paid' }, 'Credit'),
-      h('span', { class: 'ex-done' }, 'Debit'), chev ? chev.cloneNode() : null);
+      h('span', { class: 'ex-done' }, 'Debit'), h('span', { class: 'ex-cash' }, 'Cash'), chev ? chev.cloneNode() : null);
     // Credit: what went on a credit card (still owed until the card is paid).
     // Debit: money that's gone, paid by debit card, cash or check, and on a
     // card's own line the payments made to the card company (the splashes).
@@ -2511,6 +2513,12 @@
       v = Math.round(G.num(v) * 100) / 100;
       paidOutTotal += v;
       return h('span', { class: 'amt num ex-done', 'aria-label': 'Debit ' + money(v) }, v > 0.004 ? money(v) : '\u2014');
+    };
+    var cashTotal = 0;
+    var cashCell = function (v) {
+      v = Math.round(G.num(v) * 100) / 100;
+      cashTotal += v;
+      return h('span', { class: 'amt num ex-cash', 'aria-label': 'Cash ' + money(v) }, v > 0.004 ? money(v) : '\u2014');
     };
     var creditCell = function (v, over) {
       v = Math.round(G.num(v) * 100) / 100;
@@ -2533,8 +2541,9 @@
           unset ? '\u2014' : money(l.projected)),
         // Commission is paid from the bank, so it reads as debit.
         creditCell(l.key === 'commission' ? 0 : l.creditOut != null ? l.creditOut : l.paid - paidPart(t, l.key), l.over > 0),
-        paidCell(l.paidOut != null ? l.paidOut : l.key === 'commission' ? l.paid : paidPart(t, l.key) +
-          (l.key === 'card' ? G.cardDebts(t).reduce(function (n, d) { return n + G.cardSummary(d, t).paidOff; }, 0) : 0))
+        paidCell(l.paidOut != null ? l.paidOut : l.key === 'commission' ? l.paid : debitPart(t, l.key) +
+          (l.key === 'card' ? G.cardDebts(t).reduce(function (n, d) { return n + G.cardSummary(d, t).paidOff; }, 0) : 0)),
+        cashCell(l.key === 'commission' ? 0 : l.cashOut != null ? l.cashOut : cashPart(t, l.key))
       ];
       if (!edit) return h('div', { class: 'row ex-row' }, inner);
       return h('button', {
@@ -2549,19 +2558,20 @@
     var rows = [];
     c.lines.forEach(function (l) {
       if (l.key !== 'card' || !feedCards.length) { rows.push(lineRow(l)); return; }
-      feedCards.forEach(function (card) { rows.push(cardRow(id, t, card, paidCell, creditCell)); });
+      feedCards.forEach(function (card) { rows.push(cardRow(id, t, card, paidCell, creditCell, cashCell)); });
       // Anything else under Credit card (a card typed in by hand, or a charge
       // sorted there) keeps a line of its own.
       var inCards = feedCards.reduce(function (n, card) { return n + G.cardSummary(card, t).remainder; }, 0);
       var rest = Math.round((l.paid - inCards) * 100) / 100;
-      var otherPaid = paidPart(t, 'card') + G.cardDebts(t).filter(function (d) { return !G.isObj(d.feed); })
+      var otherPaid = debitPart(t, 'card') + cashPart(t, 'card') + G.cardDebts(t).filter(function (d) { return !G.isObj(d.feed); })
         .reduce(function (n, d) { return n + G.cardSummary(d, t).paidOff; }, 0);
       if (rest > 0.004 || l.projected != null || otherPaid > 0.004) {
         rows.push(lineRow(Object.assign({}, l, {
           label: 'Credit card (other)', paid: Math.max(0, rest),
           cards: (l.cards || []).filter(function (r) { return !r.feed; }),
           over: l.projected != null ? Math.max(0, rest - l.projected) : 0,
-          paidOut: otherPaid,
+          paidOut: otherPaid - cashPart(t, 'card'),
+          cashOut: cashPart(t, 'card'),
           creditOut: Math.max(0, rest) - paidPart(t, 'card'),
           left: l.projected != null ? Math.max(0, l.projected - Math.max(0, rest)) : l.left
         })));
@@ -2575,6 +2585,7 @@
       h('strong', { class: 'amt num glow ex-proj' }, money(projTotal)),
       h('strong', { class: 'amt num ex-paid' }, money(creditTotal)),
       h('strong', { class: 'amt num ex-done' }, money(paidOutTotal)),
+      h('strong', { class: 'amt num ex-cash' }, money(cashTotal)),
       chev ? chev.cloneNode() : null));
     var charges = G.rows(t && t.charges);
     var baselineOffer = (!off && canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
@@ -2585,16 +2596,7 @@
     return [
       feedEntry(id),
       baselineOffer,
-      h('div', { class: 'btnrow tiles' },
-        canEditTour(id) ? fileControl({
-          label: 'Import Card Statements', icon: 'card', cls: 'btn ghost tile',
-          accept: '.csv,.tsv,text/csv,application/pdf,' + imageAccept(), multiple: true,
-          onFiles: function (files) { readStatement(id, files); }
-        }) : null,
-        h('button', { class: 'btn ghost tile', type: 'button',
-          onclick: function () { if (off) openOffLog(id); else go({ name: 'tour', id: id, view: 'daybyday' }); } },
-          icon('edit', 18), 'Log New Expense'),
-        off ? null : cashLogEntry(id, t)),
+      off ? null : h('div', { class: 'mini-stack' }, cashLogEntry(id, t)),
       // The chart says it all: nothing under the Total.
       h('div', { class: 'ledger' }, rows)
     ];
@@ -2615,14 +2617,21 @@
     return 'UNKNOWN';
   }
   // Of what's spent in a category, what's already paid: debit, cash, check.
-  function paidPart(t, key) {
+  // Debit: paid by debit card or check. Cash: what the merch cash log spent
+  // in this category. Both are money already gone (paidPart is the two).
+  function debitPart(t, key) {
     var n = 0;
     G.rows(t && t.charges).forEach(function (ch) {
       if (ch.category === key && ch.paid && !ch.accounted) n += G.num(ch.amount);
     });
+    return Math.round(n * 100) / 100;
+  }
+  function cashPart(t, key) {
+    var n = 0;
     G.rows(t && t.cashLog).forEach(function (x) { if (x.category === key) n += G.num(x.amount); });
     return Math.round(n * 100) / 100;
   }
+  function paidPart(t, key) { return Math.round((debitPart(t, key) + cashPart(t, key)) * 100) / 100; }
   function categoryEntries(t, key) {
     var out = [];
     G.rows(t && t.charges).forEach(function (ch) {
@@ -2745,7 +2754,8 @@
         h('div', null, h('span', null, 'Projected'), h('strong', { class: 'num' }, p == null ? 'Not set' : money(p))),
         h('div', null, h('span', null, 'Spent so far'), h('strong', { class: 'num' }, money(paid))),
         paid > 0 ? h('div', null, h('span', null, '\u21b3 Credit'), h('strong', { class: 'num' }, money(paid - settled))) : null,
-        paid > 0 ? h('div', null, h('span', null, '\u21b3 Debit'), h('strong', { class: 'num' }, money(settled))) : null,
+        paid > 0 ? h('div', null, h('span', null, '\u21b3 Debit'), h('strong', { class: 'num' }, money(debitPart(t, key)))) : null,
+        cashPart(t, key) > 0 ? h('div', null, h('span', null, '\u21b3 Cash'), h('strong', { class: 'num' }, money(cashPart(t, key)))) : null,
         p == null ? h('div', null, h('span', null, 'Counts as'), h('strong', { class: 'num' }, money(paid)))
           : paid > p ? h('div', null, h('span', null, 'Over by'), h('strong', { class: 'num neg' }, money(paid - p)))
           : h('div', null, h('span', null, 'Left to pay'), h('strong', { class: 'num' }, money(p - paid))));
@@ -5409,15 +5419,27 @@
   function viewCalendar(id, t) {
     var today = G.tourToday();
     var got = overviewDays(t);
-    var rowsOut = [];
+    var rowsOut = [], pastBtn = null;
     if (got) {
       var firstShow = got.days.filter(function (x) { return x.show; })[0];
       var lastShow = got.days.slice().reverse().filter(function (x) { return x.show; })[0];
-      rowsOut = got.days.map(function (x) {
-        if (x.show) return calShowRow(id, x.show, today);
-        var travel = (firstShow && x.date < firstShow.date) || (lastShow && x.date > lastShow.date);
-        return calOffRow(id, t, x.date, travel);
+      // The list starts where we are; the days already done are greyed and
+      // tucked away behind "View previous dates" (all of them show once the
+      // run is over).
+      var past = got.days.filter(function (x) { return x.date < today; }).length;
+      var ahead = past < got.days.length;
+      S.calPast = S.calPast || {};
+      var showPast = !ahead || !!S.calPast[id];
+      rowsOut = got.days.filter(function (x) { return showPast || x.date >= today; }).map(function (x) {
+        var row = x.show ? calShowRow(id, x.show, today) : calOffRow(id, t, x.date,
+          (firstShow && x.date < firstShow.date) || (lastShow && x.date > lastShow.date));
+        if (x.date < today) row.firstChild.classList.add('is-past');
+        return row;
       });
+      if (past && ahead) pastBtn = h('button', { class: 'btn quiet sm cal-past', type: 'button',
+        'aria-expanded': showPast ? 'true' : 'false',
+        onclick: function () { S.calPast[id] = !showPast; render(true); } },
+        icon('chevron', 16), showPast ? 'Hide previous dates' : 'View previous dates (' + past + ')');
     }
     return h('div', { class: 'page tour has-tabs' },
       h('div', { class: 'headband' },
@@ -5426,6 +5448,7 @@
       dbBanner(),
       rowsOut.length
         ? [h('p', { class: 'count-line' }, 'Special requests on show days · a vote on days off'),
+           pastBtn ? h('div', { class: 'cal-past-wrap' + (S.calPast[id] ? ' open' : '') }, pastBtn) : null,
            h('ul', { class: 'shows cal-list' }, rowsOut)]
         : emptyState('No dates yet', 'Once the shows are in, every day of the run shows up here.'),
       tourTabs(id, 'details'));
@@ -7999,10 +8022,47 @@
     var t = getTour(tourId);
     var nm = String(name || '').trim();
     if (!t || !nm || NOT_CREW.test(String(tourRole || '')) || crewListed(t, nm, email)) return false;
-    var patch = { crew: {} };
+    var patch = { crew: {}, crewSeen: {} };
     patch.crew[newId()] = { name: nm, title: String(tourRole || '').trim(), pay: 0,
       email: String(email || '').trim().toLowerCase(), createdAt: Date.now() };
+    patch.crewSeen[crewSeenKey(nm, email)] = true;
     return api.update(tourId, patch);
+  }
+  function crewSeenKey(name, email) {
+    var em = String(email || '').trim().toLowerCase();
+    return (em ? 'e_' + em : 'n_' + String(name || '').trim().toLowerCase()).replace(/[^a-z0-9_]+/g, '_');
+  }
+  /* Everyone already on the tour shows up under Crew too: the first time the
+     Expenses tab sees someone who isn't listed, they're added with their pay
+     left to fill in. doc.crewSeen remembers who was added, so someone taken
+     off the Crew list stays off (the crew sheet can still put them back). */
+  function syncCrew(id) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || !B.crew || !canEditTour(id)) return;
+    S.crewSync = S.crewSync || {};
+    if (S.crewSync[id] && Date.now() - S.crewSync[id] < 60e3) return;
+    S.crewSync[id] = Date.now();
+    B.crew(id).then(function (rows) {
+      S.crewCache = S.crewCache || {};
+      S.crewCache[id] = { rows: rows, at: Date.now() };
+      var t = getTour(id);
+      if (!t) return;
+      var seen = G.isObj(t.crewSeen) ? t.crewSeen : {};
+      var patch = { crew: {}, crewSeen: {} }, added = 0;
+      rows.forEach(function (m) {
+        var nm = String(m.name || m.username || '').trim(), em = m.invitedEmail || m.email;
+        var k = crewSeenKey(nm, em);
+        if (m.owner || !nm || NOT_CREW.test(String(m.tourRole || '')) || seen[k]) return;
+        patch.crewSeen[k] = true;
+        if (crewListed(t, nm, em)) return;
+        patch.crew[newId()] = { name: nm, title: String(m.tourRole || '').trim(), pay: 0,
+          email: String(em || '').trim().toLowerCase(), createdAt: Date.now() };
+        added++;
+      });
+      if (!Object.keys(patch.crewSeen).length) return;
+      if (!added) delete patch.crew;
+      return api.update(id, patch).then(function (ok) { if (ok && added) render(true); });
+    }).catch(function () { S.crewSync[id] = 0; });
   }
 
   /* Real invites (the GitHub Pages build): the tour manager runs the guest
@@ -9999,7 +10059,7 @@
         h('button', { class: 'btn quiet glow feed-gear', type: 'button', 'aria-label': 'Card feed settings',
           onclick: function () { openFeedSheet(id); } }, icon('gear', 20))),
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)),
-      n ? h('button', { class: 'btn primary block feed-new', type: 'button',
+      n ? h('button', { class: 'btn primary feed-new', type: 'button',
         onclick: function () { openFeedReview(id); } },
         icon('card', 18), plural(n, 'new charge')) : null);
   }
@@ -10035,7 +10095,7 @@
     return h('div', { class: 'feed-entry' },
       h('div', { class: 'feed-bar' }, refreshBtn),
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(P.lastRun)),
-      n ? h('button', { class: 'btn primary block feed-new', type: 'button',
+      n ? h('button', { class: 'btn primary feed-new', type: 'button',
         onclick: function () { openFeedReview(id); } },
         icon('card', 18), plural(n, 'new charge')) : null);
   }
