@@ -7615,6 +7615,9 @@
     // tax, with the tax kept beside it.
     var tax = Math.max(0, G.num(s.taxWithheld));
     var gross = draft.guarantee + tax;
+    // How the guarantee is paid: a check, straight into the bank, or to the agency first.
+    var PAID_BY = [['check', 'Check'], ['direct', 'Direct Deposit'], ['agency', 'Agency Deposit']];
+    var paidBy = PAID_BY.some(function (x) { return x[0] === s.guaranteePaidBy; }) ? s.guaranteePaidBy : null;
     var miscLabel = String((G.isObj(s.income) && s.income.miscLabel) || '');
     // Who has their buyout (only the Artists' count as income).
     var track = G.isObj(s.buyoutTrack) ? JSON.parse(JSON.stringify(s.buyoutTrack)) : null;
@@ -7644,7 +7647,9 @@
               return h('div', { class: 'row' },
                 h('div', { class: 'row-label' }, f.label,
                   f.key === 'misc' && miscLabel ? h('span', { class: 'hint' }, miscLabel) : null,
-                  f.key === 'guarantee' && tax > 0 ? h('span', { class: 'hint' }, 'After ' + money(tax) + ' taxes withheld') : null),
+                  f.key === 'guarantee' && tax > 0 ? h('span', { class: 'hint' }, 'After ' + money(tax) + ' taxes withheld') : null,
+                  f.key === 'guarantee' && paidBy ? h('span', { class: 'hint' }, 'Paid by ' +
+                    PAID_BY.filter(function (x) { return x[0] === paidBy; })[0][1].toLowerCase()) : null),
                 h('span', { class: 'amt num' }, money(draft[f.key])));
             }),
             h('div', { class: 'row total' },
@@ -7691,6 +7696,7 @@
           merchCardDeposit: draft.merch > 0 && merchCardDeposit != null ? merchCardDeposit : null,
           guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
           taxWithheld: tax > 0 && gross > 0 ? Math.min(tax, gross) : null,
+          guaranteePaidBy: gross > 0 ? paidBy : null,
           // All-cash merch has no deposit to wait for.
           merchReceived: draft.merch > 0 ? (due > 0 ? !!recv.merch : true) : null };
         if (!(draft.merch > 0 && due > 0 && recv.merch)) {
@@ -7946,6 +7952,19 @@
               h('span', { class: 'hint' }, 'Taken out of the guarantee, if any')),
             taxInput));
           rows.push(netRow);
+          // Paid by: one of the three (tap the ticked one again to clear it).
+          var boxes = [];
+          rows.push(h('div', { class: 'row gp-row' },
+            h('span', { class: 'row-label' }, 'Paid by'),
+            h('div', { class: 'gp-opts', role: 'group', 'aria-label': 'How the guarantee is paid' }, PAID_BY.map(function (x) {
+              var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: paidBy === x[0],
+                onchange: function (e) {
+                  paidBy = e.target.checked ? x[0] : null;
+                  boxes.forEach(function (o) { o.checked = o === cb && !!paidBy; });
+                } });
+              boxes.push(cb);
+              return h('label', { class: 'yn-opt' }, cb, h('span', null, x[1]));
+            }))));
         } else {
           rows.push(h('div', { class: 'row' },
             h('label', { class: 'row-label', for: 'inc-' + f.key }, f.label),
