@@ -319,7 +319,7 @@ function sortTransactions(
     if (category && tour && cats.indexOf(category) < 0) category = null;
 
     const posted = String(t.posted || date);
-    const base = { id, owner_id: owner, tour_id: tour?.id ?? null, date, posted, merchant, amount: spent, category, account: acct?.name ?? "" };
+    const base = { id, owner_id: owner, tour_id: tour?.id ?? null, date, posted, seq: Number.isFinite(Number(t.seq)) ? Number(t.seq) : null, merchant, amount: spent, category, account: acct?.name ?? "" };
     const cutoff = tour ? G.preTourCutoff(tour.doc) : null;
     if (spent > 0 && cutoff && date <= cutoff) { items.push({ ...base, why: "Before the tour", status: "skipped" }); continue; }
     const twin = tour && spent > 0 && G.rows(tour.doc.charges).concat(G.rows(tour.doc.extras)).some((c: Obj) =>
@@ -576,6 +576,7 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
   const accounts: Record<string, Account> = {};
   for (const [id, a] of Object.entries(feed.accounts ?? {})) accounts[id] = { ...a };
   const txs: Obj[] = [];
+  const runRank = (4e12 - Date.now()) * 1000;
   const cursors = new Map<string, string | null>();
   const problems: string[] = [];
 
@@ -589,7 +590,9 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
       cursors.set(item.item_id, got.cursor);
       for (const t of got.added) {
         if (t.pending) continue;                       // posted charges only
-        txs.push(asTx(t, accounts));
+        // Its place in what the bank sent (newest first, and within a day the
+        // order the card's own app shows). A later read sits above an earlier one.
+        txs.push({ ...asTx(t, accounts), seq: runRank + txs.length });
       }
       for (const t of got.removed) txs.push({ id: String(t.transaction_id), account_id: String(t.account_id ?? ""), deleted: true, amount: 0, date: "" });
       if (item.status !== "ok") await admin.from("plaid_items").update({ status: "ok" }).eq("owner_id", item.owner_id).eq("item_id", item.item_id);
@@ -843,7 +846,7 @@ Deno.serve(async (req) => {
         .eq("owner_id", owner).maybeSingle();
       if (!f || f.source !== "plaid") return reply(200, { ok: true, connected: false, items: [] });
       const { data: rows } = await admin.from("feed_items")
-        .select("id, tour_id, date, posted, merchant, amount, category, account, why")
+        .select("id, tour_id, date, posted, seq, merchant, amount, category, account, why")
         .eq("owner_id", owner).eq("status", "waiting").order("date");
       const cards: Obj = {};
       for (const a of Object.values((f.accounts ?? {}) as Record<string, Account>)) cards[a.name] = isCredit(a) ? "credit" : "debit";

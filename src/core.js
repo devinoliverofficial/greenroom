@@ -341,6 +341,20 @@
       left: round((took - used) * 100) / 100 };
   }
 
+  /* Card charges, newest first. Within a day: the order the bank sent them
+     (seq, lower first), which is the order the card's own app shows; without
+     it, the later posting day, then A to Z. */
+  function newestFirst(a, b) {
+    var da = parseDay(a && a.date) ? a.date : '0000', db = parseDay(b && b.date) ? b.date : '0000';
+    if (da !== db) return db < da ? -1 : 1;
+    if (a.seq != null && b.seq != null && isFinite(a.seq) && isFinite(b.seq) && Number(a.seq) !== Number(b.seq)) {
+      return Number(a.seq) - Number(b.seq);
+    }
+    var pa = String(a.posted || a.date || ''), pb = String(b.posted || b.date || '');
+    if (pa !== pb) return pb < pa ? -1 : 1;
+    return String(a.merchant || '').localeCompare(String(b.merchant || ''));
+  }
+
   function crewProjection(tour) {
     return rows(tour && tour.crew).reduce(function (t, p) { return t + num(p.pay); }, 0);
   }
@@ -1216,7 +1230,7 @@
 
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

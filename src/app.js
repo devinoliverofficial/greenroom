@@ -9702,11 +9702,8 @@
   function openImportReview(tourId, rows, source, opts) {
     var importId = newId();
     // Newest charge at the top, oldest at the bottom.
-    rows.sort(function (a, b) {
-      var da = G.parseDay(a.date) ? a.date : '0000', db = G.parseDay(b.date) ? b.date : '0000';
-      return db.localeCompare(da) || String(b.posted || b.date || '').localeCompare(String(a.posted || a.date || '')) ||
-        String(a.merchant || '').localeCompare(String(b.merchant || ''));
-    });
+    // Within a day, the order the card's own app shows (the bank's order).
+    rows.sort(G.newestFirst);
     var feed = !!(opts && opts.feed);
     // Where each charge is logged, picked under its category:
     //   Off Tour: the band's Off Tour book only (from a tour, the tour also
@@ -10233,7 +10230,7 @@
       var cat = it.category && valid[it.category] ? it.category : '';
       var amt = G.num(it.amount);
       return {
-        feedId: it.id, date: it.date, posted: it.posted || it.date, merchant: it.merchant, amount: amt, account: it.account || '',
+        feedId: it.id, date: it.date, posted: it.posted || it.date, seq: it.seq, merchant: it.merchant, amount: amt, account: it.account || '',
         category: cat, source: cat ? 'learned' : null, why: it.why || '',
         duplicate: false, preCutoff: false,
         // Refunds and look-alikes of charges already on the tour start unticked.

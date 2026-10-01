@@ -345,6 +345,27 @@
     eq(G.calc(t).out, before, 'still unchanged');
   });
 
+  test('card charges: within a day, the bank\u2019s own order (the card app\u2019s), not A to Z', function () {
+    // As the bank sent them, newest first: Aug 15, then three on Aug 14, then Aug 8.
+    var sent = [
+      { merchant: 'Storage', date: '2026-08-15', posted: '2026-08-16', seq: 50 },
+      { merchant: 'Band van', date: '2026-08-14', posted: '2026-08-14', seq: 51 },
+      { merchant: 'Audio', date: '2026-08-14', posted: '2026-08-15', seq: 52 },
+      { merchant: 'Shop', date: '2026-08-14', posted: '2026-08-14', seq: 54 },
+      { merchant: 'Ride', date: '2026-08-08', posted: '2026-08-08', seq: 55 }
+    ];
+    var shuffled = [sent[3], sent[4], sent[1], sent[0], sent[2]];
+    eq(shuffled.sort(G.newestFirst).map(function (c) { return c.seq; }).join(','), '50,51,52,54,55', 'bank order kept');
+    // Same day, same posting day: the bank put the ride first, so it stays first.
+    var day = [{ merchant: 'Gym', date: '2026-07-19', posted: '2026-07-19', seq: 65 },
+      { merchant: 'Ride', date: '2026-07-19', posted: '2026-07-19', seq: 64 }];
+    eq(day.sort(G.newestFirst)[0].merchant, 'Ride', 'ride above gym');
+    // Without the bank's order (a statement): later posting day, then A to Z.
+    var plain = [{ merchant: 'B', date: '2026-07-19', posted: '2026-07-19' }, { merchant: 'A', date: '2026-07-19', posted: '2026-07-19' },
+      { merchant: 'C', date: '2026-07-19', posted: '2026-07-20' }];
+    eq(plain.sort(G.newestFirst).map(function (c) { return c.merchant; }).join(''), 'CAB', 'fallback order');
+  });
+
   test('atVenu: the band\u2019s number is picked by rule, never the gross', function () {
     // Reading: a venue cut, and Total Due Artist printed after card fees.
     var r = G.pickBandNumber({ income: { merch: 3974.5 }, totals: { gross: 5000, adjusted: 4566.15, dueArtist: 3823.67, dueVenue: 742.48 } });
