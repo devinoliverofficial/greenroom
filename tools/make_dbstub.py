@@ -285,6 +285,7 @@ shim = r"""<script>
           var it = F.items.filter(function (x) { return x.id === pk.id; })[0];
           if (!it) { already += 1; return; }
           F.items = F.items.filter(function (x) { return x.id !== pk.id; });
+          if (pk.keep) { H.filedItems = H.filedItems || {}; H.filedItems[it.id] = it; }
           if (!pk.keep) { skipped += 1; return; }
           var acct = F.accounts.filter(function (a) { return a.name === it.account; })[0];
           var ch = { date: it.date, merchant: it.merchant, amount: it.amount, category: pk.category, accounted: !!pk.accounted,
@@ -314,6 +315,25 @@ shim = r"""<script>
           }));
         }).then(function () { return { ok: true, filed: filed, skipped: skipped, already: already, offTour: offN, upcoming: nextN,
           total: Math.round(total * 100) / 100 }; });
+      }
+      // Undo, like the server: off every tour it landed on, back in the pile.
+      if (action === 'unfile') {
+        var H2 = window.__harness, fid = String((body && body.id) || '').replace(/^p/, '');
+        var back = (H2.filedItems || {})[fid];
+        if (!back) return Promise.resolve({ ok: false, status: 'not_filed' });
+        delete H2.filedItems[fid];
+        return window.claude.use('db').then(function (db) {
+          var key = 'p' + fid;
+          var tids = ['t1'].concat([H2.offTourId, H2.nextTourId].filter(Boolean));
+          return Promise.all(tids.map(function (tid) {
+            var c = {}; c[key] = null; var aw = {}; aw[key] = null;
+            return db.doc('tours/' + tid).update({ charges: c, cardAway: aw });
+          }));
+        }).then(function () {
+          F.items.push(Object.assign({}, back, { tour_id: body.tourId }));
+          H2.feedPush();
+          return { ok: true, tourId: body.tourId };
+        });
       }
       // Plaid's shape: banks, accounts, test mode.
       // Plaid's hosted window: 'finish' says waiting until the harness sets plaidDone.

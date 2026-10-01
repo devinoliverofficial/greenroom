@@ -2664,17 +2664,112 @@
     // Oldest first; the balances going in (no date) lead the list.
     return out.sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
   }
+  /* A row that slides left to show its actions (Edit, Undo). A tap opens
+     it too, and tapping again closes it. */
+  function swipeRow(inner, acts) {
+    var tray = h('div', { class: 'sw-acts' }, acts);
+    var face = h('div', { class: 'sw-face' }, inner);
+    var row = h('div', { class: 'sw-row' }, tray, face);
+    var x0 = null, y0 = 0, dx = 0, open = false, drag = false, W = 0;
+    function set(px, anim) {
+      face.style.transition = anim ? 'transform .22s ease' : 'none';
+      face.style.transform = px ? 'translateX(' + px + 'px)' : '';
+      row.classList.toggle('open', px < 0);
+    }
+    face.addEventListener('touchstart', function (e) {
+      var t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; dx = open ? -W : 0; drag = false; W = tray.offsetWidth;
+    }, { passive: true });
+    face.addEventListener('touchmove', function (e) {
+      if (x0 == null) return;
+      var t = e.touches[0], mx = t.clientX - x0, my = t.clientY - y0;
+      if (!drag && Math.abs(mx) > 8 && Math.abs(mx) > Math.abs(my) * 1.2) drag = true;
+      if (!drag) return;
+      dx = Math.max(-W, Math.min(0, (open ? -W : 0) + mx));
+      set(dx, false);
+    }, { passive: true });
+    face.addEventListener('touchend', function () {
+      if (x0 == null) return;
+      x0 = null;
+      if (!drag) return;
+      open = dx < -W / 3;
+      set(open ? -W : 0, true);
+      row.dataset.swiped = String(Date.now());
+    });
+    face.addEventListener('click', function () {
+      if (Date.now() - Number(row.dataset.swiped || 0) < 400) return;   // the end of a swipe, not a tap
+      W = tray.offsetWidth; open = !open; set(open ? -W : 0, true);
+    });
+    return row;
+  }
+
+  // A card charge logged by mistake goes back under "X new charges" (the
+  // tour manager's, as filing is). Edit sends it back and opens it straight
+  // away to sort again: category, and Off Tour / Current / Upcoming.
+  async function unfileCharge(id, chargeId) {
+    var B = window.GR_BACKEND, r = null;
+    try { r = await B.feedCall('unfile', { tourId: id, id: chargeId }); } catch (e) { r = null; }
+    if (!r || !r.ok) {
+      toast(r && r.error === 'not_allowed' ? 'Only the tour manager can undo card charges.' : 'Couldn\u2019t undo that. Try again.');
+      return null;
+    }
+    S.pile = {};   // the tour manager's pile reads again
+    return r;
+  }
+  async function editCharge(id, ch) {
+    var r = await unfileCharge(id, ch.id);
+    if (!r) return;
+    var home = r.tourId || id;
+    var valid = {};
+    G.chargeCategoriesFor(getTour(home)).forEach(function (c) { valid[c.key] = true; });
+    var was = ch.category === 'offdebt' ? ch.offCategory : ch.category;
+    var row = { feedId: String(ch.id).replace(/^p/, ''), date: ch.date, posted: ch.posted || ch.date, merchant: ch.merchant,
+      amount: G.num(ch.amount), account: ch.account || '', category: was && valid[was] && was !== 'offdebt' ? was : '',
+      source: null, why: '', duplicate: false, preCutoff: false, keep: G.num(ch.amount) > 0 };
+    closeSheet();
+    render(true);
+    setTimeout(function () { openImportReview(home, [row], 'Card feed', { feed: true, card: row.account || 'Card' }); }, 340);
+  }
+
   function openLoggedSheet(id, key, back) {
     function build() {
       var t = getTour(id);
       var cat = G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0] || { label: key };
       var list = categoryEntries(t, key);
       var total = list.reduce(function (a, r) { return r.counts ? a + r.amount : a; }, 0);
+      var lead = S.mode === 'db' && moneyLead(id);
+      var slides = function (r) { return lead && r.source === 'PLAID' && /^p/.test(String(r.chargeId || '')); };
+      var anySlide = list.some(slides);
       return [
         h('h2', { class: 'sh-title' }, 'Logged Card Transactions'),
         h('p', { class: 'sh-sub' }, cat.label + ' · ' + plural(list.length, 'entry').replace('entrys', 'entries') + ' · ' + money(total)),
+        anySlide ? h('p', { class: 'note sw-hint' }, 'Logged one wrong? Swipe it left to Edit or Undo.') : null,
         list.length ? h('div', { class: 'ledger logged' }, list.map(function (r) {
           var removable = canWrite() && (r.typed || (r.chargeId && r.source === 'MANUAL'));
+          var line = logRow(r, removable);
+          if (!slides(r)) return line;
+          var ch = (t.charges || {})[r.chargeId];
+          ch = Object.assign({ id: r.chargeId }, ch || {});
+          var busy = false;
+          return swipeRow(line, [
+            h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit ' + r.label,
+              onclick: function () { if (busy) return; busy = true; editCharge(id, ch).then(function () { busy = false; }); } },
+              icon('edit', 16), 'Edit'),
+            h('button', { class: 'sw-undo', type: 'button', 'aria-label': 'Undo ' + r.label + ', back to new charges',
+              onclick: async function () {
+                if (busy) return; busy = true;
+                var ok = await unfileCharge(id, r.chargeId);
+                busy = false;
+                if (!ok) return;
+                toast(r.label + ' is back in new charges');
+                render(true);
+                setTimeout(function () { openLoggedSheet(id, key, back); }, 700);
+              } }, icon('back', 16), 'Undo')]);
+        })) : emptyState('Nothing logged yet', 'Charges from the card feed, statements you import and payments you log by hand all show up here.'),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { if (back) back(); else closeSheet(); } },
+            back ? 'Back' : 'Close'))
+      ];
+      function logRow(r, removable) {
           return h('div', { class: 'row' },
             h('div', { class: 'row-label' }, r.label,
               h('span', { class: 'hint' }, [r.date ? dayMD(r.date) : '', r.detail].filter(Boolean).join(' · '))),
@@ -2695,11 +2790,7 @@
                   }
                 });
               } }, icon('trash', 16)) : null);
-        })) : emptyState('Nothing logged yet', 'Charges from the card feed, statements you import and payments you log by hand all show up here.'),
-        h('div', { class: 'stack' },
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { if (back) back(); else closeSheet(); } },
-            back ? 'Back' : 'Close'))
-      ];
+      }
     }
     openSheet(build, { label: 'Logged Card Transactions', cls: 'cat-sheet' });
   }

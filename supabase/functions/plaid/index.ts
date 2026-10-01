@@ -1024,6 +1024,39 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Undo a card charge logged by mistake (owner or tour manager): it comes
+    // off wherever it landed, with the Off Tour Debt line or the "logged to
+    // another tour" note that came with it, and goes back in the pile as a
+    // new charge for the tour it came from.
+    if (action === "unfile") {
+      const tourId = String(body.tourId ?? "");
+      const fid = String(body.id ?? "").replace(/^p/, "");
+      const owner = await cardLead(uid, tourId);
+      if (!owner || !fid) return reply(403, { error: "not_allowed" });
+      const { data: row } = await admin.from("feed_items").select("id, tour_id, status")
+        .eq("owner_id", owner).eq("id", fid).maybeSingle();
+      if (!row || row.status !== "filed") return reply(200, { ok: false, status: "not_filed" });
+      const key = "p" + fid;
+      const { data: all } = await admin.from("tours").select("id, doc").eq("owner_id", owner);
+      let home: string | null = null;
+      for (const t of all ?? []) {
+        const d = (t.doc ?? {}) as Obj;
+        const ch = ((d.charges ?? {}) as Obj)[key] as Obj | null | undefined;
+        const aw = ((d.cardAway ?? {}) as Obj)[key];
+        if (ch && typeof ch === "object" && ch.fromTour) home = String(ch.fromTour);
+        if (aw) home = String(t.id);
+        if ((ch && typeof ch === "object") || aw) {
+          const r = await admin.rpc("unfile_charge", { t_id: t.id, k: key });
+          if (r.error) return reply(200, { ok: false, status: "save_failed" });
+        }
+      }
+      const back = home ?? row.tour_id ?? null;
+      const u = await admin.from("feed_items").update({ status: "waiting", tour_id: back })
+        .eq("owner_id", owner).eq("id", fid);
+      if (u.error) return reply(200, { ok: false, status: "save_failed" });
+      return reply(200, { ok: true, tourId: back });
+    }
+
     // The tour manager's Refresh: the tour owner's cards, read the same way.
     if (action === "sync" && body.tourId) {
       const owner = await cardLead(uid, String(body.tourId));
