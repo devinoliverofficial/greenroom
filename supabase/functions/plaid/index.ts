@@ -843,7 +843,7 @@ Deno.serve(async (req) => {
         .eq("owner_id", owner).maybeSingle();
       if (!f || f.source !== "plaid") return reply(200, { ok: true, connected: false, items: [] });
       const { data: rows } = await admin.from("feed_items")
-        .select("id, tour_id, date, merchant, amount, category, account, why")
+        .select("id, tour_id, date, posted, merchant, amount, category, account, why")
         .eq("owner_id", owner).eq("status", "waiting").order("date");
       const cards: Obj = {};
       for (const a of Object.values((f.accounts ?? {}) as Record<string, Account>)) cards[a.name] = isCredit(a) ? "credit" : "debit";

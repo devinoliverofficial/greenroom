@@ -765,7 +765,7 @@
         feedListeners.forEach(function (fn) { fn(none); });
         return;
       }
-      var items = await sb.from('feed_items').select('id, tour_id, date, merchant, amount, category, account, why')
+      var items = await sb.from('feed_items').select('id, tour_id, date, posted, merchant, amount, category, account, why')
         .eq('status', 'waiting').order('date');
       var state = { row: f.data, items: items.error ? [] : items.data };
       feedListeners.forEach(function (fn) { try { fn(state); } catch (e) { /* listener's problem */ } });

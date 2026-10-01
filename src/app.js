@@ -2407,7 +2407,7 @@
     var b = String((G.isObj(card.feed) && card.feed.bank) || (G.isObj(card.owedNow) && card.owedNow.bank) || '').trim();
     return /^american express$/i.test(b) ? 'AMEX' : b;
   }
-  function cardRow(id, t, card, paidCell) {
+  function cardRow(id, t, card, paidCell, creditCell) {
     var sm = G.cardSummary(card, t);
     var bank = cardBank(card);
     var inner = [
@@ -2417,7 +2417,7 @@
           (sm.remainder > 0.004 ? money(sm.remainder) + ' to sort' : 'All sorted') +
           ' \u00b7 ' + (sm.owed > 0 ? money(sm.owed) + ' owed' : 'paid off'))),
       h('span', { class: 'amt num glow ex-proj', 'aria-label': 'Projected not set' }, '\u2014'),
-      h('span', { class: 'amt num ex-paid', 'aria-label': 'Still to sort ' + money(sm.remainder) }, money(sm.remainder)),
+      creditCell(sm.remainder),
       paidCell(sm.paidOff)
     ];
     if (!canSeeMoney(id)) return h('div', { class: 'row ex-row cc-row' }, inner);
@@ -2501,15 +2501,22 @@
     var edit = canEditTour(id);
     var chev = edit ? h('span', { class: 'ex-chev', 'aria-hidden': 'true' }) : null;
     var head = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
-      h('span', null, ''), h('span', { class: 'ex-proj' }, 'Projected'), h('span', { class: 'ex-paid' }, 'Spent'),
-      h('span', { class: 'ex-done' }, 'Paid'), chev ? chev.cloneNode() : null);
-    // Paid: money actually gone. A category's debit, cash and check payments;
-    // a credit card's payments to the card company (the ones that splash).
-    var paidOutTotal = 0;
+      h('span', null, ''), h('span', { class: 'ex-proj' }, 'Projected'), h('span', { class: 'ex-paid' }, 'Credit'),
+      h('span', { class: 'ex-done' }, 'Debit'), chev ? chev.cloneNode() : null);
+    // Credit: what went on a credit card (still owed until the card is paid).
+    // Debit: money that's gone, paid by debit card, cash or check, and on a
+    // card's own line the payments made to the card company (the splashes).
+    var paidOutTotal = 0, creditTotal = 0;
     var paidCell = function (v) {
       v = Math.round(G.num(v) * 100) / 100;
       paidOutTotal += v;
-      return h('span', { class: 'amt num ex-done', 'aria-label': 'Paid ' + money(v) }, v > 0.004 ? money(v) : '\u2014');
+      return h('span', { class: 'amt num ex-done', 'aria-label': 'Debit ' + money(v) }, v > 0.004 ? money(v) : '\u2014');
+    };
+    var creditCell = function (v, over) {
+      v = Math.round(G.num(v) * 100) / 100;
+      creditTotal += v;
+      return h('span', { class: 'amt num ex-paid' + (over ? ' over' : ''), 'aria-label': 'Credit ' + money(v) },
+        Math.abs(v) > 0.004 ? money(v) : '\u2014');
     };
     // Commission reads like every other category, a plain line, until a
     // deal is actually filled in.
@@ -2524,9 +2531,9 @@
           hint.text ? h('span', { class: 'hint' + hint.cls }, hint.text) : null),
         h('span', { class: 'amt num glow ex-proj', 'aria-label': 'Projected ' + (unset ? 'not set' : money(l.projected)) },
           unset ? '\u2014' : money(l.projected)),
-        h('span', { class: 'amt num ex-paid' + (l.over > 0 ? ' over' : ''), 'aria-label': 'Spent ' + money(l.paid) },
-          money(l.paid)),
-        paidCell(l.paidOut != null ? l.paidOut : l.key === 'commission' ? 0 : paidPart(t, l.key) +
+        // Commission is paid from the bank, so it reads as debit.
+        creditCell(l.key === 'commission' ? 0 : l.creditOut != null ? l.creditOut : l.paid - paidPart(t, l.key), l.over > 0),
+        paidCell(l.paidOut != null ? l.paidOut : l.key === 'commission' ? l.paid : paidPart(t, l.key) +
           (l.key === 'card' ? G.cardDebts(t).reduce(function (n, d) { return n + G.cardSummary(d, t).paidOff; }, 0) : 0))
       ];
       if (!edit) return h('div', { class: 'row ex-row' }, inner);
@@ -2542,7 +2549,7 @@
     var rows = [];
     c.lines.forEach(function (l) {
       if (l.key !== 'card' || !feedCards.length) { rows.push(lineRow(l)); return; }
-      feedCards.forEach(function (card) { rows.push(cardRow(id, t, card, paidCell)); });
+      feedCards.forEach(function (card) { rows.push(cardRow(id, t, card, paidCell, creditCell)); });
       // Anything else under Credit card (a card typed in by hand, or a charge
       // sorted there) keeps a line of its own.
       var inCards = feedCards.reduce(function (n, card) { return n + G.cardSummary(card, t).remainder; }, 0);
@@ -2555,6 +2562,7 @@
           cards: (l.cards || []).filter(function (r) { return !r.feed; }),
           over: l.projected != null ? Math.max(0, rest - l.projected) : 0,
           paidOut: otherPaid,
+          creditOut: Math.max(0, rest) - paidPart(t, 'card'),
           left: l.projected != null ? Math.max(0, l.projected - Math.max(0, rest)) : l.left
         })));
       }
@@ -2565,9 +2573,17 @@
     rows.push(h('div', { class: 'row total ex-total' },
       h('span', null, 'Total'),
       h('strong', { class: 'amt num glow ex-proj' }, money(projTotal)),
-      h('strong', { class: 'amt num ex-paid' + (paidTotal > projTotal && projTotal > 0 ? ' over' : '') }, money(paidTotal)),
+      h('strong', { class: 'amt num ex-paid' }, money(creditTotal)),
       h('strong', { class: 'amt num ex-done' }, money(paidOutTotal)),
       chev ? chev.cloneNode() : null));
+    // What the two columns mean, and the tour's real spending in one number
+    // (a card payment pays off credit, so it isn't spending twice).
+    var key = h('p', { class: 'note ex-key' },
+      h('b', null, 'Credit'), ' went on a credit card. ', h('b', null, 'Debit'), ' was paid by debit card, cash or check, ' +
+      'plus payments made on the cards. ',
+      h('span', { class: 'ex-spent' + (projTotal > 0 && paidTotal > projTotal ? ' over' : '') }, 'Spent so far: ' + money(paidTotal) +
+        (projTotal > 0 ? (paidTotal > projTotal ? ' \u00b7 ' + money(paidTotal - projTotal) + ' over the projection'
+          : ' \u00b7 ' + money(projTotal - paidTotal) + ' left of the projection') : '')));
     var charges = G.rows(t && t.charges);
     var baselineOffer = (!off && canEditTour(id) && budgetIsBlank(t) && !charges.length && baselineCandidates(id).length)
       ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-bottom:14px',
@@ -2588,6 +2604,7 @@
           icon('edit', 18), 'Log New Expense'),
         off ? null : cashLogEntry(id, t)),
       h('div', { class: 'ledger' }, rows),
+      key,
       canEditTour(id) ? h('p', { class: 'note' }, 'Tap a category to set what you expect it to cost and what you’ve already paid.') : null,
       // Debts logged before Credit card and Loan became plain categories still
       // count, so a tour that has them keeps its ledger; fresh tours never see it.
@@ -2630,7 +2647,7 @@
     G.rows(t && t.charges).forEach(function (ch) {
       if (ch.category !== key) return;
       out.push({ date: ch.date || '', label: ch.merchant || 'Charge', amount: G.num(ch.amount),
-        detail: [ch.account || '', ch.paid ? 'Paid' : 'Spent', ch.by ? 'sorted by ' + ch.by : '',
+        detail: [ch.account || '', ch.paid ? 'Debit' : 'Credit', ch.by ? 'sorted by ' + ch.by : '',
           ch.accounted ? 'already accounted for' : ''].filter(Boolean).join(' · '),
         source: chargeSource(t, ch), chargeId: ch.id, counts: !ch.accounted });
     });
@@ -2696,11 +2713,11 @@
       icon('card', 18), 'Logged Card Transactions' + (n ? ' (' + n + ')' : ''));
   }
   // A payment logged by hand: an entry of its own, dated, marked MANUAL.
-  // Spent: put on a credit card, still owed until the card is paid off.
-  // Paid: a debit card, cash or a check, so the money is already gone.
+  // Credit: put on a credit card, still owed until the card is paid off.
+  // Debit: a debit card, cash or a check, so the money is already gone.
   function paidLogForm(id, key, label, after, how) {
     var paid = how === 'paid';
-    var word = paid ? 'paid' : 'spent';
+    var word = paid ? 'paid' : 'charged';
     var f = { amount: 0, date: G.tourToday(), what: '' };
     var submit = async function (e) {
       e.preventDefault();
@@ -2712,13 +2729,13 @@
         accounted: false, manual: true, paid: paid, createdAt: Date.now() };
       if (await api.update(id, patch)) {
         delete S.drafts['exp:' + id];
-        toast(money(f.amount) + ' logged as ' + word); render(true);
+        toast(money(f.amount) + ' logged as ' + (paid ? 'debit' : 'credit')); render(true);
         if (after) after(); else closeSheet();
       }
     };
     return h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
-      h('p', { class: 'note' }, paid ? 'Paid: a debit card, cash or a check. The money\u2019s already gone.'
-        : 'Spent: put on a credit card. It counts now and stays owed until the card is paid off.'),
+      h('p', { class: 'note' }, paid ? 'Debit: a debit card, cash or a check. The money\u2019s already gone.'
+        : 'Credit: put on a credit card. It counts now and stays owed until the card is paid off.'),
       field('How much was ' + word, moneyInput({ id: 'log-paid', value: 0, label: label + ' ' + word, nextId: 'log-what',
         onValue: function (v) { f.amount = v; } })),
       field('What was it for?', h('input', { class: 'input', type: 'text', id: 'log-what', maxlength: 60, autocomplete: 'off',
@@ -2726,7 +2743,7 @@
       field('Day it was ' + word, h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Day it was ' + word,
         onchange: function (e) { f.date = e.target.value; } })),
       h('div', { class: 'stack' },
-        h('button', { class: 'btn primary block', type: 'submit' }, 'Log it as ' + word)));
+        h('button', { class: 'btn primary block', type: 'submit' }, 'Log it as ' + (paid ? 'debit' : 'credit'))));
   }
 
   function openCategorySheet(id, key) {
@@ -2745,8 +2762,8 @@
       readout.append(
         h('div', null, h('span', null, 'Projected'), h('strong', { class: 'num' }, p == null ? 'Not set' : money(p))),
         h('div', null, h('span', null, 'Spent so far'), h('strong', { class: 'num' }, money(paid))),
-        settled > 0 ? h('div', null, h('span', null, '\u21b3 of that, paid (debit, cash, check)'),
-          h('strong', { class: 'num' }, money(settled))) : null,
+        paid > 0 ? h('div', null, h('span', null, '\u21b3 Credit'), h('strong', { class: 'num' }, money(paid - settled))) : null,
+        paid > 0 ? h('div', null, h('span', null, '\u21b3 Debit'), h('strong', { class: 'num' }, money(settled))) : null,
         p == null ? h('div', null, h('span', null, 'Counts as'), h('strong', { class: 'num' }, money(paid)))
           : paid > p ? h('div', null, h('span', null, 'Over by'), h('strong', { class: 'num neg' }, money(paid - p)))
           : h('div', null, h('span', null, 'Left to pay'), h('strong', { class: 'num' }, money(p - paid))));
@@ -2779,9 +2796,9 @@
         cat.note ? h('p', { class: 'sh-sub' }, cat.note) : null,
         readout,
         canWrite() ? [
-          h('h3', { class: 'sh-h3' }, 'Is this log projected, spent or paid?'),
-          segmented(['Projected', 'Spent', 'Paid'], -1, function (i) { kind = ['projected', 'spent', 'paid'][i]; draw(); },
-            'Projected, spent or paid'),
+          h('h3', { class: 'sh-h3' }, 'Is this log projected, credit or debit?'),
+          segmented(['Projected', 'Credit', 'Debit'], -1, function (i) { kind = ['projected', 'spent', 'paid'][i]; draw(); },
+            'Projected, credit or debit'),
           box
         ] : null,
         loggedButton(id, key, function () { openCategorySheet(id, key); })
@@ -2880,7 +2897,7 @@
       return [
         h('h2', { class: 'sh-title' }, 'Pay ' + (p.name || 'crew')),
         h('p', { class: 'sh-sub' }, money(G.num(p.pay)) + ' for the tour' + (owed < G.num(p.pay) ? ' \u00b7 ' + money(owed) + ' still owed' : '') +
-          '. Logged under Crew as MANUAL, paid (debit card, cash or check).'),
+          '. Logged under Crew as MANUAL, as debit (debit card, cash or check).'),
         h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
           e.preventDefault(); blurActive();
           if (!(f.amount > 0)) { toast('Enter how much you paid'); return; }
@@ -2959,11 +2976,11 @@
       }
       var kind = crewKind[id] || null;
       var ask = canWrite() ? [
-        h('h3', { class: 'sh-h3' }, 'Is this log projected, spent or paid?'),
-        segmented(['Projected', 'Spent', 'Paid'], ['projected', 'spent', 'paid'].indexOf(kind), function (i) {
+        h('h3', { class: 'sh-h3' }, 'Is this log projected, credit or debit?'),
+        segmented(['Projected', 'Credit', 'Debit'], ['projected', 'spent', 'paid'].indexOf(kind), function (i) {
           crewKind[id] = ['projected', 'spent', 'paid'][i];
           openCrewSheet(id);
-        }, 'Projected, spent or paid'),
+        }, 'Projected, credit or debit'),
         kind === 'projected' ? h('div', { style: 'margin-top:14px' },
           benchRow,
           h('button', { class: 'btn primary block', type: 'button', style: 'margin-bottom:16px',
@@ -4679,7 +4696,7 @@
           return h('div', { class: 'row' },
             h('div', { class: 'row-label' }, ch.merchant || 'Charge',
               h('span', { class: 'hint' }, [dayMD(ch.date), cats[ch.category] || 'Not sorted', ch.account || (ch.manual ? 'Logged by hand' : ''),
-                ch.paid ? 'Paid' : 'Spent', ch.by ? 'sorted by ' + ch.by : ''].filter(Boolean).join(' · '))),
+                ch.paid ? 'Debit' : 'Credit', ch.by ? 'sorted by ' + ch.by : ''].filter(Boolean).join(' · '))),
             h('span', { class: 'src-tag src-' + chargeSource(t, ch).toLowerCase() }, chargeSource(t, ch)),
             h('span', { class: 'amt num' }, G.moneyCents(ch.amount)));
         })),
@@ -9495,7 +9512,8 @@
     // Newest charge at the top, oldest at the bottom.
     rows.sort(function (a, b) {
       var da = G.parseDay(a.date) ? a.date : '0000', db = G.parseDay(b.date) ? b.date : '0000';
-      return db.localeCompare(da);
+      return db.localeCompare(da) || String(b.posted || b.date || '').localeCompare(String(a.posted || a.date || '')) ||
+        String(a.merchant || '').localeCompare(String(b.merchant || ''));
     });
     var feed = !!(opts && opts.feed);
     // Where each charge is logged, picked under its category:
@@ -10026,7 +10044,7 @@
       var cat = it.category && valid[it.category] ? it.category : '';
       var amt = G.num(it.amount);
       return {
-        feedId: it.id, date: it.date, merchant: it.merchant, amount: amt, account: it.account || '',
+        feedId: it.id, date: it.date, posted: it.posted || it.date, merchant: it.merchant, amount: amt, account: it.account || '',
         category: cat, source: cat ? 'learned' : null, why: it.why || '',
         duplicate: false, preCutoff: false,
         // Refunds and look-alikes of charges already on the tour start unticked.

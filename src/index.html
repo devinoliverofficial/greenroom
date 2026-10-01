@@ -1274,12 +1274,24 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .ex-proj, .ex-paid, .ex-done { flex: 0 0 62px; text-align: right; }
 .row.ex-row, .row.ex-head, .row.ex-total { gap: 6px; }
 .ex-row .amt, .ex-total .amt { font-size: 14px; }
-.ledger .amt.ex-done { color: var(--ink-2); }
+.ledger .amt.ex-done { color: var(--ink); }
+/* Credit and Debit read in white, in the tour dates' font. */
+.exp-page .ledger .amt.ex-paid, .exp-page .ledger .amt.ex-done { color: var(--ink); font-family: var(--font); font-weight: 600; }
+.exp-page .ledger .amt.ex-paid.over { color: var(--neg); }
+.exp-page .ex-row .row-label { font-size: 14px; font-weight: 600; }
+.exp-page .ex-row .row-label .hint { font-size: 12px; }
+.exp-page .row.ex-row { min-height: 56px; padding-top: 10px; padding-bottom: 10px; }
+.ex-key { margin-top: 10px; font-size: 12.5px; line-height: 1.45; }
+.ex-key b { color: var(--ink); font-weight: 700; }
+.ex-spent { display: block; margin-top: 4px; color: var(--ink); font-weight: 700; }
+.ex-spent.over { color: var(--neg); }
 .ex-row .row-label { overflow-wrap: normal; }
 .ex-chev { flex: 0 0 18px; }
 .row.ex-head { min-height: 0; padding-top: 11px; padding-bottom: 9px;
   font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
 .row.ex-head > span:first-child { flex: 1; }
+/* Credit and Debit (and Projected) in white, in the tour dates' font. */
+.row.ex-head { color: var(--ink); font-family: var(--font); font-size: 11.5px; font-weight: 600; letter-spacing: .06em; }
 .ledger .amt.ex-paid { color: var(--ink); }
 .ledger .amt.ex-paid.over { color: var(--neg); }
 .row.ex-total .amt { font-size: 15px; }
