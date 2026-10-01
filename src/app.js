@@ -884,7 +884,8 @@
   function heroNode(tour, tourId) {
     var c = G.calc(tour);
     var st = G.stateOf(c);
-    var series = G.balanceSeries(tour);
+    // So far: the line stops at today while the tour is on.
+    var series = G.balanceSeries(tour, { until: G.tourToday() });
     var change = G.latestChange(tour);
     var pct = Math.max(0, Math.min(100, Math.floor(c.coverage * 100)));
 
@@ -908,8 +909,9 @@
     if (series.length > 1) {
       chart = h('div', {
         class: 'chart-wrap', tabindex: '0', role: 'img',
-        'aria-label': 'Running balance from ' + dayLong(series[0].date) + ' to ' +
-          dayLong(series[series.length - 1].date) + '. Now ' + money(c.net, true) + '. ' +
+        'aria-label': 'Money in against what\u2019s spent and owed, from ' + dayLong(series[0].date) + ' to ' +
+          dayLong(series[series.length - 1].date) + '. Now ' + money(series[series.length - 1].income) + ' in and ' +
+          money(series[series.length - 1].spent) + ' spent and owed. ' +
           'Use the left and right arrow keys to step through the tour night by night.'
       });
       chart.__data = { series: series, nights: loggedNights(tour), tourId: tourId };
@@ -955,26 +957,21 @@
     var W = Math.max(260, Math.round(wrap.clientWidth || 340));
     var H = 140, PAD = 14, PADX = 8; // PADX keeps the first and last markers whole
 
-    var nets = series.map(function (p) { return p.net; });
-    var lo = Math.min.apply(null, nets.concat([0]));
-    var hi = Math.max.apply(null, nets.concat([0]));
-    if (hi === lo) hi = lo + 1;
-    // Keep break-even off the edge so it reads as a line to cross, not a border.
-    var room = (hi - lo) * 0.16;
-    hi += room; lo -= room;
-    var span = hi - lo;
-    var y = function (v) { return PAD + (hi - v) / span * (H - PAD * 2); };
+    // Two lines on one scale from zero: money in (the dots, only ever
+    // climbing) and what's spent and owed (dashed, stepping up as costs come
+    // in). Green between them while money in is ahead, red while spending is.
+    var top = Math.max.apply(null, series.map(function (p) { return Math.max(p.income, p.spent); }).concat([1])) * 1.12;
+    var y = function (v) { return PAD + (1 - v / top) * (H - PAD * 2); };
     var x = function (i) { return last < 1 ? PADX : PADX + (i / last) * (W - PADX * 2); };
-    var y0 = y(0);
-
-    var line = series.map(function (p, i) {
-      return (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.net).toFixed(1);
-    }).join(' ');
-    var area = line + ' L' + x(last).toFixed(1) + ' ' + y0.toFixed(1) +
-      ' L' + x(0).toFixed(1) + ' ' + y0.toFixed(1) + ' Z';
+    var pts = function (key) { return series.map(function (p, i) { return x(i).toFixed(1) + ' ' + y(p[key]).toFixed(1); }); };
+    var inc = pts('income'), out = pts('spent');
+    var lineOf = function (a) { return 'M' + a.join(' L'); };
+    var edge = function (key, i) { return y(series[i][key]).toFixed(1); };
+    // The region under a line, and the region over it (edge to edge).
+    var under = function (a, key) { return 'M0 ' + edge(key, 0) + ' L' + a.join(' L') + ' L' + W + ' ' + edge(key, last) + ' L' + W + ' ' + H + ' L0 ' + H + ' Z'; };
+    var over = function (a, key) { return 'M0 ' + edge(key, 0) + ' L' + a.join(' L') + ' L' + W + ' ' + edge(key, last) + ' L' + W + ' 0 L0 0 Z'; };
 
     var uid = 'gr' + (++chartSeq);
-    var above = Math.max(0, Math.min(H, y0));
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'chart');
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
@@ -982,32 +979,32 @@
     svg.setAttribute('height', String(H));
     svg.setAttribute('aria-hidden', 'true');
 
+    var head = series[last];
     var parts = [
       '<defs>',
-      '<clipPath id="' + uid + '-pos"><rect x="0" y="0" width="' + W + '" height="' + above.toFixed(1) + '"/></clipPath>',
-      '<clipPath id="' + uid + '-neg"><rect x="0" y="' + above.toFixed(1) + '" width="' + W + '" height="' + (H - above).toFixed(1) + '"/></clipPath>',
+      '<clipPath id="' + uid + '-overout"><path d="' + over(out, 'spent') + '"/></clipPath>',
+      '<clipPath id="' + uid + '-overin"><path d="' + over(inc, 'income') + '"/></clipPath>',
       '</defs>',
-      '<path class="fill-pos" d="' + area + '" clip-path="url(#' + uid + '-pos)"/>',
-      '<path class="fill-neg" d="' + area + '" clip-path="url(#' + uid + '-neg)"/>',
-      '<line class="baseline" x1="' + PADX + '" y1="' + y0.toFixed(1) + '" x2="' + (W - PADX) + '" y2="' + y0.toFixed(1) + '"/>',
-      // The line itself is red under break-even and green over it.
-      '<path class="curve pos" d="' + line + '" clip-path="url(#' + uid + '-pos)"/>',
-      '<path class="curve neg" d="' + line + '" clip-path="url(#' + uid + '-neg)"/>'
+      '<line class="zero" x1="' + PADX + '" y1="' + y(0).toFixed(1) + '" x2="' + (W - PADX) + '" y2="' + y(0).toFixed(1) + '"/>',
+      '<path class="fill-pos" d="' + under(inc, 'income') + '" clip-path="url(#' + uid + '-overout)"/>',
+      '<path class="fill-neg" d="' + under(out, 'spent') + '" clip-path="url(#' + uid + '-overin)"/>',
+      '<path class="curve spent" d="' + lineOf(out) + '"/>',
+      '<path class="curve inc" d="' + lineOf(inc) + '"/>'
     ];
-
+    // A dot on every night money came in; the head is today.
     series.forEach(function (p, i) {
-      if (!d.nights[p.date] || i === last) return;
-      parts.push('<circle class="night ' + (p.net < 0 ? 'neg' : 'pos') + '" cx="' +
-        x(i).toFixed(1) + '" cy="' + y(p.net).toFixed(1) + '" r="4"/>');
+      if (i === last) return;
+      if (!(i === 0 ? p.income > 0 : p.income > series[i - 1].income + 0.004)) return;
+      parts.push('<circle class="night pos" cx="' + x(i).toFixed(1) + '" cy="' + y(p.income).toFixed(1) + '" r="4"/>');
     });
-    parts.push('<circle class="head ' + (series[last].net < 0 ? 'neg' : 'pos') + '" cx="' +
-      x(last).toFixed(1) + '" cy="' + y(series[last].net).toFixed(1) + '" r="5.5"/>');
+    parts.push('<circle class="spent-head" cx="' + x(last).toFixed(1) + '" cy="' + y(head.spent).toFixed(1) + '" r="3.5"/>');
+    parts.push('<circle class="head ' + (head.income >= head.spent ? 'pos' : 'neg') + '" cx="' +
+      x(last).toFixed(1) + '" cy="' + y(head.income).toFixed(1) + '" r="5.5"/>');
     parts.push('<line class="cursor" x1="0" y1="0" x2="0" y2="' + H + '"/>');
-    parts.push('<circle class="dot neg" cx="0" cy="0" r="5.5"/>');
+    parts.push('<circle class="dot2" cx="0" cy="0" r="4"/>');
+    parts.push('<circle class="dot pos" cx="0" cy="0" r="5.5"/>');
     svg.innerHTML = parts.join('');
 
-    var flag = h('span', { class: 'break-even' }, 'break even');
-    flag.style.top = (y0 / H * 100) + '%';
     var pill = h('div', { class: 'scrub-pill', hidden: true });
     // Comments for the night you're on, below the line.
     var notes = h('div', { class: 'scrub-notes', hidden: true });
@@ -1035,11 +1032,13 @@
       el.classList.toggle('neg', !up);
     };
     var bus = h('span', { class: 'chart-bus', 'aria-hidden': 'true' });
-    parkBus(bus, x(last), y(series[last].net), series[last].net >= 0);
+    parkBus(bus, x(last), y(head.income), head.income >= head.spent);
 
-    wrap.replaceChildren(svg, flag, pill, notes, pins, bus,
+    wrap.replaceChildren(svg, pill, notes, pins, bus,
       h('div', { class: 'chart-ends' },
         h('span', null, dayMD(series[0].date)),
+        h('span', { class: 'chart-key' },
+          h('i', { class: 'k-in' }), 'Money in', h('i', { class: 'k-out' }), 'Spent & owed'),
         h('span', null, dayMD(series[last].date))));
 
     wrap.__geo = { x: x, y: y, W: W, H: H, svg: svg, pill: pill, notes: notes,
@@ -1052,7 +1051,7 @@
   // The line draws itself in, then the marks arrive.
   function animateDraw(svg) {
     if (reduced()) return;
-    Array.prototype.forEach.call(svg.querySelectorAll('.curve'), function (p) {
+    Array.prototype.forEach.call(svg.querySelectorAll('.curve:not(.spent)'), function (p) {
       var len = 0;
       try { len = p.getTotalLength(); } catch (e) { return; }
       if (!len) return;
@@ -1062,12 +1061,12 @@
       p.style.transition = 'stroke-dashoffset .95s cubic-bezier(.22,.9,.18,1)';
       p.style.strokeDashoffset = '0';
     });
-    Array.prototype.forEach.call(svg.querySelectorAll('.fill-pos, .fill-neg'), function (f) {
+    Array.prototype.forEach.call(svg.querySelectorAll('.fill-pos, .fill-neg, .curve.spent'), function (f) {
       f.style.opacity = '0';
       f.style.transition = 'opacity .95s ease';
       requestAnimationFrame(function () { f.style.opacity = ''; });
     });
-    Array.prototype.forEach.call(svg.querySelectorAll('.night, .head'), function (m, i) {
+    Array.prototype.forEach.call(svg.querySelectorAll('.night, .head, .spent-head'), function (m, i) {
       m.style.opacity = '0';
       m.style.transition = 'opacity .3s ease ' + (0.6 + i * 0.06).toFixed(2) + 's';
       requestAnimationFrame(function () { m.style.opacity = '1'; });
@@ -1178,6 +1177,7 @@
     var pctEl = $('#prog-pct', hero);
     var cursor = geo.svg.querySelector('.cursor');
     var dot = geo.svg.querySelector('.dot');
+    var dot2 = geo.svg.querySelector('.dot2');
     var c = hero.__calc;
 
     // The whole booked run, logged or not, so an unlogged night can still
@@ -1231,21 +1231,23 @@
       cur = i;
       wrap.classList.add('scrubbing');
       hero.classList.add('scrubbing');
-      var px = geo.x(i), py = geo.y(p.net);
-      var up = p.net >= 0;
+      var px = geo.x(i), py = geo.y(p.income);
+      var gap = p.income - p.spent;
+      var up = gap >= 0;
 
       cursor.setAttribute('x1', px); cursor.setAttribute('x2', px);
       dot.setAttribute('cx', px); dot.setAttribute('cy', py);
       dot.setAttribute('class', 'dot ' + (up ? 'pos' : 'neg'));
+      if (dot2) { dot2.setAttribute('cx', px); dot2.setAttribute('cy', geo.y(p.spent)); }
       if (geo.bus) geo.parkBus(geo.bus, px, py, up);
 
-      renderOdo(odo, money(p.net, true), money(p.net, true));
+      // The number: that day's money in less what was spent and owed by then.
+      renderOdo(odo, money(gap, true), money(gap, true));
       setHeroState(hero, up ? 'green' : 'red');
 
       var night = geo.nights[p.date];
-      // Under the number: what came in that day, rolling like the number does.
-      var took = night ? night.total : 0;
-      var tookText = money(took) + ' in';
+      // Under the number: money in and spent by that day, rolling like the number does.
+      var tookText = money(p.income) + ' in \u00b7 ' + money(p.spent) + ' out';
       if (cap.__last !== tookText) {
         cap.classList.add('num', 'cap-odo');
         renderOdo(cap, tookText, cap.__last || tookText);
@@ -1286,7 +1288,7 @@
       hero.classList.remove('scrubbing');
       if (geo.bus) {
         var hp = geo.series[geo.headI];
-        geo.parkBus(geo.bus, geo.x(geo.headI), geo.y(hp.net), hp.net >= 0);
+        geo.parkBus(geo.bus, geo.x(geo.headI), geo.y(hp.income), hp.income >= hp.spent);
       }
       geo.pill.hidden = true;
       geo.notes.hidden = true;

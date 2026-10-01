@@ -642,7 +642,20 @@
 
   /* ---------------- Balance by day (the chart) ---------------- */
 
-  function balanceSeries(tour) {
+  /* What's actually gone out or is owed, as of a calc: what's been spent in
+     every category (card balances going in included), the commission on what
+     has come in, loans, and the day-by-day costs. Never projections. */
+  function spentOf(c) {
+    var paid = c.lines.reduce(function (t, l) { return l.key === 'commission' ? t : t + num(l.paid); }, 0);
+    return round((paid + num(c.commission) + num(c.debt) + num(c.dayByDay)) * 100) / 100;
+  }
+
+  /* The chart, day by day: money in (it only climbs) against what's spent
+     and owed. It starts the day the tour does; anything spent before that is
+     already in its first point. opts.until stops it there (today, while the
+     tour is on). */
+  function balanceSeries(tour, opts) {
+    var o = opts || {};
     var c = calc(tour);
     var dated = c.allShows.filter(function (s) { return parseDay(s.date); });
     var extras = rows(tour && tour.extras).filter(function (x) { return parseDay(x.date); });
@@ -657,6 +670,10 @@
 
     days.sort();
     var start = days[0], end = days[days.length - 1];
+    var ts = tourStart(tour);
+    if (ts && ts > start) start = ts;
+    if (end < start) end = start;
+    if (o.until && parseDay(o.until) && o.until >= start && o.until < end) end = o.until;
     var span = daysBetween(start, end);
     if (span < 0) return [];
     // One day of activity would be a single point and no line at all. Start the
@@ -668,7 +685,7 @@
     for (var i = 0; i <= span; i++) {
       var day = addDays(start, i);
       var snap = calc(tour, { upTo: day });
-      series.push({ date: day, net: snap.net, income: snap.income, out: snap.out });
+      series.push({ date: day, net: snap.net, income: snap.income, out: snap.out, spent: spentOf(snap) });
     }
     return series;
   }
@@ -1230,7 +1247,7 @@
 
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

@@ -645,6 +645,28 @@
     near(s[1].net, 1000, 'the show pulls it into the green');
   });
 
+  test('the chart starts the day the tour does; what was spent before is in its first point', function () {
+    var t = {
+      expenses: { bus: { projected: 4000, paid: 0 } },
+      crew: {}, debts: {}, commission: {}, extras: {},
+      charges: keyed([{ date: '2026-09-20', merchant: 'Van rental', amount: 300, category: 'bus' }]),
+      shows: keyed([
+        { date: '2026-10-05', city: 'Detroit, MI', loggedAt: 1, income: { merch: 1000 } },
+        { date: '2026-10-07', city: 'Chicago, IL', loggedAt: 1, income: { merch: 1500 } }])
+    };
+    var s = G.balanceSeries(t);
+    eq(s[0].date, '2026-10-05', 'starts with the first show, not the September charge');
+    near(s[0].spent, 300, 'the September charge is already in');
+    near(s[0].income, 1000, 'first night in');
+    near(s[s.length - 1].income, 2500, 'money in only climbs');
+    near(s[s.length - 1].spent, 300, 'spent is what went out, not the $4,000 plan');
+    s.forEach(function (p, i) {
+      if (i && p.income < s[i - 1].income) throw new Error('money in went down on ' + p.date);
+      if (p.spent > p.out + 0.005) throw new Error('spent above the plan on ' + p.date);
+    });
+    eq(G.balanceSeries(t, { until: '2026-10-06' }).slice(-1)[0].date, '2026-10-06', 'stops at today while the tour is on');
+  });
+
   /* ============ The change chip ============ */
 
   test('the change chip reports the last show net of commission', function () {

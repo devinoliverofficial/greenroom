@@ -16,7 +16,9 @@ shim = r"""<script>
         gas: { projected: 9800 }, flights: { projected: 18250 } }, commission: {}, crew: {}, debts: {}, extras: {},
       charges: { c1: { id: 'c1', date: ymd(today), merchant: 'Prevost', amount: 21456.78, category: 'bus', manual: true, paid: false },
         c2: { id: 'c2', date: ymd(today), merchant: 'Marriott', amount: 4560, category: 'hotels', manual: true, paid: true },
-        c3: { id: 'c3', date: ymd(today), merchant: 'Delta', amount: 6890, category: 'flights', manual: true, paid: false } }, imports: {},
+        c3: { id: 'c3', date: ymd(today), merchant: 'Delta', amount: 6890, category: 'flights', manual: true, paid: false },
+        // Before the first show: the chart folds it into its first day.
+        c4: { id: 'c4', date: ymd(new Date(today.getTime() - 12 * 864e5)), merchant: 'Van rental', amount: 450, category: 'bus', manual: true, paid: true } }, imports: {},
       bands: ['Opener Band', 'I See Stars'],
       shows: { s1: { id: 's1', date: ymd(today), city: 'Austin, TX', venue: 'Mohawk',
         daySheet: { doors: '7:00 PM', venueAddress: '912 Red River St, Austin, TX 78701' } },
