@@ -4904,16 +4904,17 @@
     if (!on[today]) return { off: true };
     var n = 0, d = today;
     while (on[d] && n < 400) { n += 1; d = G.addDays(d, 1); }
-    return { n: n };
+    return { n: n, last: today === dates[dates.length - 1] };
   }
   function offCounter(t) {
     var c = daysUntilOff(t);
     if (!c) return null;
-    return h('div', { class: 'off-count', 'aria-label': c.off ? 'Day off today'
-        : c.n + (c.n === 1 ? ' show' : ' shows') + ' until day off' },
-      c.off ? [h('b', null, 'Day off'), h('span', { class: 'oc-2' }, 'today')]
-        : [h('b', { class: 'num' }, String(c.n)),
-           h('span', { class: 'oc-2' }, (c.n === 1 ? 'show' : 'shows') + ' until day off')]);
+    // Tonight's the only show before a break: just "Day off tomorrow"
+    // (or, on the run's final night, "Last show tonight").
+    var pair = c.off ? ['Day off', 'today'] : c.n === 1 ? (c.last ? ['Last show', 'tonight'] : ['Day off', 'tomorrow']) : null;
+    return h('div', { class: 'off-count', 'aria-label': pair ? pair.join(' ') : c.n + ' shows until day off' },
+      pair ? [h('b', null, pair[0]), h('span', { class: 'oc-2' }, pair[1])]
+        : [h('b', { class: 'num' }, String(c.n)), h('span', { class: 'oc-2' }, 'shows until day off')]);
   }
 
   function viewTourDay(id, t, view) {
@@ -7753,129 +7754,151 @@
       onclick: function () { go({ name: 'tour', id: id, view: 'cashlog' }); } },
       icon('cash', 18), h('span', null, 'MERCH CASH LOG'),
       sum.took > 0 ? h('span', { class: 'ce-left num' + (sum.left > 0.004 ? ' neg' : ' pos') },
-        sum.left > 0.004 ? money(sum.left) + ' left' : 'All in') : null);
+        sum.left > 0.004 ? cashMoney(sum.left) + ' left' : 'All in') : null);
   }
 
+  // Cash comes in odd amounts: show the cents whenever there are any, so
+  // what's on screen is exactly what's left to type in.
+  function cashMoney(v) {
+    v = Math.round(G.num(v) * 100) / 100;
+    return Math.abs(v - Math.round(v)) > 0.004 ? G.moneyCents(v) : money(v);
+  }
+  // Where merch cash can go: the Expenses categories (so it lands in their
+  // Cash column), plus a deposit or a hand-off, which just move the cash.
+  function cashCats(t) {
+    return G.chargeCategoriesFor(t).filter(function (c) { return c.key !== 'commission' && c.key !== 'offdebt'; });
+  }
+  function cashCatLabels(t) {
+    var out = {};
+    G.chargeCategoriesFor(t).forEach(function (c) { out[c.key] = c.label; });
+    Object.keys(G.CASH_MOVES).forEach(function (k) { out[k] = G.CASH_MOVES[k]; });
+    return out;
+  }
+
+  /* Up top, the cash still to account for. Under it, only the cities whose
+     cash isn't all accounted for yet, laid out like the Budget's cities: tap
+     one to log what was spent or deposited. The rest wait behind a button. */
   function cashLogBody(id, t) {
     var sum = G.cashSummary(t);
     var byShow = G.cashByShow(t);
-    var cats = G.chargeCategoriesFor(t).filter(function (c) { return c.key !== 'commission'; });
-    var catLabel = {};
-    cats.forEach(function (c) { catLabel[c.key] = c.label; });
-    Object.keys(G.CASH_MOVES).forEach(function (k) { catLabel[k] = G.CASH_MOVES[k]; });
+    var catLabel = cashCatLabels(t);
     var edit = canEditTour(id);
-
-    var status;
-    if (!(sum.took > 0) && !(sum.used > 0)) status = h('span', { class: 'hint' }, 'No merch cash yet');
-    else if (sum.left > 0.004) status = h('strong', { class: 'amt num neg' }, money(sum.left));
-    else if (sum.left < -0.004) status = h('strong', { class: 'amt num neg' }, money(-sum.left) + ' over');
-    else status = h('strong', { class: 'amt num pos glow' }, 'All in');
-    var summary = h('div', { class: 'ledger' },
-      h('div', { class: 'row' }, h('span', { class: 'row-label' }, 'Cash taken in',
-        h('span', { class: 'hint' }, 'From atVenu, show by show')),
-        h('span', { class: 'amt num' }, money(sum.took))),
-      h('div', { class: 'row' }, h('span', { class: 'row-label' }, 'Accounted for'),
-        h('span', { class: 'amt num' }, money(sum.used))),
-      h('div', { class: 'row total' }, h('span', null, sum.left < -0.004 ? 'Logged more than came in' : 'Still to account for'),
-        status));
-
-    // Catching up: every visit starts at the oldest night whose cash isn't
-    // all accounted for, and stays on it until it is (or it's skipped).
-    S.cashSkip = S.cashSkip || {};
     var open = byShow.nights.filter(function (n) { return n.left > 0.004; });
-    var next = open.filter(function (n) { return !S.cashSkip[n.show.id]; })[0] || null;
-    var catchUp = null;
-    if (edit && sum.took > 0) {
-      if (!open.length) {
-        catchUp = h('div', { class: 'cash-done' }, icon('check', 18), 'Every night’s merch cash is accounted for.');
-      } else if (!next) {
-        catchUp = h('div', { class: 'card cash-catch' },
-          h('p', { class: 'note', style: 'margin:0 0 10px' },
-            plural(open.length, 'night') + ' skipped for now still ' + (open.length === 1 ? 'has' : 'have') + ' cash to account for.'),
-          h('button', { class: 'btn primary block', type: 'button',
-            onclick: function () { S.cashSkip = {}; render(true); } }, 'Go through them again'));
-      } else {
-        catchUp = cashCatchUpCard(id, next, open.indexOf(next) + 1, open.length, cats);
-      }
-    }
-
-    var nightsList = byShow.nights.map(function (n) {
-      var sh = n.show;
-      return h('section', { class: 'cash-night' },
-        h('div', { class: 'cn-head' },
-          h('div', null, h('div', { class: 'cn-city' }, sh.city || 'Show'),
-            h('div', { class: 'hint' }, dayLong(sh.date) + ' · ' + money(n.took) + ' cash')),
-          h('span', { class: 'amt num ' + (n.left > 0.004 ? 'neg' : 'pos') },
-            n.left > 0.004 ? money(n.left) + ' left' : 'All in')),
-        n.entries.length ? h('div', { class: 'ledger' }, n.entries.map(function (x) { return cashEntryRow(id, x, catLabel, edit); })) : null);
-    });
-
+    var done = byShow.nights.filter(function (n) { return n.left <= 0.004; });
+    var over = sum.left < -0.004;
+    var hero = h('div', { class: 'cl-hero' + (sum.left > 0.004 || over ? ' owed' : '') },
+      h('div', { class: 'cl-k' }, over ? 'Logged more than came in' : 'Cash not accounted for'),
+      h('div', { class: 'cl-n num' }, sum.left > 0.004 ? cashMoney(sum.left) : over ? cashMoney(-sum.left)
+        : sum.took > 0 ? 'All in' : cashMoney(0)),
+      sum.took > 0 ? h('div', { class: 'cl-sub' }, cashMoney(sum.took) + ' taken in · ' + cashMoney(sum.used) + ' accounted for') : null);
+    var row = function (n) {
+      var sh = n.show, left = n.left > 0.004;
+      return h('li', null, h('button', { class: 'show-row' + (left ? ' owed' : ''), type: 'button',
+        'aria-label': (sh.city || 'Show') + ', ' + cashMoney(n.took) + ' cash taken, ' +
+          (left ? cashMoney(n.left) + ' still to account for' : 'all accounted for'),
+        onclick: function () { openCashNight(id, sh.id); } },
+        dateBlock(sh.date),
+        h('div', { class: 'where' }, h('div', { class: 'city' }, sh.city || 'Show'),
+          h('div', { class: 'venue' }, cashMoney(n.took) + ' cash taken')),
+        h('span', { class: 'amt num ' + (left ? 'neg' : 'pos') }, left ? cashMoney(n.left) + ' left' : 'All in')));
+    };
+    var cities = function (k) { return k === 1 ? '1 city' : k + ' cities'; };
+    S.cashDone = S.cashDone || {};
+    var showDone = !!S.cashDone[id];
+    var rest = done.length + (byShow.loose.length ? 1 : 0);
     return [
-      summary,
-      catchUp,
-      nightsList.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:24px' }, 'Show by show'), nightsList]
-        : h('p', { class: 'note' }, 'Cash shows up here as atVenu reports come in, or when you type it under Merch → Cash while logging a show.'),
-      byShow.loose.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:22px' }, 'Logged before shows were tracked'),
+      hero,
+      !byShow.nights.length
+        ? h('p', { class: 'note' }, 'Cash shows up here as atVenu reports come in, or when you type it under Merch → Cash while logging a show.')
+        : open.length
+          ? [h('p', { class: 'count-line' }, cities(open.length) + ' still to account for' + (edit ? ' · tap one' : '')),
+             h('ul', { class: 'shows cl-list' }, open.map(row))]
+          : h('div', { class: 'cash-done' }, icon('check', 18), 'Every city’s merch cash is accounted for.'),
+      rest ? h('div', { class: 'cal-past-wrap' + (showDone ? ' open' : '') },
+        h('button', { class: 'btn quiet sm cal-past', type: 'button', 'aria-expanded': String(showDone),
+          onclick: function () { S.cashDone[id] = !showDone; render(true); } },
+          icon('chevron', 16), done.length
+            ? (showDone ? 'Hide accounted-for cities' : 'View accounted-for cities (' + done.length + ')')
+            : (showDone ? 'Hide cash logged without a city' : 'View cash logged without a city'))) : null,
+      showDone && done.length ? h('ul', { class: 'shows cl-list cl-done' }, done.map(row)) : null,
+      showDone && byShow.loose.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:18px' }, 'Logged without a city'),
         h('div', { class: 'ledger' }, byShow.loose.map(function (x) { return cashEntryRow(id, x, catLabel, edit); }))] : null
     ];
   }
 
-  // One night, one question: where did this cash go?
-  function cashCatchUpCard(id, n, place, count, cats) {
-    var sh = n.show;
-    var f = { amount: n.left, label: '', category: '', date: sh.date || G.tourToday() };
-    var amountIn = moneyInput({ id: 'cash-amt', value: n.left, label: 'Amount', placeholder: '0',
-      onValue: function (v) { f.amount = v; } });
-    var labelIn = h('input', { class: 'input', type: 'text', maxlength: 60, autocomplete: 'off',
-      placeholder: 'A note, if it helps (optional)', 'aria-label': 'Note about where the cash went',
-      oninput: function (e) { f.label = e.target.value; } });
-    // The same categories as the Expenses tab, so spending shows up there.
-    // A deposit or a hand-off just moves the cash.
-    var chipsEl = h('div', { class: 'chips cash-chips', role: 'group', 'aria-label': 'Where the cash went' });
-    function chip(key, label, cls) {
-      var b = h('button', { type: 'button', class: 'chip' + (cls ? ' ' + cls : ''), 'aria-pressed': 'false',
-        onclick: function () {
-          f.category = key;
-          Array.prototype.forEach.call(chipsEl.children, function (c) { c.setAttribute('aria-pressed', String(c === b)); });
-        } }, label);
-      return b;
-    }
-    cats.forEach(function (c) { chipsEl.append(chip(c.key, c.label)); });
-    chipsEl.append(chip('deposit', 'Deposited in bank', 'move'), chip('handoff', 'Handed off', 'move'));
-    return h('form', { class: 'card addform cash-catch', novalidate: true,
-      onsubmit: async function (e) {
-        e.preventDefault();
-        if (!(f.amount > 0)) { toast('Enter how much cash'); return; }
-        if (!f.category) { toast('Tap where the cash went'); return; }
-        blurActive();
-        var patch = {};
-        patch[newId()] = { date: G.parseDay(f.date) ? f.date : G.tourToday(), amount: f.amount, showId: sh.id,
-          label: f.label.trim() || G.CASH_MOVES[f.category] || (cats.filter(function (c) { return c.key === f.category; })[0] || {}).label || 'Cash',
-          category: f.category, createdAt: Date.now() };
-        if (await api.update(id, { cashLog: patch })) {
-          var leftNow = Math.round((n.left - f.amount) * 100) / 100;
-          toast(leftNow > 0.004 ? money(f.amount) + ' logged · ' + money(leftNow) + ' of ' + (sh.city || 'this night') + ' left'
-            : (sh.city || 'That night') + '’s cash is all accounted for');
-          render(true);
+  /* One city's cash: Spent (how much, and which Expenses category it goes
+     under, in the Cash column) or Deposited (how much, and when). */
+  function openCashNight(id, showId, how) {
+    openSheet(function () {
+      var t = getTour(id);
+      var n = G.cashByShow(t).nights.filter(function (x) { return x.show.id === showId; })[0];
+      if (!n) return [h('h2', { class: 'sh-title' }, 'Merch cash'),
+        emptyState('Nothing to account for', 'This show has no merch cash logged.')];
+      var sh = n.show, edit = canEditTour(id), catLabel = cashCatLabels(t);
+      var left = Math.round(Math.max(0, n.left) * 100) / 100;
+      var place = sh.city ? String(sh.city).split(',')[0] : 'this show';
+      var readout = h('div', { class: 'preview' },
+        h('div', null, h('span', null, 'Cash taken in'), h('strong', { class: 'num' }, cashMoney(n.took))),
+        h('div', null, h('span', null, 'Accounted for'), h('strong', { class: 'num' }, cashMoney(n.used))),
+        h('div', null, h('span', null, 'Left to account for'), h('strong', { class: 'num' + (left > 0.004 ? ' neg' : '') }, cashMoney(left))));
+      var box = h('div');
+      function draw() {
+        if (!how) { box.replaceChildren(); return; }
+        var deposit = how === 'deposit';
+        var f = { amount: 0, category: '', what: '', date: G.tourToday() };
+        var sel = null;
+        if (!deposit) {
+          sel = h('select', { class: 'input', 'aria-label': 'Category', onchange: function (e) { f.category = e.target.value; } },
+            h('option', { value: '' }, 'Pick a category'),
+            cashCats(t).map(function (c) { return h('option', { value: c.key }, c.label); }));
         }
-      } },
-      h('div', { class: 'cc-top' },
-        h('span', { class: 'cc-step' }, 'Catching up · ' + plural(count, 'night') + ' to go'),
-        h('div', { class: 'cc-city' }, sh.city || 'Show'),
-        h('div', { class: 'hint' }, dayLong(sh.date) + (sh.venue ? ' · ' + sh.venue : ''))),
-      h('div', { class: 'cc-nums' },
-        h('div', null, h('span', { class: 'hint' }, 'Cash taken'), h('strong', { class: 'amt num' }, money(n.took))),
-        h('div', null, h('span', { class: 'hint' }, 'Still to account for'), h('strong', { class: 'amt num neg' }, money(n.left)))),
-      h('p', { class: 'cash-q' }, 'Where did it go?'),
-      chipsEl,
-      h('div', { class: 'af-row' }, amountIn,
-        h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Date',
-          oninput: function (e) { f.date = e.target.value; } })),
-      labelIn,
-      h('div', { class: 'stack', style: 'margin-top:10px' },
-        h('button', { class: 'btn primary block', type: 'submit' }, 'Log it'),
-        h('button', { class: 'btn quiet block', type: 'button',
-          onclick: function () { S.cashSkip[sh.id] = true; render(true); } }, 'Skip this show for now')));
+        box.replaceChildren(h('form', { class: 'sh-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            blurActive();
+            if (!(f.amount > 0)) { toast('Enter how much was ' + (deposit ? 'deposited' : 'spent')); return; }
+            if (f.amount > left + 0.004) { toast('Only ' + cashMoney(left) + ' of ' + place + '’s cash is left to account for'); return; }
+            if (!deposit && !f.category) { toast('Pick a category'); return; }
+            if (deposit && !G.parseDay(f.date)) { toast('Pick the day it was deposited'); return; }
+            var patch = {};
+            patch[newId()] = { date: deposit ? f.date : G.tourToday(), amount: f.amount, showId: sh.id,
+              label: deposit ? G.CASH_MOVES.deposit : (f.what.trim() || catLabel[f.category] || 'Cash'),
+              category: deposit ? 'deposit' : f.category, createdAt: Date.now() };
+            if (await api.update(id, { cashLog: patch })) {
+              var leftNow = Math.round((left - f.amount) * 100) / 100;
+              toast(cashMoney(f.amount) + (deposit ? ' deposit logged' : ' logged under ' + catLabel[f.category]) +
+                (leftNow > 0.004 ? ' · ' + cashMoney(leftNow) + ' of ' + place + ' left' : ' · ' + place + ' is all accounted for'));
+              render(true);
+              if (leftNow > 0.004) openCashNight(id, showId); else closeSheet();
+            }
+          } },
+          field(deposit ? 'How much was deposited' : 'How much was spent', moneyInput({ id: 'cl-amt', value: 0,
+            label: deposit ? 'Amount deposited' : 'Amount spent', nextId: deposit ? null : 'cl-what',
+            onValue: function (v) { f.amount = v; } }), 'Up to ' + cashMoney(left)),
+          deposit ? field('Date deposited', h('input', { class: 'input', type: 'date', value: f.date, 'aria-label': 'Date deposited',
+              onchange: function (e) { f.date = e.target.value; } }))
+            : [field('Category', h('div', { class: 'sel-wrap' }, sel, icon('chevron', 16)),
+                'It shows up under this category on Expenses, in the Cash column.'),
+               field('Expense details', h('input', { class: 'input', type: 'text', id: 'cl-what', maxlength: 60, autocomplete: 'off',
+                 placeholder: 'Optional, e.g. per diems', oninput: function (e) { f.what = e.target.value; } }))],
+          h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' },
+            deposit ? 'Log the deposit' : 'Log it as spent'))));
+      }
+      draw();
+      return [
+        h('h2', { class: 'sh-title' }, sh.city || 'Show'),
+        h('p', { class: 'sh-sub' }, dayLong(sh.date) + (sh.venue ? ' · ' + sh.venue : '')),
+        readout,
+        edit && left > 0.004 ? [
+          segmented(['Spent', 'Deposited'], how === 'spent' ? 0 : how === 'deposit' ? 1 : -1, function (i) {
+            how = i ? 'deposit' : 'spent'; draw();
+          }, 'Spent or deposited'),
+          box] : null,
+        n.entries.length ? [h('h3', { class: 'sh-h3', style: 'margin-top:18px' }, 'Logged for ' + place),
+          h('div', { class: 'ledger' }, n.entries.map(function (x) { return cashEntryRow(id, x, catLabel, edit); }))] : null
+      ];
+    }, { label: (function () { var x = G.rows(getTour(id) && getTour(id).shows).filter(function (s) { return s.id === showId; })[0];
+      return 'Merch cash, ' + ((x && x.city) || 'show'); })(), cls: 'cat-sheet' });
   }
 
   function cashEntryRow(id, x, catLabel, edit) {
@@ -7884,7 +7907,7 @@
       h('div', { class: 'row-label' }, x.label || 'Cash',
         h('span', { class: 'hint' }, dayMD(x.date) + ' · ' + (catLabel[x.category] || 'Other') +
           (spent ? ' · counts as an expense' : ''))),
-      h('span', { class: 'amt num' }, money(G.num(x.amount))),
+      h('span', { class: 'amt num' }, cashMoney(x.amount)),
       edit ? h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + (x.label || 'entry'),
         onclick: function () {
           confirmSheet({
