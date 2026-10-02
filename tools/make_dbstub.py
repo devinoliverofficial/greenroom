@@ -232,6 +232,7 @@ shim = r"""<script>
       if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', verified: true, bio: '', roles: [], tourRole: me.tour_role, avatar: '', artists: [], tours: [], logos: {} }, base));
       if (uid === 'u-brent') return Promise.resolve(Object.assign({ userId: uid, name: 'Brent Allen', handle: 'brent', bio: 'Guitars, backline, bad jokes.',
         roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', avatar: '', artists: ['Sleeping With Sirens', 'I See Stars'],
+        acts: (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-brent'; }); }).map(function (x) { return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: x.members.filter(function (m) { return m.userId === 'u-brent'; })[0].kind }; }),
         tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true },
                 { id: 'x9', artist: 'Other Band', name: 'Spring Fling', first: '2026-03-02', last: '2026-04-11', shows: 28, mine: false }], logos: {} }, base));
       return Promise.resolve(null);
@@ -252,6 +253,61 @@ shim = r"""<script>
       return Promise.resolve({ id: 'x9', artist: 'Other Band', name: 'Spring Fling', flyer: H.flyerX9 || '',
         dates: [{ date: '2026-03-02', city: 'Detroit, MI', venue: 'Saint Andrew’s Hall' }, { date: '2026-03-04', city: 'Chicago, IL', venue: 'Bottom Lounge' }, { date: '2026-04-11', city: 'Anaheim, CA', venue: '' }] });
     },
+    /* Artist profiles, in memory. Searchable accounts: Brent, plus two people
+       you don't tour with (found by @username only). */
+    myArtists: function () {
+      var H = window.__harness; H.acts = H.acts || [];
+      return Promise.resolve(H.acts.map(function (a) { return { id: a.id, handle: a.handle, name: a.name, avatar: a.avatar, mine: true, kind: null }; }));
+    },
+    artistHandleFree: function (h, forArtist) {
+      var H = window.__harness; H.acts = H.acts || [];
+      var taken = ['brent', 'tasha.lane', H.handle || ''].indexOf(String(h).toLowerCase()) >= 0 ||
+        H.acts.some(function (a) { return a.handle === h && a.id !== forArtist; });
+      return new Promise(function (res) { setTimeout(function () { res(!taken); }, 60); });
+    },
+    createArtist: function (a) {
+      var H = window.__harness; H.acts = H.acts || [];
+      if (H.acts.some(function (x) { return x.handle === a.handle; })) { var e = new Error('taken'); e.code = 'taken'; return Promise.reject(e); }
+      var id = 'act' + (H.acts.length + 1);
+      H.acts.push({ id: id, handle: a.handle, name: a.name, avatar: a.avatar || '', bio: '', members: [] });
+      return Promise.resolve(id);
+    },
+    saveArtist: function (id, patch) {
+      var H = window.__harness, a = (H.acts || []).filter(function (x) { return x.id === id; })[0];
+      if (patch.handle && H.acts.some(function (x) { return x.handle === patch.handle && x.id !== id; })) { var e = new Error('taken'); e.code = 'taken'; return Promise.reject(e); }
+      Object.assign(a, patch); return Promise.resolve();
+    },
+    deleteArtist: function (id) { var H = window.__harness; H.acts = (H.acts || []).filter(function (x) { return x.id !== id; }); return Promise.resolve(); },
+    addArtistMember: function (id, uid, kind) {
+      var H = window.__harness, a = H.acts.filter(function (x) { return x.id === id; })[0];
+      a.members = a.members.filter(function (m) { return m.userId !== uid; }).concat([{ userId: uid, kind: kind }]);
+      return Promise.resolve();
+    },
+    removeArtistMember: function (id, uid) {
+      var H = window.__harness, a = H.acts.filter(function (x) { return x.id === id; })[0];
+      a.members = a.members.filter(function (m) { return m.userId !== uid; }); return Promise.resolve();
+    },
+    people: { 'u-devin': { name: 'Devin Oliver', handle: '', verified: true, roles: ['Artist'], tourRole: 'Artist', canOpen: true },
+      'u-brent': { name: 'Brent Allen', handle: 'brent', roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', canOpen: true },
+      'u-jeff': { name: 'Jeff Valentine', handle: 'jeffv', roles: ['Artist'], tourRole: 'Artist', canOpen: false },
+      'u-ana': { name: 'Ana Reyes', handle: 'ana.foh', roles: ['FOH Engineer'], tourRole: 'FOH Engineer', canOpen: false } },
+    findPeople: function (text) {
+      var H = window.__harness, P = window.GR_BACKEND.people, t = String(text || '').trim().replace(/^@/, '').toLowerCase();
+      H.searches = (H.searches || []).concat([t]);
+      if (t.length < 2) return Promise.resolve([]);
+      return Promise.resolve(Object.keys(P).filter(function (id) {
+        var p = P[id], h = id === 'u-devin' ? (H.handle || '') : p.handle;
+        return (h && h.indexOf(t) === 0) || (p.canOpen && p.name.toLowerCase().indexOf(t) >= 0);
+      }).map(function (id) { return Object.assign({ userId: id, avatar: '' }, P[id], id === 'u-devin' ? { handle: H.handle || '' } : {}); }));
+    },
+    artistCard: function (id) {
+      var H = window.__harness, P = window.GR_BACKEND.people, a = (H.acts || []).filter(function (x) { return x.id === id; })[0];
+      if (!a) return Promise.resolve(null);
+      return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '', mine: true,
+        members: a.members.map(function (m) { return Object.assign({ userId: m.userId, kind: m.kind, avatar: '' }, P[m.userId], m.userId === 'u-devin' ? { handle: H.handle || '' } : {}); }),
+        tours: a.name.toLowerCase() === 'i see stars' ? [{ id: 't1', artist: a.name, name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }] : [] });
+    },
+    artistTourCard: function () { return Promise.resolve(null); },
     /* Messages, in memory: one conversation with Brent, his last line unread. */
     dmThreads: function () {
       var H = window.__harness; H.dms = H.dms || [{ id: 'm1', from: 'u-devin', to: 'u-brent', body: 'Load-in is 2 tomorrow', at: new Date(Date.now() - 864e5).toISOString(), read: true }, { id: 'm2', from: 'u-brent', to: 'u-devin', body: 'Got it. Bringing the spare head.', at: new Date(Date.now() - 36e5).toISOString(), read: false }];

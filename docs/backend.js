@@ -451,6 +451,73 @@
         : await sb.from('tour_flyers').delete().eq('tour_id', tourId);
       if (q.error) throw mapError(q.error);
     },
+    /* Artist profiles: a band or act with a username, a photo, and its band
+       and crew, each a Greenroom account its owner found by search. Open to
+       everyone signed in; only the owner changes one. */
+    myArtists: async function () {
+      var q = await sb.rpc('my_artists');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    artistCard: async function (id) {
+      var q = await sb.rpc('artist_card', { a_id: id });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    artistHandleFree: async function (h, forArtist) {
+      var q = await sb.rpc('artist_handle_free', { h: String(h || ''), for_artist: forArtist || null });
+      if (q.error) throw mapError(q.error);
+      return q.data === true;
+    },
+    createArtist: async function (a) {
+      var id = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : null;
+      var row = { owner_id: session.user.id, handle: String(a.handle || '').trim().toLowerCase(),
+        name: String(a.name || '').trim().slice(0, 60), avatar: String(a.avatar || '').slice(0, 120000) };
+      if (id) row.id = id;
+      var q = await sb.from('artists').insert(row).select('id').single();
+      if (q.error) {
+        if (q.error.code === '23505') { var taken = new Error('taken'); taken.code = 'taken'; throw taken; }
+        if (q.error.code === '23514') { var bad = new Error('shape'); bad.code = 'shape'; throw bad; }
+        throw mapError(q.error);
+      }
+      return q.data.id;
+    },
+    saveArtist: async function (id, patch) {
+      var row = {};
+      if (patch.name != null) row.name = String(patch.name).trim().slice(0, 60);
+      if (patch.handle != null) row.handle = String(patch.handle).trim().toLowerCase();
+      if (patch.bio != null) row.bio = String(patch.bio).slice(0, 300);
+      if (patch.avatar != null) row.avatar = String(patch.avatar).slice(0, 120000);
+      var q = await sb.from('artists').update(row).eq('id', id);
+      if (q.error) {
+        if (q.error.code === '23505') { var taken = new Error('taken'); taken.code = 'taken'; throw taken; }
+        if (q.error.code === '23514') { var bad = new Error('shape'); bad.code = 'shape'; throw bad; }
+        throw mapError(q.error);
+      }
+    },
+    deleteArtist: async function (id) {
+      var q = await sb.from('artists').delete().eq('id', id);
+      if (q.error) throw mapError(q.error);
+    },
+    addArtistMember: async function (id, userId, kind) {
+      var q = await sb.from('artist_members').upsert({ artist_id: id, user_id: userId, kind: kind === 'crew' ? 'crew' : 'band' },
+        { onConflict: 'artist_id,user_id' });
+      if (q.error) throw mapError(q.error);
+    },
+    removeArtistMember: async function (id, userId) {
+      var q = await sb.from('artist_members').delete().eq('artist_id', id).eq('user_id', userId);
+      if (q.error) throw mapError(q.error);
+    },
+    findPeople: async function (text) {
+      var q = await sb.rpc('find_people', { q: String(text || '') });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    artistTourCard: async function (artistId, tourId) {
+      var q = await sb.rpc('artist_tour_card', { a_id: artistId, t_id: tourId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
     /* Direct messages: readable by the two people in them, nobody else (the
        database's rule, not the app's). A new one arriving pokes dmWatch. */
     dmThreads: async function () {

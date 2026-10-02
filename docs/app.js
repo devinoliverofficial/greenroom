@@ -720,6 +720,7 @@
     else if (S.route.name === 'newartist') node = viewNewArtist();
     else if (S.route.name === 'profile') node = viewProfile();
     else if (S.route.name === 'dm') node = viewDm();
+    else if (S.route.name === 'act') node = viewAct();
     else node = viewHome();
     // The tab bar stays the same element when nothing about it changed, so a
     // tap on it always lands.
@@ -1842,19 +1843,18 @@
     var stat = pfStat;
     var uid = socialOn() ? window.GR_BACKEND.uid() : null;
     var counts = myCounts();
-    var checked = !!(uid && cardOf(uid).card && cardOf(uid).card.verified);
     var unread = dmOn() ? dmUnread() : 0;
     syncSocial();
     return h('section', { class: 'pf', 'aria-label': 'Your profile' },
       h('div', { class: 'pf-top' },
         h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
           card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
-        h('div', { class: 'pf-stats' },
-          stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
-          stat(counts.followers, counts.followers === 1 ? 'follower' : 'followers', uid ? function () { openFollowList(uid, 'followers'); } : null),
-          stat(counts.following, 'following', uid ? function () { openFollowList(uid, 'following'); } : null))),
-      (card.handle || checked) ? h('p', { class: 'pf-handle' }, card.handle ? '@' + card.handle : myName(),
-        checked ? verifiedBadge() : null) : null,
+        h('div', { class: 'vp-side' },
+          (card.handle && myName()) ? h('strong', { class: 'vp-name' }, myName()) : null,
+          h('div', { class: 'pf-stats' },
+            stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
+            stat(counts.followers, counts.followers === 1 ? 'follower' : 'followers', uid ? function () { openFollowList(uid, 'followers'); } : null),
+            stat(counts.following, 'following', uid ? function () { openFollowList(uid, 'following'); } : null)))),
       roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 '))
         : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
       card.bio ? h('p', { class: 'pf-bio' }, card.bio)
@@ -2183,7 +2183,21 @@
         'aria-selected': tab === key ? 'true' : 'false', onclick: function () { if (tab !== key) pickTab(key); } },
         icon(ic, 20), h('span', null, label));
     };
-    var artistRows = Array.from(byArtist, function (pair) {
+    var acts = Array.isArray(card.acts) ? card.acts : [];
+    var actNames = acts.map(function (a) { return String(a.name).trim().toLowerCase(); });
+    var actRows = acts.map(function (a) {
+      var n = (byArtist.get(Array.from(byArtist.keys()).filter(function (k) { return String(k).trim().toLowerCase() === String(a.name).trim().toLowerCase(); })[0]) || []).length;
+      return h('li', null, h('button', { class: 'list-row art-row', type: 'button', onclick: function () { openAct(a.id); } },
+        h('span', { class: 'avatar' + (a.avatar ? ' has photo' : ' letter') },
+          a.avatar ? h('img', { class: 'brand-logo', src: a.avatar, alt: '' }) : String(a.name).trim().charAt(0).toUpperCase()),
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title' }, a.name),
+          h('span', { class: 'lr-sub vp-vouch' }, a.kind === 'band' ? 'Band member' : 'Crew', verifiedBadge('sm'),
+            n ? ' \u00b7 ' + plural(n, 'tour') : '')),
+        icon('chevron', 18)));
+    });
+    var artistRows = actRows.concat(Array.from(byArtist, function (pair) {
+      if (actNames.indexOf(String(pair[0]).trim().toLowerCase()) >= 0) return null;
       var logo = logos[String(pair[0]).trim().toLowerCase()] || '';
       return h('li', null, h('div', { class: 'list-row art-row still' },
         h('span', { class: 'avatar' + (logo ? ' has' : ' letter') },
@@ -2191,7 +2205,7 @@
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title' }, pair[0]),
           h('span', { class: 'lr-sub' }, plural(pair[1].length, 'tour')))));
-    }).concat(said.map(function (a) {
+    }).filter(Boolean)).concat(said.filter(function (a) { return actNames.indexOf(String(a).trim().toLowerCase()) < 0; }).map(function (a) {
       return h('li', null, h('div', { class: 'list-row art-row still' },
         h('span', { class: 'avatar letter' }, String(a).trim().charAt(0).toUpperCase()),
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a), h('span', { class: 'lr-sub' }, 'Toured with'))));
@@ -2427,7 +2441,7 @@
   }
   /* A tour from someone's profile: what's on the poster. Its name, the flyer
      if the tour has one, and the dates. Nothing else of the tour comes down. */
-  function openTourCard(tourId, userId, t) {
+  function openTourCard(tourId, userId, t, artistId) {
     var state = { card: null, failed: false };
     var draw = function () {
       openSheet(function () {
@@ -2455,7 +2469,7 @@
       }, { label: 'Tour', cls: 'tc-sheet' });
     };
     draw();
-    window.GR_BACKEND.tourCard(tourId, userId)
+    (artistId ? window.GR_BACKEND.artistTourCard(artistId, tourId) : window.GR_BACKEND.tourCard(tourId, userId))
       .then(function (c) { state.card = c; state.failed = !c; if (sheet) draw(); })
       .catch(function () { state.failed = true; if (sheet) draw(); });
   }
@@ -2566,6 +2580,393 @@
     }
   }
 
+  /* ---- Artist profiles. ----
+     A band or act gets a profile of its own. The arrow beside your username
+     lists the profiles you run (and the ones that list you), with Create
+     Greenroom Artist at the bottom. Making one is three short steps: a name
+     and username, then the band members, then the crew, each found by
+     searching their account. The artist's page shows its photo, bio, band,
+     crew and tours; only whoever made it can change it. */
+  function accountTitle(who) {
+    var card = myCard(), uid = socialOn() ? window.GR_BACKEND.uid() : null;
+    var checked = !!(uid && cardOf(uid).card && cardOf(uid).card.verified);
+    var can = !!(uid && window.GR_BACKEND.myArtists);
+    var inner = [h('span', { class: 'vp-user-t' }, card.handle || who), checked ? verifiedBadge() : null,
+      can ? h('span', { class: 'acct-arrow', 'aria-hidden': 'true' }, icon('chevron', 16)) : null];
+    return can
+      ? h('h1', { class: 'band-name vp-user' }, h('button', { class: 'acct-btn', type: 'button',
+          'aria-label': 'Your profiles: ' + (card.handle || who), onclick: function () { openAccounts(); } }, inner))
+      : h('h1', { class: 'band-name vp-user' }, inner);
+  }
+  function myActs(fresh) {
+    var a = S.acts || (S.acts = { list: null, at: 0, asking: false });
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B.myArtists) return a;
+    if (!a.asking && (fresh || Date.now() - a.at > 60e3)) {
+      a.asking = true;
+      B.myArtists().then(function (rows) { a.list = rows; a.at = Date.now(); a.asking = false; if (a.onLoad) { var f = a.onLoad; a.onLoad = null; f(); } })
+        .catch(function () { a.asking = false; a.at = Date.now(); });
+    }
+    return a;
+  }
+  function actOf(id, fresh) {
+    S.actCards = S.actCards || {};
+    var c = S.actCards[id] || (S.actCards[id] = { card: null, at: 0, asking: false, gone: false });
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      window.GR_BACKEND.artistCard(id).then(function (card) {
+        c.card = card; c.gone = !card; c.at = Date.now(); c.asking = false; c.failed = false; render();
+      }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); render(); });
+    }
+    return c;
+  }
+  function openAct(id) {
+    if (!id || !socialOn()) return;
+    if (sheet) closeSheet(true);
+    var back = S.route && S.route.name === 'act' ? (S.route.back || { name: 'home' }) : S.route;
+    go({ name: 'act', id: id, back: back });
+  }
+  function openAccounts() {
+    var a = myActs(true), me = myCard(), who = myName();
+    var draw = function () {
+      openSheet(function () {
+        var list = a.list;
+        return [
+          h('h2', { class: 'sh-title pe-title' }, 'Your profiles'),
+          h('div', { class: 'acct-list' },
+            h('div', { class: 'acct-row me' },
+              personPhoto({ name: who, avatar: me.photo }, 'xs'),
+              h('span', { class: 'lr-text' },
+                h('span', { class: 'lr-title' }, me.handle || who),
+                me.handle ? h('span', { class: 'lr-sub' }, who) : null),
+              h('span', { class: 'acct-on', 'aria-label': 'You are here' }, icon('check', 14))),
+            !list ? h('p', { class: 'note' }, 'Loading\u2026') : list.map(function (x) {
+              return h('button', { class: 'acct-row', type: 'button', onclick: function () { openAct(x.id); } },
+                personPhoto(x, 'xs'),
+                h('span', { class: 'lr-text' },
+                  h('span', { class: 'lr-title' }, x.handle),
+                  h('span', { class: 'lr-sub' }, x.name + (x.mine ? '' : x.kind === 'band' ? ' \u00b7 Band member' : ' \u00b7 Crew'))),
+                icon('chevron', 16));
+            }),
+            h('button', { class: 'acct-row add', type: 'button', onclick: function () { openCreateArtist(); } },
+              h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon('plus', 18)),
+              h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, 'Create Greenroom Artist'))))
+        ];
+      }, { label: 'Your profiles', cls: 'acct-sheet' });
+    };
+    a.onLoad = function () { if (sheet && sheet.panel.classList.contains('acct-sheet')) draw(); };
+    draw();
+  }
+  // A username box that says whether the name is free as you type.
+  function handleField(f, check, onState) {
+    var mark = h('span', { class: 'ca-mark', 'aria-hidden': 'true' });
+    var said = h('span', { class: 'pe-said' });
+    var timer = 0, seq = 0;
+    var set = function (state, text) {
+      f.handleOk = state === 'ok';
+      mark.className = 'ca-mark ' + state;
+      mark.replaceChildren(state === 'ok' ? icon('check', 14) : state === 'bad' ? icon('close', 13) : '');
+      said.className = 'pe-said' + (state === 'ok' ? ' ok' : state === 'bad' ? ' bad' : '');
+      said.textContent = text || '';
+      if (onState) onState();
+    };
+    var run = function () {
+      clearTimeout(timer);
+      var v = f.handle;
+      if (!v) return set('', '');
+      if (!HANDLE_OK.test(v)) return set('bad', '3 to 24 letters, numbers, dots or underscores');
+      set('', 'Checking\u2026');
+      var n = ++seq;
+      timer = setTimeout(function () {
+        check(v).then(function (free) { if (n === seq) set(free ? 'ok' : 'bad', free ? '@' + v + ' is available' : '@' + v + ' is taken'); })
+          .catch(function () { if (n === seq) set('', ''); });
+      }, 350);
+    };
+    var input = h('input', { class: 'ca-in', type: 'text', value: f.handle || '', maxlength: 24, placeholder: 'username',
+      autocapitalize: 'none', autocorrect: 'off', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Username',
+      oninput: function (e) { var v = cleanHandle(e.target.value); if (v !== e.target.value) e.target.value = v; f.handle = v; f.handleTyped = true; run(); } });
+    return { input: input, mark: mark, said: said, run: run, set: function (v) { f.handle = v; input.value = v; run(); } };
+  }
+  function openCreateArtist(keep) {
+    var B = window.GR_BACKEND;
+    var f = G.isObj(keep) ? keep : { name: '', handle: '', handleOk: false, handleTyped: false, busy: false };
+    // Artists you already have tours or a folder for, to start from.
+    var seen = {}, known = [];
+    tourArtists().concat(registeredArtists()).forEach(function (a) {
+      var k = String(a).trim().toLowerCase();
+      var has = (S.acts && S.acts.list || []).some(function (x) { return String(x.name).trim().toLowerCase() === k; });
+      if (k && !seen[k] && !has) { seen[k] = true; known.push(a); }
+    });
+    openSheet(function () {
+      var next = h('button', { class: 'btn primary block ca-next', type: 'submit' }, 'Next');
+      var ready = function () { next.disabled = !(String(f.name).trim() && f.handleOk) || f.busy; };
+      var hf = handleField(f, function (v) { return B.artistHandleFree(v, null); }, ready);
+      var nameIn = h('input', { class: 'ca-in', type: 'text', value: f.name, maxlength: 60, placeholder: 'I See Stars',
+        autocapitalize: 'words', autocomplete: 'off', 'aria-label': 'Artist name',
+        oninput: function (e) {
+          f.name = e.target.value;
+          // Until you type a username yourself, it follows the name.
+          if (!f.handleTyped) hf.set(cleanHandle(f.name.replace(/\s+/g, '')));
+          ready();
+        } });
+      if (f.handle) hf.run();
+      ready();
+      return [
+        h('h2', { class: 'sh-title ca-title' }, 'Create a Greenroom Artist'),
+        h('p', { class: 'sh-sub' }, 'Name the artist and pick a username. You can change both at any time.'),
+        h('form', { class: 'sh-form ca-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            if (next.disabled) return;
+            blurActive();
+            f.busy = true; ready();
+            try {
+              var id = await B.createArtist({ name: String(f.name).trim(), handle: f.handle, avatar: '' });
+              myActs(true);
+              openAddMembers(id, 'band', { wizard: true, name: String(f.name).trim() });
+            } catch (x) {
+              f.busy = false; ready();
+              if (x && x.code === 'taken') { toast('@' + f.handle + ' is taken. Try another.'); hf.run(); }
+              else if (x && x.code === 'shape') toast('That username can\u2019t be used. Try another.');
+              else saveFailed('artist', x);
+            }
+          } },
+          h('label', { class: 'ca-field' }, h('span', { class: 'ca-label' }, 'Artist name'), nameIn),
+          known.length ? h('div', { class: 'pf-chips ca-known' }, known.slice(0, 6).map(function (a) {
+            return h('button', { class: 'rv-chip', type: 'button', onclick: function () {
+              f.name = a; nameIn.value = a; if (!f.handleTyped) hf.set(cleanHandle(a.replace(/\s+/g, ''))); ready();
+            } }, a);
+          })) : null,
+          h('label', { class: 'ca-field' }, h('span', { class: 'ca-label' }, 'Username'),
+            h('span', { class: 'ca-line' }, h('span', { class: 'ca-at', 'aria-hidden': 'true' }, '@'), hf.input, hf.mark)),
+          hf.said,
+          next)
+      ];
+    }, { label: 'Create a Greenroom Artist', cls: 'ca-sheet' });
+  }
+  /* Add band members, or crew: search for an account, tap Add. In the
+     set-up it's a step with Next; from the artist's page it's just Done. */
+  function openAddMembers(artistId, kind, o) {
+    o = o || {};
+    var B = window.GR_BACKEND, band = kind === 'band';
+    var known = S.actCards && S.actCards[artistId] && S.actCards[artistId].card;
+    var on = {};
+    ((known && known.members) || []).forEach(function (m) { on[m.userId] = m.kind; });
+    var results = h('div', { class: 'am-results' });
+    var timer = 0, seq = 0, last = [];
+    var row = function (p) {
+      var roles = personRoles(p);
+      var has = on[p.userId];
+      var btn = h('button', { class: 'am-add' + (has ? ' on' : ''), type: 'button' }, has === kind ? 'Added' : has ? (has === 'band' ? 'In the band' : 'On the crew') : 'Add');
+      btn.onclick = async function () {
+        btn.disabled = true;
+        try {
+          if (on[p.userId] === kind) { await B.removeArtistMember(artistId, p.userId); delete on[p.userId]; }
+          else { await B.addArtistMember(artistId, p.userId, kind); on[p.userId] = kind; }
+          actOf(artistId, true);
+          paint();
+        } catch (x) { btn.disabled = false; saveFailed('member', x); }
+      };
+      return h('div', { class: 'fl-row am-row' }, personPhoto(p, 'xs'),
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title fl-name' }, p.name || 'Someone', p.verified ? verifiedBadge() : null),
+          (p.handle || roles.length) ? h('span', { class: 'lr-sub' },
+            [p.handle ? '@' + p.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')) : null),
+        btn);
+    };
+    var paint = function (note) {
+      results.replaceChildren.apply(results, note ? [h('p', { class: 'note' }, note)] : last.map(row));
+    };
+    var search = function (v) {
+      clearTimeout(timer);
+      v = String(v || '').trim();
+      if (v.replace(/^@/, '').length < 2) { last = []; paint('Type a name or an @username.'); return; }
+      var n = ++seq;
+      timer = setTimeout(function () {
+        B.findPeople(v).then(function (rows) {
+          if (n !== seq) return;
+          last = rows;
+          paint(rows.length ? null : 'Nobody found. They need a Greenroom account, and a username makes them easy to find.');
+        }).catch(function () { if (n === seq) paint('Couldn\u2019t search. Check your signal and try again.'); });
+      }, 300);
+    };
+    var done = function () {
+      if (o.wizard && band) { openAddMembers(artistId, 'crew', o); return; }
+      closeSheet();
+      if (o.wizard) { toast((o.name || 'Artist') + ' is on Greenroom'); openAct(artistId); } else render(true);
+    };
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title ca-title' }, band ? 'Add band members' : 'Add crew members'),
+        h('p', { class: 'sh-sub' }, (band ? 'Who\u2019s in the band?' : 'Who\u2019s on the crew?') + ' Search for their Greenroom account.'),
+        h('div', { class: 'rv-find am-find' }, icon('search', 17),
+          h('input', { class: 'input rv-search', type: 'search', placeholder: 'Search name or @username', autocomplete: 'off',
+            autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', 'aria-label': 'Search accounts',
+            oninput: function (e) { search(e.target.value); } })),
+        results,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: done }, o.wizard ? (band ? 'Next' : 'Done') : 'Done'))
+      ];
+    }, { label: band ? 'Add band members' : 'Add crew members', cls: 'ca-sheet am-sheet' });
+    paint('Type a name or an @username.');
+  }
+  function viewAct() {
+    var id = S.route.id, B = window.GR_BACKEND, backTo = S.route.back || { name: 'home' };
+    var c = socialOn() ? actOf(id) : { gone: true };
+    var card = c.card;
+    var head = function (title) {
+      return h('div', { class: 'headband' },
+        h('header', { class: 'topbar' },
+          h('span', { class: 'top-side' },
+            h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go(backTo); } },
+              icon('back'), h('span', null, 'Back'))),
+          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('span', { class: 'top-side right' })),
+        h('div', { class: 'band-row' }, h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title))));
+    };
+    if (!card) {
+      return h('div', { class: 'page home profile' }, head('Artist'),
+        c.gone ? emptyState('This artist isn\u2019t on Greenroom', 'The profile may have been removed.')
+          : c.failed ? emptyState('Couldn\u2019t load this artist', 'Check your signal and try again.')
+          : h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading\u2026'));
+    }
+    var members = Array.isArray(card.members) ? card.members : [];
+    var bandList = members.filter(function (m) { return m.kind === 'band'; });
+    var crewList = members.filter(function (m) { return m.kind === 'crew'; });
+    var tours = Array.isArray(card.tours) ? card.tours : [];
+    var tab = (S.actTab && S.actTab.id === id && S.actTab.tab) || 'band';
+    var pickTab = function (t) { S.actTab = { id: id, tab: t }; render(true); };
+    var tabBtn = function (key, label, ic) {
+      return h('button', { class: 'vp-tab' + (tab === key ? ' on' : ''), type: 'button', role: 'tab',
+        'aria-selected': tab === key ? 'true' : 'false', onclick: function () { if (tab !== key) pickTab(key); } },
+        icon(ic, 20), h('span', null, label));
+    };
+    var photo = card.mine ? fileControl({
+      label: card.avatar ? null : (String(card.name).trim().charAt(0).toUpperCase() || '?'), logo: card.avatar || undefined,
+      cls: 'pf-photo' + (card.avatar ? ' has' : ' letter'), accept: imageAccept(),
+      ariaLabel: (card.avatar ? 'Change' : 'Add') + ' the photo for ' + card.name,
+      onFiles: function (files) {
+        readPhotoFile(files[0], async function (dataUrl) {
+          try { await B.saveArtist(id, { avatar: dataUrl }); card.avatar = dataUrl; myActs(true); toast('Photo in'); closeSheet(); render(true); }
+          catch (x) { saveFailed('artist photo', x); }
+        });
+      }
+    }) : personPhoto(card);
+    var memberRow = function (m) {
+      var roles = personRoles(m);
+      var inner = [personPhoto(m, 'xs'),
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title fl-name' }, m.name || 'Someone', m.verified ? verifiedBadge() : null),
+          (m.handle || roles.length) ? h('span', { class: 'lr-sub' },
+            [m.handle ? '@' + m.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')) : null)];
+      return h('li', { class: 'am-li' },
+        m.canOpen ? h('button', { class: 'fl-row', type: 'button', onclick: function () { openProfile(m.userId); } }, inner)
+          : h('div', { class: 'fl-row' }, inner),
+        card.mine ? h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Remove ' + (m.name || 'them'),
+          onclick: function () {
+            confirmSheet({ title: 'Remove ' + (m.name || 'them') + ' from ' + card.name + '?', body: 'You can add them again any time.',
+              action: 'Remove', danger: true,
+              onConfirm: async function () {
+                try { await B.removeArtistMember(id, m.userId); actOf(id, true); return true; }
+                catch (x) { saveFailed('member', x); return false; }
+              } });
+          } }, icon('close', 14)) : null);
+    };
+    var people = function (list, kind) {
+      return [
+        list.length ? h('ul', { class: 'tour-list rows vp-list am-list' }, list.map(memberRow))
+          : emptyState(kind === 'band' ? 'No band members yet' : 'No crew yet',
+              card.mine ? 'Search for their Greenroom account to add them.' : card.name + ' hasn\u2019t added anyone here yet.'),
+        card.mine ? h('div', { class: 'am-more' },
+          h('button', { class: 'add-pill', type: 'button', onclick: function () { openAddMembers(id, kind); } },
+            icon('plus', 16), kind === 'band' ? 'Add band members' : 'Add crew members')) : null
+      ];
+    };
+    var tourRows = tours.map(function (t) {
+      var span = t.first ? dayMD(t.first) + (t.last && t.last !== t.first ? ' \u2013 ' + dayMD(t.last) : '') +
+        ', ' + String(t.last || t.first).slice(0, 4) + ' \u00b7 ' + plural(G.num(t.shows), 'show') : 'No dates yet';
+      return h('li', null, h('button', { class: 'list-row tour-row', type: 'button',
+        onclick: function () { if (t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, id); } },
+        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, t.name || 'Untitled tour'), h('span', { class: 'lr-sub' }, span)),
+        icon('chevron', 18)));
+    });
+    return h('div', { class: 'page home profile' },
+      head(card.handle),
+      h('section', { class: 'pf vp', 'aria-label': card.name + ' profile' },
+        h('div', { class: 'pf-top' },
+          h('div', { class: 'pf-photo-wrap' }, photo,
+            (card.mine && !card.avatar) ? h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14)) : null),
+          h('div', { class: 'vp-side' },
+            h('strong', { class: 'vp-name' }, card.name),
+            h('div', { class: 'pf-stats' },
+              pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
+              pfStat(bandList.length, 'band', function () { pickTab('band'); }),
+              pfStat(crewList.length, 'crew', function () { pickTab('crew'); })))),
+        h('p', { class: 'pf-roles' }, 'Artist'),
+        card.bio ? h('p', { class: 'pf-bio' }, card.bio)
+          : (card.mine ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
+        card.mine ? h('div', { class: 'pf-actions' },
+          h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist')) : null),
+      h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Band', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
+      tab === 'band' ? people(bandList, 'band')
+        : tab === 'crew' ? people(crewList, 'crew')
+        : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
+            : emptyState('No tours yet', card.mine ? 'Tours you file under ' + card.name + ' show up here.' : card.name + ' has no tours on Greenroom yet.')),
+      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }));
+  }
+  function openActEdit(id, keep) {
+    var B = window.GR_BACKEND;
+    var card = S.actCards && S.actCards[id] && S.actCards[id].card;
+    if (!card) return;
+    var f = G.isObj(keep) ? keep : { name: card.name, handle: card.handle, handleOk: true, bio: card.bio || '' };
+    openSheet(function () {
+      var save = h('button', { class: 'btn primary block', type: 'submit' }, 'Save');
+      var ready = function () { save.disabled = !(String(f.name).trim() && (f.handle === card.handle || f.handleOk)); };
+      var hf = handleField(f, function (v) { return v === card.handle ? Promise.resolve(true) : B.artistHandleFree(v, id); }, ready);
+      var count = h('span', { class: 'pe-count num' }, f.bio.length + ' / ' + BIO_MAX);
+      ready();
+      return [
+        h('h2', { class: 'sh-title pe-title' }, 'Edit artist'),
+        h('form', { class: 'sh-form pe-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            if (save.disabled) return;
+            blurActive();
+            try {
+              await B.saveArtist(id, { name: f.name, handle: f.handle, bio: f.bio });
+              actOf(id, true); myActs(true);
+              closeSheet(); toast('Artist saved');
+            } catch (x) {
+              if (x && x.code === 'taken') toast('@' + f.handle + ' is taken. Try another.');
+              else if (x && x.code === 'shape') toast('That username can\u2019t be used. Try another.');
+              else saveFailed('artist', x);
+            }
+          } },
+          h('div', { class: 'pe-rows' },
+            h('label', { class: 'pe-row' }, h('span', { class: 'pe-label' }, 'Name'),
+              h('span', { class: 'pe-val' }, h('input', { class: 'pe-in', type: 'text', value: f.name, maxlength: 60,
+                oninput: function (e) { f.name = e.target.value; ready(); } }))),
+            h('label', { class: 'pe-row' }, h('span', { class: 'pe-label' }, 'Username'),
+              h('span', { class: 'pe-val' }, h('span', { class: 'pe-at' }, h('span', { 'aria-hidden': 'true' }, '@'), hf.input), hf.said)),
+            h('label', { class: 'pe-row' }, h('span', { class: 'pe-label' }, 'Bio'),
+              h('span', { class: 'pe-val' }, h('textarea', { class: 'pe-in pe-bio', maxlength: BIO_MAX, rows: 2, placeholder: 'A line or two about the artist', value: f.bio,
+                oninput: function (e) { f.bio = e.target.value; count.textContent = f.bio.length + ' / ' + BIO_MAX; } }), count))),
+          h('div', { class: 'stack' },
+            save,
+            h('button', { class: 'btn danger block', type: 'button', onclick: function () {
+              confirmSheet({ title: 'Delete ' + card.name + '\u2019s profile?',
+                body: 'The artist profile and its band and crew lists go. Your tours are not touched.',
+                action: 'Delete artist profile', danger: true,
+                onConfirm: async function () {
+                  try { await B.deleteArtist(id); delete S.actCards[id]; myActs(true); go({ name: 'home' }); toast('Artist profile deleted'); return true; }
+                  catch (x) { saveFailed('artist', x); return false; }
+                } });
+            } }, icon('trash', 18), 'Delete artist profile'),
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
+      ];
+    }, { label: 'Edit artist', cls: 'pe-sheet' });
+  }
+
   function viewHome() {
     var entries = allTourEntries();
     var byArtist = new Map();
@@ -2597,7 +2998,7 @@
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
               onclick: openSettingsSheet }, icon('more')))),
-        who ? h('div', { class: 'band-row' }, h('h1', { class: 'band-name' }, who))
+        who ? h('div', { class: 'band-row' }, accountTitle(who))
           : h('div', { class: 'band-row wordmark-row' },
               h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }))),
       dbBanner(),
