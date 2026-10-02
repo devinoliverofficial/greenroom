@@ -133,6 +133,7 @@
     moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>',
     check: '<path d="M4.5 12.5l5 5 10-11"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     deck: '<rect x="6.5" y="4" width="11" height="15" rx="2.2"/><path d="M4 7.5v10A2.5 2.5 0 0 0 6.5 20h8"/><path d="M9.5 9.5l1.6 1.6 3.2-3.4"/>',
     music: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
     up: '<path d="M12 19V5.5"/><path d="M6 11l6-6 6 6"/>',
@@ -3052,43 +3053,86 @@
     return h('nav', { class: 'tabbar social-bar', 'aria-label': 'Greenroom',
       'data-sig': 'social|' + current + '|' + me.photo.length + '|' + who,
       style: 'grid-template-columns: repeat(2, 1fr)' },
-      tabButton(current === 'search', 'Search', 'search', function () { if (current !== 'search') go({ name: 'search' }); }),
+      tabButton(current === 'search', 'Search', 'search', function () { if (current !== 'search') go({ name: 'search', back: S.route, focus: true }); }),
       tabButton(current === 'me', 'Profile', null, function () { if (current !== 'me') go({ name: 'home' }); }, face));
   }
-  /* Search: one box for people, artists and tours. People and artist
-     profiles come from Greenroom; tours are yours plus the ones on artist
-     profiles. Results fill in under the box as you type, so the keyboard
-     never drops. */
+  /* Search, the way a social app does it: a back arrow and one rounded box
+     across the top. Before you type, it lists what you opened lately
+     (Recent), each with an x to drop it; a search you sent with the Search
+     key is kept there too, under a clock. As you type, people, artist
+     profiles and tours fill in under the box without the keyboard dropping.
+     Opening anything from here puts it at the top of Recent. */
+  function recentKey() { var B = window.GR_BACKEND; return 'gr-recent:' + ((B && B.uid && B.uid()) || 'me'); }
+  function recents() {
+    try { var a = JSON.parse(lsGet(recentKey()) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+  }
+  function remember(item) {
+    var list = recents().filter(function (x) { return !(x.kind === item.kind && x.id === item.id); });
+    list.unshift(item);
+    // Kept short: each one carries its picture.
+    while (list.length > 12 || (list.length > 1 && !lsSet(recentKey(), JSON.stringify(list)))) list.pop();
+    lsSet(recentKey(), JSON.stringify(list));
+  }
+  function forget(item) {
+    lsSet(recentKey(), JSON.stringify(recents().filter(function (x) { return !(x.kind === item.kind && x.id === item.id); })));
+  }
   function viewSearch() {
-    var B = window.GR_BACKEND;
-    var st = S.search || (S.search = { q: '', seq: 0, res: null, busy: false });
+    var B = window.GR_BACKEND, backTo = S.route.back || { name: 'home' };
+    var st = S.search || (S.search = { q: '', seq: 0, res: null, busy: false, all: false });
     var results = h('div', { class: 'sr-results' });
-    var row = function (photo, title, sub, onTap, badge) {
-      var inner = [photo, h('span', { class: 'lr-text' },
-        h('span', { class: 'lr-title fl-name' }, title, badge ? verifiedBadge() : null),
-        sub ? h('span', { class: 'lr-sub' }, sub) : null)];
-      return onTap ? h('button', { class: 'fl-row', type: 'button', onclick: onTap }, inner, icon('chevron', 16))
-        : h('div', { class: 'fl-row' }, inner);
-    };
-    var group = function (label, rows) {
-      return rows.length ? h('section', { class: 'sr-group' }, h('h2', { class: 'sr-h' }, label), rows) : null;
-    };
-    var mark = function (name, logo) {
-      return h('span', { class: 'avatar' + (logo ? ' has photo' : ' letter') },
-        logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : (String(name || '?').trim().charAt(0).toUpperCase() || '?'));
-    };
+    var followers = function (n) { n = G.num(n); return n + (n === 1 ? ' follower' : ' followers'); };
     var span = function (t) {
       return t.first ? dayMD(t.first) + (t.last && t.last !== t.first ? ' \u2013 ' + dayMD(t.last) : '') + ', ' + String(t.last || t.first).slice(0, 4) : 'No dates yet';
+    };
+    // Everything a row needs to be drawn, opened, and kept in Recent.
+    var asItem = {
+      person: function (p) {
+        var roles = personRoles(p);
+        return { kind: 'person', id: p.userId, title: p.handle || p.name || 'Someone', verified: !!p.verified, avatar: p.avatar || '', letter: p.name,
+          sub: p.handle ? [p.name, p.iFollow ? 'Following' : followers(p.followers)].filter(Boolean).join(' \u00b7 ') : roles.join(' \u00b7 '),
+          canOpen: !!p.canOpen };
+      },
+      artist: function (a) { return { kind: 'artist', id: a.id, title: a.handle, sub: [a.name, 'Artist'].join(' \u00b7 '), avatar: a.avatar || '', letter: a.name }; },
+      folder: function (a) { return { kind: 'folder', id: a, title: a, sub: 'Your artist folder', avatar: artistLogo(a) || '', letter: a, logo: true }; },
+      tour: function (t) {
+        return { kind: 'tour', id: t.id, title: t.name || 'Untitled tour', sub: [t.artist, span(t)].filter(Boolean).join(' \u00b7 '),
+          avatar: (t.artist && artistLogo(t.artist)) || '', letter: t.artist || t.name, logo: true, artistId: t.artistId || null, artist: t.artist || '' };
+      },
+      term: function (q) { return { kind: 'term', id: q.toLowerCase(), title: q, sub: 'Search' }; }
+    };
+    var open = function (it) {
+      if (it.kind !== 'term') remember(it);
+      if (it.kind === 'person') {
+        if (it.canOpen) openProfile(it.id);
+        else { toast('You can open the profiles of people you tour with or share an artist with.'); paint(); }
+      } else if (it.kind === 'artist') openAct(it.id);
+      else if (it.kind === 'folder') go({ name: 'artist', artist: it.id });
+      else if (it.kind === 'tour') {
+        if (getTour(it.id)) openTour(it.id);
+        else if (it.artistId) openTourCard(it.id, null, { name: it.title, artist: it.artist }, it.artistId);
+        else toast('That tour isn\u2019t open to you any more.');
+      } else if (it.kind === 'term') { st.q = it.title; input.value = it.title; run(); }
+    };
+    var row = function (it, onDrop) {
+      var face = it.kind === 'term' ? h('span', { class: 'sr-face clock', 'aria-hidden': 'true' }, icon('clock', 22))
+        : h('span', { class: 'sr-face' + (it.avatar ? (it.logo ? ' logo' : ' has') : ' letter'), 'aria-hidden': 'true' },
+            it.avatar ? h('img', { src: it.avatar, alt: '' }) : (String(it.letter || it.title || '?').trim().charAt(0).toUpperCase() || '?'));
+      return h('div', { class: 'sr-row' },
+        h('button', { class: 'sr-main', type: 'button', onclick: function () { open(it); } }, face,
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'sr-title' }, h('span', { class: 'sr-title-t' }, it.title), it.verified ? verifiedBadge() : null),
+            it.sub ? h('span', { class: 'sr-sub' }, it.sub) : null)),
+        onDrop ? h('button', { class: 'sr-x', type: 'button', 'aria-label': 'Remove ' + it.title + ' from Recent', onclick: onDrop }, icon('close', 18)) : null);
     };
     // Your own tours and artist folders, matched on this phone.
     var local = function (q) {
       var t = q.toLowerCase(), tours = [], folders = {};
       allTourEntries().forEach(function (e) {
         var d = e[1], name = String(d.name || ''), artist = artistOf(d) || '';
-        var cities = G.rows(d.shows).map(function (x) { return String(x.city || '') + ' ' + String(x.venue || ''); }).join(' ').toLowerCase();
-        if (name.toLowerCase().indexOf(t) >= 0 || artist.toLowerCase().indexOf(t) >= 0 || cities.indexOf(t) >= 0) {
+        var places = G.rows(d.shows).map(function (x) { return String(x.city || '') + ' ' + String(x.venue || ''); }).join(' ').toLowerCase();
+        if (name.toLowerCase().indexOf(t) >= 0 || artist.toLowerCase().indexOf(t) >= 0 || places.indexOf(t) >= 0) {
           var dates = G.rows(d.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
-          tours.push({ id: e[0], name: name || 'Untitled tour', artist: artist, first: dates[0], last: dates[dates.length - 1], mine: true });
+          tours.push({ id: e[0], name: name, artist: artist, first: dates[0], last: dates[dates.length - 1] });
         }
         if (artist && artist.toLowerCase().indexOf(t) >= 0) folders[artist.toLowerCase()] = artist;
       });
@@ -3098,45 +3142,37 @@
     var paint = function () {
       var q = st.q.trim();
       if (q.replace(/^@/, '').length < 2) {
-        results.replaceChildren(h('p', { class: 'note sr-hint' }, 'Search people, artists and tours. People are found by name if you tour with them, and by @username if you don\u2019t.'));
+        var list = recents(), shown = st.all ? list : list.slice(0, 7);
+        results.replaceChildren.apply(results, list.length ? [
+          h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, 'Recent'),
+            list.length > shown.length ? h('button', { class: 'sr-all', type: 'button', onclick: function () { st.all = true; paint(); } }, 'See all') : null),
+          h('div', { class: 'sr-list' }, shown.map(function (it) { return row(it, function () { forget(it); paint(); }); }))
+        ] : [h('p', { class: 'note sr-hint' }, 'Search people, artists and tours. People are found by name if you tour with them, and by @username if you don\u2019t.')]);
         return;
       }
       var mine = local(q.replace(/^@/, ''));
       var r = st.res && st.res.q === q ? st.res : null;
-      var people = (r ? r.people : []).map(function (p) {
-        var roles = personRoles(p);
-        var sub = [p.handle ? '@' + p.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ');
-        return row(personPhoto(p, 'xs'), p.name || 'Someone', sub || null,
-          p.canOpen ? function () { openProfile(p.userId); }
-            : function () { toast('You can open the profiles of people you tour with or share an artist with.'); }, p.verified);
-      });
+      var items = (r ? r.people : []).map(asItem.person);
       var actNames = (r ? r.artists : []).map(function (a) { return String(a.name).trim().toLowerCase(); });
-      var artists = (r ? r.artists : []).map(function (a) {
-        return row(mark(a.name, a.avatar), a.name, '@' + a.handle, function () { openAct(a.id); });
-      }).concat(mine.folders.filter(function (a) { return actNames.indexOf(a.toLowerCase()) < 0; }).map(function (a) {
-        return row(mark(a, artistLogo(a)), a, 'Your artist folder', function () { go({ name: 'artist', artist: a }); });
-      }));
+      items = items.concat((r ? r.artists : []).map(asItem.artist),
+        mine.folders.filter(function (a) { return actNames.indexOf(a.toLowerCase()) < 0; }).map(asItem.folder));
       var seen = {};
-      var tours = mine.tours.map(function (t) {
-        seen[t.id] = true;
-        return row(mark(t.artist || t.name, artistLogo(t.artist)), t.name, [t.artist, span(t)].filter(Boolean).join(' \u00b7 '), function () { openTour(t.id); });
-      }).concat((r ? r.tours : []).filter(function (t) { return !seen[t.id]; }).map(function (t) {
-        return row(mark(t.artist || t.name, ''), t.name || 'Untitled tour', [t.artist, span(t)].filter(Boolean).join(' \u00b7 '),
-          function () { if (t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, t.artistId); });
-      }));
-      var kids = [group('People', people), group('Artists', artists), group('Tours', tours)].filter(Boolean);
-      if (!kids.length) kids = [h('p', { class: 'note sr-hint' }, st.busy || !r ? 'Searching\u2026' : 'Nothing found for \u201c' + q + '\u201d.')];
-      else if (st.busy || !r) kids.push(h('p', { class: 'note sr-hint' }, 'Searching\u2026'));
+      mine.tours.forEach(function (t) { seen[t.id] = true; });
+      items = items.concat(mine.tours.map(asItem.tour), (r ? r.tours : []).filter(function (t) { return !seen[t.id]; }).map(asItem.tour));
+      var kids = items.length ? [h('div', { class: 'sr-list' }, items.map(function (it) { return row(it); }))] : [];
+      if (st.busy || !r) kids.push(h('p', { class: 'note sr-hint' }, 'Searching\u2026'));
+      else if (r.failed) kids.push(h('p', { class: 'note sr-hint' }, 'Couldn\u2019t reach Greenroom. Check your signal and try again.'));
+      else if (!items.length) kids.push(h('p', { class: 'note sr-hint' }, 'Nothing found for \u201c' + q + '\u201d.'));
       results.replaceChildren.apply(results, kids);
     };
     var timer = 0;
     var run = function () {
       clearTimeout(timer);
       var q = st.q.trim();
-      paint();
-      if (q.replace(/^@/, '').length < 2) { st.busy = false; return; }
-      if (st.res && st.res.q === q) return;
+      if (q.replace(/^@/, '').length < 2) { st.busy = false; paint(); return; }
+      if (st.res && st.res.q === q) { st.busy = false; paint(); return; }
       st.busy = true;
+      paint();
       var n = ++st.seq;
       timer = setTimeout(function () {
         var safe = function (p) { return p.catch(function () { return null; }); };
@@ -3145,12 +3181,12 @@
           st.busy = false;
           st.res = { q: q, people: out[0] || [], artists: out[1] || [], tours: out[2] || [], failed: !out[0] && !out[1] && !out[2] };
           if (results.isConnected) paint();
-          if (st.res.failed && results.isConnected) results.append(h('p', { class: 'note sr-hint' }, 'Couldn\u2019t reach Greenroom. Check your signal and try again.'));
         });
       }, 300);
     };
-    var input = h('input', { class: 'input rv-search', type: 'search', value: st.q, placeholder: 'Search', autocomplete: 'off',
+    var input = h('input', { class: 'sr-in', type: 'search', value: st.q, placeholder: 'Search', autocomplete: 'off',
       autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'search', 'data-k': 'search-in',
+      autofocus: (S.route.focus && !st.q) ? true : null,
       'aria-label': 'Search people, artists and tours',
       oninput: function (e) { st.q = e.target.value; run(); } });
     run();
@@ -3160,8 +3196,16 @@
           h('span', { class: 'top-side' }),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' })),
-        h('div', { class: 'band-row' }, h('h1', { class: 'band-name vp-user mid' }, 'Search'))),
-      h('form', { class: 'rv-find sr-find', onsubmit: function (e) { e.preventDefault(); blurActive(); } }, icon('search', 17), input),
+        h('div', { class: 'band-row sr-bar' },
+          h('button', { class: 'sr-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 20)),
+          h('form', { class: 'sr-pill', role: 'search',
+            // The Search key keeps what you looked for in Recent, under a clock.
+            onsubmit: function (e) {
+              e.preventDefault();
+              var q = st.q.trim();
+              if (q.replace(/^@/, '').length >= 2) remember(asItem.term(q));
+              blurActive();
+            } }, icon('search', 18), input))),
       results,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar('search'));

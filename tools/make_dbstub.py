@@ -292,7 +292,7 @@ shim = r"""<script>
       a.members = a.members.filter(function (m) { return m.userId !== uid; }); return Promise.resolve();
     },
     people: { 'u-devin': { name: 'Devin Oliver', handle: '', verified: true, roles: ['Artist'], tourRole: 'Artist', canOpen: true },
-      'u-brent': { name: 'Brent Allen', handle: 'brent', roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', canOpen: true },
+      'u-brent': { name: 'Brent Allen', handle: 'brent', roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', canOpen: true, followers: 12 },
       'u-jeff': { name: 'Jeff Valentine', handle: 'jeffv', roles: ['Artist'], tourRole: 'Artist', canOpen: false },
       'u-ana': { name: 'Ana Reyes', handle: 'ana.foh', roles: ['FOH Engineer'], tourRole: 'FOH Engineer', canOpen: false } },
     findPeople: function (text) {
@@ -302,7 +302,8 @@ shim = r"""<script>
       return Promise.resolve(Object.keys(P).filter(function (id) {
         var p = P[id], h = id === 'u-devin' ? (H.handle || '') : p.handle;
         return (h && h.indexOf(t) === 0) || (p.canOpen && p.name.toLowerCase().indexOf(t) >= 0);
-      }).map(function (id) { return Object.assign({ userId: id, avatar: '' }, P[id], id === 'u-devin' ? { handle: H.handle || '' } : {}); }));
+      }).map(function (id) { return Object.assign({ userId: id, avatar: '', followers: 0,
+        iFollow: (H.follows || []).some(function (x) { return x.a === 'u-devin' && x.b === id; }) }, P[id], id === 'u-devin' ? { handle: H.handle || '' } : {}); }));
     },
     artistCard: function (id) {
       var H = window.__harness, P = window.GR_BACKEND.people, a = (H.acts || []).filter(function (x) { return x.id === id; })[0];
