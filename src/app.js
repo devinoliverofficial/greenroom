@@ -2132,6 +2132,17 @@
      username (and check) across the top, photo with name and counts beside
      it, roles and bio, then Following | Message | Contact, and two tabs,
      Artists and Tours, where a photo grid would be. */
+  /* The header of the viewer experience (a person's page or an artist's, as
+     anyone else gets it). Black, not green: this isn't your own page. One
+     row, the way a social app heads a profile: the back arrow, then the
+     username and its check right beside it; the GR mark keeps the far corner. */
+  function viewerHead(title, checked, backTo) {
+    return h('div', { class: 'headband dark vp-head' },
+      h('header', { class: 'topbar vp-top' },
+        h('button', { class: 'iconbtn vp-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 30)),
+        h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title), checked ? verifiedBadge() : null),
+        h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' })));
+  }
   function viewProfile() {
     var uid = S.route.user, B = window.GR_BACKEND;
     var backTo = S.route.back || { name: 'home' };
@@ -2140,16 +2151,7 @@
     // Looking at your own page the way others get it.
     var preview = !!(S.route.preview && socialOn() && uid === B.uid());
     var justLooking = function (what) { return function () { toast(what); }; };
-    // Black, not green: this isn't your own page. One row, the way a social
-    // app heads a profile: the back arrow, then the username and its check
-    // right beside it; the GR mark keeps the far corner.
-    var head = function (title, checked) {
-      return h('div', { class: 'headband dark vp-head' },
-        h('header', { class: 'topbar vp-top' },
-          h('button', { class: 'iconbtn vp-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 30)),
-          h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title), checked ? verifiedBadge() : null),
-          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' })));
-    };
+    var head = function (title, checked) { return viewerHead(title, checked, backTo); };
     if (!card) {
       return h('div', { class: 'page home profile' }, head('Profile'),
         c.gone ? emptyState('This profile isn\u2019t available', 'You can see the profiles of people you\u2019ve toured with.')
@@ -2643,11 +2645,16 @@
     }
     return c;
   }
-  function openAct(id) {
+  /* An artist's page has the same two sides a person's does. Reached any
+     ordinary way (search, someone's profile), it's the viewer experience,
+     even for the account that runs it. Only the list under your own
+     username opens it to be run: the photo, Edit artist, adding and
+     removing band and crew. */
+  function openAct(id, manage) {
     if (!id || !socialOn()) return;
     if (sheet) closeSheet(true);
     var back = S.route && S.route.name === 'act' ? (S.route.back || { name: 'home' }) : S.route;
-    go({ name: 'act', id: id, back: back });
+    go({ name: 'act', id: id, manage: !!manage, back: back });
   }
   // Artist names that already have something under them (tours you made, or
   // a folder of yours) and no artist profile yet: these can be claimed.
@@ -2672,7 +2679,7 @@
     var fill = function () {
       var list = a.list;
       box.replaceChildren.apply(box, !list ? [h('p', { class: 'note' }, 'Loading\u2026')] : list.map(function (x) {
-        return h('button', { class: 'acct-row', type: 'button', onclick: function () { openAct(x.id); } },
+        return h('button', { class: 'acct-row', type: 'button', onclick: function () { openAct(x.id, true); } },
           personPhoto(x, 'xs'),
           h('span', { class: 'lr-text' },
             h('span', { class: 'lr-title' }, x.handle),
@@ -2865,7 +2872,7 @@
     var done = function () {
       if (o.wizard && band) { openAddMembers(artistId, 'crew', o); return; }
       closeSheet();
-      if (o.wizard) { toast((o.name || 'Artist') + ' is on Greenroom'); openAct(artistId); } else render(true);
+      if (o.wizard) { toast((o.name || 'Artist') + ' is on Greenroom'); openAct(artistId, true); } else render(true);
     };
     openSheet(function () {
       return [
@@ -2886,7 +2893,10 @@
     var id = S.route.id, B = window.GR_BACKEND, backTo = S.route.back || { name: 'home' };
     var c = socialOn() ? actOf(id) : { gone: true };
     var card = c.card;
+    // Opened from your own list, and yours: the page you run. Any other way in: the viewer's.
+    var manage = !!(S.route.manage && card && card.mine);
     var head = function (title) {
+      if (!(S.route.manage && (!card || card.mine))) return viewerHead(title, false, backTo);
       return h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' },
@@ -2913,7 +2923,7 @@
         'aria-selected': tab === key ? 'true' : 'false', onclick: function () { if (tab !== key) pickTab(key); } },
         icon(ic, 20), h('span', null, label));
     };
-    var photo = card.mine ? fileControl({
+    var photo = manage ? fileControl({
       label: card.avatar ? null : (String(card.name).trim().charAt(0).toUpperCase() || '?'), logo: card.avatar || undefined,
       cls: 'pf-photo' + (card.avatar ? ' has' : ' letter'), accept: imageAccept(),
       ariaLabel: (card.avatar ? 'Change' : 'Add') + ' the photo for ' + card.name,
@@ -2934,7 +2944,7 @@
       return h('li', { class: 'am-li' },
         m.canOpen ? h('button', { class: 'fl-row', type: 'button', onclick: function () { openProfile(m.userId); } }, inner)
           : h('div', { class: 'fl-row' }, inner),
-        card.mine ? h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Remove ' + (m.name || 'them'),
+        manage ? h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Remove ' + (m.name || 'them'),
           onclick: function () {
             confirmSheet({ title: 'Remove ' + (m.name || 'them') + ' from ' + card.name + '?', body: 'You can add them again any time.',
               action: 'Remove', danger: true,
@@ -2948,8 +2958,8 @@
       return [
         list.length ? h('ul', { class: 'tour-list rows vp-list am-list' }, list.map(memberRow))
           : emptyState(kind === 'band' ? 'No band members yet' : 'No crew yet',
-              card.mine ? 'Search for their Greenroom account to add them.' : card.name + ' hasn\u2019t added anyone here yet.'),
-        card.mine ? h('div', { class: 'am-more' },
+              manage ? 'Search for their Greenroom account to add them.' : card.name + ' hasn\u2019t added anyone here yet.'),
+        manage ? h('div', { class: 'am-more' },
           h('button', { class: 'add-pill', type: 'button', onclick: function () { openAddMembers(id, kind); } },
             icon('plus', 16), kind === 'band' ? 'Add band members' : 'Add crew members')) : null
       ];
@@ -2958,7 +2968,7 @@
       var span = t.first ? dayMD(t.first) + (t.last && t.last !== t.first ? ' \u2013 ' + dayMD(t.last) : '') +
         ', ' + String(t.last || t.first).slice(0, 4) + ' \u00b7 ' + plural(G.num(t.shows), 'show') : 'No dates yet';
       return h('li', null, h('button', { class: 'list-row tour-row', type: 'button',
-        onclick: function () { if (t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, id); } },
+        onclick: function () { if ((manage || !card.mine) && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, id); } },
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, t.name || 'Untitled tour'), h('span', { class: 'lr-sub' }, span)),
         icon('chevron', 18)));
     });
@@ -2967,7 +2977,7 @@
       h('section', { class: 'pf vp', 'aria-label': card.name + ' profile' },
         h('div', { class: 'pf-top' },
           h('div', { class: 'pf-photo-wrap' }, photo,
-            (card.mine && !card.avatar) ? h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14)) : null),
+            (manage && !card.avatar) ? h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14)) : null),
           h('div', { class: 'vp-side' },
             h('strong', { class: 'vp-name' }, card.name),
             h('div', { class: 'pf-stats' },
@@ -2976,14 +2986,14 @@
               pfStat(crewList.length, 'crew', function () { pickTab('crew'); })))),
         h('p', { class: 'pf-roles' }, 'Artist'),
         card.bio ? h('p', { class: 'pf-bio' }, card.bio)
-          : (card.mine ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
-        card.mine ? h('div', { class: 'pf-actions' },
+          : (manage ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
+        manage ? h('div', { class: 'pf-actions' },
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist')) : null),
       h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Band', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
       tab === 'band' ? people(bandList, 'band')
         : tab === 'crew' ? people(crewList, 'crew')
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
-            : emptyState('No tours yet', card.mine ? 'Tours you file under ' + card.name + ' show up here.' : card.name + ' has no tours on Greenroom yet.')),
+            : emptyState('No tours yet', manage ? 'Tours you file under ' + card.name + ' show up here.' : card.name + ' has no tours on Greenroom yet.')),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
   }
