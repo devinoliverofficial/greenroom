@@ -693,11 +693,16 @@
     }
     // The menu slides in when you open it from your profile, not when you step back to it.
     if (route.name === 'mainmenu' && S.route && S.route.name === 'home') S.menuIn = true;
+    // Leaving your profile: how far down its tabs you were, for the way back.
+    if (S.route && S.route.name === 'home' && route.name !== 'home') S.homeY = window.scrollY;
+    var backToTabs = route === PF_HOME && S.homeY;
     S.route = route;
     S.xsAt = null; // the Expenses flow eases in afresh each time you arrive
-    S.focusOnRender = true;
+    S.focusOnRender = !backToTabs;
     window.scrollTo(0, 0);
     render(true);
+    // Back from a tour opened under your profile's tabs: the same spot in the list.
+    if (backToTabs) window.scrollTo(0, S.homeY);
   }
   function clampStep(s) { return 2; } // one resume point: the shows
   // A tour's setup wizard counts as that tour: where you came from survives it.
@@ -2082,21 +2087,6 @@
       ];
     }, { label: 'Role' });
   }
-  // A tour under its artist on the profile: name, dates, straight in.
-  function tourLine(id, t) {
-    var dates = G.rows(t && t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
-    var live = tourIsLive(t);
-    var year = dates.length ? String(dates[0]).slice(0, 4) : '';
-    // On the road, the dates are enough; once it's history, the year and the count too.
-    var span = dates.length ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') : '';
-    var sub = !dates.length ? 'No shows yet'
-      : live ? span : span + (year ? ', ' + year : '') + ' \u00b7 ' + plural(dates.length, 'show');
-    return h('button', { class: 'pf-tour', type: 'button', onclick: function () { openTour(id); } },
-      h('span', { class: 'lr-text' },
-        h('span', { class: 'pf-tour-name' }, t.name || 'Untitled tour'),
-        h('span', { class: 'lr-sub' + (live ? ' live' : '') }, (live ? 'On the road \u00b7 ' : '') + sub)),
-      icon('chevron', 16));
-  }
 
   /* ---- Step two: other people. ----
      Whoever you tour with can open your profile, and you theirs: photo,
@@ -3345,25 +3335,7 @@
     var id = currentTourId(), t = id ? getTour(id) : null;
     var tabs = !t ? [] : canSeeMoney(id) ? TOUR_TABS : TOUR_TABS.filter(function (x) { return x.view !== 'money' && x.view !== 'costs'; });
     var first = S.menuIn; S.menuIn = false;
-    var pickTour = function () {
-      openSheet(function () {
-        return [
-          h('h2', { class: 'sh-title' }, 'Which tour?'),
-          h('p', { class: 'sh-sub' }, 'The rows under it in the menu open this tour.'),
-          h('div', { class: 'fl-list' }, entries.map(function (e) {
-            var on = e[0] === id, live = tourIsLive(e[1]);
-            return h('button', { class: 'fl-row', type: 'button', 'aria-pressed': on ? 'true' : 'false',
-              onclick: function () { rememberTour(e[0]); closeSheet(); render(true); } },
-              h('span', { class: 'lr-text' },
-                h('span', { class: 'lr-title' }, e[1].name || 'Untitled tour'),
-                h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artistOf(e[1]), live ? 'On the road' : ''].filter(Boolean).join(' \u00b7 '))),
-              on ? h('span', { class: 'acct-on', 'aria-hidden': 'true' }, icon('check', 14)) : null);
-          })),
-          h('div', { class: 'stack' },
-            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
-        ];
-      }, { label: 'Which tour?' });
-    };
+    var pickTour = function () { openTourPicker(); };
     return h('div', { class: 'page home menu-page' + (first ? ' mn-in' : '') },
       menuHead('Menu', backTo),
       dbBanner(),
@@ -3391,15 +3363,7 @@
   function viewAllTours() {
     var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
     var here = { name: 'tours', back: backTo };
-    // A tour with no dates yet sorts by the day it was made, not as the oldest of all.
-    var when = function (t) {
-      var d = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
-      return d.length ? d[d.length - 1] : (t.createdAt ? G.ymd(new Date(t.createdAt)) : '');
-    };
-    var entries = allTourEntries().slice().sort(function (a, b) {
-      var la = tourIsLive(a[1]) ? 1 : 0, lb = tourIsLive(b[1]) ? 1 : 0;
-      return (lb - la) || String(when(b[1])).localeCompare(String(when(a[1]))) || ((b[1].createdAt || 0) - (a[1].createdAt || 0));
-    });
+    var entries = toursByNow();
     return h('div', { class: 'page home profile menu-page' },
       menuHead('Tours', backTo),
       dbBanner(),
@@ -3435,6 +3399,273 @@
         : 'Nothing has been shared with you yet.'));
   }
 
+  /* ---- The tabs under your own profile. ----
+     Where a social app keeps the photo grid, your profile keeps the tour:
+     TODAY (where you are today, and the day sheet under it when there is
+     one), STATS (your own Crew Stats, nobody else's), GUEST LIST (tonight's),
+     ARTISTS (your artists) and TOURS (every run with its dates, laid out like
+     the calendar, with the Day sheet, Special requests and vote buttons, and
+     no way to add shows from here). Today, Stats and Guest list read the tour
+     you were last in, the same one the menu's rows open. Switching tabs
+     redraws in place; nothing here is a route. */
+  var PF_TABS = [
+    { key: 'today', label: 'Today', icon: 'tabmap' },
+    { key: 'stats', label: 'Stats', icon: 'tabstats' },
+    { key: 'guests', label: 'Guest list', icon: 'tabguest' },
+    { key: 'artists', label: 'Artists', icon: 'music' },
+    { key: 'tours', label: 'Tours', icon: 'calendar' }
+  ];
+  var PF_HOME = { name: 'home' };
+  // On the road first, then the newest; a tour with no dates yet sorts by the day it was made.
+  function toursByNow() {
+    var when = function (t) {
+      var d = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+      return d.length ? d[d.length - 1] : (t.createdAt ? G.ymd(new Date(t.createdAt)) : '');
+    };
+    return allTourEntries().slice().sort(function (a, b) {
+      var la = tourIsLive(a[1]) ? 1 : 0, lb = tourIsLive(b[1]) ? 1 : 0;
+      return (lb - la) || String(when(b[1])).localeCompare(String(when(a[1]))) || ((b[1].createdAt || 0) - (a[1].createdAt || 0));
+    });
+  }
+  /* The tour the profile's Today, Stats and Guest list read: the one you
+     picked, else the one on the road, else the one you were last in. Opening
+     an old tour to look something up doesn't move Today off the road. */
+  function profileTourId() {
+    var entries = allTourEntries();
+    if (S.pfTour && entries.some(function (e) { return e[0] === S.pfTour; })) return S.pfTour;
+    var last = currentTourId();
+    if (last && tourIsLive(getTour(last))) return last;
+    var live = toursByNow().filter(function (e) { return tourIsLive(e[1]); })[0];
+    return live ? live[0] : last;
+  }
+  // Pick the tour the menu's rows and the profile's Today, Stats and Guest list read.
+  function openTourPicker(cur) {
+    var entries = toursByNow(), id = cur || currentTourId();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Which tour?'),
+        h('p', { class: 'sh-sub' }, 'Today, Stats, Guest list and the menu follow this tour.'),
+        h('div', { class: 'fl-list' }, entries.map(function (e) {
+          var on = e[0] === id, live = tourIsLive(e[1]);
+          return h('button', { class: 'fl-row', type: 'button', 'aria-pressed': on ? 'true' : 'false',
+            onclick: function () { rememberTour(e[0]); S.pfTour = e[0]; closeSheet(); render(true); } },
+            h('span', { class: 'lr-text' },
+              h('span', { class: 'lr-title' }, e[1].name || 'Untitled tour'),
+              h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artistOf(e[1]), live ? 'On the road' : ''].filter(Boolean).join(' \u00b7 '))),
+            on ? h('span', { class: 'acct-on', 'aria-hidden': 'true' }, icon('check', 14)) : null);
+        })),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: 'Which tour?' });
+  }
+  // Which tour a tab is about, with a way to change it when there's more than one.
+  function pfTourBar(id, t, count, view) {
+    return h('div', { class: 'pt-tourbar' },
+      h('button', { class: 'pt-tourname', type: 'button', 'aria-label': 'Open ' + (t.name || 'the tour'),
+        onclick: function () { openTour(id, view, PF_HOME, 'Profile'); } },
+        h('span', null, t.name || 'Untitled tour'), icon('chevron', 14)),
+      count > 1 ? h('button', { class: 'mn-change', type: 'button', onclick: function () { openTourPicker(id); } }, 'Change') : null);
+  }
+  /* TODAY: where the tour is today (the show, or the day off and its hotel),
+     or the next show when the run hasn't started, then that day's sheet
+     under it. A day with nothing filled in shows nothing under it at all. */
+  function pfToday(id, t, count) {
+    var got = overviewDays(t);
+    if (!got) return [pfTourBar(id, t, count, 'details'), emptyState('No dates yet', 'Once shows are on the run, today shows up here.')];
+    var today = G.tourToday();
+    var entry = got.days[got.index];
+    // A run that's over rests on its last show, not on the travel day after it.
+    if (entry.date < today && !entry.show) {
+      entry = got.days.filter(function (x) { return x.show; }).pop() || entry;
+    }
+    var s = entry.show, off = s ? null : offDayFor(t, entry.date);
+    var isToday = entry.date === today;
+    var d = s && G.isObj(s.daySheet) ? s.daySheet : {};
+    var shows = got.days.filter(function (x) { return x.show; }).map(function (x) { return x.show; });
+    var firstShow = shows[0], lastShow = shows[shows.length - 1];
+    var travel = !s && ((firstShow && entry.date < firstShow.date) || (lastShow && entry.date > lastShow.date));
+    var kind = isRehearsalDay(t, entry.date) ? 'Rehearsal' : travel ? 'Travel day' : 'Day off';
+    // With no city for the day off, the kind of day is the headline, so the tag doesn't say it twice.
+    var when = s ? (isToday ? 'Tonight' : entry.date > today ? 'Next show' : 'Last show')
+      : (off.city || !isToday) ? kind : 'Today';
+    var city = s ? (s.city || 'Show') : (off.city || kind);
+    var place = s ? String(s.venue || '').trim() : String(off.hotel || '').trim();
+    var address = String(d.venueAddress || '').trim();
+    // On a day off, the next show is one quiet line under it.
+    var next = !s ? shows.filter(function (x) { return x.date > entry.date; })[0] : null;
+    var sheet = daySheetNodes(s, off, { onlySet: true });
+    return [
+      pfTourBar(id, t, count, 'details'),
+      h('div', { class: 'pt-today' },
+        h('p', { class: 'pt-when' }, h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), dayLong(entry.date),
+          s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null),
+        h('p', { class: 'pt-city' }, city),
+        place ? h('p', { class: 'pt-venue' }, place) : null,
+        address ? h('a', { class: 'pt-addr', href: mapsHref(address), target: '_blank', rel: 'noopener' }, address) : null,
+        next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
+          [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null),
+      sheet ? [isToday ? checkInBtn(id, entry.date, true) : null, h('div', { class: 'pt-sheet' }, sheet)] : null
+    ];
+  }
+  // You, on a tour's stat sheet: the creator is 'owner'; everyone else goes by the email they were invited on.
+  function myPersonKey(id) {
+    var B = window.GR_BACKEND;
+    if (!B) return null;
+    if (B.ownsTour && B.ownsTour(id)) return 'owner';
+    var uid = B.uid && B.uid();
+    var rows = S.crewCache && S.crewCache[id] && S.crewCache[id].rows;
+    // Not asked for yet on this tour: ask once, and draw again when it's in.
+    if (!rows && S.mode === 'db' && B.crew) {
+      S.crewCache = S.crewCache || {};
+      S.crewAsk = S.crewAsk || {};
+      if (!S.crewAsk[id]) {
+        S.crewAsk[id] = true;
+        B.crew(id).then(function (got) { S.crewCache[id] = { rows: got, at: Date.now() }; render(true); })
+          .catch(function () { /* the sign-in email stands in */ });
+      }
+    }
+    var mine = rows && uid ? rows.filter(function (m) { return m.userId === uid; })[0] : null;
+    if (mine) return personKey(mine);
+    var e = B.email && B.email();
+    return e ? 'e:' + String(e).toLowerCase() : null;
+  }
+  /* STATS: your own numbers on this tour, one line per stat. Adding to them
+     stays on the tour's Crew Stats, where the whole crew is. */
+  function pfStats(id, t, count) {
+    var B = window.GR_BACKEND;
+    var bar = pfTourBar(id, t, count, 'stats');
+    if (!(S.mode === 'db' && B && B.statsFor)) return [bar, emptyState('No stats here', 'Crew Stats are kept with a signed-in tour.')];
+    var key = myPersonKey(id);
+    var stats = B.statsFor(id);
+    var gb = B.gameBall ? B.gameBall(id) : { rounds: [] };
+    var pend = S.statPending || {};
+    var count1 = function (st) {
+      return st.balls ? gb.rounds.filter(function (g) { return g.status === 'won' && g.winner === key; }).length
+        : stats.filter(function (x) { return x.person === key && x.stat === st.key; }).length + (pend[key + '|' + st.key] || 0);
+    };
+    var days = {};
+    stats.forEach(function (x) { if (x.person === key && x.stat === 'checkin' && x.day) days[x.day] = true; });
+    var d0 = G.tourToday(); if (!days[d0]) d0 = G.addDays(d0, -1);
+    var streak = 0; while (days[d0]) { streak += 1; d0 = G.addDays(d0, -1); }
+    var holder = gameBallHolder(id);
+    return [
+      bar,
+      (holder && holder.winner === key) ? h('p', { class: 'pt-ball' }, '\ud83c\udfc8 You have the game ball') : null,
+      h('div', { class: 'pt-stats' }, STATS.map(function (st) {
+        var n = count1(st);
+        return h('div', { class: 'pt-stat' + (n ? '' : ' zero') },
+          h('span', { class: 'pt-emoji', 'aria-hidden': 'true' }, st.emoji),
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'pt-stat-l' }, st.label),
+            (st.key === 'checkin' && streak > 1) ? h('span', { class: 'lr-sub' }, '\ud83d\udd25 ' + streak + '-day streak') : null),
+          h('strong', { class: 'pt-stat-n num' }, String(n)));
+      })),
+      h('button', { class: 'pt-more', type: 'button', onclick: function () { openTour(id, 'stats', PF_HOME, 'Profile'); } },
+        'See the whole crew', icon('chevron', 14))
+    ];
+  }
+  /* GUEST LIST: tonight's (or the next show's), with Add guest and Import
+     List right under it. Other nights are on the tour's own Guest list. */
+  function pfGuests(id, t, count) {
+    var bar = pfTourBar(id, t, count, 'guests');
+    var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.guestsFor);
+    var myUid = backend ? window.GR_BACKEND.uid() : null;
+    var today = G.tourToday();
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
+    if (!shows.length) return [bar, emptyState('No dates yet', 'Once shows are on the run, each night gets its own guest list.')];
+    var s = shows.filter(function (x) { return x.date === today; })[0] ||
+      shows.filter(function (x) { return x.date > today; })[0] || shows[shows.length - 1];
+    var refresh = function () { setTimeout(function () { render(true); }, backend ? 500 : 150); };
+    var list = guestsFor(t, id, s.id);
+    var sum = G.guestSummary(list);
+    var rows = guestRowsFor(id, s, list, backend, myUid, refresh);
+    return [
+      bar,
+      h('div', { class: 'pt-today' },
+        h('p', { class: 'pt-when' }, h('span', { class: 'pt-chip' + (s.date === today ? ' on' : '') }, s.date === today ? 'Tonight' : s.date > today ? 'Next show' : 'Last show'), dayLong(s.date)),
+        h('p', { class: 'pt-city' }, s.city || 'Show'),
+        h('p', { class: 'pt-venue' }, [String(s.venue || '').trim(), sum.names ? plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket') : 'No names yet'].filter(Boolean).join(' \u00b7 '))),
+      rows.length ? h('div', { class: 'pt-sheet' }, guestLedger(rows)) : null,
+      h('div', { class: 'pt-two' },
+        h('button', { class: 'pf-btn go', type: 'button',
+          onclick: function () { openGuestForm(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } }, icon('plus', 16), 'Add guest'),
+        h('button', { class: 'pf-btn', type: 'button',
+          onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } }, 'Import list')),
+      guestSendRow(id, t, s, list),
+      shows.length > 1 ? h('button', { class: 'pt-more', type: 'button',
+        onclick: function () { openTour(id, 'guests', PF_HOME, 'Profile'); } }, 'Other nights', icon('chevron', 14)) : null
+    ];
+  }
+  // ARTISTS: your artists, each opening its own page; then the ones you've said you toured with.
+  function pfArtists(byArtist, declared, loose) {
+    if (!byArtist.size && !declared.length) {
+      return emptyState('No artists yet', loose.length
+        ? 'Your tours are under Tours. Open one, then \u22ef, then Name and artist, to file it under its artist.'
+        : canWrite() ? 'Tap + to add your artist, then their first tour.'
+        : 'Nothing has been shared with you yet.');
+    }
+    return h('ul', { class: 'tour-list rows' },
+      Array.from(byArtist, function (pair) { return h('li', null, artistRow(pair[0], pair[1])); }),
+      declared.map(function (a) {
+        return h('li', null, h('div', { class: 'list-row art-row still' },
+          h('span', { class: 'avatar letter' }, String(a).trim().charAt(0).toUpperCase()),
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a), h('span', { class: 'lr-sub' }, 'Toured with'))));
+      }));
+  }
+  /* TOURS: each run under its name, its days laid out like the tour's
+     calendar: a show with Day sheet and Special requests, a day off with Day
+     sheet and the vote. Days already played fold away; a run that's over
+     stays folded until asked for. Shows are added on the tour, not here. */
+  function pfTours() {
+    var entries = toursByNow();
+    if (!entries.length) {
+      return emptyState('No tours yet', canWrite()
+        ? 'Tap + to add an artist, then their first tour.'
+        : 'Nothing has been shared with you yet.');
+    }
+    return entries.map(function (e) {
+      var id = e[0], t = e[1], artist = artistOf(t), live = tourIsLive(t);
+      var dates = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+      var span = dates.length ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') +
+        ', ' + String(dates[dates.length - 1]).slice(0, 4) : 'No shows yet';
+      tourRole(id); // asked for now, so a sheet opened from a row already knows what you may do
+      var cal = calendarRows(id, t, { tidy: true, from: PF_HOME, fromLabel: 'Profile' });
+      return h('section', { class: 'pt-run' },
+        h('button', { class: 'pt-run-h', type: 'button', onclick: function () { openTour(id, 'details', PF_HOME, 'Profile'); } },
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
+            h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artist || 'No artist yet', live ? 'On the road' : '', span].filter(Boolean).join(' \u00b7 '))),
+          icon('chevron', 16)),
+        cal.pastBtn ? h('div', { class: 'cal-past-wrap' + (cal.open ? ' open' : '') }, cal.pastBtn) : null,
+        cal.rows.length ? h('ul', { class: 'shows cal-list' }, cal.rows) : null);
+    });
+  }
+  function profileTabs(entries, byArtist, loose, declared) {
+    var id = profileTourId(), t = id ? getTour(id) : null;
+    var tab = S.pfTab || (t ? 'today' : 'artists');
+    var pick = function (k) { if (k !== tab) { S.pfTab = k; render(true); } };
+    var none = function () {
+      return emptyState('No tours yet', canWrite()
+        ? 'Tap + to add an artist, then their first tour. Its day shows up here.'
+        : 'Nothing has been shared with you yet.');
+    };
+    var body = tab === 'today' ? (t ? pfToday(id, t, entries.length) : none())
+      : tab === 'stats' ? (t ? pfStats(id, t, entries.length) : none())
+      : tab === 'guests' ? (t ? pfGuests(id, t, entries.length) : none())
+      : tab === 'tours' ? pfTours()
+      : pfArtists(byArtist, declared, loose);
+    return [
+      h('div', { class: 'vp-tabs pt-tabs', role: 'tablist' }, PF_TABS.map(function (x) {
+        var on = x.key === tab;
+        return h('button', { class: 'vp-tab pt-tab' + (on ? ' on' : ''), type: 'button', role: 'tab',
+          'aria-selected': on ? 'true' : 'false', onclick: function () { pick(x.key); } },
+          icon(x.icon, 20), h('span', null, x.label));
+      })),
+      h('div', { class: 'pt-body', role: 'tabpanel' }, body)
+    ];
+  }
+
   function viewHome() {
     var entries = allTourEntries();
     var byArtist = new Map();
@@ -3453,11 +3684,6 @@
       var k = a.toLowerCase();
       return !Array.from(byArtist.keys()).some(function (b) { return String(b).toLowerCase() === k; });
     });
-    // Each artist, and under them the tours you've been on with them.
-    var withTours = function (row, list) {
-      return list.length ? [row, h('div', { class: 'pf-tours' }, list.map(function (e) { return tourLine(e[0], e[1]); }))] : row;
-    };
-
     return h('div', { class: 'page home profile' + (socialOn() ? ' has-tabs' : '') },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
@@ -3475,35 +3701,7 @@
               h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }))),
       dbBanner(),
       profileHead(entries.length),
-      h('div', { class: 'sec-head pf-sec' },
-        h('h2', { class: 'sec-title hdr' }, 'Artists & tours')),
-      byArtist.size
-        ? h('ul', { class: 'tour-list rows' }, Array.from(byArtist, function (pair) {
-            return h('li', null, withTours(artistRow(pair[0], pair[1]), pair[1]));
-          }))
-        : null,
-      loose.length
-        ? [h('p', { class: 'count-line', style: 'margin-top:22px' }, 'Not filed under an artist yet'),
-           h('ul', { class: 'tour-list rows' },
-             loose.map(function (e) {
-               var cardEl = tourCard(e[0], e[1]);
-               if (!canWrite() || (S.mode === 'db' && !createdTour(e[0]))) return h('li', null, cardEl);
-               return h('li', null, swipeable(cardEl, function () { softDeleteTour(e[0]).then(function () { render(true); }); },
-                 e[1].name || 'tour'));
-             })),
-           canWrite() ? h('p', { class: 'note' },
-             'Open one \u2192 \u22ef \u2192 Name and artist to file it.') : null]
-        : null,
-      declared.length ? h('ul', { class: 'tour-list rows pf-declared' }, declared.map(function (a) {
-        return h('li', null, h('div', { class: 'list-row art-row still' },
-          h('span', { class: 'avatar letter' }, String(a).trim().charAt(0).toUpperCase()),
-          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a), h('span', { class: 'lr-sub' }, 'Toured with'))));
-      })) : null,
-      (!byArtist.size && !loose.length && !declared.length)
-        ? emptyState('No artists yet', canWrite()
-            ? 'Add your artist, then their first tour. Every act you manage gets its own folder here.'
-            : 'Nothing has been shared with you yet.')
-        : null,
+      profileTabs(entries, byArtist, loose, declared),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar('me'),
       (function () {
@@ -7248,6 +7446,43 @@
   }
 
   /* Guest list tab: tonight's list up front, any other night one tap away. */
+  // A night's guests as rows, by last name; yours (or anyone's, for the tour manager) come off with a tap.
+  function guestRowsFor(id, s, list, backend, myUid, refresh) {
+    return list.slice().sort(function (a, b) {
+      return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
+        String(a.firstName || '').localeCompare(String(b.firstName || ''));
+    }).map(function (g) {
+      var mine = !backend || (g.addedBy && g.addedBy === myUid);
+      return guestRow(g, { canManage: canEditTour(id) || mine,
+        onRemove: async function () { await removeGuest(id, s.id, g.id); refresh(); } });
+    });
+  }
+  // Send the night's list straight to the promoter: Messages or Mail opens
+  // with the whole list already written; the manager picks who it goes to.
+  function guestSendRow(id, t, s, list) {
+    if (!list.length) return null;
+    var copyBtn = null;
+    var listText = G.guestListText(s, list);
+    var subject = 'Guest list \u00b7 ' + (t.artist || t.name || 'Greenroom') +
+      (s.city ? ' \u00b7 ' + s.city : '') + (G.parseDay(s.date) ? ' \u00b7 ' + dayMD(s.date) : '');
+    var copyOne = h('button', { class: 'btn ghost gl-send', type: 'button',
+      onclick: async function () {
+        var ta = h('textarea', { class: 'sr', readonly: true, value: listText });
+        document.body.appendChild(ta);
+        var ok = await copyText(listText, ta);
+        ta.remove();
+        toast(ok ? 'Guest list copied for the box office' : 'Press and hold to copy');
+      } }, icon('copy', 17), 'Copy');
+    copyBtn = h('div', { class: 'gl-sendrow' + (canEditTour(id) ? '' : ' solo') },
+      canEditTour(id) ? h('a', { class: 'btn ghost gl-send', href: 'sms:?&body=' + encodeURIComponent(listText) },
+        icon('tabchat', 17), 'Text') : null,
+      canEditTour(id) ? h('a', { class: 'btn ghost gl-send',
+        href: 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(listText) },
+        icon('mail', 17), 'Email') : null,
+      copyOne);
+    return copyBtn;
+  }
+
   function guestsBody(id, t) {
     var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.guestsFor);
     var myUid = backend ? window.GR_BACKEND.uid() : null;
@@ -7267,38 +7502,8 @@
     var list = guestsFor(t, id, s.id);
     var sum = G.guestSummary(list);
 
-    var rowsOut = list.slice().sort(function (a, b) {
-      return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
-        String(a.firstName || '').localeCompare(String(b.firstName || ''));
-    }).map(function (g) {
-      var mine = !backend || (g.addedBy && g.addedBy === myUid);
-      return guestRow(g, { canManage: canWrite() || mine,
-        onRemove: async function () { await removeGuest(id, s.id, g.id); refresh(); } });
-    });
-
-    // Send the night's list straight to the promoter: Messages or Mail opens
-    // with the whole list already written; the manager picks who it goes to.
-    var copyBtn = null;
-    if (list.length) {
-      var listText = G.guestListText(s, list);
-      var subject = 'Guest list \u00b7 ' + (t.artist || t.name || 'Greenroom') +
-        (s.city ? ' \u00b7 ' + s.city : '') + (G.parseDay(s.date) ? ' \u00b7 ' + dayMD(s.date) : '');
-      var copyOne = h('button', { class: 'btn ghost gl-send', type: 'button',
-        onclick: async function () {
-          var ta = h('textarea', { class: 'sr', readonly: true, value: listText });
-          document.body.appendChild(ta);
-          var ok = await copyText(listText, ta);
-          ta.remove();
-          toast(ok ? 'Guest list copied for the box office' : 'Press and hold to copy');
-        } }, icon('copy', 17), 'Copy');
-      copyBtn = h('div', { class: 'gl-sendrow' + (canEditTour(id) ? '' : ' solo') },
-        canEditTour(id) ? h('a', { class: 'btn ghost gl-send', href: 'sms:?&body=' + encodeURIComponent(listText) },
-          icon('tabchat', 17), 'Text') : null,
-        canEditTour(id) ? h('a', { class: 'btn ghost gl-send',
-          href: 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(listText) },
-          icon('mail', 17), 'Email') : null,
-        copyOne);
-    }
+    var rowsOut = guestRowsFor(id, s, list, backend, myUid, refresh);
+    var copyBtn = guestSendRow(id, t, s, list);
 
     var rail = h('div', { class: 'ds-rail gl-rail' }, shows.map(function (x) {
       var dd = G.parseDay(x.date);
@@ -7751,31 +7956,40 @@
      Every day of the run, laid out like the Budget but with no money: show
      days take special requests, days off take a vote. Everyone on the tour
      sees everything here. */
-  function viewCalendar(id, t) {
+  /* Every day of a run as calendar rows (a show day with its Day sheet and
+     Special requests, a day off with its Day sheet and vote). The list
+     starts where we are; days already done are greyed and tucked behind
+     "View previous dates". o.tidy: a run that's over stays folded until
+     asked for. o.from / o.fromLabel: where a Day sheet's back button returns. */
+  function calendarRows(id, t, o) {
+    o = o || {};
     var today = G.tourToday();
     var got = overviewDays(t);
     var rowsOut = [], pastBtn = null;
     if (got) {
       var firstShow = got.days.filter(function (x) { return x.show; })[0];
       var lastShow = got.days.slice().reverse().filter(function (x) { return x.show; })[0];
-      // The list starts where we are; the days already done are greyed and
-      // tucked away behind "View previous dates" (all of them show once the
-      // run is over).
       var past = got.days.filter(function (x) { return x.date < today; }).length;
       var ahead = past < got.days.length;
       S.calPast = S.calPast || {};
-      var showPast = !ahead || !!S.calPast[id];
+      var fold = ahead || !!o.tidy;
+      var showPast = !fold || !!S.calPast[id];
       rowsOut = got.days.filter(function (x) { return showPast || x.date >= today; }).map(function (x) {
-        var row = x.show ? calShowRow(id, x.show, today) : calOffRow(id, t, x.date,
-          (firstShow && x.date < firstShow.date) || (lastShow && x.date > lastShow.date));
+        var row = x.show ? calShowRow(id, x.show, today, o.from, o.fromLabel) : calOffRow(id, t, x.date,
+          (firstShow && x.date < firstShow.date) || (lastShow && x.date > lastShow.date), o.from, o.fromLabel);
         if (x.date < today) row.firstChild.classList.add('is-past');
         return row;
       });
-      if (past && ahead) pastBtn = h('button', { class: 'btn quiet sm cal-past', type: 'button',
+      if (past && fold) pastBtn = h('button', { class: 'btn quiet sm cal-past', type: 'button',
         'aria-expanded': showPast ? 'true' : 'false',
         onclick: function () { S.calPast[id] = !showPast; render(true); } },
         icon('chevron', 16), showPast ? 'Hide previous dates' : 'View previous dates (' + past + ')');
     }
+    return { rows: rowsOut, pastBtn: pastBtn, open: !!(S.calPast && S.calPast[id]) };
+  }
+  function viewCalendar(id, t) {
+    var cal = calendarRows(id, t);
+    var rowsOut = cal.rows, pastBtn = cal.pastBtn;
     return h('div', { class: 'page tour has-tabs' },
       h('div', { class: 'headband' },
         tourTopbar(t, id, 'calendar'),
@@ -7790,13 +8004,14 @@
         : emptyState('No dates yet', 'Once the shows are in, every day of the run shows up here.'),
       tourTabs(id, 'details'));
   }
-  function calShowRow(id, s, today) {
+  function calShowRow(id, s, today, from, fromLabel) {
     var B = window.GR_BACKEND;
-    var reqs = B && B.requestsFor ? B.requestsFor(id, s.date) : [];
+    var asks = !!(B && B.requestsFor); // requests live with a signed-in tour
+    var reqs = asks ? B.requestsFor(id, s.date) : [];
     var open = reqs.filter(function (r) { return r.status === 'pending'; }).length;
     return h('li', null, h('div', { class: 'show-row cal-row' + (s.date === today ? ' is-today' : '') },
-      dateBlock(s.date), whereBlock(s), daySheetBtn(id, s.date),
-      h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
+      dateBlock(s.date), whereBlock(s), daySheetBtn(id, s.date, from, fromLabel),
+      !asks ? h('span', { 'aria-hidden': 'true' }) : h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
         'aria-label': 'Special requests for ' + (s.city || 'this show') + (open ? ', ' + open + ' waiting for an answer' : ''),
         onclick: function () { openRequests(id, s); } },
         'Special requests')));
@@ -7820,18 +8035,19 @@
     return h('button', { class: cls, type: 'button', 'aria-label': (mine ? 'Voted' : kids[0]) + ', day off ' + dayMD(date),
       onclick: function () { openPoll(id, date); } }, kids);
   }
-  function calOffRow(id, t, date, travel) {
+  function calOffRow(id, t, date, travel, from, fromLabel) {
     var off = offDayFor(t, date);
     var reh = isRehearsalDay(t, date);
     var right;
     if (reh || travel) right = h('span', { class: 'tag quiet' }, reh ? 'Rehearsal' : 'Travel');
+    else if (!(window.GR_BACKEND && window.GR_BACKEND.pollFor)) right = h('span', { 'aria-hidden': 'true' }); // polls live with a signed-in tour
     else right = pollBtn(id, date);
     return h('li', null, h('div', { class: 'show-row is-off cal-row' },
       dateBlock(date),
       h('div', { class: 'where' },
         h('div', { class: 'city' }, off.city || (reh ? 'Rehearsal day' : travel ? 'Travel day' : 'Day off')),
         off.hotel ? h('div', { class: 'venue' }, off.hotel) : null),
-      daySheetBtn(id, date),
+      daySheetBtn(id, date, from, fromLabel),
       right));
   }
   /* Check In: at the top of the day sheet, each person's way of saying
@@ -7873,13 +8089,13 @@
   }
 
   // Straight to that day's day sheet.
-  function daySheetBtn(id, date) {
+  function daySheetBtn(id, date, from, fromLabel) {
     return h('button', { class: 'cal-btn ds-jump', type: 'button', 'aria-label': 'Day sheet for ' + dayMD(date),
       onclick: function () {
         var got = overviewDays(getTour(id));
         var i = got ? got.days.map(function (x) { return x.date; }).indexOf(date) : -1;
         if (i >= 0) { S.dsIndex = i; S.dsTour = id; }
-        go({ name: 'tour', id: id, view: 'day' });
+        go({ name: 'tour', id: id, view: 'day', from: from || null, fromLabel: fromLabel || null });
       } }, 'Day sheet');
   }
 
@@ -8120,6 +8336,119 @@
     return G.isObj(bag[date]) ? bag[date] : {};
   }
 
+  /* A day's sheet as it reads: the venue, the schedule and the amenities on a
+     show day; the hotel and the plans on a day off. Null when nothing has
+     been filled in, so a caller can show nothing at all. o.onlySet is for
+     the profile's Today, which has the address above it already: only what
+     someone filled in counts (the address and phone the app looks up by
+     itself don't make a sheet), the address isn't said twice, and the
+     amenities nobody answered are left out instead of a row of dashes. */
+  function daySheetNodes(s, off, o) {
+    var lines = s ? G.daySheetLines(s) : G.offDayLines(off || {});
+    if (o && o.onlySet && s) lines = lines.filter(function (x) { return !/^(Address|Venue phone): /.test(x); });
+    if (!lines.length) return null;
+    var d = s && G.isObj(s.daySheet) ? s.daySheet : {};
+    off = off || {};
+    var body;
+    if (s) {
+      // In sections, in the order the day happens: where you are, the
+      // schedule from lobby call to bus call, then the amenities.
+      var dsRow = function (label, val) {
+        return h('div', { class: 'row ds-row' }, h('span', { class: 'row-label' }, label), val);
+      };
+      var textRow = function (label, v) {
+        v = String(v || '').trim();
+        return v ? dsRow(label, h('span', { class: 'ds-val' }, v)) : null;
+      };
+      var clockRow = function (label, v) {
+        v = G.cleanTime(v);
+        return v ? dsRow(label, h('span', { class: 'ds-time num' }, v)) : null;
+      };
+      // Soundchecks and set times: a small heading, then one row per band.
+      var bandRows = function (title, list) {
+        var got = (Array.isArray(list) ? list : []).filter(function (r) {
+          return r && (String(r.band || '').trim() || String(r.time || '').trim());
+        });
+        if (!got.length) return [];
+        return [h('div', { class: 'row ds-sub' }, title)].concat(got.map(function (r) {
+          return h('div', { class: 'row ds-row ds-band-row' },
+            h('span', { class: 'row-label' }, String(r.band || '').trim() || 'TBA'),
+            h('span', { class: 'ds-time num' }, G.cleanTime(r.time) || 'TBA'));
+        }));
+      };
+      var section = function (title, rows) {
+        rows = [].concat.apply([], rows).filter(Boolean);
+        return rows.length ? h('section', { class: 'ds-sec' },
+          h('h3', { class: 'ds-sec-h' }, title), h('div', { class: 'ledger' }, rows)) : null;
+      };
+      // The schedule in blocks, each its own card: VIP and Doors sit on their
+      // own between the soundchecks and the set times.
+      var blocks = function (title, groups) {
+        var cards = groups.map(function (g) { return [].concat.apply([], g).filter(Boolean); })
+          .filter(function (g) { return g.length; })
+          .map(function (g) { return h('div', { class: 'ledger ds-block' }, g); });
+        return cards.length ? h('section', { class: 'ds-sec' }, h('h3', { class: 'ds-sec-h' }, title), cards) : null;
+      };
+      var address = String(d.venueAddress || '').trim();
+      body = [
+        section('Venue', [
+          (address && !(o && o.onlySet)) ? dsRow('Address', h('a', { class: 'ds-val ds-link', href: mapsHref(address),
+            target: '_blank', rel: 'noopener' }, address)) : null,
+          textRow('Venue phone', d.venuePhone),
+          textRow('Wifi', d.wifi),
+          textRow('Wifi password', d.wifiPass),
+          textRow('Parking', d.parking)]),
+        blocks('Schedule', [
+          [clockRow('Lobby call', d.lobbyCall), clockRow('Load in', d.loadIn)],
+          [bandRows('Soundcheck', d.soundchecks)],
+          [textRow('VIP', d.vip), clockRow('Doors', d.doors)],
+          [bandRows('Set times', d.setTimes)],
+          [clockRow('Load out', d.loadOut), clockRow('Bus call', d.busCall), textRow('Drive to next venue', d.driveNext)]]),
+        // Every amenity listed, a plain yes or no beside it.
+        section('Amenities', G.DS_AMENITIES.map(function (a) {
+          if (o && o.onlySet && d[a[0]] !== 'yes' && d[a[0]] !== 'no') return null;
+          return dsRow(a[1], h('span', { class: 'ds-val' },
+            d[a[0]] === 'yes' ? 'Yes' : (d[a[0]] === 'no' ? 'No' : '\u2014')));
+        })),
+        String(d.notes || '').trim() ? h('section', { class: 'ds-sec' },
+          h('h3', { class: 'ds-sec-h' }, 'Notes'), h('p', { class: 'ds-notes' }, String(d.notes).trim())) : null
+      ];
+    } else {
+      // An off day: the hotel and the plans.
+      var offRows = [];
+      var offRow = function (label, v) {
+        if (!String(v || '').trim()) return;
+        offRows.push(h('div', { class: 'row ds-row' },
+          h('span', { class: 'row-label' }, label),
+          h('span', { class: 'ds-val' }, String(v).trim())));
+      };
+      if (String(off.hotel || '').trim()) {
+        // The hotel's name and the town are enough for Maps to find it.
+        offRows.push(h('div', { class: 'row ds-row' },
+          h('span', { class: 'row-label' }, 'Hotel'),
+          h('a', { class: 'ds-val ds-link', target: '_blank', rel: 'noopener',
+            href: mapsHref(String(off.hotel).trim() + (off.city ? ', ' + off.city : '')) }, String(off.hotel).trim())));
+      }
+      offRow('Wifi', off.wifi);
+      offRow('Wifi password', off.wifiPass);
+      offRow('Rooms', off.rooms);
+      var planRows = (Array.isArray(off.plans) ? off.plans : []).filter(function (r) {
+        return r && (String(r.label || '').trim() || String(r.time || '').trim());
+      }).map(function (r) {
+        return h('div', { class: 'row ds-row' },
+          h('span', { class: 'row-label' }, r.label || 'Plan'),
+          h('span', { class: 'ds-time num' }, r.time || 'TBA'));
+      });
+      body = [
+        offRows.length ? h('div', { class: 'ledger' }, offRows) : null,
+        planRows.length ? [h('h3', { class: 'sh-h3' }, 'Reservations & plans'),
+          h('div', { class: 'ledger' }, planRows)] : null,
+        String(off.notes || '').trim() ? h('p', { class: 'note' }, off.notes) : null
+      ];
+    }
+    return body;
+  }
+
   function detailsBody(id, t, only) {
     var got = overviewDays(t);
     if (!got) {
@@ -8164,104 +8493,10 @@
         disabled: S.dsIndex >= days.length - 1,
         onclick: function () { S.dsIndex += 1; render(true); } }, icon('chevron', 22)));
 
-    var body;
-    if (!lines.length) {
+    var body = daySheetNodes(s, off);
+    if (!body) {
       body = emptyState('No day sheet added.', null);
       body.classList.add('ds-empty');
-    } else if (s) {
-      // In sections, in the order the day happens: where you are, the
-      // schedule from lobby call to bus call, then the amenities.
-      var dsRow = function (label, val) {
-        return h('div', { class: 'row ds-row' }, h('span', { class: 'row-label' }, label), val);
-      };
-      var textRow = function (label, v) {
-        v = String(v || '').trim();
-        return v ? dsRow(label, h('span', { class: 'ds-val' }, v)) : null;
-      };
-      var clockRow = function (label, v) {
-        v = G.cleanTime(v);
-        return v ? dsRow(label, h('span', { class: 'ds-time num' }, v)) : null;
-      };
-      // Soundchecks and set times: a small heading, then one row per band.
-      var bandRows = function (title, list) {
-        var got = (Array.isArray(list) ? list : []).filter(function (r) {
-          return r && (String(r.band || '').trim() || String(r.time || '').trim());
-        });
-        if (!got.length) return [];
-        return [h('div', { class: 'row ds-sub' }, title)].concat(got.map(function (r) {
-          return h('div', { class: 'row ds-row ds-band-row' },
-            h('span', { class: 'row-label' }, String(r.band || '').trim() || 'TBA'),
-            h('span', { class: 'ds-time num' }, G.cleanTime(r.time) || 'TBA'));
-        }));
-      };
-      var section = function (title, rows) {
-        rows = [].concat.apply([], rows).filter(Boolean);
-        return rows.length ? h('section', { class: 'ds-sec' },
-          h('h3', { class: 'ds-sec-h' }, title), h('div', { class: 'ledger' }, rows)) : null;
-      };
-      // The schedule in blocks, each its own card: VIP and Doors sit on their
-      // own between the soundchecks and the set times.
-      var blocks = function (title, groups) {
-        var cards = groups.map(function (g) { return [].concat.apply([], g).filter(Boolean); })
-          .filter(function (g) { return g.length; })
-          .map(function (g) { return h('div', { class: 'ledger ds-block' }, g); });
-        return cards.length ? h('section', { class: 'ds-sec' }, h('h3', { class: 'ds-sec-h' }, title), cards) : null;
-      };
-      var address = String(d.venueAddress || '').trim();
-      body = [
-        section('Venue', [
-          address ? dsRow('Address', h('a', { class: 'ds-val ds-link', href: mapsHref(address),
-            target: '_blank', rel: 'noopener' }, address)) : null,
-          textRow('Venue phone', d.venuePhone),
-          textRow('Wifi', d.wifi),
-          textRow('Wifi password', d.wifiPass),
-          textRow('Parking', d.parking)]),
-        blocks('Schedule', [
-          [clockRow('Lobby call', d.lobbyCall), clockRow('Load in', d.loadIn)],
-          [bandRows('Soundcheck', d.soundchecks)],
-          [textRow('VIP', d.vip), clockRow('Doors', d.doors)],
-          [bandRows('Set times', d.setTimes)],
-          [clockRow('Load out', d.loadOut), clockRow('Bus call', d.busCall), textRow('Drive to next venue', d.driveNext)]]),
-        // Every amenity listed, a plain yes or no beside it.
-        section('Amenities', G.DS_AMENITIES.map(function (a) {
-          return dsRow(a[1], h('span', { class: 'ds-val' },
-            d[a[0]] === 'yes' ? 'Yes' : (d[a[0]] === 'no' ? 'No' : '\u2014')));
-        })),
-        String(d.notes || '').trim() ? h('section', { class: 'ds-sec' },
-          h('h3', { class: 'ds-sec-h' }, 'Notes'), h('p', { class: 'ds-notes' }, String(d.notes).trim())) : null
-      ];
-    } else {
-      // An off day: the hotel and the plans.
-      var offRows = [];
-      var offRow = function (label, v) {
-        if (!String(v || '').trim()) return;
-        offRows.push(h('div', { class: 'row ds-row' },
-          h('span', { class: 'row-label' }, label),
-          h('span', { class: 'ds-val' }, String(v).trim())));
-      };
-      if (String(off.hotel || '').trim()) {
-        // The hotel's name and the town are enough for Maps to find it.
-        offRows.push(h('div', { class: 'row ds-row' },
-          h('span', { class: 'row-label' }, 'Hotel'),
-          h('a', { class: 'ds-val ds-link', target: '_blank', rel: 'noopener',
-            href: mapsHref(String(off.hotel).trim() + (off.city ? ', ' + off.city : '')) }, String(off.hotel).trim())));
-      }
-      offRow('Wifi', off.wifi);
-      offRow('Wifi password', off.wifiPass);
-      offRow('Rooms', off.rooms);
-      var planRows = (Array.isArray(off.plans) ? off.plans : []).filter(function (r) {
-        return r && (String(r.label || '').trim() || String(r.time || '').trim());
-      }).map(function (r) {
-        return h('div', { class: 'row ds-row' },
-          h('span', { class: 'row-label' }, r.label || 'Plan'),
-          h('span', { class: 'ds-time num' }, r.time || 'TBA'));
-      });
-      body = [
-        offRows.length ? h('div', { class: 'ledger' }, offRows) : null,
-        planRows.length ? [h('h3', { class: 'sh-h3' }, 'Reservations & plans'),
-          h('div', { class: 'ledger' }, planRows)] : null,
-        String(off.notes || '').trim() ? h('p', { class: 'note' }, off.notes) : null
-      ];
     }
 
     var copyBtn = null;
@@ -8873,7 +9108,7 @@
           String(a.firstName || '').localeCompare(String(b.firstName || ''));
       }).map(function (g) {
         var mine = !backend || (g.addedBy && g.addedBy === myUid);
-        return guestRow(g, { canManage: canWrite() || mine,
+        return guestRow(g, { canManage: canEditTour(tourId) || mine,
           onRemove: async function () {
             await removeGuest(tourId, showId, g.id);
             setTimeout(function () { openGuestList(tourId, showId); }, backend ? 500 : 150);

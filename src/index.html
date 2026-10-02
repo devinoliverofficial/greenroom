@@ -2305,6 +2305,64 @@ button.acct-row:active { background: var(--surface-2); }
 @keyframes mn-in { from { transform: translateX(22px); opacity: 0; } to { transform: none; opacity: 1; } }
 .menu-page.mn-in > :not(.headband) { animation: mn-in .2s ease-out both; }
 @media (prefers-reduced-motion: reduce) { .menu-page.mn-in > :not(.headband) { animation: none; } }
+/* The tabs under your own profile, and what sits under them. Black, white
+   text, green for what's live or tappable; the profile's own type sizes
+   (15 names, 14 body, 13 quiet lines) on everything borrowed from a tour. */
+.vp-tabs.pt-tabs { margin-top: -6px; }
+.page.profile .vp-tab.pt-tab { flex-direction: column; gap: 3px; height: 54px; font-size: 11px; font-weight: 600; letter-spacing: 0; padding: 0 2px; }
+.pt-tab span:not(.ic) { white-space: nowrap; }
+/* Tall enough that a short tab doesn't yank the page back up when you switch to it. */
+.pt-body { position: relative; z-index: 1; padding-top: 6px; min-height: calc(100vh - 170px); min-height: calc(100dvh - 170px); }
+.pt-tourbar { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 4px 2px 10px; }
+.pt-tourname { display: inline-flex; align-items: center; gap: 4px; min-width: 0; appearance: none; border: 0; background: none; padding: 2px 0;
+  font: inherit; font-size: 14px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.pt-tourname span:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pt-tourname .ic { flex: none; color: var(--ink-3); }
+.pt-today { margin: 0 2px 14px; }
+.pt-when { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.pt-chip { padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink); font-size: 11.5px; font-weight: 700; letter-spacing: .02em; }
+.pt-chip.on { background: var(--brand); color: var(--on-brand); }
+.pt-chip.sold { background: none; box-shadow: inset 0 0 0 1px var(--neg); color: var(--neg); }
+.pt-city { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.02em; line-height: 1.15; color: var(--ink); overflow-wrap: anywhere; }
+.pt-venue { margin: 3px 0 0; font-size: 14px; line-height: 1.35; color: var(--ink-2); }
+.pt-addr { display: inline-block; margin-top: 5px; font-size: 14px; line-height: 1.35; color: var(--pos); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.pt-next { margin: 9px 0 0; font-size: 13px; color: var(--ink-2); }
+/* A day sheet, or a guest list, in the profile's sizes. */
+.pt-sheet .ds-sec { margin-top: 18px; }
+.pt-sheet .ds-sec:first-child { margin-top: 4px; }
+.pt-sheet .ds-sec-h { margin: 0 2px 7px; font-size: 14px; font-weight: 600; letter-spacing: 0; color: var(--ink-2); text-align: left; }
+.pt-sheet .ledger { border-radius: 14px; }
+.pt-sheet .ledger .row.ds-row { min-height: 44px; padding: 9px 14px; }
+.pt-sheet .ds-row .row-label { font-size: 14px; font-weight: 500; }
+.pt-sheet .ds-row .ds-time, .pt-sheet .ds-row .ds-val, .pt-sheet .ds-row .num { font-size: 14px; }
+.pt-sheet .ledger .row.ds-sub { padding: 11px 14px 2px; font-size: 12.5px; }
+.pt-sheet .ds-block + .ds-block { margin-top: 10px; }
+.pt-sheet .ds-notes { font-size: 14px; line-height: 1.45; }
+.pt-sheet .sh-h3 { margin: 16px 2px 7px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
+.pt-sheet .guest-rows .row.crew-row { min-height: 54px; }
+.pt-sheet .crew-row .row-label { font-size: 15px; }
+.pt-body .ci-wrap { margin: 0 0 12px; justify-content: flex-start; }
+.pt-two { display: flex; gap: 7px; margin-top: 14px; }
+.pt-two .pf-btn { flex: 1 1 0; }
+.pt-body .gl-sendrow { margin-top: 8px; }
+.pt-body .gl-send { min-height: 34px; border-radius: 9px; font-size: 14px; }
+.pt-more { display: inline-flex; align-items: center; gap: 4px; margin: 14px 2px 0; appearance: none; border: 0; background: none; padding: 6px 0;
+  font: inherit; font-size: 14px; font-weight: 600; color: var(--pos); cursor: pointer; }
+/* Your stats: one line each. */
+.pt-ball { margin: 0 2px 10px; font-size: 14px; font-weight: 600; color: var(--pos); }
+.pt-stats { border-top: 1px solid var(--line); }
+.pt-stat { display: flex; align-items: center; gap: 12px; min-height: 50px; padding: 6px 2px; border-bottom: 1px solid var(--line); }
+.pt-emoji { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); font-size: 17px; }
+.pt-stat-l { font-size: 15px; font-weight: 500; }
+.pt-stat-n { flex: none; min-width: 28px; text-align: right; font-size: 17px; font-weight: 700; color: var(--ink); }
+.pt-stat.zero .pt-stat-n { color: var(--ink-3); font-weight: 600; }
+/* Tours: each run, then its days. */
+.pt-run + .pt-run { margin-top: 18px; padding-top: 12px; border-top: 6px solid var(--surface-2); margin-left: -18px; margin-right: -18px; padding-left: 18px; padding-right: 18px; }
+.pt-run-h { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 4px 2px; appearance: none; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.pt-run-h > .ic { flex: none; color: var(--ink-3); }
+.pt-run .cal-past-wrap { justify-content: flex-start; margin: 4px 0 2px; }
+.pt-run .show-row.cal-row { min-height: 60px; padding: 10px 2px; }
+.pt-body > .empty { margin-top: 18px; }
 /* A tour's public card: the flyer and the dates. */
 .tc-flyer { display: block; width: 100%; height: auto; max-height: 70vh; object-fit: contain; border-radius: 14px; margin: 12px 0 14px; background: var(--surface-2); }
 .tc-dates { margin: 6px 0 12px; border-top: 1px solid var(--line); }
