@@ -2037,6 +2037,24 @@ span.pf-photo { cursor: default; }
 .list-row.still:active { background: none; }
 .pf-declared { margin-top: 2px; }
 .crew-name { appearance: none; border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+/* The green check beside a username. */
+.pf-handle { display: flex; align-items: center; gap: 5px; }
+.pf-check { display: inline-grid; place-items: center; flex: none; line-height: 0; }
+.pf-check .seal { fill: var(--pos); }
+.pf-check .tick { fill: none; stroke: #000; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+.fl-name { display: flex; align-items: center; gap: 5px; }
+/* Sizing a profile photo: the picture behind a round window. */
+.pc-sub { text-align: center; }
+.pc-stage {
+  position: relative; width: min(100%, 300px); aspect-ratio: 1 / 1; margin: 14px auto 16px; overflow: hidden;
+  border-radius: 18px; background: #000; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+}
+.pc-stage:active { cursor: grabbing; }
+.pc-img { position: absolute; left: 50%; top: 50%; max-width: none; transform-origin: center; pointer-events: none; user-select: none; -webkit-user-drag: none; }
+/* Everything outside the circle is dimmed; the ring is the edge of the photo. */
+.pc-ring { position: absolute; inset: 0; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 2px var(--pos), 0 0 0 999px rgba(0, 0, 0, .62); }
+.pc-zoom-row { display: flex; align-items: center; gap: 12px; margin: 0 6px 18px; color: var(--ink-2); }
+.pc-zoom { flex: 1; min-width: 0; height: 28px; accent-color: var(--pos); }
 /* A tour's public card: the flyer and the dates. */
 .tc-flyer { display: block; width: 100%; height: auto; max-height: 70vh; object-fit: contain; border-radius: 14px; margin: 12px 0 14px; background: var(--surface-2); }
 .tc-dates { margin: 6px 0 12px; border-top: 1px solid var(--line); }

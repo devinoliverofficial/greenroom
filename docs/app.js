@@ -102,6 +102,7 @@
 
   var ICONS = {
     plus: '<path d="M12 5v14M5 12h14"/>',
+    minus: '<path d="M5 12h14"/>',
     /* the five tabs along the bottom */
     tabsheet: '<path d="M6 3h9l5 5v13H6z"/><path d="M15 3v5h5"/><path d="M9 12h7M9 16h5"/>',
     tabmoney: '<path d="M12 3v18"/><path d="M16.5 7.5c0-1.7-2-2.5-4.5-2.5S7.5 5.8 7.5 7.5 9.5 10 12 10s4.5.8 4.5 2.5S14.5 15 12 15s-4.5-.8-4.5-2.5"/>',
@@ -1719,23 +1720,106 @@
       'Merch', 'Guitar Tech', 'Drum Tech', 'Assistant', 'FOH Engineer', 'Monitors', 'Liaison', 'Dancer'])
       .filter(function (r) { return !NOT_CREW.test(r); });
   }
-  /* Any picture in, a small square out: the middle of the shot, 256 across,
-     as a JPEG, so a profile photo weighs about as much as a logo. */
-  function readPhotoFile(file, cb) {
+  /* A new profile photo is sized before it's kept: the picture sits behind a
+     round window; drag it to move, pinch or slide to zoom, and what's inside
+     the circle is what's saved (320 across, as a JPEG, so a photo weighs
+     about as much as a logo). Closing the sheet keeps the old photo. */
+  function readPhotoFile(file, cb, onCancel) {
     var url = URL.createObjectURL(file);
     var img = new Image();
-    img.onload = function () {
-      var SZ = 256, c = document.createElement('canvas');
-      c.width = SZ; c.height = SZ;
-      var side = Math.min(img.width, img.height) || 1;
-      var ctx = c.getContext('2d');
-      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, SZ, SZ);
-      ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, SZ, SZ);
-      URL.revokeObjectURL(url);
-      cb(c.toDataURL('image/jpeg', 0.82));
-    };
+    img.onload = function () { openPhotoCrop(img, url, cb, onCancel); };
     img.onerror = function () { URL.revokeObjectURL(url); toast('Couldn\u2019t read that picture \u2014 try a JPG or PNG'); };
     img.src = url;
+  }
+  function openPhotoCrop(img, url, cb, onCancel) {
+    var iw = img.naturalWidth || img.width || 1, ih = img.naturalHeight || img.height || 1;
+    var st = { s: 1, x: 0, y: 0 }, STAGE = 280, base = 1, done = false, MAX = 4;
+    var pic = h('img', { class: 'pc-img', src: url, alt: '', draggable: 'false' });
+    var stage = h('div', { class: 'pc-stage no-pull' }, pic, h('div', { class: 'pc-ring', 'aria-hidden': 'true' }));
+    var zoom = h('input', { class: 'pc-zoom', type: 'range', min: '1', max: String(MAX), step: '0.01', value: '1',
+      'aria-label': 'Zoom', oninput: function (e) { setScale(Number(e.target.value)); } });
+    // The picture always covers the window: it can't be dragged off the edge.
+    function apply() {
+      var mx = Math.max(0, (iw * base * st.s - STAGE) / 2), my = Math.max(0, (ih * base * st.s - STAGE) / 2);
+      st.x = Math.max(-mx, Math.min(mx, st.x)); st.y = Math.max(-my, Math.min(my, st.y));
+      pic.style.width = (iw * base) + 'px'; pic.style.height = (ih * base) + 'px';
+      pic.style.transform = 'translate(-50%, -50%) translate(' + st.x.toFixed(1) + 'px,' + st.y.toFixed(1) + 'px) scale(' + st.s.toFixed(3) + ')';
+    }
+    // Zooming holds the spot under the fingers (or the middle) where it is.
+    function setScale(next, cx, cy) {
+      next = Math.max(1, Math.min(MAX, next || 1));
+      var k = next / st.s;
+      cx = cx || 0; cy = cy || 0;
+      st.x = cx - (cx - st.x) * k; st.y = cy - (cy - st.y) * k; st.s = next;
+      zoom.value = String(next);
+      apply();
+    }
+    function layout() { STAGE = stage.clientWidth || 280; base = STAGE / Math.min(iw, ih); apply(); }
+    var pts = {}, lastDist = 0, lastMid = null;
+    var at = function (e) { var r = stage.getBoundingClientRect(); return { x: e.clientX - r.left - r.width / 2, y: e.clientY - r.top - r.height / 2 }; };
+    var two = function () {
+      var k = Object.keys(pts);
+      if (k.length < 2) return null;
+      var a = pts[k[0]], b = pts[k[1]];
+      return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    };
+    stage.addEventListener('pointerdown', function (e) {
+      try { stage.setPointerCapture(e.pointerId); } catch (x) { /* fine without */ }
+      pts[e.pointerId] = at(e);
+      var t = two(); lastDist = t ? t.d : 0; lastMid = t;
+    });
+    stage.addEventListener('pointermove', function (e) {
+      if (!pts[e.pointerId]) return;
+      var was = pts[e.pointerId], now = at(e);
+      pts[e.pointerId] = now;
+      var t = two();
+      if (t) {
+        if (lastMid) { st.x += t.x - lastMid.x; st.y += t.y - lastMid.y; }
+        if (lastDist > 0) setScale(st.s * t.d / lastDist, t.x, t.y); else apply();
+        lastDist = t.d; lastMid = t;
+      } else { st.x += now.x - was.x; st.y += now.y - was.y; apply(); }
+    });
+    var lift = function (e) { delete pts[e.pointerId]; var t = two(); lastDist = t ? t.d : 0; lastMid = t; };
+    stage.addEventListener('pointerup', lift);
+    stage.addEventListener('pointercancel', lift);
+    stage.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      var p = at(e);
+      setScale(st.s * (e.deltaY < 0 ? 1.08 : 0.93), p.x, p.y);
+    }, { passive: false });
+    var use = function () {
+      var SZ = 320, c = document.createElement('canvas');
+      c.width = SZ; c.height = SZ;
+      var ctx = c.getContext('2d'), disp = base * st.s, side = STAGE / disp;
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, SZ, SZ);
+      ctx.drawImage(img, iw / 2 - (STAGE / 2 + st.x) / disp, ih / 2 - (STAGE / 2 + st.y) / disp, side, side, 0, 0, SZ, SZ);
+      done = true;
+      cb(c.toDataURL('image/jpeg', 0.85));
+    };
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title pe-title' }, 'Size your photo'),
+        h('p', { class: 'sh-sub pc-sub' }, 'Drag to move it. Pinch, or use the slider, to zoom.'),
+        stage,
+        h('div', { class: 'pc-zoom-row' }, icon('minus', 16), zoom, icon('plus', 16)),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: use }, 'Use photo'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+      ];
+    }, { label: 'Size your photo', cls: 'pc-sheet',
+      // Closed without choosing: nothing changes, and you're back where you were.
+      onClose: function () {
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        if (!done) { done = true; if (onCancel) setTimeout(onCancel, 0); }
+      } });
+    requestAnimationFrame(layout);
+  }
+  // The green check: Greenroom's own mark that an account is who it says.
+  function verifiedBadge() {
+    var b = h('span', { class: 'pf-check', role: 'img', 'aria-label': 'Verified' });
+    b.innerHTML = '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><g class="seal"><circle cx="12" cy="12" r="8.6"/>' +
+      '<circle cx="20.30" cy="12.00" r="2.75"/><circle cx="18.71" cy="16.88" r="2.75"/><circle cx="14.56" cy="19.89" r="2.75"/><circle cx="9.44" cy="19.89" r="2.75"/><circle cx="5.29" cy="16.88" r="2.75"/><circle cx="3.70" cy="12.00" r="2.75"/><circle cx="5.29" cy="7.12" r="2.75"/><circle cx="9.44" cy="4.11" r="2.75"/><circle cx="14.56" cy="4.11" r="2.75"/><circle cx="18.71" cy="7.12" r="2.75"/></g><path class="tick" d="M8.1 12.3l2.7 2.7 5.1-5.6"/></svg>';
+    return b;
   }
   function profilePhoto(cls, after) {
     var card = myCard(), name = myName();
@@ -1747,8 +1831,8 @@
       ariaLabel: (card.photo ? 'Change' : 'Add') + ' your profile photo',
       onFiles: function (files) {
         readPhotoFile(files[0], async function (dataUrl) {
-          if (await saveMyCard({ photo: dataUrl })) { toast('Photo in'); if (after) after(); else render(true); }
-        });
+          if (await saveMyCard({ photo: dataUrl })) { toast('Photo in'); if (after) after(); else { closeSheet(); render(true); } }
+        }, after);
       }
     });
   }
@@ -1757,6 +1841,7 @@
     var stat = pfStat;
     var uid = socialOn() ? window.GR_BACKEND.uid() : null;
     var counts = myCounts();
+    var checked = !!(uid && cardOf(uid).card && cardOf(uid).card.verified);
     syncSocial();
     return h('section', { class: 'pf', 'aria-label': 'Your profile' },
       h('div', { class: 'pf-top' },
@@ -1766,7 +1851,8 @@
           stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
           stat(counts.followers, counts.followers === 1 ? 'follower' : 'followers', uid ? function () { openFollowList(uid, 'followers'); } : null),
           stat(counts.following, 'following', uid ? function () { openFollowList(uid, 'following'); } : null))),
-      card.handle ? h('p', { class: 'pf-handle' }, '@' + card.handle) : null,
+      (card.handle || checked) ? h('p', { class: 'pf-handle' }, card.handle ? '@' + card.handle : myName(),
+        checked ? verifiedBadge() : null) : null,
       roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 '))
         : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
       card.bio ? h('p', { class: 'pf-bio' }, card.bio)
@@ -1847,7 +1933,7 @@
           h('div', { class: 'pe-photo-links' },
             fileControl({ label: now.photo ? 'Edit picture' : 'Add a picture', cls: 'pe-link', accept: imageAccept(),
               onFiles: function (files) {
-                readPhotoFile(files[0], async function (dataUrl) { if (await saveMyCard({ photo: dataUrl })) { toast('Photo in'); redraw(); } });
+                readPhotoFile(files[0], async function (dataUrl) { if (await saveMyCard({ photo: dataUrl })) { toast('Photo in'); redraw(); } }, redraw);
               } }),
             now.photo ? h('button', { class: 'pe-link quiet', type: 'button', onclick: async function () {
               if (await saveMyCard({ photo: '' })) { toast('Photo removed'); redraw(); }
@@ -2097,7 +2183,8 @@
             pfStat(G.num(card.followers), G.num(card.followers) === 1 ? 'follower' : 'followers',
               function () { openFollowList(uid, 'followers', card.name); }),
             pfStat(G.num(card.following), 'following', function () { openFollowList(uid, 'following', card.name); }))),
-        card.handle ? h('p', { class: 'pf-handle' }, '@' + card.handle) : null,
+        (card.handle || card.verified) ? h('p', { class: 'pf-handle' }, card.handle ? '@' + card.handle : (card.name || ''),
+          card.verified ? verifiedBadge() : null) : null,
         roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 ')) : null,
         card.bio ? h('p', { class: 'pf-bio' }, card.bio) : null,
         h('div', { class: 'pf-actions' },
@@ -2179,7 +2266,7 @@
                 var roles = personRoles(p);
                 var inner = [personPhoto(p, 'xs'),
                   h('span', { class: 'lr-text' },
-                    h('span', { class: 'lr-title' }, p.name || 'Someone'),
+                    h('span', { class: 'lr-title fl-name' }, p.name || 'Someone', p.verified ? verifiedBadge() : null),
                     (p.handle || roles.length) ? h('span', { class: 'lr-sub' },
                       [p.handle ? '@' + p.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')) : null)];
                 return p.canOpen

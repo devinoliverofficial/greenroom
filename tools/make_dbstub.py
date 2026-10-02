@@ -229,7 +229,7 @@ shim = r"""<script>
       var base = { followers: n(function (x) { return x.b === uid; }), following: n(function (x) { return x.a === uid; }),
         iFollow: H.follows.some(function (x) { return x.a === 'u-devin' && x.b === uid; }),
         followsMe: H.follows.some(function (x) { return x.a === uid && x.b === 'u-devin'; }) };
-      if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', bio: '', roles: [], tourRole: me.tour_role, avatar: '', artists: [], tours: [], logos: {} }, base));
+      if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', verified: true, bio: '', roles: [], tourRole: me.tour_role, avatar: '', artists: [], tours: [], logos: {} }, base));
       if (uid === 'u-brent') return Promise.resolve(Object.assign({ userId: uid, name: 'Brent Allen', handle: 'brent', bio: 'Guitars, backline, bad jokes.',
         roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', avatar: '', artists: ['Sleeping With Sirens', 'I See Stars'],
         tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true },
@@ -238,7 +238,7 @@ shim = r"""<script>
     },
     followList: function (uid, which) {
       var H = window.__harness; H.follows = H.follows || [{ a: 'u-brent', b: 'u-devin' }];
-      var who = { 'u-devin': { name: 'Devin Oliver', handle: H.handle || '', roles: [], tourRole: 'Artist' }, 'u-brent': { name: 'Brent Allen', handle: 'brent', roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech' } };
+      var who = { 'u-devin': { name: 'Devin Oliver', verified: true, handle: H.handle || '', roles: [], tourRole: 'Artist' }, 'u-brent': { name: 'Brent Allen', handle: 'brent', roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech' } };
       return Promise.resolve(H.follows.filter(function (x) { return which === 'following' ? x.a === uid : x.b === uid; }).map(function (x) {
         var o = which === 'following' ? x.b : x.a;
         return Object.assign({ userId: o, avatar: '', canOpen: true, iFollow: H.follows.some(function (y) { return y.a === 'u-devin' && y.b === o; }) }, who[o]);
