@@ -2140,16 +2140,15 @@
     // Looking at your own page the way others get it.
     var preview = !!(S.route.preview && socialOn() && uid === B.uid());
     var justLooking = function (what) { return function () { toast(what); }; };
-    // Black, not green: this isn't your own page.
+    // Black, not green: this isn't your own page. One row, the way a social
+    // app heads a profile: the back arrow, then the username and its check
+    // right beside it; the GR mark keeps the far corner.
     var head = function (title, checked) {
-      return h('div', { class: 'headband dark' },
-        h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' },
-            h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go(backTo); } },
-              icon('back'), h('span', null, 'Back'))),
-          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-          h('span', { class: 'top-side right' })),
-        h('div', { class: 'band-row' }, h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title), checked ? verifiedBadge('on-band') : null)));
+      return h('div', { class: 'headband dark vp-head' },
+        h('header', { class: 'topbar vp-top' },
+          h('button', { class: 'iconbtn vp-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 30)),
+          h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title), checked ? verifiedBadge() : null),
+          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' })));
     };
     if (!card) {
       return h('div', { class: 'page home profile' }, head('Profile'),

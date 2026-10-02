@@ -2249,6 +2249,27 @@ button.acct-row:active { background: var(--surface-2); }
 .sr-x { flex: none; width: 40px; height: 44px; display: grid; place-items: center; appearance: none; border: 0; background: none; color: var(--ink-2); cursor: pointer; }
 .sr-hint { margin: 18px 2px; }
 .page.profile .pf-actions.three .pf-btn { padding: 0 6px; white-space: nowrap; }
+/* Viewer experience, placed against Instagram's view of another account on
+   Devin's iPhone (measured off his screenshot, 440 points wide): one header
+   row with the back arrow at 32 and the username starting at 73, 22 bold;
+   the photo 86 across, 16 in from the edge, about 36 below the middle of
+   that row; the name 15 semibold starting 23 right of the photo, the counts
+   under it with the same 55-point gap between each (not spread to the far
+   edge); role and bio starting 16 under the photo; buttons 32 tall. */
+.topbar.vp-top { justify-content: flex-start; gap: 14px; }
+.topbar.vp-top > .logo-mark.bar { position: static; transform: none; margin-left: auto; flex: none; }
+.iconbtn.vp-back { flex: none; margin-left: -3px; padding: 0; color: var(--ink); }
+.iconbtn.vp-back .ic svg { stroke-width: 1.9; }
+.headband.dark.vp-head { margin-bottom: 0; padding-bottom: 4px; }
+/* 16 in from the edge, and the name and counts a touch higher beside the photo. */
+.page.profile .pf { margin-left: -2px; margin-right: -2px; }
+.page.profile .vp-side { margin-top: -6px; }
+.page.profile .vp-top .vp-user { font-size: 22px; font-weight: 700; letter-spacing: -.015em; }
+.page.profile .vp-top .vp-user .pf-check svg { width: 18px; height: 18px; }
+.page.profile .pf-top { gap: 23px; }
+.page.profile .vp-name { font-size: 15px; }
+.page.profile .pf-stats { justify-content: flex-start; gap: clamp(22px, 12.5vw, 56px); padding-right: 0; }
+.page.profile .pf-btn { height: 32px; border-radius: 8px; }
 /* A tour's public card: the flyer and the dates. */
 .tc-flyer { display: block; width: 100%; height: auto; max-height: 70vh; object-fit: contain; border-radius: 14px; margin: 12px 0 14px; background: var(--surface-2); }
 .tc-dates { margin: 6px 0 12px; border-top: 1px solid var(--line); }
