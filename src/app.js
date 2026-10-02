@@ -717,6 +717,7 @@
     else if (S.route.name === 'tour') node = viewTour();
     else if (S.route.name === 'artist') node = viewArtist();
     else if (S.route.name === 'newartist') node = viewNewArtist();
+    else if (S.route.name === 'profile') node = viewProfile();
     else node = viewHome();
     // The tab bar stays the same element when nothing about it changed, so a
     // tap on it always lands.
@@ -1678,17 +1679,22 @@
     var rec = S.labels[PROFILE_KEY];
     rec = G.isObj(rec) && rec.kind === 'profile' ? rec : {};
     return { bio: String(rec.bio || ''), photo: String(rec.photo || ''),
+      handle: String(rec.handle || ''),
+      // Artists you say you've toured with (the ones your tours show are added on top).
+      artists: Array.isArray(rec.artists) ? rec.artists.map(String).filter(Boolean) : [],
       roles: Array.isArray(rec.roles) ? rec.roles.map(String).filter(Boolean) : null };
   }
   async function saveMyCard(patch) {
     var cur = myCard();
-    var rec = Object.assign({ kind: 'profile', bio: cur.bio, photo: cur.photo, roles: cur.roles || myRoles() }, patch);
+    var rec = Object.assign({ kind: 'profile', bio: cur.bio, photo: cur.photo, handle: cur.handle, artists: cur.artists,
+      roles: cur.roles || myRoles() }, patch);
     rec.bio = String(rec.bio || '').trim().slice(0, BIO_MAX);
     var before = S.labels[PROFILE_KEY];
     S.labels[PROFILE_KEY] = rec;
     try {
       if (S.mode === 'db' && store.db) await store.db.doc('labels/' + PROFILE_KEY).set(rec);
       else saveLocalLabels();
+      syncSocial();
       return true;
     } catch (e) {
       if (before) S.labels[PROFILE_KEY] = before; else delete S.labels[PROFILE_KEY];
@@ -1748,15 +1754,19 @@
   }
   function profileHead(tourCount) {
     var card = myCard(), roles = myRoles(), edit = canWrite() || S.mode === 'db';
-    var stat = function (n, label) {
-      return h('div', { class: 'pf-stat' }, h('strong', { class: 'pf-n num' }, String(n)), h('span', { class: 'pf-l' }, label));
-    };
+    var stat = pfStat;
+    var uid = socialOn() ? window.GR_BACKEND.uid() : null;
+    var counts = myCounts();
+    syncSocial();
     return h('section', { class: 'pf', 'aria-label': 'Your profile' },
       h('div', { class: 'pf-top' },
         h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
           card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
         h('div', { class: 'pf-stats' },
-          stat(tourCount, tourCount === 1 ? 'tour' : 'tours'), stat(0, 'followers'), stat(0, 'following'))),
+          stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
+          stat(counts.followers, counts.followers === 1 ? 'follower' : 'followers', uid ? function () { openFollowList(uid, 'followers'); } : null),
+          stat(counts.following, 'following', uid ? function () { openFollowList(uid, 'following'); } : null))),
+      card.handle ? h('p', { class: 'pf-handle' }, '@' + card.handle) : null,
       roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 '))
         : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
       card.bio ? h('p', { class: 'pf-bio' }, card.bio)
@@ -1764,20 +1774,159 @@
       edit ? h('div', { class: 'pf-actions' },
         h('button', { class: 'pf-btn', type: 'button', onclick: function () { openProfileSheet(); } }, 'Edit profile')) : null);
   }
+  /* Edit profile, laid out like a social app's: the photo up top, then a
+     row each for name, @username, role and bio, then the artists you've
+     toured with. What's typed stays put while the sheet redraws (a new
+     photo, a trip to the role list). */
+  var HANDLE_OK = /^[a-z0-9._]{3,24}$/;
+  function cleanHandle(v) { return String(v || '').trim().replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9._]/g, '').slice(0, 24); }
+  // The artists your own tours show: these are on your profile already.
+  function tourArtists() {
+    var seen = {}, out = [];
+    allTourEntries().forEach(function (e) {
+      var a = artistOf(e[1]), k = String(a || '').trim().toLowerCase();
+      if (k && !seen[k]) { seen[k] = true; out.push(a); }
+    });
+    return out;
+  }
   function openProfileSheet(keep) {
     var B = window.GR_BACKEND;
     var card = myCard();
-    // What's been typed stays put when the sheet redraws for a new photo.
-    var f = G.isObj(keep) && Array.isArray(keep.roles) ? keep : { bio: card.bio, roles: myRoles().slice() };
+    var online = S.mode === 'db' && B && B.saveProfile && B.myProfile;
+    var f = G.isObj(keep) && Array.isArray(keep.roles) ? keep
+      : { name: myName(), handle: card.handle, bio: card.bio, roles: myRoles().slice(), artists: card.artists.slice(), adding: '' };
     var redraw = function () { openProfileSheet(f); };
     openSheet(function () {
       var now = myCard();
-      var count = h('span', { class: 'pf-count num' }, f.bio.length + ' / ' + BIO_MAX);
-      var bio = h('textarea', { class: 'gl-paste pf-bio-in', maxlength: BIO_MAX, rows: 3,
+      var count = h('span', { class: 'pe-count num' }, f.bio.length + ' / ' + BIO_MAX);
+      var bio = h('textarea', { class: 'pe-in pe-bio', maxlength: BIO_MAX, rows: 2,
         placeholder: 'A line or two about you', value: f.bio,
         oninput: function (e) { f.bio = e.target.value; count.textContent = f.bio.length + ' / ' + BIO_MAX; } });
-      var chips = h('div', { class: 'pf-chips' }, roleChoices().concat(f.roles.filter(function (r) { return roleChoices().indexOf(r) < 0; }))
-        .map(function (r) {
+      // Username: checked against everyone else's as you type.
+      var said = h('span', { class: 'pe-said' });
+      var askTimer = 0, askSeq = 0;
+      var check = function () {
+        clearTimeout(askTimer);
+        var v = f.handle;
+        said.className = 'pe-said';
+        if (!v) { said.textContent = ''; return; }
+        if (!HANDLE_OK.test(v)) { said.textContent = '3 to 24 letters, numbers, dots or underscores'; said.classList.add('bad'); return; }
+        if (v === now.handle) { said.textContent = 'This is yours'; said.classList.add('ok'); return; }
+        if (!(S.mode === 'db' && B && B.handleFree)) { said.textContent = ''; return; }
+        said.textContent = 'Checking\u2026';
+        var seq = ++askSeq;
+        askTimer = setTimeout(function () {
+          B.handleFree(v).then(function (free) {
+            if (seq !== askSeq) return;
+            said.textContent = free ? '@' + v + ' is available' : '@' + v + ' is taken';
+            said.classList.add(free ? 'ok' : 'bad');
+          }).catch(function () { if (seq === askSeq) said.textContent = ''; });
+        }, 350);
+      };
+      var handle = h('input', { class: 'pe-in', type: 'text', value: f.handle, maxlength: 24, placeholder: 'username',
+        autocapitalize: 'none', autocorrect: 'off', autocomplete: 'off', spellcheck: 'false',
+        oninput: function (e) { var v = cleanHandle(e.target.value); if (v !== e.target.value) e.target.value = v; f.handle = v; check(); } });
+      check();
+      var row = function (label, control, extra) {
+        return h('label', { class: 'pe-row' }, h('span', { class: 'pe-label' }, label),
+          h('span', { class: 'pe-val' }, control, extra || null));
+      };
+      // Artists: the ones your tours show are fixed; the rest are yours to add.
+      var fromTours = tourArtists(), fromKeys = fromTours.map(function (a) { return a.toLowerCase(); });
+      var addArtist = function () {
+        var v = String(f.adding || '').trim().replace(/\s+/g, ' ').slice(0, 60), k = v.toLowerCase();
+        if (!v) return;
+        if (fromKeys.indexOf(k) >= 0 || f.artists.some(function (a) { return a.toLowerCase() === k; })) { toast(v + ' is already on your list'); return; }
+        if (f.artists.length >= 40) { toast('That\u2019s the most a profile can hold'); return; }
+        f.artists.push(v); f.adding = ''; redraw();
+      };
+      return [
+        h('h2', { class: 'sh-title pe-title' }, 'Edit profile'),
+        h('div', { class: 'pe-photo' },
+          profilePhoto('lg', redraw),
+          h('div', { class: 'pe-photo-links' },
+            fileControl({ label: now.photo ? 'Edit picture' : 'Add a picture', cls: 'pe-link', accept: imageAccept(),
+              onFiles: function (files) {
+                readPhotoFile(files[0], async function (dataUrl) { if (await saveMyCard({ photo: dataUrl })) { toast('Photo in'); redraw(); } });
+              } }),
+            now.photo ? h('button', { class: 'pe-link quiet', type: 'button', onclick: async function () {
+              if (await saveMyCard({ photo: '' })) { toast('Photo removed'); redraw(); }
+            } }, 'Remove') : null)),
+        h('form', { class: 'sh-form pe-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            blurActive();
+            var name = String(f.name || '').trim().replace(/\s+/g, ' ');
+            if (online && !name) { toast('Type your name'); return; }
+            if (f.handle && !HANDLE_OK.test(f.handle)) { toast('Usernames are 3 to 24 letters, numbers, dots or underscores'); return; }
+            // The username first: it's the one thing someone else can beat you to.
+            if (S.mode === 'db' && B && B.setHandle && f.handle !== now.handle) {
+              try { await B.setHandle(f.handle); }
+              catch (x) {
+                if (x && x.code === 'taken') { toast('@' + f.handle + ' is taken. Try another.'); return; }
+                if (x && x.code === 'shape') { toast('That username can\u2019t be used. Try another.'); return; }
+                saveFailed('username', x); return;
+              }
+            }
+            if (online && name !== myName()) {
+              var me = B.myProfile(), parts = name.split(' ');
+              try {
+                await B.saveProfile({ firstName: parts[0], lastName: parts.slice(1).join(' '), phone: me.phone, tourRole: me.tourRole });
+                forgetCrew();
+              } catch (x2) { saveFailed('name', x2); return; }
+            }
+            var order = roleChoices();
+            var roles = f.roles.slice().sort(function (a, b) {
+              var ia = order.indexOf(a), ib = order.indexOf(b);
+              return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+            });
+            if (await saveMyCard({ bio: f.bio, roles: roles, artists: f.artists.slice(), handle: f.handle })) {
+              if (socialOn()) cardOf(B.uid(), true);
+              closeSheet(); toast('Profile saved'); render(true);
+            }
+          } },
+          h('div', { class: 'pe-rows' },
+            online ? row('Name', h('input', { class: 'pe-in', type: 'text', value: f.name, maxlength: 60, placeholder: 'Your name',
+              autocomplete: 'name', oninput: function (e) { f.name = e.target.value; } })) : null,
+            (S.mode === 'db' && B && B.setHandle) ? row('Username', h('span', { class: 'pe-at' }, h('span', { 'aria-hidden': 'true' }, '@'), handle), said) : null,
+            h('button', { class: 'pe-row tap', type: 'button', onclick: function () { openRolePick(f, redraw); } },
+              h('span', { class: 'pe-label' }, 'Role'),
+              h('span', { class: 'pe-val' + (f.roles.length ? '' : ' empty') }, f.roles.length ? f.roles.join(' \u00b7 ') : 'What you\u2019ve done on tour'),
+              icon('chevron', 16)),
+            row(h('span', null, 'Bio'), bio, count)),
+          h('div', { class: 'pe-sec' },
+            h('h3', { class: 'pe-h' }, 'Which artists have you toured with?'),
+            h('div', { class: 'pe-artists' },
+              fromTours.map(function (a) {
+                return h('div', { class: 'pe-artist' }, h('span', { class: 'pe-artist-name' }, a), h('span', { class: 'pe-from' }, 'From your tours'));
+              }),
+              f.artists.map(function (a, i) {
+                return h('div', { class: 'pe-artist' }, h('span', { class: 'pe-artist-name' }, a),
+                  h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Remove ' + a,
+                    onclick: function () { f.artists.splice(i, 1); redraw(); } }, icon('close', 14)));
+              })),
+            h('div', { class: 'pe-add' },
+              h('input', { class: 'pe-in', type: 'text', value: f.adding, maxlength: 60, placeholder: 'Artist name', autocapitalize: 'words',
+                'aria-label': 'Add an artist you\u2019ve toured with',
+                oninput: function (e) { f.adding = e.target.value; },
+                onkeydown: function (e) { if (e.key === 'Enter') { e.preventDefault(); addArtist(); } } }),
+              h('button', { class: 'add-pill', type: 'button', onclick: addArtist }, icon('plus', 16), 'Add your artist'))),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
+            online ? h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { openUsernameSheet(false); } }, icon('people', 18), 'Phone and contact card') : null,
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
+      ];
+    }, { label: 'Edit profile', cls: 'pe-sheet' });
+  }
+  // Role: tap every one you've had; Done takes you back to Edit profile.
+  function openRolePick(f, back) {
+    openSheet(function () {
+      var list = roleChoices().concat(f.roles.filter(function (r) { return roleChoices().indexOf(r) < 0; }));
+      return [
+        h('h2', { class: 'sh-title' }, 'Role'),
+        h('p', { class: 'sh-sub' }, 'Tap every role you\u2019ve had on tour.'),
+        h('div', { class: 'pf-chips' }, list.map(function (r) {
           var on = f.roles.indexOf(r) >= 0;
           return h('button', { class: 'rv-chip pf-chip' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false',
             onclick: function (e) {
@@ -1786,41 +1935,11 @@
               e.currentTarget.classList.toggle('on', i < 0);
               e.currentTarget.setAttribute('aria-pressed', i < 0 ? 'true' : 'false');
             } }, r);
-        }));
-      return [
-        h('h2', { class: 'sh-title' }, 'Edit profile'),
-        h('div', { class: 'pf-edit-photo' },
-          profilePhoto('sm', redraw),
-          h('div', { class: 'pf-edit-photo-text' },
-            h('strong', null, myName() || 'Your photo'),
-            h('span', null, now.photo ? 'Tap the photo to change it' : 'Tap the circle to add a photo')),
-          now.photo ? h('button', { class: 'pf-link', type: 'button', onclick: async function () {
-            if (await saveMyCard({ photo: '' })) { toast('Photo removed'); redraw(); }
-          } }, 'Remove') : null),
-        h('form', { class: 'sh-form', novalidate: true,
-          onsubmit: async function (e) {
-            e.preventDefault();
-            blurActive();
-            // Kept in the order the list shows them, however they were tapped.
-            var order = roleChoices();
-            var roles = f.roles.slice().sort(function (a, b) {
-              var ia = order.indexOf(a), ib = order.indexOf(b);
-              return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-            });
-            if (await saveMyCard({ bio: f.bio, roles: roles })) { closeSheet(); toast('Profile saved'); render(true); }
-          } },
-          h('div', { class: 'field' },
-            h('span', { class: 'field-label' }, 'Roles you\u2019ve had on tour'), chips,
-            h('span', { class: 'hint' }, 'Tap every one that fits.')),
-          h('label', { class: 'field' },
-            h('span', { class: 'field-label pf-bio-label' }, 'Bio', count), bio),
-          h('div', { class: 'stack' },
-            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
-            (S.mode === 'db' && B && B.saveProfile) ? h('button', { class: 'btn ghost block', type: 'button',
-              onclick: function () { openUsernameSheet(false); } }, icon('people', 18), 'Name and contact card') : null,
-            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
+        })),
+        h('div', { class: 'stack', style: 'margin-top:18px' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: back }, 'Done'))
       ];
-    }, { label: 'Edit profile' });
+    }, { label: 'Role' });
   }
   // A tour under its artist on the profile: name, dates, straight in.
   function tourLine(id, t) {
@@ -1838,6 +1957,317 @@
       icon('chevron', 16));
   }
 
+  /* ---- Step two: other people. ----
+     Whoever you tour with can open your profile, and you theirs: photo,
+     roles, bio, the counts, and the artists and tours they've been on. A tour
+     there is only its name and dates; tap it and you get the dates and the
+     flyer, nothing else of it, unless you're on that tour yourself, in which
+     case it opens the way it always does for you. The database decides all
+     of this; the app only shows what it's handed. */
+  function socialOn() {
+    var B = window.GR_BACKEND;
+    return !!(S.mode === 'db' && B && B.profileCard && B.uid && B.uid());
+  }
+  function pfStat(n, label, onTap) {
+    var inner = [h('strong', { class: 'pf-n num' }, String(n)), h('span', { class: 'pf-l' }, label)];
+    return onTap ? h('button', { class: 'pf-stat tap', type: 'button', onclick: onTap }, inner)
+      : h('div', { class: 'pf-stat' }, inner);
+  }
+  // Your photo, roles and bio, copied to your profile card whenever they
+  // change, so the people you tour with see what you see.
+  function syncSocial() {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || !B.pushSocial || !B.uid || !B.uid()) return;
+    if (!G.isObj(S.labels[PROFILE_KEY])) return;
+    var card = myCard(), roles = myRoles();
+    var sig = [card.bio, roles.join(','), card.artists.join(','), card.photo.length, card.photo.slice(-32)].join('|');
+    var key = 'gr-social:' + B.uid();
+    if (S.socialSig === sig || (S.socialTry && Date.now() - S.socialTry < 60e3)) return;
+    if (lsGet(key) === sig) { S.socialSig = sig; return; }
+    S.socialTry = Date.now();
+    B.pushSocial({ bio: card.bio, roles: roles, photo: card.photo, artists: card.artists })
+      .then(function () { S.socialSig = sig; S.socialTry = 0; lsSet(key, sig); })
+      .catch(function () { /* tried again in a minute */ });
+  }
+  // Profiles looked up this session: { card, at, asking, gone }.
+  function cardOf(uid, fresh) {
+    S.cards = S.cards || {};
+    var c = S.cards[uid] || (S.cards[uid] = { card: null, at: 0, asking: false, gone: false });
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      window.GR_BACKEND.profileCard(uid).then(function (card) {
+        c.card = card; c.gone = !card; c.at = Date.now(); c.asking = false; c.failed = false; render();
+      }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); render(); });
+    }
+    return c;
+  }
+  function myCounts() {
+    if (!socialOn()) return { followers: 0, following: 0 };
+    var c = cardOf(window.GR_BACKEND.uid()).card;
+    return { followers: c ? G.num(c.followers) : 0, following: c ? G.num(c.following) : 0 };
+  }
+  function openProfile(uid) {
+    if (!uid || !socialOn()) return;
+    if (sheet) closeSheet(true);
+    if (uid === window.GR_BACKEND.uid()) { go({ name: 'home' }); return; }
+    var back = S.route && S.route.name === 'profile' ? (S.route.back || { name: 'home' }) : S.route;
+    go({ name: 'profile', user: uid, back: back });
+  }
+  function personPhoto(p, cls) {
+    var initial = String(p.name || '?').trim().charAt(0).toUpperCase() || '?';
+    return h('span', { class: 'pf-photo ' + (cls || '') + (p.avatar ? ' has' : ' letter'), 'aria-hidden': 'true' },
+      p.avatar ? h('img', { class: 'brand-logo', src: p.avatar, alt: '' }) : initial);
+  }
+  function personRoles(p) {
+    var roles = Array.isArray(p.roles) ? p.roles.filter(Boolean) : [];
+    return roles.length ? roles : (p.tourRole ? [p.tourRole] : []);
+  }
+  function viewProfile() {
+    var uid = S.route.user, B = window.GR_BACKEND;
+    var backTo = S.route.back || { name: 'home' };
+    var c = socialOn() ? cardOf(uid) : { gone: true };
+    var card = c.card;
+    var head = function (title) {
+      return h('div', { class: 'headband' },
+        h('header', { class: 'topbar' },
+          h('span', { class: 'top-side' },
+            h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go(backTo); } },
+              icon('back'), h('span', null, 'Back'))),
+          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('span', { class: 'top-side right' })),
+        h('div', { class: 'band-row' }, h('h1', { class: 'band-name' }, title)));
+    };
+    if (!card) {
+      return h('div', { class: 'page home profile' }, head('Profile'),
+        c.gone ? emptyState('This profile isn\u2019t available', 'You can see the profiles of people you\u2019ve toured with.')
+          : c.failed ? emptyState('Couldn\u2019t load this profile', 'Check your signal and try again.')
+          : h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading\u2026'));
+    }
+    var roles = personRoles(card);
+    var tours = Array.isArray(card.tours) ? card.tours : [];
+    var logos = G.isObj(card.logos) ? card.logos : {};
+    var first = String(card.name || '').trim().split(/\s+/)[0] || 'They';
+    // Artists in the order of their latest tour, each with its tours under it.
+    var byArtist = new Map();
+    tours.forEach(function (t) {
+      var a = t.artist || 'Other tours';
+      if (!byArtist.has(a)) byArtist.set(a, []);
+      byArtist.get(a).push(t);
+    });
+    // Artists they say they've toured with that no tour above already shows.
+    var said = (Array.isArray(card.artists) ? card.artists : []).filter(function (a) {
+      var k = String(a).toLowerCase();
+      return !Array.from(byArtist.keys()).some(function (b) { return String(b).toLowerCase() === k; });
+    });
+    var busy = false;
+    var toggle = async function () {
+      if (busy) return;
+      busy = true;
+      var was = !!card.iFollow;
+      // Shown at once; put back if it didn't take.
+      card.iFollow = !was; card.followers = Math.max(0, G.num(card.followers) + (was ? -1 : 1));
+      render(true);
+      try {
+        await (was ? B.unfollow(uid) : B.follow(uid));
+        cardOf(uid, true); cardOf(B.uid(), true);
+      } catch (e) {
+        card.iFollow = was; card.followers = Math.max(0, G.num(card.followers) + (was ? 1 : -1));
+        saveFailed('follow', e); render(true);
+      }
+      busy = false;
+    };
+    var tourRow = function (t) {
+      var span = t.first ? dayMD(t.first) + (t.last && t.last !== t.first ? ' \u2013 ' + dayMD(t.last) : '') +
+        ', ' + String(t.last || t.first).slice(0, 4) : '';
+      var sub = t.first ? span + ' \u00b7 ' + plural(G.num(t.shows), 'show') : 'No dates yet';
+      return h('button', { class: 'pf-tour', type: 'button',
+        onclick: function () { if (t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, uid, t); } },
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'pf-tour-name' }, t.name || 'Untitled tour'),
+          h('span', { class: 'lr-sub' }, sub)),
+        icon('chevron', 16));
+    };
+    return h('div', { class: 'page home profile' },
+      head(card.name || 'Profile'),
+      h('section', { class: 'pf', 'aria-label': (card.name || 'Their') + ' profile' },
+        h('div', { class: 'pf-top' },
+          h('div', { class: 'pf-photo-wrap' }, personPhoto(card)),
+          h('div', { class: 'pf-stats' },
+            pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours'),
+            pfStat(G.num(card.followers), G.num(card.followers) === 1 ? 'follower' : 'followers',
+              function () { openFollowList(uid, 'followers', card.name); }),
+            pfStat(G.num(card.following), 'following', function () { openFollowList(uid, 'following', card.name); }))),
+        card.handle ? h('p', { class: 'pf-handle' }, '@' + card.handle) : null,
+        roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 ')) : null,
+        card.bio ? h('p', { class: 'pf-bio' }, card.bio) : null,
+        h('div', { class: 'pf-actions' },
+          h('button', { class: 'pf-btn' + (card.iFollow ? '' : ' go'), type: 'button', 'aria-pressed': card.iFollow ? 'true' : 'false',
+            onclick: toggle }, card.iFollow ? 'Following' : (card.followsMe ? 'Follow back' : 'Follow'))),
+        card.followsMe ? h('p', { class: 'pf-note' }, first + ' follows you') : null),
+      h('div', { class: 'sec-head split pf-sec' },
+        h('div', null, h('h2', { class: 'sec-title hdr' }, 'Artists & tours'))),
+      byArtist.size
+        ? h('ul', { class: 'tour-list rows' }, Array.from(byArtist, function (pair) {
+            var logo = logos[String(pair[0]).trim().toLowerCase()] || '';
+            return h('li', null,
+              h('div', { class: 'list-row art-row still' },
+                h('span', { class: 'avatar' + (logo ? ' has' : ' letter') },
+                  logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(pair[0]).trim().charAt(0).toUpperCase()),
+                h('span', { class: 'lr-text' },
+                  h('span', { class: 'lr-title' }, pair[0]),
+                  h('span', { class: 'lr-sub' }, plural(pair[1].length, 'tour')))),
+              h('div', { class: 'pf-tours' }, pair[1].map(tourRow)));
+          }))
+        : null,
+      said.length ? h('ul', { class: 'tour-list rows pf-declared' }, said.map(function (a) {
+        return h('li', null, h('div', { class: 'list-row art-row still' },
+          h('span', { class: 'avatar letter' }, String(a).trim().charAt(0).toUpperCase()),
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a), h('span', { class: 'lr-sub' }, 'Toured with'))));
+      })) : null,
+      (!byArtist.size && !said.length) ? emptyState('No tours yet', first + ' hasn\u2019t added any artists or tours yet.') : null,
+      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }));
+  }
+  /* A tour from someone's profile: what's on the poster. Its name, the flyer
+     if the tour has one, and the dates. Nothing else of the tour comes down. */
+  function openTourCard(tourId, userId, t) {
+    var state = { card: null, failed: false };
+    var draw = function () {
+      openSheet(function () {
+        var c = state.card;
+        var title = (c && c.name) || (t && t.name) || 'Tour';
+        var artist = (c && c.artist) || (t && t.artist) || '';
+        var dates = c && Array.isArray(c.dates) ? c.dates : [];
+        return [
+          h('h2', { class: 'sh-title' }, title),
+          artist ? h('p', { class: 'sh-sub' }, artist) : null,
+          !c ? h('p', { class: 'note' }, state.failed ? 'Couldn\u2019t load this tour. Check your signal and try again.' : 'Loading\u2026') : [
+            c.flyer ? h('img', { class: 'tc-flyer', src: c.flyer, alt: title + ' flyer' }) : null,
+            dates.length ? h('div', { class: 'tc-dates' }, dates.map(function (d) {
+              var day = G.parseDay(d.date);
+              return h('div', { class: 'tc-date' },
+                h('span', { class: 'tc-day num' }, day ? F.md.format(day) : d.date),
+                h('span', { class: 'tc-where' },
+                  h('span', { class: 'tc-city' }, d.city || 'TBA'),
+                  d.venue ? h('span', { class: 'tc-venue' }, d.venue) : null));
+            })) : h('p', { class: 'note' }, 'No dates yet.')
+          ],
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+        ];
+      }, { label: 'Tour', cls: 'tc-sheet' });
+    };
+    draw();
+    window.GR_BACKEND.tourCard(tourId, userId)
+      .then(function (c) { state.card = c; state.failed = !c; if (sheet) draw(); })
+      .catch(function () { state.failed = true; if (sheet) draw(); });
+  }
+  function openFollowList(uid, which, whose) {
+    var B = window.GR_BACKEND, mine = uid === B.uid();
+    var state = { rows: null, failed: false };
+    var title = which === 'following' ? 'Following' : 'Followers';
+    var draw = function () {
+      openSheet(function () {
+        var rows = state.rows;
+        return [
+          h('h2', { class: 'sh-title' }, title),
+          !mine && whose ? h('p', { class: 'sh-sub' }, whose) : null,
+          !rows ? h('p', { class: 'note' }, state.failed ? 'Couldn\u2019t load the list. Check your signal and try again.' : 'Loading\u2026')
+            : !rows.length ? h('p', { class: 'note' }, which === 'following'
+                ? (mine ? 'You\u2019re not following anyone yet. Open someone\u2019s profile from a tour\u2019s crew list to follow them.' : 'Not following anyone yet.')
+                : (mine ? 'No followers yet.' : 'No followers yet.'))
+            : h('div', { class: 'fl-list' }, rows.map(function (p) {
+                var roles = personRoles(p);
+                var inner = [personPhoto(p, 'xs'),
+                  h('span', { class: 'lr-text' },
+                    h('span', { class: 'lr-title' }, p.name || 'Someone'),
+                    (p.handle || roles.length) ? h('span', { class: 'lr-sub' },
+                      [p.handle ? '@' + p.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')) : null)];
+                return p.canOpen
+                  ? h('button', { class: 'fl-row', type: 'button', onclick: function () { openProfile(p.userId); } }, inner, icon('chevron', 16))
+                  : h('div', { class: 'fl-row' }, inner);
+              })),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+        ];
+      }, { label: title });
+    };
+    draw();
+    B.followList(uid, which)
+      .then(function (rows) { state.rows = rows || []; if (sheet) draw(); })
+      .catch(function () { state.failed = true; if (sheet) draw(); });
+  }
+  /* The tour's flyer: kept when it's uploaded, so the people on the tour, and
+     anyone looking at a tour-mate's profile, can see it. The tour manager and
+     ALL ACCESS put it up or take it down. */
+  function shrinkFlyer(file, cb) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      URL.revokeObjectURL(url);
+      var out = '', side = 1400, quality = 0.82;
+      // Smaller until it fits what the store takes.
+      for (var i = 0; i < 6; i++) {
+        var r = Math.min(1, side / Math.max(img.width, img.height, 1));
+        var c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.width * r)); c.height = Math.max(1, Math.round(img.height * r));
+        var ctx = c.getContext('2d');
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        out = c.toDataURL('image/jpeg', quality);
+        if (out.length <= 650000) break;
+        side = Math.round(side * 0.8); quality = Math.max(0.6, quality - 0.06);
+      }
+      cb(out.length <= 650000 ? out : '');
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); cb(''); };
+    img.src = url;
+  }
+  function keepFlyer(tourId, file, quiet, after) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || !B.saveFlyer || !leadsTour(tourId)) return;
+    shrinkFlyer(file, async function (dataUrl) {
+      if (!dataUrl) { if (!quiet) toast('Couldn\u2019t read that picture \u2014 try a JPG or PNG'); return; }
+      try {
+        await B.saveFlyer(tourId, dataUrl);
+        S.flyers = S.flyers || {}; S.flyers[tourId] = dataUrl;
+        if (!quiet) toast('Flyer saved');
+        if (after) after();
+      } catch (e) { if (!quiet) saveFailed('flyer', e); }
+    });
+  }
+  function openFlyerSheet(tourId) {
+    var B = window.GR_BACKEND, t = getTour(tourId), lead = leadsTour(tourId);
+    S.flyers = S.flyers || {};
+    var state = { image: S.flyers[tourId], failed: false };
+    var draw = function () {
+      openSheet(function () {
+        var has = !!state.image;
+        return [
+          h('h2', { class: 'sh-title' }, 'Tour flyer'),
+          h('p', { class: 'sh-sub' }, lead
+            ? 'Everyone on the tour can see it here, and it shows on your profile when a tour-mate taps this tour.'
+            : (t && t.name) || ''),
+          state.image === undefined ? h('p', { class: 'note' }, state.failed ? 'Couldn\u2019t load the flyer.' : 'Loading\u2026')
+            : has ? h('img', { class: 'tc-flyer', src: state.image, alt: 'Tour flyer' })
+            : h('p', { class: 'note' }, lead ? 'No flyer yet.' : 'The tour manager hasn\u2019t added a flyer yet.'),
+          h('div', { class: 'stack' },
+            lead ? fileControl({ label: has ? 'Replace flyer' : 'Add flyer', icon: 'flyer', cls: 'btn primary block', accept: imageAccept(),
+              onFiles: function (files) { keepFlyer(tourId, files[0], false, function () { state.image = S.flyers[tourId]; if (sheet) draw(); }); } }) : null,
+            lead && has ? h('button', { class: 'btn ghost block', type: 'button', onclick: async function () {
+              try { await B.saveFlyer(tourId, ''); S.flyers[tourId] = ''; state.image = ''; toast('Flyer removed'); draw(); }
+              catch (e) { saveFailed('flyer', e); }
+            } }, 'Remove flyer') : null,
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+        ];
+      }, { label: 'Tour flyer', cls: 'tc-sheet' });
+    };
+    draw();
+    if (state.image === undefined) {
+      B.flyer(tourId).then(function (img) { S.flyers[tourId] = img || ''; state.image = img || ''; if (sheet) draw(); })
+        .catch(function () { state.failed = true; if (sheet) draw(); });
+    }
+  }
+
   function viewHome() {
     var entries = allTourEntries();
     var byArtist = new Map();
@@ -1851,6 +2281,11 @@
     registeredArtists().forEach(function (a) { if (!byArtist.has(a)) byArtist.set(a, []); });
     var pill = homePill();
     var who = myName();
+    // Artists you've said you toured with that no tour here already shows.
+    var declared = myCard().artists.filter(function (a) {
+      var k = a.toLowerCase();
+      return !Array.from(byArtist.keys()).some(function (b) { return String(b).toLowerCase() === k; });
+    });
     // Each artist, and under them the tours you've been on with them.
     var withTours = function (row, list) {
       return list.length ? [row, h('div', { class: 'pf-tours' }, list.map(function (e) { return tourLine(e[0], e[1]); }))] : row;
@@ -1912,7 +2347,12 @@
            canWrite() ? h('p', { class: 'note' },
              'Open one \u2192 \u22ef \u2192 Name and artist to file it.') : null]
         : null,
-      (!byArtist.size && !loose.length)
+      declared.length ? h('ul', { class: 'tour-list rows pf-declared' }, declared.map(function (a) {
+        return h('li', null, h('div', { class: 'list-row art-row still' },
+          h('span', { class: 'avatar letter' }, String(a).trim().charAt(0).toUpperCase()),
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a), h('span', { class: 'lr-sub' }, 'Toured with'))));
+      })) : null,
+      (!byArtist.size && !loose.length && !declared.length)
         ? emptyState('No artists yet', canWrite()
             ? 'Add your artist, then their first tour. Every act you manage gets its own folder here.'
             : 'Nothing has been shared with you yet.')
@@ -5009,8 +5449,11 @@
       var pending = !m.joined;
       // Access sits under the name; the role is the green badge in the middle.
       var access = m.owner ? 'Creator' : (m.role === 'editor' ? 'All Access' : 'GA');
+      var canOpen = !pending && m.userId && socialOn();
       return h('div', { class: 'row crew-row' },
-        h('div', { class: 'row-label' }, title,
+        h('div', { class: 'row-label' },
+          canOpen ? h('button', { class: 'crew-name', type: 'button', 'aria-label': 'Open ' + title + '\u2019s profile',
+            onclick: function () { openProfile(m.userId); } }, title) : title,
           h('span', { class: 'hint crew-sub' }, access,
             pending ? h('span', { class: 'pending' }, ' \u00b7 Pending') : null)),
         h('div', { class: 'crew-side' },
@@ -9510,6 +9953,8 @@
             icon('edit', 18), 'Name and artist'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } },
             icon('people', 18), 'Crew'),
+          (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.flyer) ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { openFlyerSheet(id); } }, icon('flyer', 18), 'Tour flyer') : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportHub(id); } },
             icon('card', 18), 'Bring in your info'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openNotifications(id); } },
@@ -9695,6 +10140,8 @@
   }
 
   async function readFlyer(tourId, file) {
+    // The picture itself is kept too, quietly, so the tour has its flyer.
+    keepFlyer(tourId, file, true);
     if (!S.sample) return;
     if (S.imageMax && file.size > S.imageMax) {
       readFail('Couldn’t read that flyer', 'That image is too large. Try a screenshot of the flyer instead.',

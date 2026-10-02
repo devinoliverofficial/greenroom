@@ -1985,16 +1985,71 @@ tr.st-balls .st-cell { color: var(--pos); cursor: default; }
 .pf-tour > .ic { flex: none; color: var(--ink-3); }
 .pf-tour-name { font-size: 15.5px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pf-tour .lr-sub { font-size: 13px; }
-/* Edit profile. */
-.pf-edit-photo { display: flex; align-items: center; gap: 16px; margin: 16px 2px 20px; }
-.pf-edit-photo-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.pf-edit-photo-text strong { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pf-edit-photo-text span { font-size: 13.5px; color: var(--ink-2); }
-.pf-link { appearance: none; border: 0; background: none; padding: 8px 2px; font: inherit; font-size: 14.5px; font-weight: 600; color: var(--neg); cursor: pointer; }
+/* Edit profile, in the shape of a social app's: photo, then label | value rows. */
+.pe-title { text-align: center; }
+.pe-photo { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 14px 0 10px; }
+.pf-photo.lg { width: 92px; height: 92px; box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--pos); }
+.pe-photo-links { display: flex; align-items: center; gap: 18px; }
+.pe-link { appearance: none; border: 0; background: none; padding: 6px 2px; font: inherit; font-size: 15px; font-weight: 600; color: var(--pos); cursor: pointer; }
+.pe-link.quiet { color: var(--ink-2); font-weight: 500; }
+.pe-rows { border-top: 1px solid var(--line); }
+.pe-row {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; min-height: 54px; padding: 15px 2px;
+  border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--ink); font: inherit; text-align: left;
+}
+button.pe-row { appearance: none; cursor: pointer; align-items: center; }
+button.pe-row > .ic { flex: none; color: var(--ink-3); }
+.pe-label { flex: 0 0 92px; font-size: 16px; font-weight: 450; line-height: 1.4; color: var(--ink); }
+.pe-val { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 16px; line-height: 1.4; }
+.pe-val.empty { color: var(--ink-3); }
+.pe-in {
+  width: 100%; min-width: 0; appearance: none; border: 0; outline: none; background: none; padding: 0; margin: 0;
+  color: var(--ink); font: inherit; font-size: 16px; line-height: 1.4; border-radius: 0;
+}
+.pe-in::placeholder { color: var(--ink-3); }
+textarea.pe-bio { resize: none; min-height: 46px; }
+.pe-at { display: flex; align-items: baseline; gap: 1px; color: var(--ink-2); }
+.pe-said { font-size: 12.5px; color: var(--ink-2); min-height: 0; }
+.pe-said:empty { display: none; }
+.pe-said.ok { color: var(--pos); }
+.pe-said.bad { color: var(--neg); }
+.pe-count { align-self: flex-end; font-size: 12px; color: var(--ink-3); }
+.pe-sec { margin: 22px 0 6px; }
+.pe-h { margin: 0 2px 6px; font-size: 16px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); }
+.pe-artist { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 4px 2px; border-bottom: 1px solid var(--line); }
+.pe-artist-name { flex: 1; min-width: 0; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pe-from { flex: none; font-size: 12.5px; color: var(--ink-3); }
+.pe-x { flex: none; width: 32px; height: 32px; display: grid; place-items: center; appearance: none; border: 0; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); cursor: pointer; }
+.pe-add { display: flex; align-items: center; gap: 10px; padding: 10px 2px 2px; }
+.pe-add .pe-in { flex: 1; height: 38px; padding: 0 12px; border-radius: 999px; background: var(--surface-2); }
+.pe-add .add-pill { white-space: nowrap; }
+.pe-form .stack { margin-top: 18px; }
 .pf-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 6px; }
-.pf-bio-label { display: flex; justify-content: space-between; align-items: baseline; }
-.pf-count { font-size: 12.5px; font-weight: 450; color: var(--ink-3); letter-spacing: 0; text-transform: none; }
-textarea.pf-bio-in { min-height: 84px; }
+/* The rest of the social profile: @username, the Follow button, tappable
+   counts, and someone else's profile (rows that don't open anything). */
+.pf-handle { margin: 14px 0 -10px; font-size: 15px; font-weight: 600; letter-spacing: -.005em; color: var(--ink); }
+button.pf-stat { appearance: none; border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; align-items: flex-start; }
+.pf-btn.go { background: var(--brand); color: var(--on-brand); font-weight: 700; }
+.pf-note { margin: 9px 2px 0; font-size: 13px; color: var(--ink-2); }
+.pf-photo.xs { width: 44px; height: 44px; font-size: 17px; box-shadow: none; flex: none; }
+span.pf-photo { cursor: default; }
+.list-row.still { cursor: default; }
+.list-row.still:active { background: none; }
+.pf-declared { margin-top: 2px; }
+.crew-name { appearance: none; border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+/* A tour's public card: the flyer and the dates. */
+.tc-flyer { display: block; width: 100%; height: auto; max-height: 70vh; object-fit: contain; border-radius: 14px; margin: 12px 0 14px; background: var(--surface-2); }
+.tc-dates { margin: 6px 0 12px; border-top: 1px solid var(--line); }
+.tc-date { display: flex; align-items: baseline; gap: 14px; padding: 11px 2px; border-bottom: 1px solid var(--line); }
+.tc-day { flex: 0 0 58px; font-size: 14px; font-weight: 600; color: var(--pos); }
+.tc-where { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tc-city { font-size: 15.5px; font-weight: 600; letter-spacing: -.01em; }
+.tc-venue { font-size: 13.5px; color: var(--ink-2); }
+/* Followers and following. */
+.fl-list { margin: 8px 0 12px; }
+.fl-row { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 60px; padding: 8px 2px; appearance: none; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; }
+button.fl-row { cursor: pointer; }
+.fl-row > .ic { flex: none; color: var(--ink-3); }
 /* Budget: each show is date, city, Log income in the middle, its total on the right. */
 .show-row.inc-row { grid-template-columns: 42px minmax(0, 1fr) auto minmax(58px, auto); gap: 10px; cursor: default; }
 .inc-row .inc-btn { min-height: 32px; padding: 0 12px; font-size: 12.5px; white-space: nowrap; }

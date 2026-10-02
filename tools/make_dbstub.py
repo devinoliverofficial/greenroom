@@ -97,9 +97,9 @@ shim = r"""<script>
   var me = { first_name: 'Devin', last_name: 'Oliver', full_name: 'Devin Oliver', username: 'Devin Oliver',
     phone: '555-0100', tour_role: 'Artist' };
   window.__harness = { me: me, crew: [
-    { owner: true, role: 'owner', name: 'Devin Oliver', email: 'devin@example.com', phone: '555-0100', tourRole: 'Artist', joined: true },
-    { owner: false, role: 'editor', name: 'Brent Allen', email: 'brent@example.com', invitedEmail: 'brent@example.com', phone: '(313) 555-0142', tourRole: 'Guitar Tech', joined: true },
-    { owner: false, role: 'viewer', name: 'Tasha Lane', email: 'tasha@example.com', invitedEmail: 'tasha@example.com', phone: '', tourRole: 'Production Manager', joined: false }
+    { owner: true, role: 'owner', userId: 'u-devin', name: 'Devin Oliver', email: 'devin@example.com', phone: '555-0100', tourRole: 'Artist', joined: true },
+    { owner: false, role: 'editor', userId: 'u-brent', name: 'Brent Allen', email: 'brent@example.com', invitedEmail: 'brent@example.com', phone: '(313) 555-0142', tourRole: 'Guitar Tech', joined: true },
+    { owner: false, role: 'viewer', userId: null, name: 'Tasha Lane', email: 'tasha@example.com', invitedEmail: 'tasha@example.com', phone: '', tourRole: 'Production Manager', joined: false }
   ] };
   var d0 = ymd(today);
   window.__harness.feed = {
@@ -215,6 +215,45 @@ shim = r"""<script>
     ownsTour: function () { return true; },
     myRole: function () { return Promise.resolve('owner'); },
     crew: function () { window.__harness.crewCalls = (window.__harness.crewCalls || 0) + 1; return Promise.resolve(window.__harness.crew); },
+    /* Social, in memory. Brent has a profile with a tour you share and one
+       you don't; Tasha is still pending, so she has none to open. */
+    pushSocial: function (p) { var H = window.__harness; H.social = JSON.parse(JSON.stringify(p)); H.socialPushes = (H.socialPushes || 0) + 1; return Promise.resolve(); },
+    handleFree: function (h) { return Promise.resolve(['brent', 'tasha.lane'].indexOf(String(h).toLowerCase()) < 0); },
+    setHandle: function (h) {
+      if (['brent', 'tasha.lane'].indexOf(String(h).toLowerCase()) >= 0) { var e = new Error('taken'); e.code = 'taken'; return Promise.reject(e); }
+      window.__harness.handle = h || ''; return Promise.resolve();
+    },
+    profileCard: function (uid) {
+      var H = window.__harness; H.follows = H.follows || [{ a: 'u-brent', b: 'u-devin' }];
+      var n = function (f) { return H.follows.filter(f).length; };
+      var base = { followers: n(function (x) { return x.b === uid; }), following: n(function (x) { return x.a === uid; }),
+        iFollow: H.follows.some(function (x) { return x.a === 'u-devin' && x.b === uid; }),
+        followsMe: H.follows.some(function (x) { return x.a === uid && x.b === 'u-devin'; }) };
+      if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', bio: '', roles: [], tourRole: me.tour_role, avatar: '', artists: [], tours: [], logos: {} }, base));
+      if (uid === 'u-brent') return Promise.resolve(Object.assign({ userId: uid, name: 'Brent Allen', handle: 'brent', bio: 'Guitars, backline, bad jokes.',
+        roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', avatar: '', artists: ['Sleeping With Sirens', 'I See Stars'],
+        tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true },
+                { id: 'x9', artist: 'Other Band', name: 'Spring Fling', first: '2026-03-02', last: '2026-04-11', shows: 28, mine: false }], logos: {} }, base));
+      return Promise.resolve(null);
+    },
+    followList: function (uid, which) {
+      var H = window.__harness; H.follows = H.follows || [{ a: 'u-brent', b: 'u-devin' }];
+      var who = { 'u-devin': { name: 'Devin Oliver', handle: H.handle || '', roles: [], tourRole: 'Artist' }, 'u-brent': { name: 'Brent Allen', handle: 'brent', roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech' } };
+      return Promise.resolve(H.follows.filter(function (x) { return which === 'following' ? x.a === uid : x.b === uid; }).map(function (x) {
+        var o = which === 'following' ? x.b : x.a;
+        return Object.assign({ userId: o, avatar: '', canOpen: true, iFollow: H.follows.some(function (y) { return y.a === 'u-devin' && y.b === o; }) }, who[o]);
+      }));
+    },
+    follow: function (uid) { var H = window.__harness; H.follows = (H.follows || []).concat([{ a: 'u-devin', b: uid }]); return Promise.resolve(); },
+    unfollow: function (uid) { var H = window.__harness; H.follows = (H.follows || []).filter(function (x) { return !(x.a === 'u-devin' && x.b === uid); }); return Promise.resolve(); },
+    tourCard: function (tourId, uid) {
+      var H = window.__harness; H.tourCards = (H.tourCards || []).concat([tourId + '|' + uid]);
+      if (tourId !== 'x9') return Promise.resolve(null);
+      return Promise.resolve({ id: 'x9', artist: 'Other Band', name: 'Spring Fling', flyer: H.flyerX9 || '',
+        dates: [{ date: '2026-03-02', city: 'Detroit, MI', venue: 'Saint Andrew’s Hall' }, { date: '2026-03-04', city: 'Chicago, IL', venue: 'Bottom Lounge' }, { date: '2026-04-11', city: 'Anaheim, CA', venue: '' }] });
+    },
+    flyer: function (tourId) { return Promise.resolve((window.__harness.flyers2 || {})[tourId] || ''); },
+    saveFlyer: function (tourId, img) { var H = window.__harness; H.flyers2 = H.flyers2 || {}; H.flyers2[tourId] = img || ''; return Promise.resolve(); },
     myProfile: function () { return { firstName: me.first_name, lastName: me.last_name, fullName: me.full_name,
       username: me.username, phone: me.phone, tourRole: me.tour_role, email: 'devin@example.com' }; },
     saveProfile: function (p) { me.first_name = p.firstName; me.last_name = p.lastName;

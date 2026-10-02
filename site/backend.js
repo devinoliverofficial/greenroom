@@ -380,6 +380,77 @@
       if (q.data && q.data.user && session) session.user = q.data.user;
       await pushProfile();
     },
+    /* ---------------- Social: profiles, following, the tour flyer ----------------
+       Your own photo, roles and bio live with your labels (yours alone); this
+       copies them onto your profile card, where the people you tour with can
+       read them. Everything about someone ELSE comes from the database's own
+       functions, which hand over a profile and, for each tour, only its name,
+       its dates and its flyer. */
+    pushSocial: async function (p) {
+      if (!session || !session.user) return;
+      var q = await sb.from('profiles').upsert({
+        user_id: session.user.id,
+        bio: String(p.bio || '').slice(0, 300),
+        roles: (Array.isArray(p.roles) ? p.roles : []).map(function (r) { return String(r).slice(0, 40); }).slice(0, 20),
+        avatar: String(p.photo || '').slice(0, 120000),
+        artists: (Array.isArray(p.artists) ? p.artists : []).map(function (a) { return String(a).trim().slice(0, 60); })
+          .filter(Boolean).slice(0, 40),
+        updated_at: new Date().toISOString()
+      });
+      if (q.error) throw mapError(q.error);
+    },
+    // A username is yours once the database says so: one owner each.
+    handleFree: async function (h) {
+      var q = await sb.rpc('handle_free', { h: String(h || '') });
+      if (q.error) throw mapError(q.error);
+      return q.data === true;
+    },
+    setHandle: async function (h) {
+      if (!session || !session.user) return;
+      var q = await sb.from('profiles').upsert({ user_id: session.user.id, handle: String(h || '').trim().toLowerCase() || null,
+        updated_at: new Date().toISOString() });
+      if (q.error) {
+        if (q.error.code === '23505') { var taken = new Error('taken'); taken.code = 'taken'; throw taken; }
+        if (q.error.code === '23514') { var bad = new Error('shape'); bad.code = 'shape'; throw bad; }
+        throw mapError(q.error);
+      }
+    },
+    profileCard: async function (userId) {
+      var q = await sb.rpc('profile_card', { u: userId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    followList: async function (userId, which) {
+      var q = await sb.rpc('follow_list', { u: userId, which: which === 'following' ? 'following' : 'followers' });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    follow: async function (userId) {
+      var q = await sb.from('follows').upsert({ follower_id: session.user.id, followee_id: userId },
+        { onConflict: 'follower_id,followee_id', ignoreDuplicates: true });
+      if (q.error) throw mapError(q.error);
+    },
+    unfollow: async function (userId) {
+      var q = await sb.from('follows').delete().eq('follower_id', session.user.id).eq('followee_id', userId);
+      if (q.error) throw mapError(q.error);
+    },
+    tourCard: async function (tourId, userId) {
+      var q = await sb.rpc('tour_card', { t_id: tourId, u: userId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    flyer: async function (tourId) {
+      var q = await sb.from('tour_flyers').select('image').eq('tour_id', tourId).maybeSingle();
+      if (q.error) throw mapError(q.error);
+      return q.data ? String(q.data.image || '') : '';
+    },
+    saveFlyer: async function (tourId, dataUrl) {
+      var q = dataUrl
+        ? await sb.from('tour_flyers').upsert({ tour_id: tourId, image: dataUrl, updated_by: session.user.id,
+            updated_at: new Date().toISOString() })
+        : await sb.from('tour_flyers').delete().eq('tour_id', tourId);
+      if (q.error) throw mapError(q.error);
+    },
     /* The tour's phone book: everyone invited, plus the manager who owns it. */
     crew: async function (tourId) {
       var mq = await sb.from('members')
@@ -401,7 +472,7 @@
       if (ownerId) {
         var op = byId[ownerId] || {};
         out.push({
-          owner: true, role: 'owner',
+          owner: true, role: 'owner', userId: ownerId,
           name: op.full_name || '', username: op.username || '',
           email: op.email || (ownerId === (session && session.user && session.user.id) ? session.user.email : ''),
           phone: op.phone || '', tourRole: roleName(op.tour_role), joined: true
@@ -418,7 +489,7 @@
         };
         var ov = isObj(r.overrides) ? r.overrides : {};
         out.push({
-          owner: false, role: r.role,
+          owner: false, role: r.role, userId: r.user_id || null,
           name: pr.full_name || r.display_name || '',
           username: pr.username || '',
           email: ov.email || base.email,
