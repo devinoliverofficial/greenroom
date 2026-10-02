@@ -103,6 +103,7 @@
   var ICONS = {
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
+    menu: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
     /* the five tabs along the bottom */
     tabsheet: '<path d="M6 3h9l5 5v13H6z"/><path d="M15 3v5h5"/><path d="M9 12h7M9 16h5"/>',
     tabmoney: '<path d="M12 3v18"/><path d="M16.5 7.5c0-1.7-2-2.5-4.5-2.5S7.5 5.8 7.5 7.5 9.5 10 12 10s4.5.8 4.5 2.5S14.5 15 12 15s-4.5-.8-4.5-2.5"/>',
@@ -362,6 +363,11 @@
     return h('div', { class: 'empty' }, h('h3', null, title), body ? h('p', null, body) : null);
   }
   function backBtn(tour) {
+    var f = S.route && S.route.name === 'tour' ? cameFrom('tour:' + S.route.id) : null;
+    if (f) {
+      return h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go(f.back); } },
+        icon('back'), h('span', null, f.label));
+    }
     var artist = tour ? String(tour.artist || '').trim() : '';
     if (artist) {
       return h('button', { class: 'iconbtn back', type: 'button',
@@ -669,6 +675,24 @@
   function go(route) {
     // OVERVIEW always opens on today's show, not wherever you last flipped to.
     if (route.name === 'tour' && route.view === 'details') S.dsIndex = null;
+    // The tour you were last in is the one the menu's tour rows open.
+    if (route.name === 'tour' && route.id) rememberTour(route.id);
+    // A page reached from the menu (or its Tours / Artists lists) goes back
+    // there, however many tabs you visit inside it. Home wipes the slate.
+    if (route.name === 'home') S.fromMap = {};
+    var key = routeKey(route), prevKey = S.route ? routeKey(S.route) : '';
+    if (key) {
+      S.fromMap = S.fromMap || {};
+      if (route.from) S.fromMap[key] = { back: route.from, label: route.fromLabel || 'Back' };
+      // Reached afresh some other way: its back button goes where it always
+      // did. Not arriving afresh: returning from a side trip (someone's
+      // profile, a message) to the very page you left, and stepping back
+      // from a tour to its artist.
+      else if (key !== prevKey && !(S.route && S.route.back === route) &&
+        !(route.name === 'artist' && S.route && S.route.name === 'tour')) delete S.fromMap[key];
+    }
+    // The menu slides in when you open it from your profile, not when you step back to it.
+    if (route.name === 'mainmenu' && S.route && S.route.name === 'home') S.menuIn = true;
     S.route = route;
     S.xsAt = null; // the Expenses flow eases in afresh each time you arrive
     S.focusOnRender = true;
@@ -676,10 +700,25 @@
     render(true);
   }
   function clampStep(s) { return 2; } // one resume point: the shows
-  function openTour(id) {
+  // A tour's setup wizard counts as that tour: where you came from survives it.
+  function routeKey(route) {
+    return (route.name === 'tour' || route.name === 'wizard') && route.id ? 'tour:' + route.id
+      : route.name === 'artist' && route.artist ? 'artist:' + route.artist : '';
+  }
+  function cameFrom(key) { return (S.fromMap && S.fromMap[key]) || null; }
+  function lastTourKey() {
+    var B = window.GR_BACKEND;
+    return 'gr-last-tour:' + ((S.mode === 'db' && B && B.uid && B.uid()) || 'me');
+  }
+  // Kept on the phone, and in memory for phones that won't keep anything.
+  function rememberTour(id) { S.lastTour = id; lsSet(lastTourKey(), id); }
+  // view: which tab to land on; from / fromLabel: where its back button returns.
+  function openTour(id, view, from, fromLabel) {
     var t = getTour(id);
-    if (t && !t.setupDone && canEditTour(id)) go({ name: 'wizard', id: id, step: clampStep(t.setupStep) });
-    else go({ name: 'tour', id: id, view: 'menu' });
+    // Coming in from the menu or its lists is a fresh visit: today, not the day you last flipped to.
+    if (from) { S.dsIndex = null; S.glTour = null; S.glShow = null; }
+    if (t && !t.setupDone && canEditTour(id)) go({ name: 'wizard', id: id, step: clampStep(t.setupStep), from: from || null, fromLabel: fromLabel || null });
+    else go({ name: 'tour', id: id, view: typeof view === 'string' ? view : 'menu', from: from || null, fromLabel: fromLabel || null });
   }
   // A hard close and reopen always lands on the Artists screen — the top of
   // the app, not wherever the last session wandered.
@@ -723,6 +762,9 @@
     else if (S.route.name === 'dm') node = viewDm();
     else if (S.route.name === 'act') node = viewAct();
     else if (S.route.name === 'search') node = viewSearch();
+    else if (S.route.name === 'mainmenu') node = viewMenu();
+    else if (S.route.name === 'tours') node = viewAllTours();
+    else if (S.route.name === 'artists') node = viewAllArtists();
     else node = viewHome();
     // The tab bar stays the same element when nothing about it changed, so a
     // tap on it always lands.
@@ -1707,9 +1749,13 @@
       return false;
     }
   }
-  function myName() {
+  // The name on your profile: first and last from your contact card. Empty
+  // when there's no account behind the app (phone-only mode), where the
+  // header shows the Greenroom wordmark instead. (profileName(), further down, is
+  // the name your chat messages carry, and is never empty.)
+  function profileName() {
     var B = window.GR_BACKEND, me = S.mode === 'db' && B && B.myProfile ? B.myProfile() : null;
-    return me ? ((me.firstName + ' ' + me.lastName).trim() || me.fullName || '') : '';
+    return me ? ((me.firstName + ' ' + me.lastName).trim() || me.fullName || (B.username && B.username()) || '') : '';
   }
   // The roles you've picked; until you pick, the one on your contact card.
   function myRoles() {
@@ -1826,7 +1872,7 @@
     return b;
   }
   function profilePhoto(cls, after) {
-    var card = myCard(), name = myName();
+    var card = myCard(), name = profileName();
     return fileControl({
       label: card.photo ? null : (name.trim().charAt(0).toUpperCase() || '?'),
       logo: card.photo || undefined,
@@ -1853,7 +1899,7 @@
         h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
           card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
         h('div', { class: 'vp-side' },
-          (card.handle && myName()) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, myName()),
+          (card.handle && profileName()) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, profileName()),
             checked ? verifiedBadge() : null) : null,
           h('div', { class: 'pf-stats' },
             stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
@@ -1889,7 +1935,7 @@
     var card = myCard();
     var online = S.mode === 'db' && B && B.saveProfile && B.myProfile;
     var f = G.isObj(keep) && Array.isArray(keep.roles) ? keep
-      : { name: myName(), handle: card.handle, bio: card.bio, roles: myRoles().slice(), artists: card.artists.slice(), adding: '' };
+      : { name: profileName(), handle: card.handle, bio: card.bio, roles: myRoles().slice(), artists: card.artists.slice(), adding: '' };
     var redraw = function () { openProfileSheet(f); };
     openSheet(function () {
       var now = myCard();
@@ -1963,7 +2009,7 @@
                 saveFailed('username', x); return;
               }
             }
-            if (online && name !== myName()) {
+            if (online && name !== profileName()) {
               var me = B.myProfile(), parts = name.split(' ');
               try {
                 await B.saveProfile({ firstName: parts[0], lastName: parts.slice(1).join(' '), phone: me.phone, tourRole: me.tourRole });
@@ -2672,7 +2718,7 @@
     return out;
   }
   function openAccounts() {
-    var a = myActs(), me = myCard(), who = myName();
+    var a = myActs(), me = myCard(), who = profileName();
     // One sheet, opened once: the artists drop into it when they arrive.
     var box = h('div', { class: 'acct-acts' });
     var tail = h('div', { class: 'acct-tail' });
@@ -3056,7 +3102,7 @@
      there instead.) More doors can join these two later. */
   function socialBar(current) {
     if (!socialOn()) return null;
-    var me = myCard(), who = myName();
+    var me = myCard(), who = profileName();
     var face = h('span', { class: 'sb-face' + (me.photo ? ' has' : '') + (current === 'me' ? ' on' : ''), 'aria-hidden': 'true' },
       me.photo ? h('img', { src: me.photo, alt: '' }) : (who.trim().charAt(0).toUpperCase() || '?'));
     return h('nav', { class: 'tabbar social-bar', 'aria-label': 'Greenroom',
@@ -3220,6 +3266,175 @@
       socialBar('search'));
   }
 
+  /* ============================== MODEL7: the menu ==============================
+     Three lines in the top-right of your profile open one page that reaches
+     everything: your tours, your artists, and every tab of the tour you
+     were last in (Overview, Budget, Day sheet, Expenses, Guest list, Crew
+     Stats, Chat), without walking artist, then tour, then tab. Laid out
+     against a social app's settings page on the same phone: 16-point labels,
+     22-point icons, 48-point rows, a quiet heading over each group and a
+     thick rule between groups. An experiment: the tabs along the bottom of
+     a tour are still there. */
+  function tourGroups() {
+    var byArtist = new Map(), loose = [];
+    allTourEntries().forEach(function (e) {
+      var a = artistOf(e[1]);
+      if (!a) { loose.push(e); return; }
+      if (!byArtist.has(a)) byArtist.set(a, []);
+      byArtist.get(a).push(e);
+    });
+    registeredArtists().forEach(function (a) { if (!byArtist.has(a)) byArtist.set(a, []); });
+    return { byArtist: byArtist, loose: loose };
+  }
+  // An artist's row; swipe it away if every tour under it is yours to delete.
+  function artistRow(name, entries, from, fromLabel) {
+    var cardEl = artistCard(name, entries, from, fromLabel);
+    if (!canWrite() || (S.mode === 'db' && !entries.every(function (e) { return createdTour(e[0]); }))) return cardEl;
+    return swipeable(cardEl, function () {
+      confirmSheet({
+        title: 'Delete everything for ' + name + '?',
+        body: entries.length
+          ? plural(entries.length, 'tour') + ' move to Recently deleted for ' + TRASH_DAYS + ' days.'
+          : 'They have no runs yet, so nothing else goes with them.',
+        action: entries.length ? 'Delete ' + plural(entries.length, 'tour') : 'Delete ' + name,
+        danger: true,
+        onConfirm: async function () {
+          for (var i = 0; i < entries.length; i++) {
+            await api.update(entries[i][0], { deletedAt: Date.now() });
+          }
+          await forgetArtist(name);
+          toast(name + ' moved to Recently deleted');
+          return true;
+        }
+      });
+    }, name);
+  }
+  // The tour the menu's tour rows open: the one you were last in, else the
+  // one on the road now, else the newest.
+  function currentTourId() {
+    var entries = allTourEntries();
+    if (!entries.length) return null;
+    var has = function (x) { return !!x && entries.some(function (e) { return e[0] === x; }); };
+    if (has(S.lastTour)) return S.lastTour;
+    var last = lsGet(lastTourKey());
+    if (has(last)) return last;
+    var live = entries.filter(function (e) { return tourIsLive(e[1]); })[0];
+    return (live || entries[0])[0];
+  }
+  // The header the menu and its two lists share: a round back button and the title in the middle.
+  function menuHead(title, backTo) {
+    return h('div', { class: 'headband' },
+      h('header', { class: 'topbar' },
+        h('span', { class: 'top-side' }),
+        h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+        h('span', { class: 'top-side right' })),
+      h('div', { class: 'band-row mn-bar' },
+        h('button', { class: 'sr-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 20)),
+        h('h1', { class: 'mn-title' }, title)));
+  }
+  function menuRow(ic, label, onTap, sub) {
+    return h('button', { class: 'mn-row', type: 'button', onclick: onTap },
+      h('span', { class: 'mn-ic', 'aria-hidden': 'true' }, icon(ic, 24)),
+      h('span', { class: 'mn-text' }, h('span', { class: 'mn-label' }, label), sub ? h('span', { class: 'mn-sub' }, sub) : null),
+      h('span', { class: 'mn-chev', 'aria-hidden': 'true' }, icon('chevron', 18)));
+  }
+  function viewMenu() {
+    var backTo = S.route.back || { name: 'home' };
+    var here = { name: 'mainmenu', back: backTo };
+    var entries = allTourEntries();
+    var id = currentTourId(), t = id ? getTour(id) : null;
+    var tabs = !t ? [] : canSeeMoney(id) ? TOUR_TABS : TOUR_TABS.filter(function (x) { return x.view !== 'money' && x.view !== 'costs'; });
+    var first = S.menuIn; S.menuIn = false;
+    var pickTour = function () {
+      openSheet(function () {
+        return [
+          h('h2', { class: 'sh-title' }, 'Which tour?'),
+          h('p', { class: 'sh-sub' }, 'The rows under it in the menu open this tour.'),
+          h('div', { class: 'fl-list' }, entries.map(function (e) {
+            var on = e[0] === id, live = tourIsLive(e[1]);
+            return h('button', { class: 'fl-row', type: 'button', 'aria-pressed': on ? 'true' : 'false',
+              onclick: function () { rememberTour(e[0]); closeSheet(); render(true); } },
+              h('span', { class: 'lr-text' },
+                h('span', { class: 'lr-title' }, e[1].name || 'Untitled tour'),
+                h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artistOf(e[1]), live ? 'On the road' : ''].filter(Boolean).join(' \u00b7 '))),
+              on ? h('span', { class: 'acct-on', 'aria-hidden': 'true' }, icon('check', 14)) : null);
+          })),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+        ];
+      }, { label: 'Which tour?' });
+    };
+    return h('div', { class: 'page home menu-page' + (first ? ' mn-in' : '') },
+      menuHead('Menu', backTo),
+      dbBanner(),
+      h('section', { class: 'mn-group' },
+        h('h2', { class: 'mn-h' }, 'Your tours and artists'),
+        menuRow('calendar', 'Tours', function () { go({ name: 'tours', back: here }); }),
+        menuRow('music', 'Artists', function () { go({ name: 'artists', back: here }); })),
+      h('section', { class: 'mn-group' },
+        h('div', { class: 'mn-head' },
+          h('h2', { class: 'mn-h' }, t ? (t.name || 'Untitled tour') : 'Your tour'),
+          entries.length > 1 ? h('button', { class: 'mn-change', type: 'button', onclick: pickTour }, 'Change') : null),
+        (t && !t.setupDone && canEditTour(id))
+          ? menuRow('edit', 'Finish setting up', function () { openTour(id, 'details', here, 'Menu'); }, 'Add its shows to open the rest')
+        : t ? tabs.map(function (x) {
+          return menuRow(x.icon, x.label, function () { openTour(id, x.view, here, 'Menu'); });
+        }) : h('p', { class: 'mn-none' }, canWrite()
+          ? 'No tours yet. Tap + on your profile to add an artist, then their first tour.'
+          : 'No tours have been shared with you yet.')),
+      h('section', { class: 'mn-group' },
+        h('h2', { class: 'mn-h' }, 'Your account'),
+        menuRow('gear', 'Settings', function () { openSettingsSheet(); })));
+  }
+  /* Every tour you're on, all artists together: on the road first, then the
+     newest. A tour opened from here comes back here. */
+  function viewAllTours() {
+    var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
+    var here = { name: 'tours', back: backTo };
+    // A tour with no dates yet sorts by the day it was made, not as the oldest of all.
+    var when = function (t) {
+      var d = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+      return d.length ? d[d.length - 1] : (t.createdAt ? G.ymd(new Date(t.createdAt)) : '');
+    };
+    var entries = allTourEntries().slice().sort(function (a, b) {
+      var la = tourIsLive(a[1]) ? 1 : 0, lb = tourIsLive(b[1]) ? 1 : 0;
+      return (lb - la) || String(when(b[1])).localeCompare(String(when(a[1]))) || ((b[1].createdAt || 0) - (a[1].createdAt || 0));
+    });
+    return h('div', { class: 'page home profile menu-page' },
+      menuHead('Tours', backTo),
+      dbBanner(),
+      entries.length ? h('ul', { class: 'tour-list rows mn-list' }, entries.map(function (e) {
+        var t = e[1], artist = artistOf(t), logo = artist ? artistLogo(artist) : null;
+        var dates = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+        var live = tourIsLive(t);
+        var span = dates.length ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') + ', ' + String(dates[dates.length - 1]).slice(0, 4) : 'No shows yet';
+        return h('li', null, h('button', { class: 'list-row tour-row', type: 'button',
+          onclick: function () { openTour(e[0], 'details', here, 'Tours'); } },
+          h('span', { class: 'avatar' + (logo ? ' has' : ' letter'), 'aria-hidden': 'true' },
+            logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(artist || t.name || '?').trim().charAt(0).toUpperCase()),
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
+            h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artist, live ? 'On the road' : span].filter(Boolean).join(' \u00b7 '))),
+          icon('chevron', 18)));
+      })) : emptyState('No tours yet', canWrite()
+        ? 'Tap + on your profile to add an artist, then their first tour.'
+        : 'Nothing has been shared with you yet.'));
+  }
+  // Your artists, each opening its own page of tours (and Off Tour). An artist opened from here comes back here.
+  function viewAllArtists() {
+    var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
+    var here = { name: 'artists', back: backTo };
+    var groups = tourGroups();
+    return h('div', { class: 'page home profile menu-page' },
+      menuHead('Artists', backTo),
+      dbBanner(),
+      groups.byArtist.size ? h('ul', { class: 'tour-list rows mn-list' }, Array.from(groups.byArtist, function (pair) {
+        return h('li', null, artistRow(pair[0], pair[1], here, 'Artists'));
+      })) : emptyState('No artists yet', canWrite()
+        ? 'Tap + on your profile to add your artist, then their first tour.'
+        : 'Nothing has been shared with you yet.'));
+  }
+
   function viewHome() {
     var entries = allTourEntries();
     var byArtist = new Map();
@@ -3232,7 +3447,7 @@
     });
     registeredArtists().forEach(function (a) { if (!byArtist.has(a)) byArtist.set(a, []); });
     var pill = homePill();
-    var who = myName();
+    var who = profileName();
     // Artists you've said you toured with that no tour here already shows.
     var declared = myCard().artists.filter(function (a) {
       var k = a.toLowerCase();
@@ -3253,8 +3468,8 @@
             pill ? h('span', { class: 'pill' }, pill) : null),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
-            h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
-              onclick: openSettingsSheet }, icon('more')))),
+            h('button', { class: 'iconbtn pf-menu', type: 'button', 'aria-label': 'Menu',
+              onclick: function () { go({ name: 'mainmenu', back: { name: 'home' } }); } }, icon('menu', 26)))),
         who ? h('div', { class: 'band-row' }, accountTitle(who))
           : h('div', { class: 'band-row wordmark-row' },
               h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }))),
@@ -3264,26 +3479,7 @@
         h('h2', { class: 'sec-title hdr' }, 'Artists & tours')),
       byArtist.size
         ? h('ul', { class: 'tour-list rows' }, Array.from(byArtist, function (pair) {
-            var cardEl = artistCard(pair[0], pair[1]);
-            if (!canWrite() || (S.mode === 'db' && !pair[1].every(function (e) { return createdTour(e[0]); }))) return h('li', null, withTours(cardEl, pair[1]));
-            return h('li', null, withTours(swipeable(cardEl, function () {
-              confirmSheet({
-                title: 'Delete everything for ' + pair[0] + '?',
-                body: pair[1].length
-                  ? plural(pair[1].length, 'tour') + ' move to Recently deleted for ' + TRASH_DAYS + ' days.'
-                  : 'They have no runs yet, so nothing else goes with them.',
-                action: pair[1].length ? 'Delete ' + plural(pair[1].length, 'tour') : 'Delete ' + pair[0],
-                danger: true,
-                onConfirm: async function () {
-                  for (var i = 0; i < pair[1].length; i++) {
-                    await api.update(pair[1][i][0], { deletedAt: Date.now() });
-                  }
-                  await forgetArtist(pair[0]);
-                  toast(pair[0] + ' moved to Recently deleted');
-                  return true;
-                }
-              });
-            }, pair[0]), pair[1]));
+            return h('li', null, withTours(artistRow(pair[0], pair[1]), pair[1]));
           }))
         : null,
       loose.length
@@ -3315,7 +3511,10 @@
             window.GR_BACKEND.saveProfile && window.GR_BACKEND.myProfile &&
             !window.GR_BACKEND.myProfile().tourRole) {
           S.askedUsername = true;
-          setTimeout(function () { openUsernameSheet(true); }, 700);
+          setTimeout(function () {
+            // Still on your profile with nothing open? Otherwise ask next time.
+            if (S.route && S.route.name === 'home' && !sheet) openUsernameSheet(true); else S.askedUsername = false;
+          }, 700);
         }
         return null;
       })(),
@@ -3367,9 +3566,9 @@
   }
 
   /* One artist: just the name. The numbers wait behind the doors. */
-  function artistCard(name, entries) {
+  function artistCard(name, entries, from, fromLabel) {
     var logo = artistLogo(name);
-    var open = function () { go({ name: 'artist', artist: name }); };
+    var open = function () { go({ name: 'artist', artist: name, from: from || null, fromLabel: fromLabel || null }); };
     // The slot left of the name IS the logo: a + until they bring one in,
     // the mark itself after — tap it either way to set or swap it.
     // Round mark on the left: the logo once there is one, the first letter
@@ -3438,12 +3637,17 @@
   }
 
   /* One artist's tours. */
+  // Back from an artist's page: to the Artists list if that's how you came, else your profile.
+  function artistBack(name) {
+    var f = cameFrom('artist:' + name);
+    return h('button', { class: 'iconbtn back', type: 'button',
+      onclick: function () { if (f) delete S.fromMap['artist:' + name]; go(f ? f.back : { name: 'home' }); } },
+      icon('back'), h('span', null, f ? f.label : 'Profile'));
+  }
   function bandHead(name, sub) {
     return h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' },
-            h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
-              icon('back'), h('span', null, 'Profile'))),
+          h('span', { class: 'top-side' }, artistBack(name)),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
@@ -3461,9 +3665,7 @@
     return h('div', { class: 'page home' + (tabs ? ' has-tabs' : '') },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' },
-            h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
-              icon('back'), h('span', null, 'Profile'))),
+          h('span', { class: 'top-side' }, artistBack(name)),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
@@ -6152,7 +6354,10 @@
     }
     if (view === 'addshows') return viewAddShows(id, t);
     if (view === 'menu') view = 'details';
-    if (!canSeeMoney(id) && (view === 'money' || view === 'costs' || view === 'daybyday' || view === 'cashlog' || view === 'addshows')) {
+    // GA never sees money: only the screens named here open for them; anything
+    // else (Budget, Expenses and their sub-pages, or a name nobody recognises,
+    // which would otherwise fall through to Budget) is Overview.
+    if (!canSeeMoney(id) && ['details', 'day', 'guests', 'chat', 'calendar', 'stats'].indexOf(view) < 0) {
       view = 'details';
     }
     if (view === 'day' || view === 'details' || view === 'guests') {
@@ -7015,7 +7220,11 @@
       S.bandAsked = S.bandAsked || {};
       if (!S.bandAsked[id]) {
         S.bandAsked[id] = true;
-        setTimeout(function () { if (!document.querySelector('#sheet-root .sheet')) openOurBandSheet(id); }, 700);
+        setTimeout(function () {
+          var here = S.route && S.route.name === 'tour' && S.route.id === id;
+          if (here && !document.querySelector('#sheet-root .sheet')) openOurBandSheet(id);
+          else if (!here) S.bandAsked[id] = false; // left before it could ask: next visit
+        }, 700);
       }
     }
     if (view === 'details') {
