@@ -3402,18 +3402,18 @@
   /* ---- The tabs under your own profile. ----
      Where a social app keeps the photo grid, your profile keeps the tour:
      TODAY (where you are today, and the day sheet under it when there is
-     one), STATS (your own Crew Stats, nobody else's), GUEST LIST (tonight's),
-     ARTISTS (your artists) and TOURS (every run with its dates, laid out like
-     the calendar, with the Day sheet, Special requests and vote buttons, and
-     no way to add shows from here). Today, Stats and Guest list read the tour
+     one), ARTISTS (who you work for, names only), TOURS (every run with its
+     dates, laid out like the calendar, with the Day sheet, Special requests
+     and vote buttons, and no way to add shows from here), GUEST LIST
+     (tonight's) and STATS (your own Crew Stats, nobody else's). Today, Stats and Guest list read the tour
      you were last in, the same one the menu's rows open. Switching tabs
      redraws in place; nothing here is a route. */
   var PF_TABS = [
     { key: 'today', label: 'Today', icon: 'tabmap' },
-    { key: 'stats', label: 'Stats', icon: 'tabstats' },
-    { key: 'guests', label: 'Guest list', icon: 'tabguest' },
     { key: 'artists', label: 'Artists', icon: 'music' },
-    { key: 'tours', label: 'Tours', icon: 'calendar' }
+    { key: 'tours', label: 'Tours', icon: 'calendar' },
+    { key: 'guests', label: 'Guest list', icon: 'tabguest' },
+    { key: 'stats', label: 'Stats', icon: 'tabstats' }
   ];
   var PF_HOME = { name: 'home' };
   // On the road first, then the newest; a tour with no dates yet sorts by the day it was made.
@@ -3597,7 +3597,7 @@
         onclick: function () { openTour(id, 'guests', PF_HOME, 'Profile'); } }, 'Other nights', icon('chevron', 14)) : null
     ];
   }
-  // ARTISTS: your artists, each opening its own page; then the ones you've said you toured with.
+  // ARTISTS: who you work for, and who you've said you toured with. Names only: their tours are the next tab.
   function pfArtists(byArtist, declared, loose) {
     if (!byArtist.size && !declared.length) {
       return emptyState('No artists yet', loose.length
@@ -3606,11 +3606,12 @@
         : 'Nothing has been shared with you yet.');
     }
     return h('ul', { class: 'tour-list rows' },
-      Array.from(byArtist, function (pair) { return h('li', null, artistRow(pair[0], pair[1])); }),
-      declared.map(function (a) {
+      Array.from(byArtist.keys()).concat(declared).map(function (a) {
+        var logo = artistLogo(a);
         return h('li', null, h('div', { class: 'list-row art-row still' },
-          h('span', { class: 'avatar letter' }, String(a).trim().charAt(0).toUpperCase()),
-          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a), h('span', { class: 'lr-sub' }, 'Toured with'))));
+          h('span', { class: 'avatar' + (logo ? ' has' : ' letter'), 'aria-hidden': 'true' },
+            logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(a).trim().charAt(0).toUpperCase()),
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a))));
       }));
   }
   /* TOURS: each run under its name, its days laid out like the tour's
