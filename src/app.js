@@ -2108,9 +2108,10 @@
     var back = S.route && S.route.name === 'profile' ? (S.route.back || { name: 'home' }) : S.route;
     go({ name: 'profile', user: uid, back: back });
   }
-  /* VIEWER EXPERIENCE: your own profile exactly as other people get it (the
-     USER EXPERIENCE is the one you see yourself, with Edit profile on it).
-     Same screen as anyone else's, fed by the same database answer; the
+  /* View profile: your own profile exactly as other people get it (what
+     Devin calls the viewer experience; the one you see yourself, with Edit
+     profile on it, is the user's experience). Same screen as anyone else's,
+     fed by the same database answer, with nothing added to say so; the
      buttons are there to look at, and a tour opens its public card. */
   function openViewerExperience() {
     var B = window.GR_BACKEND;
@@ -2138,9 +2139,10 @@
     var card = c.card;
     // Looking at your own page the way others get it.
     var preview = !!(S.route.preview && socialOn() && uid === B.uid());
-    var justLooking = function (what) { return function () { toast('Viewer experience: ' + what); }; };
+    var justLooking = function (what) { return function () { toast(what); }; };
+    // Black, not green: this isn't your own page.
     var head = function (title, checked) {
-      return h('div', { class: 'headband' },
+      return h('div', { class: 'headband dark' },
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' },
             h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go(backTo); } },
@@ -2186,7 +2188,7 @@
       }
       busy = false;
     };
-    var followBtn = preview ? h('button', { class: 'pf-btn go', type: 'button', onclick: justLooking('this is where people follow you.') }, 'Follow')
+    var followBtn = preview ? h('button', { class: 'pf-btn go', type: 'button', onclick: justLooking('This is where people follow you.') }, 'Follow')
       : card.iFollow
       ? h('button', { class: 'pf-btn on', type: 'button', 'aria-label': 'Following ' + (card.name || '') + '. Tap to unfollow.',
           onclick: function () {
@@ -2242,8 +2244,6 @@
     var peer = { name: card.name, handle: card.handle, avatar: card.avatar, verified: card.verified };
     return h('div', { class: 'page home profile has-tabs' },
       head(card.handle || card.name || 'Profile', card.verified),
-      preview ? h('p', { class: 'vp-preview', role: 'note' }, h('strong', null, 'Viewer experience'),
-        ' This is how your profile looks to other people.') : null,
       h('section', { class: 'pf vp', 'aria-label': (card.name || 'Their') + ' profile' },
         h('div', { class: 'pf-top' },
           h('div', { class: 'pf-photo-wrap' }, personPhoto(card)),
@@ -2261,7 +2261,7 @@
         h('div', { class: 'pf-actions three' },
           followBtn,
           h('button', { class: 'pf-btn', type: 'button',
-            onclick: preview ? justLooking('this is where people message you.') : function () { openDm(uid, peer); } }, 'Message'),
+            onclick: preview ? justLooking('This is where people message you.') : function () { openDm(uid, peer); } }, 'Message'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openContact(uid, card); } }, 'Contact'))),
       h('div', { class: 'vp-tabs', role: 'tablist' }, tabBtn('artists', 'Artists', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
       tab === 'artists'
