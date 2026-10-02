@@ -2198,6 +2198,29 @@ button.acct-row:active { background: var(--surface-2); }
 .page.profile .vp-tab { height: 44px; font-size: 14px; }
 .page.profile .pf-photo.xs { width: 42px; height: 42px; font-size: 16px; }
 .page.profile .fl-row { min-height: 58px; gap: 12px; }
+/* The bar along the bottom of the social pages: search, and your photo. */
+.social-bar .tabbar-b span:not(.ic):not(.sb-face) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.social-bar .tabbar-b { position: relative; }
+.social-bar .tabbar-b .ic svg { width: 26px; height: 26px; }
+.social-bar .tabbar-b.on .ic svg { stroke-width: 2.6; }
+.social-bar .tabbar-b .sb-face {
+  display: grid; place-items: center; width: 30px; height: 30px; max-width: none; border-radius: 50%; overflow: hidden;
+  background: var(--pos-soft); color: var(--pos); font-size: 14px; font-weight: 700; line-height: 1; letter-spacing: 0;
+  box-shadow: 0 0 0 1.5px var(--line);
+}
+.social-bar .sb-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.social-bar .tabbar-b .sb-face.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--pos); }
+.social-bar .tabbar-b { padding-top: 11px; align-content: center; min-height: 54px; }
+/* Search. */
+.sr-find { position: relative; z-index: 1; margin: 0 0 14px; }
+.sr-results { position: relative; z-index: 1; }
+.sr-group { margin-bottom: 14px; }
+.sr-h { margin: 0 2px 2px; font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--ink-2); }
+.sr-hint { margin: 18px 2px; }
+/* Viewer experience: the strip that says you're looking at your own page as others get it. */
+.vp-preview { position: relative; z-index: 1; margin: -14px 0 16px; padding: 9px 12px; border: 1px solid color-mix(in oklab, var(--pos), transparent 62%); border-radius: 12px; background: var(--pos-soft); font-size: 13px; line-height: 1.35; color: var(--ink); }
+.vp-preview strong { color: var(--pos); font-weight: 700; margin-right: 4px; }
+.page.profile .pf-actions.three .pf-btn { padding: 0 6px; white-space: nowrap; }
 /* A tour's public card: the flyer and the dates. */
 .tc-flyer { display: block; width: 100%; height: auto; max-height: 70vh; object-fit: contain; border-radius: 14px; margin: 12px 0 14px; background: var(--surface-2); }
 .tc-dates { margin: 6px 0 12px; border-top: 1px solid var(--line); }

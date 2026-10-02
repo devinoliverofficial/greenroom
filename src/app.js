@@ -721,6 +721,7 @@
     else if (S.route.name === 'profile') node = viewProfile();
     else if (S.route.name === 'dm') node = viewDm();
     else if (S.route.name === 'act') node = viewAct();
+    else if (S.route.name === 'search') node = viewSearch();
     else node = viewHome();
     // The tab bar stays the same element when nothing about it changed, so a
     // tap on it always lands.
@@ -1861,8 +1862,9 @@
         : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
       card.bio ? h('p', { class: 'pf-bio' }, card.bio)
         : (edit ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add a short bio') : null),
-      edit ? h('div', { class: 'pf-actions' },
+      edit ? h('div', { class: 'pf-actions three' },
         h('button', { class: 'pf-btn', type: 'button', onclick: function () { openProfileSheet(); } }, 'Edit profile'),
+        uid ? h('button', { class: 'pf-btn', type: 'button', onclick: function () { openViewerExperience(); } }, 'View profile') : null,
         dmOn() ? h('button', { class: 'pf-btn', type: 'button', onclick: function () { openInbox(); } }, 'Messages',
           unread ? h('span', { class: 'dm-dot num', 'aria-label': unread + ' unread' }, String(unread)) : null) : null) : null);
   }
@@ -2105,6 +2107,16 @@
     var back = S.route && S.route.name === 'profile' ? (S.route.back || { name: 'home' }) : S.route;
     go({ name: 'profile', user: uid, back: back });
   }
+  /* VIEWER EXPERIENCE: your own profile exactly as other people get it (the
+     USER EXPERIENCE is the one you see yourself, with Edit profile on it).
+     Same screen as anyone else's, fed by the same database answer; the
+     buttons are there to look at, and a tour opens its public card. */
+  function openViewerExperience() {
+    var B = window.GR_BACKEND;
+    if (!socialOn()) return;
+    cardOf(B.uid(), true);
+    go({ name: 'profile', user: B.uid(), preview: true, back: { name: 'home' } });
+  }
   function personPhoto(p, cls) {
     var initial = String(p.name || '?').trim().charAt(0).toUpperCase() || '?';
     return h('span', { class: 'pf-photo ' + (cls || '') + (p.avatar ? ' has' : ' letter'), 'aria-hidden': 'true' },
@@ -2123,6 +2135,9 @@
     var backTo = S.route.back || { name: 'home' };
     var c = socialOn() ? cardOf(uid) : { gone: true };
     var card = c.card;
+    // Looking at your own page the way others get it.
+    var preview = !!(S.route.preview && socialOn() && uid === B.uid());
+    var justLooking = function (what) { return function () { toast('Viewer experience: ' + what); }; };
     var head = function (title, checked) {
       return h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
@@ -2170,7 +2185,8 @@
       }
       busy = false;
     };
-    var followBtn = card.iFollow
+    var followBtn = preview ? h('button', { class: 'pf-btn go', type: 'button', onclick: justLooking('this is where people follow you.') }, 'Follow')
+      : card.iFollow
       ? h('button', { class: 'pf-btn on', type: 'button', 'aria-label': 'Following ' + (card.name || '') + '. Tap to unfollow.',
           onclick: function () {
             confirmSheet({ title: 'Unfollow ' + (card.name || 'them') + '?', body: 'You can follow them again any time.',
@@ -2216,15 +2232,17 @@
       var span = t.first ? dayMD(t.first) + (t.last && t.last !== t.first ? ' \u2013 ' + dayMD(t.last) : '') +
         ', ' + String(t.last || t.first).slice(0, 4) : 'No dates yet';
       return h('li', null, h('button', { class: 'list-row tour-row', type: 'button',
-        onclick: function () { if (t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, uid, t); } },
+        onclick: function () { if (!preview && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, uid, t); } },
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
           h('span', { class: 'lr-sub' }, [t.artist, span].filter(Boolean).join(' \u00b7 '))),
         icon('chevron', 18)));
     });
     var peer = { name: card.name, handle: card.handle, avatar: card.avatar, verified: card.verified };
-    return h('div', { class: 'page home profile' },
+    return h('div', { class: 'page home profile has-tabs' },
       head(card.handle || card.name || 'Profile', card.verified),
+      preview ? h('p', { class: 'vp-preview', role: 'note' }, h('strong', null, 'Viewer experience'),
+        ' This is how your profile looks to other people.') : null,
       h('section', { class: 'pf vp', 'aria-label': (card.name || 'Their') + ' profile' },
         h('div', { class: 'pf-top' },
           h('div', { class: 'pf-photo-wrap' }, personPhoto(card)),
@@ -2238,10 +2256,11 @@
               pfStat(G.num(card.following), 'following', function () { openFollowList(uid, 'following', card.name); })))),
         roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 ')) : null,
         card.bio ? h('p', { class: 'pf-bio' }, card.bio) : null,
-        card.followsMe ? h('p', { class: 'pf-note' }, first + ' follows you') : null,
+        (card.followsMe && !preview) ? h('p', { class: 'pf-note' }, first + ' follows you') : null,
         h('div', { class: 'pf-actions three' },
           followBtn,
-          h('button', { class: 'pf-btn', type: 'button', onclick: function () { openDm(uid, peer); } }, 'Message'),
+          h('button', { class: 'pf-btn', type: 'button',
+            onclick: preview ? justLooking('this is where people message you.') : function () { openDm(uid, peer); } }, 'Message'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openContact(uid, card); } }, 'Contact'))),
       h('div', { class: 'vp-tabs', role: 'tablist' }, tabBtn('artists', 'Artists', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
       tab === 'artists'
@@ -2249,7 +2268,8 @@
             : emptyState('No artists yet', first + ' hasn\u2019t added any artists yet.'))
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', first + ' hasn\u2019t been on a tour in Greenroom yet.')),
-      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }));
+      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
+      socialBar(''));
   }
   // Contact: what's on their contact card, for the people they tour with.
   function openContact(uid, card) {
@@ -2942,7 +2962,7 @@
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, t.name || 'Untitled tour'), h('span', { class: 'lr-sub' }, span)),
         icon('chevron', 18)));
     });
-    return h('div', { class: 'page home profile' },
+    return h('div', { class: 'page home profile has-tabs' },
       head(card.handle),
       h('section', { class: 'pf vp', 'aria-label': card.name + ' profile' },
         h('div', { class: 'pf-top' },
@@ -2964,7 +2984,8 @@
         : tab === 'crew' ? people(crewList, 'crew')
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', card.mine ? 'Tours you file under ' + card.name + ' show up here.' : card.name + ' has no tours on Greenroom yet.')),
-      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }));
+      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
+      socialBar(''));
   }
   function openActEdit(id, keep) {
     var B = window.GR_BACKEND;
@@ -3019,6 +3040,133 @@
     }, { label: 'Edit artist', cls: 'pe-sheet' });
   }
 
+  /* ---- The bar along the bottom of the social pages. ----
+     Search on the left, your own photo on the right: the photo takes you to
+     your profile from anywhere. (Inside a tour, the tour's own tabs sit
+     there instead.) More doors can join these two later. */
+  function socialBar(current) {
+    if (!socialOn()) return null;
+    var me = myCard(), who = myName();
+    var face = h('span', { class: 'sb-face' + (me.photo ? ' has' : '') + (current === 'me' ? ' on' : ''), 'aria-hidden': 'true' },
+      me.photo ? h('img', { src: me.photo, alt: '' }) : (who.trim().charAt(0).toUpperCase() || '?'));
+    return h('nav', { class: 'tabbar social-bar', 'aria-label': 'Greenroom',
+      'data-sig': 'social|' + current + '|' + me.photo.length + '|' + who,
+      style: 'grid-template-columns: repeat(2, 1fr)' },
+      tabButton(current === 'search', 'Search', 'search', function () { if (current !== 'search') go({ name: 'search' }); }),
+      tabButton(current === 'me', 'Profile', null, function () { if (current !== 'me') go({ name: 'home' }); }, face));
+  }
+  /* Search: one box for people, artists and tours. People and artist
+     profiles come from Greenroom; tours are yours plus the ones on artist
+     profiles. Results fill in under the box as you type, so the keyboard
+     never drops. */
+  function viewSearch() {
+    var B = window.GR_BACKEND;
+    var st = S.search || (S.search = { q: '', seq: 0, res: null, busy: false });
+    var results = h('div', { class: 'sr-results' });
+    var row = function (photo, title, sub, onTap, badge) {
+      var inner = [photo, h('span', { class: 'lr-text' },
+        h('span', { class: 'lr-title fl-name' }, title, badge ? verifiedBadge() : null),
+        sub ? h('span', { class: 'lr-sub' }, sub) : null)];
+      return onTap ? h('button', { class: 'fl-row', type: 'button', onclick: onTap }, inner, icon('chevron', 16))
+        : h('div', { class: 'fl-row' }, inner);
+    };
+    var group = function (label, rows) {
+      return rows.length ? h('section', { class: 'sr-group' }, h('h2', { class: 'sr-h' }, label), rows) : null;
+    };
+    var mark = function (name, logo) {
+      return h('span', { class: 'avatar' + (logo ? ' has photo' : ' letter') },
+        logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : (String(name || '?').trim().charAt(0).toUpperCase() || '?'));
+    };
+    var span = function (t) {
+      return t.first ? dayMD(t.first) + (t.last && t.last !== t.first ? ' \u2013 ' + dayMD(t.last) : '') + ', ' + String(t.last || t.first).slice(0, 4) : 'No dates yet';
+    };
+    // Your own tours and artist folders, matched on this phone.
+    var local = function (q) {
+      var t = q.toLowerCase(), tours = [], folders = {};
+      allTourEntries().forEach(function (e) {
+        var d = e[1], name = String(d.name || ''), artist = artistOf(d) || '';
+        var cities = G.rows(d.shows).map(function (x) { return String(x.city || '') + ' ' + String(x.venue || ''); }).join(' ').toLowerCase();
+        if (name.toLowerCase().indexOf(t) >= 0 || artist.toLowerCase().indexOf(t) >= 0 || cities.indexOf(t) >= 0) {
+          var dates = G.rows(d.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+          tours.push({ id: e[0], name: name || 'Untitled tour', artist: artist, first: dates[0], last: dates[dates.length - 1], mine: true });
+        }
+        if (artist && artist.toLowerCase().indexOf(t) >= 0) folders[artist.toLowerCase()] = artist;
+      });
+      registeredArtists().forEach(function (a) { if (a.toLowerCase().indexOf(t) >= 0) folders[a.toLowerCase()] = a; });
+      return { tours: tours, folders: Object.keys(folders).map(function (k) { return folders[k]; }) };
+    };
+    var paint = function () {
+      var q = st.q.trim();
+      if (q.replace(/^@/, '').length < 2) {
+        results.replaceChildren(h('p', { class: 'note sr-hint' }, 'Search people, artists and tours. People are found by name if you tour with them, and by @username if you don\u2019t.'));
+        return;
+      }
+      var mine = local(q.replace(/^@/, ''));
+      var r = st.res && st.res.q === q ? st.res : null;
+      var people = (r ? r.people : []).map(function (p) {
+        var roles = personRoles(p);
+        var sub = [p.handle ? '@' + p.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ');
+        return row(personPhoto(p, 'xs'), p.name || 'Someone', sub || null,
+          p.canOpen ? function () { openProfile(p.userId); }
+            : function () { toast('You can open the profiles of people you tour with or share an artist with.'); }, p.verified);
+      });
+      var actNames = (r ? r.artists : []).map(function (a) { return String(a.name).trim().toLowerCase(); });
+      var artists = (r ? r.artists : []).map(function (a) {
+        return row(mark(a.name, a.avatar), a.name, '@' + a.handle, function () { openAct(a.id); });
+      }).concat(mine.folders.filter(function (a) { return actNames.indexOf(a.toLowerCase()) < 0; }).map(function (a) {
+        return row(mark(a, artistLogo(a)), a, 'Your artist folder', function () { go({ name: 'artist', artist: a }); });
+      }));
+      var seen = {};
+      var tours = mine.tours.map(function (t) {
+        seen[t.id] = true;
+        return row(mark(t.artist || t.name, artistLogo(t.artist)), t.name, [t.artist, span(t)].filter(Boolean).join(' \u00b7 '), function () { openTour(t.id); });
+      }).concat((r ? r.tours : []).filter(function (t) { return !seen[t.id]; }).map(function (t) {
+        return row(mark(t.artist || t.name, ''), t.name || 'Untitled tour', [t.artist, span(t)].filter(Boolean).join(' \u00b7 '),
+          function () { if (t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, t.artistId); });
+      }));
+      var kids = [group('People', people), group('Artists', artists), group('Tours', tours)].filter(Boolean);
+      if (!kids.length) kids = [h('p', { class: 'note sr-hint' }, st.busy || !r ? 'Searching\u2026' : 'Nothing found for \u201c' + q + '\u201d.')];
+      else if (st.busy || !r) kids.push(h('p', { class: 'note sr-hint' }, 'Searching\u2026'));
+      results.replaceChildren.apply(results, kids);
+    };
+    var timer = 0;
+    var run = function () {
+      clearTimeout(timer);
+      var q = st.q.trim();
+      paint();
+      if (q.replace(/^@/, '').length < 2) { st.busy = false; return; }
+      if (st.res && st.res.q === q) return;
+      st.busy = true;
+      var n = ++st.seq;
+      timer = setTimeout(function () {
+        var safe = function (p) { return p.catch(function () { return null; }); };
+        Promise.all([safe(B.findPeople(q)), safe(B.findArtists(q)), safe(B.findTours(q))]).then(function (out) {
+          if (n !== st.seq) return;
+          st.busy = false;
+          st.res = { q: q, people: out[0] || [], artists: out[1] || [], tours: out[2] || [], failed: !out[0] && !out[1] && !out[2] };
+          if (results.isConnected) paint();
+          if (st.res.failed && results.isConnected) results.append(h('p', { class: 'note sr-hint' }, 'Couldn\u2019t reach Greenroom. Check your signal and try again.'));
+        });
+      }, 300);
+    };
+    var input = h('input', { class: 'input rv-search', type: 'search', value: st.q, placeholder: 'Search', autocomplete: 'off',
+      autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'search', 'data-k': 'search-in',
+      'aria-label': 'Search people, artists and tours',
+      oninput: function (e) { st.q = e.target.value; run(); } });
+    run();
+    return h('div', { class: 'page home profile has-tabs search-page' },
+      h('div', { class: 'headband' },
+        h('header', { class: 'topbar' },
+          h('span', { class: 'top-side' }),
+          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('span', { class: 'top-side right' })),
+        h('div', { class: 'band-row' }, h('h1', { class: 'band-name vp-user mid' }, 'Search'))),
+      h('form', { class: 'rv-find sr-find', onsubmit: function (e) { e.preventDefault(); blurActive(); } }, icon('search', 17), input),
+      results,
+      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
+      socialBar('search'));
+  }
+
   function viewHome() {
     var entries = allTourEntries();
     var byArtist = new Map();
@@ -3042,7 +3190,7 @@
       return list.length ? [row, h('div', { class: 'pf-tours' }, list.map(function (e) { return tourLine(e[0], e[1]); }))] : row;
     };
 
-    return h('div', { class: 'page home profile' },
+    return h('div', { class: 'page home profile' + (socialOn() ? ' has-tabs' : '') },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
           // Top left, where a social app keeps it: + adds an artist, then their tours.
@@ -3108,6 +3256,7 @@
             : 'Nothing has been shared with you yet.')
         : null,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
+      socialBar('me'),
       (function () {
         if (S.mode === 'db' && !S.askedUsername && window.GR_BACKEND &&
             window.GR_BACKEND.saveProfile && window.GR_BACKEND.myProfile &&
@@ -5421,7 +5570,7 @@
         });
       }));
   }
-  function tabButton(on, label, iconName, goThere) {
+  function tabButton(on, label, iconName, goThere, face) {
         var down = null;
         return h('button', {
           class: 'tabbar-b' + (on ? ' on' : ''), type: 'button',
@@ -5442,7 +5591,7 @@
           },
           ontouchcancel: function () { down = null; },
           onclick: goThere
-        }, icon(iconName, 23), h('span', null, label));
+        }, face || icon(iconName, 23), h('span', null, label));
   }
   // The band page's two tabs: TOUR and OFF TOUR (the owner and ALL ACCESS only).
   function artistTabs(name, current) {

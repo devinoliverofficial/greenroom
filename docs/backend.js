@@ -513,6 +513,16 @@
       if (q.error) throw mapError(q.error);
       return Array.isArray(q.data) ? q.data : [];
     },
+    findArtists: async function (text) {
+      var q = await sb.rpc('find_artists', { q: String(text || '') });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    findTours: async function (text) {
+      var q = await sb.rpc('find_tours', { q: String(text || '') });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
     artistTourCard: async function (artistId, tourId) {
       var q = await sb.rpc('artist_tour_card', { a_id: artistId, t_id: tourId });
       if (q.error) throw mapError(q.error);

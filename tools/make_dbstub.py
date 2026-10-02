@@ -229,7 +229,9 @@ shim = r"""<script>
       var base = { followers: n(function (x) { return x.b === uid; }), following: n(function (x) { return x.a === uid; }),
         iFollow: H.follows.some(function (x) { return x.a === 'u-devin' && x.b === uid; }),
         followsMe: H.follows.some(function (x) { return x.a === uid && x.b === 'u-devin'; }) };
-      if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', verified: true, bio: '', roles: [], tourRole: me.tour_role, avatar: '', artists: [], tours: [], logos: {} }, base));
+      var so = H.social || {};
+      if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', verified: true, bio: so.bio || '', roles: so.roles || [], tourRole: me.tour_role, avatar: so.photo || '', artists: so.artists || [],
+        tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }], logos: {} }, base));
       if (uid === 'u-brent') return Promise.resolve(Object.assign({ userId: uid, name: 'Brent Allen', handle: 'brent', bio: 'Guitars, backline, bad jokes.',
         roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', avatar: '', artists: ['Sleeping With Sirens', 'I See Stars'],
         acts: (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-brent'; }); }).map(function (x) { return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: x.members.filter(function (m) { return m.userId === 'u-brent'; })[0].kind }; }),
@@ -249,6 +251,8 @@ shim = r"""<script>
     unfollow: function (uid) { var H = window.__harness; H.follows = (H.follows || []).filter(function (x) { return !(x.a === 'u-devin' && x.b === uid); }); return Promise.resolve(); },
     tourCard: function (tourId, uid) {
       var H = window.__harness; H.tourCards = (H.tourCards || []).concat([tourId + '|' + uid]);
+      if (tourId === 't1') return Promise.resolve({ id: 't1', artist: 'I See Stars', name: 'Harness run', flyer: (H.flyers2 || {}).t1 || '',
+        dates: [{ date: '2026-09-27', city: 'Dallas, TX', venue: 'Granada' }, { date: '2026-10-01', city: 'Austin, TX', venue: 'Mohawk' }] });
       if (tourId !== 'x9') return Promise.resolve(null);
       return Promise.resolve({ id: 'x9', artist: 'Other Band', name: 'Spring Fling', flyer: H.flyerX9 || '',
         dates: [{ date: '2026-03-02', city: 'Detroit, MI', venue: 'Saint Andrew’s Hall' }, { date: '2026-03-04', city: 'Chicago, IL', venue: 'Bottom Lounge' }, { date: '2026-04-11', city: 'Anaheim, CA', venue: '' }] });
@@ -308,6 +312,17 @@ shim = r"""<script>
         tours: a.name.toLowerCase() === 'i see stars' ? [{ id: 't1', artist: a.name, name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }] : [] });
     },
     artistTourCard: function () { return Promise.resolve(null); },
+    findArtists: function (text) {
+      var H = window.__harness, t = String(text || '').trim().replace(/^@/, '').toLowerCase();
+      var all = (H.acts || []).map(function (a) { return { id: a.id, name: a.name, handle: a.handle, avatar: a.avatar, mine: true }; })
+        .concat([{ id: 'pub1', name: 'Sleeping With Sirens', handle: 'sws', avatar: '', mine: false }]);
+      return Promise.resolve(t.length < 2 ? [] : all.filter(function (a) { return a.handle.indexOf(t) === 0 || a.name.toLowerCase().indexOf(t) >= 0; }));
+    },
+    findTours: function (text) {
+      var t = String(text || '').trim().toLowerCase();
+      var all = [{ id: 'pubt1', artistId: 'pub1', artist: 'Sleeping With Sirens', name: 'Feel Tour', first: '2026-11-03', last: '2026-12-12', shows: 30, mine: false }];
+      return Promise.resolve(t.length < 2 ? [] : all.filter(function (x) { return x.name.toLowerCase().indexOf(t) >= 0 || x.artist.toLowerCase().indexOf(t) >= 0; }));
+    },
     /* Messages, in memory: one conversation with Brent, his last line unread. */
     dmThreads: function () {
       var H = window.__harness; H.dms = H.dms || [{ id: 'm1', from: 'u-devin', to: 'u-brent', body: 'Load-in is 2 tomorrow', at: new Date(Date.now() - 864e5).toISOString(), read: true }, { id: 'm2', from: 'u-brent', to: 'u-devin', body: 'Got it. Bringing the spare head.', at: new Date(Date.now() - 36e5).toISOString(), read: false }];
