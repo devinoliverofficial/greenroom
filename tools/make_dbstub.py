@@ -252,6 +252,26 @@ shim = r"""<script>
       return Promise.resolve({ id: 'x9', artist: 'Other Band', name: 'Spring Fling', flyer: H.flyerX9 || '',
         dates: [{ date: '2026-03-02', city: 'Detroit, MI', venue: 'Saint Andrew’s Hall' }, { date: '2026-03-04', city: 'Chicago, IL', venue: 'Bottom Lounge' }, { date: '2026-04-11', city: 'Anaheim, CA', venue: '' }] });
     },
+    /* Messages, in memory: one conversation with Brent, his last line unread. */
+    dmThreads: function () {
+      var H = window.__harness; H.dms = H.dms || [{ id: 'm1', from: 'u-devin', to: 'u-brent', body: 'Load-in is 2 tomorrow', at: new Date(Date.now() - 864e5).toISOString(), read: true }, { id: 'm2', from: 'u-brent', to: 'u-devin', body: 'Got it. Bringing the spare head.', at: new Date(Date.now() - 36e5).toISOString(), read: false }];
+      var last = H.dms[H.dms.length - 1];
+      return Promise.resolve(H.dms.length ? [{ userId: 'u-brent', name: 'Brent Allen', handle: 'brent', avatar: '', verified: false, last: last.body, at: last.at, fromMe: last.from === 'u-devin',
+        unread: H.dms.filter(function (m) { return m.to === 'u-devin' && !m.read; }).length }] : []);
+    },
+    dmThread: function (uid) {
+      var H = window.__harness; if (!H.dms) window.GR_BACKEND.dmThreads();
+      return Promise.resolve(uid === 'u-brent' ? H.dms.map(function (m) { return { id: m.id, mine: m.from === 'u-devin', body: m.body, at: m.at, read: m.read }; }) : []);
+    },
+    dmSend: function (uid, body) {
+      var H = window.__harness; if (!H.dms) window.GR_BACKEND.dmThreads();
+      if (H.dmFail) return Promise.reject(new Error('offline'));
+      H.dms.push({ id: 'm' + Date.now(), from: 'u-devin', to: uid, body: body, at: new Date().toISOString(), read: false });
+      return Promise.resolve();
+    },
+    dmRead: function (uid) { var H = window.__harness; (H.dms || []).forEach(function (m) { if (m.from === uid) m.read = true; }); H.dmReads = (H.dmReads || 0) + 1; return Promise.resolve(); },
+    dmWatch: function (fn) { window.__harness.dmPoke = fn; },
+    contactOf: function (uid) { return Promise.resolve(uid === 'u-brent' ? { phone: '(313) 555-0142', email: 'brent@example.com' } : { phone: '', email: '' }); },
     flyer: function (tourId) { return Promise.resolve((window.__harness.flyers2 || {})[tourId] || ''); },
     saveFlyer: function (tourId, img) { var H = window.__harness; H.flyers2 = H.flyers2 || {}; H.flyers2[tourId] = img || ''; return Promise.resolve(); },
     myProfile: function () { return { firstName: me.first_name, lastName: me.last_name, fullName: me.full_name,

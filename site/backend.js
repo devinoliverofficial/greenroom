@@ -451,6 +451,38 @@
         : await sb.from('tour_flyers').delete().eq('tour_id', tourId);
       if (q.error) throw mapError(q.error);
     },
+    /* Direct messages: readable by the two people in them, nobody else (the
+       database's rule, not the app's). A new one arriving pokes dmWatch. */
+    dmThreads: async function () {
+      var q = await sb.rpc('dm_threads');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    dmThread: async function (otherId) {
+      var me = session.user.id;
+      var q = await sb.from('dms').select('id, sender, recipient, body, created_at, read_at')
+        .or('and(sender.eq.' + me + ',recipient.eq.' + otherId + '),and(sender.eq.' + otherId + ',recipient.eq.' + me + ')')
+        .order('created_at', { ascending: false }).limit(200);
+      if (q.error) throw mapError(q.error);
+      return (q.data || []).reverse().map(function (m) {
+        return { id: m.id, mine: m.sender === me, body: m.body, at: m.created_at, read: !!m.read_at };
+      });
+    },
+    dmSend: async function (otherId, body) {
+      var q = await sb.from('dms').insert({ sender: session.user.id, recipient: otherId, body: String(body || '').trim().slice(0, 2000) });
+      if (q.error) throw mapError(q.error);
+    },
+    dmRead: async function (otherId) {
+      var q = await sb.rpc('dm_read', { other: otherId });
+      if (q.error) throw mapError(q.error);
+    },
+    dmWatch: function (fn) { dmListeners.push(fn); },
+    // How to reach someone you tour with: what's on their contact card.
+    contactOf: async function (userId) {
+      var q = await sb.from('profiles').select('phone, email').eq('user_id', userId).maybeSingle();
+      if (q.error) throw mapError(q.error);
+      return { phone: q.data ? String(q.data.phone || '') : '', email: q.data ? String(q.data.email || '') : '' };
+    },
     /* The tour's phone book: everyone invited, plus the manager who owns it. */
     crew: async function (tourId) {
       var mq = await sb.from('members')
@@ -899,6 +931,8 @@
     }
   };
 
+  var dmListeners = [];
+  function dmChanged() { dmListeners.forEach(function (fn) { try { fn(); } catch (e) { /* listener's problem */ } }); }
   var feedListeners = [];
   var feedTimer = 0;
   async function loadFeed(opening) {
@@ -1486,6 +1520,7 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ari_asks' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_items' }, feedChanged)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dms' }, dmChanged)
       .subscribe();
     resolvers.db(db);
     resolvers.user(user);
