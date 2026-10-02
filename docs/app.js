@@ -677,6 +677,11 @@
     if (route.name === 'tour' && route.view === 'details') S.dsIndex = null;
     // The tour you were last in is the one the menu's tour rows open.
     if (route.name === 'tour' && route.id) rememberTour(route.id);
+    // A tour opened from the menu's Budget shows two tabs, Expenses and
+    // Income, for as long as you stay on its money pages.
+    if (route.name === 'tour' && route.book) S.book = route.id;
+    else if (!(route.name === 'tour' && route.id === S.book &&
+      ['costs', 'money', 'daybyday', 'cashlog'].indexOf(route.view) >= 0)) S.book = null;
     // A page reached from the menu (or its Tours / Artists lists) goes back
     // there, however many tabs you visit inside it. Home wipes the slate.
     if (route.name === 'home') S.fromMap = {};
@@ -691,8 +696,9 @@
       else if (key !== prevKey && !(S.route && S.route.back === route) &&
         !(route.name === 'artist' && S.route && S.route.name === 'tour')) delete S.fromMap[key];
     }
-    // The menu slides in when you open it from your profile, not when you step back to it.
-    if (route.name === 'mainmenu' && S.route && S.route.name === 'home') S.menuIn = true;
+    // The menu slides in when you open it from your profile, not when you step back to it;
+    // opened afresh, its Budget drop-down is closed.
+    if (route.name === 'mainmenu' && S.route && S.route.name === 'home') { S.menuIn = true; S.mnBudget = false; S.mnArtist = null; }
     // Leaving your profile: how far down its tabs you were, for the way back.
     if (S.route && S.route.name === 'home' && route.name !== 'home') S.homeY = window.scrollY;
     var backToTabs = route === PF_HOME && S.homeY;
@@ -718,12 +724,13 @@
   // Kept on the phone, and in memory for phones that won't keep anything.
   function rememberTour(id) { S.lastTour = id; lsSet(lastTourKey(), id); }
   // view: which tab to land on; from / fromLabel: where its back button returns.
-  function openTour(id, view, from, fromLabel) {
+  function openTour(id, view, from, fromLabel, book) {
     var t = getTour(id);
     // Coming in from the menu or its lists is a fresh visit: today, not the day you last flipped to.
     if (from) { S.dsIndex = null; S.glTour = null; S.glShow = null; }
-    if (t && !t.setupDone && canEditTour(id)) go({ name: 'wizard', id: id, step: clampStep(t.setupStep), from: from || null, fromLabel: fromLabel || null });
-    else go({ name: 'tour', id: id, view: typeof view === 'string' ? view : 'menu', from: from || null, fromLabel: fromLabel || null });
+    // Its money pages open without its shows, so the book skips the setup detour.
+    if (t && !t.setupDone && canEditTour(id) && !book) go({ name: 'wizard', id: id, step: clampStep(t.setupStep), from: from || null, fromLabel: fromLabel || null });
+    else go({ name: 'tour', id: id, view: typeof view === 'string' ? view : 'menu', from: from || null, fromLabel: fromLabel || null, book: !!book });
   }
   // A hard close and reopen always lands on the Artists screen — the top of
   // the app, not wherever the last session wandered.
@@ -770,6 +777,7 @@
     else if (S.route.name === 'mainmenu') node = viewMenu();
     else if (S.route.name === 'tours') node = viewAllTours();
     else if (S.route.name === 'artists') node = viewAllArtists();
+    else if (S.route.name === 'book') node = viewBook();
     else node = viewHome();
     // The tab bar stays the same element when nothing about it changed, so a
     // tap on it always lands.
@@ -3258,9 +3266,10 @@
 
   /* ============================== MODEL7: the menu ==============================
      Three lines in the top-right of your profile open one page that reaches
-     everything: your tours, your artists, and every tab of the tour you
-     were last in (Overview, Budget, Day sheet, Expenses, Guest list, Crew
-     Stats, Chat), without walking artist, then tour, then tab. Laid out
+     everything: your tours, your artists, the money (Budget: an artist,
+     then Off Tour or a tour's Expenses and Income) and the other tabs of the
+     tour you were last in (Overview, Day sheet, Guest list, Crew Stats,
+     Chat), without walking artist, then tour, then tab. Laid out
      against a social app's settings page on the same phone: 16-point labels,
      22-point icons, 48-point rows, a quiet heading over each group and a
      thick rule between groups. An experiment: the tabs along the bottom of
@@ -3322,18 +3331,62 @@
         h('button', { class: 'sr-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 20)),
         h('h1', { class: 'mn-title' }, title)));
   }
-  function menuRow(ic, label, onTap, sub) {
-    return h('button', { class: 'mn-row', type: 'button', onclick: onTap },
-      h('span', { class: 'mn-ic', 'aria-hidden': 'true' }, icon(ic, 24)),
+  // o.open: a row that drops more rows down under it (true or false); o.face: a picture in place of the icon; o.cls.
+  function menuRow(ic, label, onTap, sub, o) {
+    o = o || {};
+    var drops = typeof o.open === 'boolean';
+    return h('button', { class: 'mn-row' + (o.cls ? ' ' + o.cls : '') + (o.open ? ' open' : ''), type: 'button',
+      'aria-expanded': drops ? (o.open ? 'true' : 'false') : null, onclick: onTap },
+      h('span', { class: 'mn-ic', 'aria-hidden': 'true' }, o.face || icon(ic, 24)),
       h('span', { class: 'mn-text' }, h('span', { class: 'mn-label' }, label), sub ? h('span', { class: 'mn-sub' }, sub) : null),
       h('span', { class: 'mn-chev', 'aria-hidden': 'true' }, icon('chevron', 18)));
+  }
+  /* BUDGET in the menu. The row drops down your artists; an artist drops
+     down Off Tour (what the band spends between tours) and Tours (a page of
+     that artist's tours; a tour opens as two tabs, Expenses and Income).
+     Money only: an artist is listed when you can see its Off Tour book or
+     the money of one of its tours, so GA never gets the row at all. */
+  function bookTours(name) {
+    return toursByNow().filter(function (e) { return artistOf(e[1]) === name && canSeeMoney(e[0]); });
+  }
+  function budgetArtists() {
+    return Array.from(tourGroups().byArtist.keys()).filter(function (name) {
+      return bookTours(name).length || canSeeOffTour(name);
+    });
+  }
+  function budgetRows(here) {
+    var artists = budgetArtists();
+    var loose = bookTours(''); // tours not filed under an artist yet
+    if (!artists.length && !loose.length) return null;
+    var open = !!S.mnBudget;
+    return [
+      menuRow('tabmoney', 'Budget', function () { S.mnBudget = !open; render(true); }, null, { open: open }),
+      !open ? null : h('div', { class: 'mn-drop' }, artists.map(function (name) {
+        var on = S.mnArtist === name, logo = artistLogo(name), tours = bookTours(name);
+        var face = h('span', { class: 'avatar mn-face' + (logo ? ' has' : ' letter') },
+          logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(name).trim().charAt(0).toUpperCase());
+        return [
+          menuRow(null, name, function () { S.mnArtist = on ? null : name; render(true); }, null, { open: on, face: face }),
+          !on ? null : h('div', { class: 'mn-drop' },
+            canSeeOffTour(name) ? menuRow('tabcost', 'Off Tour', function () {
+              go({ name: 'artist', artist: name, view: 'off', from: here, fromLabel: 'Menu' });
+            }) : null,
+            tours.length ? menuRow('calendar', 'Tours', function () {
+              go({ name: 'book', artist: name, back: here });
+            }) : null)
+        ];
+      }), loose.length ? menuRow('calendar', 'Tours with no artist', function () {
+        go({ name: 'book', artist: '', back: here });
+      }) : null)
+    ];
   }
   function viewMenu() {
     var backTo = S.route.back || { name: 'home' };
     var here = { name: 'mainmenu', back: backTo };
     var entries = allTourEntries();
     var id = currentTourId(), t = id ? getTour(id) : null;
-    var tabs = !t ? [] : canSeeMoney(id) ? TOUR_TABS : TOUR_TABS.filter(function (x) { return x.view !== 'money' && x.view !== 'costs'; });
+    // Expenses and Income live under Budget now, for every tour, so the tour's own rows leave them out.
+    var tabs = !t ? [] : TOUR_TABS.filter(function (x) { return x.view !== 'money' && x.view !== 'costs'; });
     var first = S.menuIn; S.menuIn = false;
     var pickTour = function () { openTourPicker(); };
     return h('div', { class: 'page home menu-page' + (first ? ' mn-in' : '') },
@@ -3342,7 +3395,8 @@
       h('section', { class: 'mn-group' },
         h('h2', { class: 'mn-h' }, 'Your tours and artists'),
         menuRow('calendar', 'Tours', function () { go({ name: 'tours', back: here }); }),
-        menuRow('music', 'Artists', function () { go({ name: 'artists', back: here }); })),
+        menuRow('music', 'Artists', function () { go({ name: 'artists', back: here }); }),
+        budgetRows(here)),
       h('section', { class: 'mn-group' },
         h('div', { class: 'mn-head' },
           h('h2', { class: 'mn-h' }, t ? (t.name || 'Untitled tour') : 'Your tour'),
@@ -3368,21 +3422,39 @@
       menuHead('Tours', backTo),
       dbBanner(),
       entries.length ? h('ul', { class: 'tour-list rows mn-list' }, entries.map(function (e) {
-        var t = e[1], artist = artistOf(t), logo = artist ? artistLogo(artist) : null;
-        var dates = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
-        var live = tourIsLive(t);
-        var span = dates.length ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') + ', ' + String(dates[dates.length - 1]).slice(0, 4) : 'No shows yet';
-        return h('li', null, h('button', { class: 'list-row tour-row', type: 'button',
-          onclick: function () { openTour(e[0], 'details', here, 'Tours'); } },
-          h('span', { class: 'avatar' + (logo ? ' has' : ' letter'), 'aria-hidden': 'true' },
-            logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(artist || t.name || '?').trim().charAt(0).toUpperCase()),
-          h('span', { class: 'lr-text' },
-            h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
-            h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artist, live ? 'On the road' : span].filter(Boolean).join(' \u00b7 '))),
-          icon('chevron', 18)));
+        return h('li', null, tourListRow(e, function () { openTour(e[0], 'details', here, 'Tours'); }));
       })) : emptyState('No tours yet', canWrite()
         ? 'Tap + on your profile to add an artist, then their first tour.'
         : 'Nothing has been shared with you yet.'));
+  }
+  // A tour as a row in a list: its artist's picture, its name, and where it stands (on the road, or its dates).
+  function tourListRow(e, onTap) {
+    var t = e[1], artist = artistOf(t), logo = artist ? artistLogo(artist) : null;
+    var dates = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+    var live = tourIsLive(t);
+    var span = dates.length ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') + ', ' + String(dates[dates.length - 1]).slice(0, 4) : 'No shows yet';
+    return h('button', { class: 'list-row tour-row', type: 'button', onclick: onTap },
+      h('span', { class: 'avatar' + (logo ? ' has' : ' letter'), 'aria-hidden': 'true' },
+        logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(artist || t.name || '?').trim().charAt(0).toUpperCase()),
+      h('span', { class: 'lr-text' },
+        h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
+        h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artist, live ? 'On the road' : span].filter(Boolean).join(' \u00b7 '))),
+      icon('chevron', 18));
+  }
+  /* Budget, then an artist, then Tours: that artist's tours whose money you
+     can see. A tour opens as its money book: two tabs, Expenses and Income. */
+  function viewBook() {
+    var name = S.route.artist || '';
+    var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
+    var here = { name: 'book', artist: name, back: backTo };
+    var entries = bookTours(name);
+    return h('div', { class: 'page home profile menu-page' },
+      menuHead(name || 'Budget', backTo),
+      dbBanner(),
+      h('h2', { class: 'mn-h mn-over' }, 'Budget \u00b7 Tours'),
+      entries.length ? h('ul', { class: 'tour-list rows mn-list' }, entries.map(function (e) {
+        return h('li', null, tourListRow(e, function () { openTour(e[0], 'costs', here, 'Tours', true); }));
+      })) : emptyState('No tours here', 'Tours whose budget you can see show up here.'));
   }
   // Your artists, each opening its own page of tours (and Off Tour). An artist opened from here comes back here.
   function viewAllArtists() {
@@ -4137,8 +4209,8 @@
     return h('div', { class: 'wz-body' },
       h('h1', { class: 'wz-title' }, 'Add your shows'),
       h('p', { class: 'wz-sub' }, S.sample
-        ? 'Upload the tour flyer and the dates fill themselves in \u2014 they land in OVERVIEW and BUDGET both.'
-        : 'Each date and city \u2014 they land in OVERVIEW and BUDGET both.'),
+        ? 'Upload the tour flyer and the dates fill themselves in \u2014 they land in OVERVIEW and INCOME both.'
+        : 'Each date and city \u2014 they land in OVERVIEW and INCOME both.'),
       S.sample
         ? h('div', { class: 'stack', style: 'margin-top:0;margin-bottom:18px' },
             fileControl({
@@ -6006,7 +6078,7 @@
   /* Five tabs along the bottom. The day sheet is where a tour opens. */
   var TOUR_TABS = [
     { view: 'details', label: 'Overview', icon: 'tabmap' },
-    { view: 'money', label: 'Budget', icon: 'tabmoney' },
+    { view: 'money', label: 'Income', icon: 'tabmoney' },
     { view: 'day', label: 'Day sheet', icon: 'tabsheet' },
     { view: 'costs', label: 'Expenses', icon: 'tabcost' },
     { view: 'guests', label: 'Guest list', icon: 'tabguest' },
@@ -6014,11 +6086,17 @@
     { view: 'chat', label: 'Chat', icon: 'tabchat' }
   ];
 
+  // A tour opened from the menu's Budget is its money book: Expenses and Income, nothing else.
+  var BOOK_TABS = ['costs', 'money'];
+  function inBook(id) { return S.book === id && canSeeMoney(id); }
   function tourTabs(id, current) {
     var tabs = canSeeMoney(id) ? TOUR_TABS : TOUR_TABS.filter(function (t) {
       return t.view !== 'money' && t.view !== 'costs';
     });
-    return h('nav', { class: 'tabbar', 'aria-label': 'Tour sections',
+    if (inBook(id) && BOOK_TABS.indexOf(current) >= 0) {
+      tabs = BOOK_TABS.map(function (v) { return TOUR_TABS.filter(function (t) { return t.view === v; })[0]; });
+    }
+    return h('nav', { class: 'tabbar' + (tabs.length === 2 ? ' book-tabs' : ''), 'aria-label': 'Tour sections',
       'data-sig': id + '|' + current + '|' + tabs.map(function (t) { return t.view; }).join(','),
       style: 'grid-template-columns: repeat(' + tabs.length + ', 1fr)' },
       tabs.map(function (t) {
