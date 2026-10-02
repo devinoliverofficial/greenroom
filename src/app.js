@@ -419,7 +419,7 @@
         var v = d.data();
         // When you last looked at something: yours alone, never a merchant label.
         if (G.isObj(v) && v.kind === 'seen') { if (G.num(v.at) >= seenShape(seen[d.id]).at) seen[d.id] = seenShape(v); return; }
-        if (G.isObj(v) && (G.isObj(v.cats) || v.kind === 'crew' || v.kind === 'artistLogo' || v.kind === 'artist')) m[d.id] = v;
+        if (G.isObj(v) && (G.isObj(v.cats) || v.kind === 'crew' || v.kind === 'artistLogo' || v.kind === 'artist' || v.kind === 'profile')) m[d.id] = v;
       });
       S.labels = m;
       if (S.loaded) render();
@@ -1664,6 +1664,180 @@
 
   /* The first screen: artists as folders, plus any tours that don't belong to
      one yet. With no artists named it looks exactly like a plain tour list. */
+  /* ============================== Profile ==============================
+     MODEL6 SOCIAL, step one. The app opens on you: your photo, how many tours
+     you've been on, followers and following, the roles you've held, a short
+     bio, and under it every artist and tour you've been part of.
+     The photo, roles and bio are kept with the account's own labels (the
+     artist logos live there too), so they follow you to any phone and only
+     you can read them. Followers and following have nothing behind them yet:
+     they wait for the step where other people can see a profile. */
+  var PROFILE_KEY = 'profile:me';
+  var BIO_MAX = 150;
+  function myCard() {
+    var rec = S.labels[PROFILE_KEY];
+    rec = G.isObj(rec) && rec.kind === 'profile' ? rec : {};
+    return { bio: String(rec.bio || ''), photo: String(rec.photo || ''),
+      roles: Array.isArray(rec.roles) ? rec.roles.map(String).filter(Boolean) : null };
+  }
+  async function saveMyCard(patch) {
+    var cur = myCard();
+    var rec = Object.assign({ kind: 'profile', bio: cur.bio, photo: cur.photo, roles: cur.roles || myRoles() }, patch);
+    rec.bio = String(rec.bio || '').trim().slice(0, BIO_MAX);
+    var before = S.labels[PROFILE_KEY];
+    S.labels[PROFILE_KEY] = rec;
+    try {
+      if (S.mode === 'db' && store.db) await store.db.doc('labels/' + PROFILE_KEY).set(rec);
+      else saveLocalLabels();
+      return true;
+    } catch (e) {
+      if (before) S.labels[PROFILE_KEY] = before; else delete S.labels[PROFILE_KEY];
+      saveFailed('profile', e);
+      return false;
+    }
+  }
+  function myName() {
+    var B = window.GR_BACKEND, me = S.mode === 'db' && B && B.myProfile ? B.myProfile() : null;
+    return me ? ((me.firstName + ' ' + me.lastName).trim() || me.fullName || '') : '';
+  }
+  // The roles you've picked; until you pick, the one on your contact card.
+  function myRoles() {
+    var card = myCard();
+    if (card.roles) return card.roles;
+    var B = window.GR_BACKEND, me = S.mode === 'db' && B && B.myProfile ? B.myProfile() : null;
+    return me && me.tourRole ? [me.tourRole] : [];
+  }
+  function roleChoices() {
+    var B = window.GR_BACKEND;
+    return (B && B.tourRoles ? B.tourRoles : ['Artist', 'Band', 'Tour Manager', 'Production Manager', 'Stage Manager',
+      'Merch', 'Guitar Tech', 'Drum Tech', 'Assistant', 'FOH Engineer', 'Monitors', 'Liaison', 'Dancer'])
+      .filter(function (r) { return !NOT_CREW.test(r); });
+  }
+  /* Any picture in, a small square out: the middle of the shot, 256 across,
+     as a JPEG, so a profile photo weighs about as much as a logo. */
+  function readPhotoFile(file, cb) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      var SZ = 256, c = document.createElement('canvas');
+      c.width = SZ; c.height = SZ;
+      var side = Math.min(img.width, img.height) || 1;
+      var ctx = c.getContext('2d');
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, SZ, SZ);
+      ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, SZ, SZ);
+      URL.revokeObjectURL(url);
+      cb(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); toast('Couldn\u2019t read that picture \u2014 try a JPG or PNG'); };
+    img.src = url;
+  }
+  function profilePhoto(cls, after) {
+    var card = myCard(), name = myName();
+    return fileControl({
+      label: card.photo ? null : (name.trim().charAt(0).toUpperCase() || '?'),
+      logo: card.photo || undefined,
+      cls: 'pf-photo ' + (cls || '') + (card.photo ? ' has' : ' letter'),
+      accept: imageAccept(),
+      ariaLabel: (card.photo ? 'Change' : 'Add') + ' your profile photo',
+      onFiles: function (files) {
+        readPhotoFile(files[0], async function (dataUrl) {
+          if (await saveMyCard({ photo: dataUrl })) { toast('Photo in'); if (after) after(); else render(true); }
+        });
+      }
+    });
+  }
+  function profileHead(tourCount) {
+    var card = myCard(), roles = myRoles(), edit = canWrite() || S.mode === 'db';
+    var stat = function (n, label) {
+      return h('div', { class: 'pf-stat' }, h('strong', { class: 'pf-n num' }, String(n)), h('span', { class: 'pf-l' }, label));
+    };
+    return h('section', { class: 'pf', 'aria-label': 'Your profile' },
+      h('div', { class: 'pf-top' },
+        h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
+          card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
+        h('div', { class: 'pf-stats' },
+          stat(tourCount, tourCount === 1 ? 'tour' : 'tours'), stat(0, 'followers'), stat(0, 'following'))),
+      roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 '))
+        : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
+      card.bio ? h('p', { class: 'pf-bio' }, card.bio)
+        : (edit ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add a short bio') : null),
+      edit ? h('div', { class: 'pf-actions' },
+        h('button', { class: 'pf-btn', type: 'button', onclick: function () { openProfileSheet(); } }, 'Edit profile')) : null);
+  }
+  function openProfileSheet(keep) {
+    var B = window.GR_BACKEND;
+    var card = myCard();
+    // What's been typed stays put when the sheet redraws for a new photo.
+    var f = G.isObj(keep) && Array.isArray(keep.roles) ? keep : { bio: card.bio, roles: myRoles().slice() };
+    var redraw = function () { openProfileSheet(f); };
+    openSheet(function () {
+      var now = myCard();
+      var count = h('span', { class: 'pf-count num' }, f.bio.length + ' / ' + BIO_MAX);
+      var bio = h('textarea', { class: 'gl-paste pf-bio-in', maxlength: BIO_MAX, rows: 3,
+        placeholder: 'A line or two about you', value: f.bio,
+        oninput: function (e) { f.bio = e.target.value; count.textContent = f.bio.length + ' / ' + BIO_MAX; } });
+      var chips = h('div', { class: 'pf-chips' }, roleChoices().concat(f.roles.filter(function (r) { return roleChoices().indexOf(r) < 0; }))
+        .map(function (r) {
+          var on = f.roles.indexOf(r) >= 0;
+          return h('button', { class: 'rv-chip pf-chip' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false',
+            onclick: function (e) {
+              var i = f.roles.indexOf(r);
+              if (i >= 0) f.roles.splice(i, 1); else f.roles.push(r);
+              e.currentTarget.classList.toggle('on', i < 0);
+              e.currentTarget.setAttribute('aria-pressed', i < 0 ? 'true' : 'false');
+            } }, r);
+        }));
+      return [
+        h('h2', { class: 'sh-title' }, 'Edit profile'),
+        h('div', { class: 'pf-edit-photo' },
+          profilePhoto('sm', redraw),
+          h('div', { class: 'pf-edit-photo-text' },
+            h('strong', null, myName() || 'Your photo'),
+            h('span', null, now.photo ? 'Tap the photo to change it' : 'Tap the circle to add a photo')),
+          now.photo ? h('button', { class: 'pf-link', type: 'button', onclick: async function () {
+            if (await saveMyCard({ photo: '' })) { toast('Photo removed'); redraw(); }
+          } }, 'Remove') : null),
+        h('form', { class: 'sh-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            blurActive();
+            // Kept in the order the list shows them, however they were tapped.
+            var order = roleChoices();
+            var roles = f.roles.slice().sort(function (a, b) {
+              var ia = order.indexOf(a), ib = order.indexOf(b);
+              return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+            });
+            if (await saveMyCard({ bio: f.bio, roles: roles })) { closeSheet(); toast('Profile saved'); render(true); }
+          } },
+          h('div', { class: 'field' },
+            h('span', { class: 'field-label' }, 'Roles you\u2019ve had on tour'), chips,
+            h('span', { class: 'hint' }, 'Tap every one that fits.')),
+          h('label', { class: 'field' },
+            h('span', { class: 'field-label pf-bio-label' }, 'Bio', count), bio),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
+            (S.mode === 'db' && B && B.saveProfile) ? h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { openUsernameSheet(false); } }, icon('people', 18), 'Name and contact card') : null,
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
+      ];
+    }, { label: 'Edit profile' });
+  }
+  // A tour under its artist on the profile: name, dates, straight in.
+  function tourLine(id, t) {
+    var dates = G.rows(t && t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+    var live = tourIsLive(t);
+    var year = dates.length ? String(dates[0]).slice(0, 4) : '';
+    // On the road, the dates are enough; once it's history, the year and the count too.
+    var span = dates.length ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') : '';
+    var sub = !dates.length ? 'No shows yet'
+      : live ? span : span + (year ? ', ' + year : '') + ' \u00b7 ' + plural(dates.length, 'show');
+    return h('button', { class: 'pf-tour', type: 'button', onclick: function () { openTour(id); } },
+      h('span', { class: 'lr-text' },
+        h('span', { class: 'pf-tour-name' }, t.name || 'Untitled tour'),
+        h('span', { class: 'lr-sub' + (live ? ' live' : '') }, (live ? 'On the road \u00b7 ' : '') + sub)),
+      icon('chevron', 16));
+  }
+
   function viewHome() {
     var entries = allTourEntries();
     var byArtist = new Map();
@@ -1676,8 +1850,13 @@
     });
     registeredArtists().forEach(function (a) { if (!byArtist.has(a)) byArtist.set(a, []); });
     var pill = homePill();
+    var who = myName();
+    // Each artist, and under them the tours you've been on with them.
+    var withTours = function (row, list) {
+      return list.length ? [row, h('div', { class: 'pf-tours' }, list.map(function (e) { return tourLine(e[0], e[1]); }))] : row;
+    };
 
-    return h('div', { class: 'page home' },
+    return h('div', { class: 'page home profile' },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' }, pill ? h('span', { class: 'pill' }, pill) : null),
@@ -1685,14 +1864,14 @@
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
               onclick: openSettingsSheet }, icon('more')))),
-        h('div', { class: 'band-row wordmark-row' },
-          h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }))),
+        who ? h('div', { class: 'band-row' }, h('h1', { class: 'band-name' }, who))
+          : h('div', { class: 'band-row wordmark-row' },
+              h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }))),
       dbBanner(),
-      h('div', { class: 'sec-head split' },
+      profileHead(entries.length),
+      h('div', { class: 'sec-head split pf-sec' },
         h('div', null,
-          h('h2', { class: 'sec-title hdr' }, 'Artists'),
-          byArtist.size ? h('p', { class: 'sec-sub' }, plural(byArtist.size, 'act') +
-            ' \u00b7 ' + plural(entries.filter(function (e) { return artistOf(e[1]); }).length, 'run')) : null),
+          h('h2', { class: 'sec-title hdr' }, 'Artists & tours')),
         canWrite()
           ? h('button', { class: 'add-pill', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
               icon('plus', 16), 'Add')
@@ -1700,8 +1879,8 @@
       byArtist.size
         ? h('ul', { class: 'tour-list rows' }, Array.from(byArtist, function (pair) {
             var cardEl = artistCard(pair[0], pair[1]);
-            if (!canWrite() || (S.mode === 'db' && !pair[1].every(function (e) { return createdTour(e[0]); }))) return h('li', null, cardEl);
-            return h('li', null, swipeable(cardEl, function () {
+            if (!canWrite() || (S.mode === 'db' && !pair[1].every(function (e) { return createdTour(e[0]); }))) return h('li', null, withTours(cardEl, pair[1]));
+            return h('li', null, withTours(swipeable(cardEl, function () {
               confirmSheet({
                 title: 'Delete everything for ' + pair[0] + '?',
                 body: pair[1].length
@@ -1718,7 +1897,7 @@
                   return true;
                 }
               });
-            }, pair[0]));
+            }, pair[0]), pair[1]));
           }))
         : null,
       loose.length
@@ -1858,7 +2037,7 @@
         h('header', { class: 'topbar' },
           h('button', { class: 'iconbtn back', type: 'button',
             onclick: function () { delete S.drafts.newArtist; go({ name: 'home' }); } },
-            icon('back'), h('span', null, 'Artists')),
+            icon('back'), h('span', null, 'Profile')),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('div', { class: 'topbar-actions' }, h('span', { style: 'width:44px' })))),
       h('form', { class: 'sh-form', onsubmit: submit, novalidate: true, style: 'margin-top:18px' },
@@ -1872,7 +2051,7 @@
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' },
             h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
-              icon('back'), h('span', null, 'Artists'))),
+              icon('back'), h('span', null, 'Profile'))),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
@@ -1892,7 +2071,7 @@
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' },
             h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
-              icon('back'), h('span', null, 'Artists'))),
+              icon('back'), h('span', null, 'Profile'))),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
@@ -10080,7 +10259,7 @@
     if (!S.sample || !charges.length) return fallback;
 
     var known = Object.keys(S.labels)
-      .map(function (k) { return S.labels[k].merchant; })
+      .map(function (k) { return S.labels[k] && S.labels[k].merchant; })
       .filter(Boolean).slice(0, 150);
 
     var lines = charges.map(function (c, i) { return i + ': ' + (c.description || c.merchant); }).join('\n');
@@ -11412,7 +11591,7 @@
   function openLabelsSheet() {
     function build() {
       var keys = Object.keys(S.labels).filter(function (k) {
-        return k.indexOf('crew:') !== 0 && k.indexOf('alogo:') !== 0 && k.indexOf('artist:') !== 0;
+        return k.indexOf('crew:') !== 0 && k.indexOf('alogo:') !== 0 && k.indexOf('artist:') !== 0 && k.indexOf('profile:') !== 0;
       }).sort(function (a, b) {
         var an = (S.labels[a].merchant || a).toLowerCase();
         var bn = (S.labels[b].merchant || b).toLowerCase();

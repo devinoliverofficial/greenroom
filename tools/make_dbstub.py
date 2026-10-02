@@ -49,13 +49,28 @@ shim = r"""<script>
       return { id: id, exists: true, data: function () { return JSON.parse(JSON.stringify(tours[id])); } }; }) };
   }
   function emit() { subs.forEach(function (cb) { cb(snap()); }); }
+  // Labels (artist folders, logos, your profile) are kept and played back the
+  // way the real store does: a write lands, then a fresh snapshot arrives.
+  var labels = {}, labelSubs = [];
+  function labelSnap() {
+    return { docs: Object.keys(labels).map(function (id) {
+      return { id: id, exists: true, data: function () { return JSON.parse(JSON.stringify(labels[id])); } }; }) };
+  }
+  function emitLabels() { labelSubs.forEach(function (cb) { cb(labelSnap()); }); }
   var db = {
     collection: function (name) { return { onSnapshot: function (cb) {
       if (name === 'tours') { subs.push(cb); setTimeout(function () { cb(snap()); }, 0); }
+      else if (name === 'labels') { labelSubs.push(cb); setTimeout(function () { cb(labelSnap()); }, 0); }
       else setTimeout(function () { cb({ docs: [] }); }, 0);
       return function () {}; } }; },
     doc: function (path) {
       var id = path.split('/')[1];
+      if (path.indexOf('labels/') === 0) return {
+        get: function () { return Promise.resolve({ exists: !!labels[id], data: function () { return labels[id]; } }); },
+        set: function (v) { labels[id] = JSON.parse(JSON.stringify(v)); setTimeout(emitLabels, 0); return Promise.resolve(); },
+        update: function (v) { labels[id] = Object.assign({}, labels[id], JSON.parse(JSON.stringify(v))); setTimeout(emitLabels, 0); return Promise.resolve(); },
+        delete: function () { delete labels[id]; setTimeout(emitLabels, 0); return Promise.resolve(); }
+      };
       return {
         get: function () { return Promise.resolve({ exists: !!tours[id], data: function () { return tours[id]; } }); },
         set: function (v) { if (path.indexOf('tours/') === 0) { tours[id] = v; emit(); } return Promise.resolve(); },
