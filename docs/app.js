@@ -3045,7 +3045,11 @@
     return h('div', { class: 'page home profile' },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' }, pill ? h('span', { class: 'pill' }, pill) : null),
+          // Top left, where a social app keeps it: + adds an artist, then their tours.
+          h('span', { class: 'top-side' },
+            canWrite() ? h('button', { class: 'iconbtn pf-add', type: 'button', 'aria-label': 'Add an artist or a tour',
+              onclick: function () { go({ name: 'newartist' }); } }, icon('plus', 24)) : null,
+            pill ? h('span', { class: 'pill' }, pill) : null),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
             h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
@@ -3055,13 +3059,8 @@
               h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }))),
       dbBanner(),
       profileHead(entries.length),
-      h('div', { class: 'sec-head split pf-sec' },
-        h('div', null,
-          h('h2', { class: 'sec-title hdr' }, 'Artists & tours')),
-        canWrite()
-          ? h('button', { class: 'add-pill', type: 'button', onclick: function () { go({ name: 'newartist' }); } },
-              icon('plus', 16), 'Add')
-          : null),
+      h('div', { class: 'sec-head pf-sec' },
+        h('h2', { class: 'sec-title hdr' }, 'Artists & tours')),
       byArtist.size
         ? h('ul', { class: 'tour-list rows' }, Array.from(byArtist, function (pair) {
             var cardEl = artistCard(pair[0], pair[1]);
