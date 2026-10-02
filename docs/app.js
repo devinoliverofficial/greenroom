@@ -3266,10 +3266,10 @@
 
   /* ============================== MODEL7: the menu ==============================
      Three lines in the top-right of your profile open one page that reaches
-     everything: your tours, your artists, the money (Budget: an artist,
-     then Off Tour or a tour's Expenses and Income) and the other tabs of the
-     tour you were last in (Overview, Day sheet, Guest list, Crew Stats,
-     Chat), without walking artist, then tour, then tab. Laid out
+     everything in a single list: the money (Budget: an artist, then Off
+     Tour or a tour's Expenses and Income), the tour you were last in
+     (Overview, Day sheet, Crew Stats, Chat) and Settings. Tours, artists
+     and the guest list are tabs on your profile, so they aren't repeated here. Laid out
      against a social app's settings page on the same phone: 16-point labels,
      22-point icons, 48-point rows, a quiet heading over each group and a
      thick rule between groups. An experiment: the tabs along the bottom of
@@ -3385,20 +3385,17 @@
     var here = { name: 'mainmenu', back: backTo };
     var entries = allTourEntries();
     var id = currentTourId(), t = id ? getTour(id) : null;
-    // Expenses and Income live under Budget now, for every tour, so the tour's own rows leave them out.
-    var tabs = !t ? [] : TOUR_TABS.filter(function (x) { return x.view !== 'money' && x.view !== 'costs'; });
+    // Expenses and Income live under Budget, and the guest list under your profile, so the tour's own rows leave them out.
+    var tabs = !t ? [] : TOUR_TABS.filter(function (x) { return ['money', 'costs', 'guests'].indexOf(x.view) < 0; });
     var first = S.menuIn; S.menuIn = false;
     var pickTour = function () { openTourPicker(); };
+    // One list, no rules between: the money first, then the tour you're in, then Settings.
     return h('div', { class: 'page home menu-page' + (first ? ' mn-in' : '') },
       menuHead('Menu', backTo),
       dbBanner(),
       h('section', { class: 'mn-group' },
-        h('h2', { class: 'mn-h' }, 'Your tours and artists'),
-        menuRow('calendar', 'Tours', function () { go({ name: 'tours', back: here }); }),
-        menuRow('music', 'Artists', function () { go({ name: 'artists', back: here }); }),
-        budgetRows(here)),
-      h('section', { class: 'mn-group' },
-        h('div', { class: 'mn-head' },
+        budgetRows(here),
+        h('div', { class: 'mn-head mn-tour' },
           h('h2', { class: 'mn-h' }, t ? (t.name || 'Untitled tour') : 'Your tour'),
           entries.length > 1 ? h('button', { class: 'mn-change', type: 'button', onclick: pickTour }, 'Change') : null),
         (t && !t.setupDone && canEditTour(id))
@@ -3407,9 +3404,7 @@
           return menuRow(x.icon, x.label, function () { openTour(id, x.view, here, 'Menu'); });
         }) : h('p', { class: 'mn-none' }, canWrite()
           ? 'No tours yet. Tap + on your profile to add an artist, then their first tour.'
-          : 'No tours have been shared with you yet.')),
-      h('section', { class: 'mn-group' },
-        h('h2', { class: 'mn-h' }, 'Your account'),
+          : 'No tours have been shared with you yet.'),
         menuRow('gear', 'Settings', function () { openSettingsSheet(); })));
   }
   /* Every tour you're on, all artists together: on the road first, then the
