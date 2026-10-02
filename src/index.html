@@ -2357,8 +2357,13 @@ button.acct-row:active { background: var(--surface-2); }
 .pt-stat-n { flex: none; min-width: 28px; text-align: right; font-size: 17px; font-weight: 700; color: var(--ink); }
 .pt-stat.zero .pt-stat-n { color: var(--ink-3); font-weight: 600; }
 /* Tours: each run, then its days. */
-.pt-run + .pt-run { margin-top: 18px; padding-top: 12px; border-top: 6px solid var(--surface-2); margin-left: -18px; margin-right: -18px; padding-left: 18px; padding-right: 18px; }
-.pt-run-h { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 4px 2px; appearance: none; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+/* A tour is one line until it's tapped; then its dates drop down under it. */
+.pt-run { border-bottom: 1px solid var(--line); }
+.pt-run.open { padding-bottom: 10px; }
+.pt-run-h > .ic { transition: transform .18s ease; }
+.pt-run.open > .pt-run-h > .ic { transform: rotate(90deg); }
+.pt-nodates { margin: 2px 2px 6px; }
+.pt-run-h { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 6px 2px; appearance: none; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
 .pt-run-h > .ic { flex: none; color: var(--ink-3); }
 .pt-run .cal-past-wrap { justify-content: flex-start; margin: 4px 0 2px; }
 .pt-run .show-row.cal-row { min-height: 60px; padding: 10px 2px; }

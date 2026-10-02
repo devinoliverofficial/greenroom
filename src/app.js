@@ -3614,10 +3614,10 @@
           h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a))));
       }));
   }
-  /* TOURS: each run under its name, its days laid out like the tour's
-     calendar: a show with Day sheet and Special requests, a day off with Day
-     sheet and the vote. Days already played fold away; a run that's over
-     stays folded until asked for. Shows are added on the tour, not here. */
+  /* TOURS: each run by name. Tap one and its dates drop down under it, laid
+     out like the tour's calendar: a show with Day sheet and Special
+     requests, a day off with Day sheet and the vote. On a run still going,
+     days already played fold away. Shows are added on the tour, not here. */
   function pfTours() {
     var entries = toursByNow();
     if (!entries.length) {
@@ -3625,21 +3625,25 @@
         ? 'Tap + to add an artist, then their first tour.'
         : 'Nothing has been shared with you yet.');
     }
+    S.pfOpen = S.pfOpen || {};
     return entries.map(function (e) {
       var id = e[0], t = e[1], artist = artistOf(t), live = tourIsLive(t);
-      var dates = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
-      var span = dates.length ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') +
-        ', ' + String(dates[dates.length - 1]).slice(0, 4) : 'No shows yet';
-      tourRole(id); // asked for now, so a sheet opened from a row already knows what you may do
-      var cal = calendarRows(id, t, { tidy: true, from: PF_HOME, fromLabel: 'Profile' });
-      return h('section', { class: 'pt-run' },
-        h('button', { class: 'pt-run-h', type: 'button', onclick: function () { openTour(id, 'details', PF_HOME, 'Profile'); } },
+      var open = !!S.pfOpen[id];
+      var cal = null;
+      if (open) {
+        tourRole(id); // asked for now, so a sheet opened from a row already knows what you may do
+        cal = calendarRows(id, t, { from: PF_HOME, fromLabel: 'Profile' });
+      }
+      return h('section', { class: 'pt-run' + (open ? ' open' : '') },
+        h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
+          onclick: function () { S.pfOpen[id] = !open; render(true); } },
           h('span', { class: 'lr-text' },
             h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
-            h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artist || 'No artist yet', live ? 'On the road' : '', span].filter(Boolean).join(' \u00b7 '))),
+            h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artist || 'No artist yet', live ? 'On the road' : ''].filter(Boolean).join(' · '))),
           icon('chevron', 16)),
-        cal.pastBtn ? h('div', { class: 'cal-past-wrap' + (cal.open ? ' open' : '') }, cal.pastBtn) : null,
-        cal.rows.length ? h('ul', { class: 'shows cal-list' }, cal.rows) : null);
+        !cal ? null : !(cal.pastBtn || cal.rows.length) ? h('p', { class: 'pt-next pt-nodates' }, 'No dates yet') : [
+          cal.pastBtn ? h('div', { class: 'cal-past-wrap' + (cal.open ? ' open' : '') }, cal.pastBtn) : null,
+          cal.rows.length ? h('ul', { class: 'shows cal-list' }, cal.rows) : null]);
     });
   }
   function profileTabs(entries, byArtist, loose, declared) {
@@ -7960,8 +7964,8 @@
   /* Every day of a run as calendar rows (a show day with its Day sheet and
      Special requests, a day off with its Day sheet and vote). The list
      starts where we are; days already done are greyed and tucked behind
-     "View previous dates". o.tidy: a run that's over stays folded until
-     asked for. o.from / o.fromLabel: where a Day sheet's back button returns. */
+     "View previous dates". o.from / o.fromLabel: where a Day sheet's back
+     button returns. */
   function calendarRows(id, t, o) {
     o = o || {};
     var today = G.tourToday();
@@ -7973,7 +7977,7 @@
       var past = got.days.filter(function (x) { return x.date < today; }).length;
       var ahead = past < got.days.length;
       S.calPast = S.calPast || {};
-      var fold = ahead || !!o.tidy;
+      var fold = ahead;
       var showPast = !fold || !!S.calPast[id];
       rowsOut = got.days.filter(function (x) { return showPast || x.date >= today; }).map(function (x) {
         var row = x.show ? calShowRow(id, x.show, today, o.from, o.fromLabel) : calOffRow(id, t, x.date,
