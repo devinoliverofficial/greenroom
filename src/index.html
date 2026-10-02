@@ -2108,6 +2108,13 @@ span.pf-photo { cursor: default; }
 .acct-arrow { display: inline-flex; flex: none; }
 .acct-arrow .ic { transform: rotate(90deg); }
 .vp-user .pf-check svg { width: 21px; height: 21px; }
+/* Your username sits in the middle of the band. */
+.band-name.vp-user.mid { justify-content: center; text-align: center; }
+.acct-btn { -webkit-tap-highlight-color: transparent; }
+.vp-name { display: flex; align-items: center; gap: 5px; }
+.vp-name-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.acct-acts, .acct-tail { display: contents; }
+.ca-field.fixed { background: none; }
 /* The list of profiles: yours, the artists you run, then Create. */
 .acct-list { margin: 12px 0 6px; border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
 .acct-row { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 66px; padding: 10px 14px; appearance: none; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--ink); font: inherit; text-align: left; }
@@ -2151,6 +2158,42 @@ button.acct-row:active { background: var(--surface-2); }
 .avatar.photo .brand-logo { object-fit: cover; padding: 0; }
 .vp-vouch { display: flex; align-items: center; gap: 4px; }
 .pf-check.sm svg { width: 13px; height: 13px; }
+/* Profile type, sized against Instagram's own profile on Devin's iPhone
+   (measured off his screenshot, 3 pixels to the point): username 24 bold,
+   name 16 semibold, counts 16 semibold over 14 regular labels, role and bio
+   14 on an 18-point line, buttons 14 semibold and 32 or so tall, list names
+   15. Smaller and calmer than the rest of the app's lists, so it's scoped
+   to the profile pages only. */
+.page.profile .vp-user { font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
+.page.profile .vp-user .pf-check svg { width: 19px; height: 19px; }
+.page.profile .vp-name { font-size: 16px; font-weight: 600; letter-spacing: -.005em; }
+.page.profile .vp-name .pf-check svg { width: 15px; height: 15px; }
+.page.profile .pf-n { font-size: 16px; font-weight: 600; letter-spacing: 0; line-height: 1.25; }
+.page.profile .pf-l { font-size: 14px; font-weight: 400; line-height: 1.3; }
+.page.profile .pf-stat { gap: 0; }
+.page.profile .pf-roles { margin-top: 13px; font-size: 14px; font-weight: 400; line-height: 1.3; }
+.page.profile .pf-bio { margin-top: 1px; font-size: 14px; font-weight: 400; line-height: 1.32; }
+.page.profile .pf-ask { font-size: 14px; }
+.page.profile .pf-roles.pf-ask { margin-top: 13px; }
+.page.profile .pf-bio.pf-ask { margin-top: 3px; }
+.page.profile .pf-note { margin-top: 7px; font-size: 12.5px; }
+.page.profile .pf-actions { margin-top: 14px; gap: 7px; }
+.page.profile .pf-btn { height: 34px; border-radius: 9px; font-size: 14px; font-weight: 600; }
+.page.profile .pf-btn .dm-dot { min-width: 18px; height: 18px; font-size: 11px; }
+.page.profile .pf { margin-bottom: 22px; }
+.page.profile .sec-head.pf-sec .sec-title.hdr { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+.page.profile .add-pill { height: 32px; padding: 0 13px 0 10px; font-size: 14px; }
+.page.profile .list-row { min-height: 60px; gap: 12px; }
+.page.profile .avatar { width: 42px; height: 42px; font-size: 16px; }
+.page.profile .lr-title { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
+.page.profile .lr-sub { font-size: 13px; font-weight: 400; }
+.page.profile .pf-tours { margin-left: 54px; }
+.page.profile .pf-tour { min-height: 48px; }
+.page.profile .pf-tour-name { font-size: 14.5px; }
+.page.profile .pf-tour .lr-sub { font-size: 12.5px; }
+.page.profile .vp-tab { height: 44px; font-size: 14px; }
+.page.profile .pf-photo.xs { width: 42px; height: 42px; font-size: 16px; }
+.page.profile .fl-row { min-height: 58px; gap: 12px; }
 /* A tour's public card: the flyer and the dates. */
 .tc-flyer { display: block; width: 100%; height: auto; max-height: 70vh; object-fit: contain; border-radius: 14px; margin: 12px 0 14px; background: var(--surface-2); }
 .tc-dates { margin: 6px 0 12px; border-top: 1px solid var(--line); }

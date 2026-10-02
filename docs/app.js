@@ -1844,13 +1844,15 @@
     var uid = socialOn() ? window.GR_BACKEND.uid() : null;
     var counts = myCounts();
     var unread = dmOn() ? dmUnread() : 0;
+    var checked = !!(uid && cardOf(uid).card && cardOf(uid).card.verified);
     syncSocial();
     return h('section', { class: 'pf', 'aria-label': 'Your profile' },
       h('div', { class: 'pf-top' },
         h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
           card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
         h('div', { class: 'vp-side' },
-          (card.handle && myName()) ? h('strong', { class: 'vp-name' }, myName()) : null,
+          (card.handle && myName()) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, myName()),
+            checked ? verifiedBadge() : null) : null,
           h('div', { class: 'pf-stats' },
             stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
             stat(counts.followers, counts.followers === 1 ? 'follower' : 'followers', uid ? function () { openFollowList(uid, 'followers'); } : null),
@@ -2227,7 +2229,8 @@
         h('div', { class: 'pf-top' },
           h('div', { class: 'pf-photo-wrap' }, personPhoto(card)),
           h('div', { class: 'vp-side' },
-            (card.handle && card.name) ? h('strong', { class: 'vp-name' }, card.name) : null,
+            (card.handle && card.name) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, card.name),
+              card.verified ? verifiedBadge() : null) : null,
             h('div', { class: 'pf-stats' },
               pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
               pfStat(G.num(card.followers), G.num(card.followers) === 1 ? 'follower' : 'followers',
@@ -2594,9 +2597,9 @@
     var inner = [h('span', { class: 'vp-user-t' }, card.handle || who), checked ? verifiedBadge() : null,
       can ? h('span', { class: 'acct-arrow', 'aria-hidden': 'true' }, icon('chevron', 16)) : null];
     return can
-      ? h('h1', { class: 'band-name vp-user' }, h('button', { class: 'acct-btn', type: 'button',
+      ? h('h1', { class: 'band-name vp-user mid' }, h('button', { class: 'acct-btn', type: 'button',
           'aria-label': 'Your profiles: ' + (card.handle || who), onclick: function () { openAccounts(); } }, inner))
-      : h('h1', { class: 'band-name vp-user' }, inner);
+      : h('h1', { class: 'band-name vp-user mid' }, inner);
   }
   function myActs(fresh) {
     var a = S.acts || (S.acts = { list: null, at: 0, asking: false });
@@ -2626,36 +2629,91 @@
     var back = S.route && S.route.name === 'act' ? (S.route.back || { name: 'home' }) : S.route;
     go({ name: 'act', id: id, back: back });
   }
-  function openAccounts() {
-    var a = myActs(true), me = myCard(), who = myName();
-    var draw = function () {
-      openSheet(function () {
-        var list = a.list;
-        return [
-          h('h2', { class: 'sh-title pe-title' }, 'Your profiles'),
-          h('div', { class: 'acct-list' },
-            h('div', { class: 'acct-row me' },
-              personPhoto({ name: who, avatar: me.photo }, 'xs'),
-              h('span', { class: 'lr-text' },
-                h('span', { class: 'lr-title' }, me.handle || who),
-                me.handle ? h('span', { class: 'lr-sub' }, who) : null),
-              h('span', { class: 'acct-on', 'aria-label': 'You are here' }, icon('check', 14))),
-            !list ? h('p', { class: 'note' }, 'Loading\u2026') : list.map(function (x) {
-              return h('button', { class: 'acct-row', type: 'button', onclick: function () { openAct(x.id); } },
-                personPhoto(x, 'xs'),
-                h('span', { class: 'lr-text' },
-                  h('span', { class: 'lr-title' }, x.handle),
-                  h('span', { class: 'lr-sub' }, x.name + (x.mine ? '' : x.kind === 'band' ? ' \u00b7 Band member' : ' \u00b7 Crew'))),
-                icon('chevron', 16));
-            }),
-            h('button', { class: 'acct-row add', type: 'button', onclick: function () { openCreateArtist(); } },
-              h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon('plus', 18)),
-              h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, 'Create Greenroom Artist'))))
-        ];
-      }, { label: 'Your profiles', cls: 'acct-sheet' });
+  // Artist names that already have something under them (tours you made, or
+  // a folder of yours) and no artist profile yet: these can be claimed.
+  function claimable() {
+    var have = ((S.acts && S.acts.list) || []).map(function (x) { return String(x.name).trim().toLowerCase(); });
+    var seen = {}, out = [];
+    var add = function (name, tours) {
+      var k = String(name || '').trim().toLowerCase();
+      if (!k || have.indexOf(k) >= 0) return;
+      if (!seen[k]) { seen[k] = { name: String(name).trim(), tours: 0 }; out.push(seen[k]); }
+      seen[k].tours += tours;
     };
-    a.onLoad = function () { if (sheet && sheet.panel.classList.contains('acct-sheet')) draw(); };
-    draw();
+    allTourEntries().forEach(function (e) { if (S.mode !== 'db' || createdTour(e[0])) add(artistOf(e[1]), 1); });
+    registeredArtists().forEach(function (a) { add(a, 0); });
+    return out;
+  }
+  function openAccounts() {
+    var a = myActs(), me = myCard(), who = myName();
+    // One sheet, opened once: the artists drop into it when they arrive.
+    var box = h('div', { class: 'acct-acts' });
+    var tail = h('div', { class: 'acct-tail' });
+    var fill = function () {
+      var list = a.list;
+      box.replaceChildren.apply(box, !list ? [h('p', { class: 'note' }, 'Loading\u2026')] : list.map(function (x) {
+        return h('button', { class: 'acct-row', type: 'button', onclick: function () { openAct(x.id); } },
+          personPhoto(x, 'xs'),
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'lr-title' }, x.handle),
+            h('span', { class: 'lr-sub' }, x.name + (x.mine ? '' : x.kind === 'band' ? ' \u00b7 Band member' : ' \u00b7 Crew'))),
+          icon('chevron', 16));
+      }));
+      var can = list ? claimable() : [];
+      tail.replaceChildren.apply(tail, [
+        h('button', { class: 'acct-row add', type: 'button', onclick: function () { openCreateArtist(); } },
+          h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon('plus', 18)),
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, 'Create Greenroom Artist'))),
+        can.length ? h('button', { class: 'acct-row add', type: 'button', onclick: function () { openClaim(); } },
+          h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon('check', 18)),
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'lr-title' }, 'Claim an artist'),
+            h('span', { class: 'lr-sub' }, can.length === 1 ? can[0].name + ' already has ' + (can[0].tours ? plural(can[0].tours, 'tour') : 'a folder') + ' here'
+              : plural(can.length, 'artist') + ' of yours already have tours here')),
+          icon('chevron', 16)) : null
+      ].filter(Boolean));
+    };
+    a.onLoad = function () { if (box.isConnected) fill(); };
+    fill();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title pe-title' }, 'Your profiles'),
+        h('div', { class: 'acct-list' },
+          h('div', { class: 'acct-row me' },
+            personPhoto({ name: who, avatar: me.photo }, 'xs'),
+            h('span', { class: 'lr-text' },
+              h('span', { class: 'lr-title' }, me.handle || who),
+              me.handle ? h('span', { class: 'lr-sub' }, who) : null),
+            h('span', { class: 'acct-on', 'aria-label': 'You are here' }, icon('check', 14))),
+          box, tail)
+      ];
+    }, { label: 'Your profiles', cls: 'acct-sheet' });
+  }
+  /* Claim: an artist name that already has tours (or a folder) under it gets
+     its profile. The name is kept exactly, so those tours show on it. */
+  function openClaim() {
+    var list = claimable();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title ca-title' }, 'Claim an artist'),
+        h('p', { class: 'sh-sub' }, 'These names already have tours of yours under them. Claiming one gives it a profile, with those tours on it.'),
+        list.length ? h('div', { class: 'acct-list' }, list.map(function (x) {
+          return h('div', { class: 'acct-row' },
+            (function () {
+              var logo = artistLogo(x.name);
+              return h('span', { class: 'avatar' + (logo ? ' has' : ' letter') },
+                logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : x.name.charAt(0).toUpperCase());
+            })(),
+            h('span', { class: 'lr-text' },
+              h('span', { class: 'lr-title' }, x.name),
+              h('span', { class: 'lr-sub' }, x.tours ? plural(x.tours, 'tour') : 'No tours yet')),
+            h('button', { class: 'am-add', type: 'button',
+              onclick: function () { openCreateArtist({ name: x.name, claim: true, tours: x.tours, handle: '', handleOk: false, handleTyped: false, busy: false }); } }, 'Claim'));
+        })) : h('p', { class: 'note' }, 'Nothing to claim: every artist you have tours under already has a profile.'),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: 'Claim an artist', cls: 'ca-sheet' });
   }
   // A username box that says whether the name is free as you type.
   function handleField(f, check, onState) {
@@ -2690,13 +2748,6 @@
   function openCreateArtist(keep) {
     var B = window.GR_BACKEND;
     var f = G.isObj(keep) ? keep : { name: '', handle: '', handleOk: false, handleTyped: false, busy: false };
-    // Artists you already have tours or a folder for, to start from.
-    var seen = {}, known = [];
-    tourArtists().concat(registeredArtists()).forEach(function (a) {
-      var k = String(a).trim().toLowerCase();
-      var has = (S.acts && S.acts.list || []).some(function (x) { return String(x.name).trim().toLowerCase() === k; });
-      if (k && !seen[k] && !has) { seen[k] = true; known.push(a); }
-    });
     openSheet(function () {
       var next = h('button', { class: 'btn primary block ca-next', type: 'submit' }, 'Next');
       var ready = function () { next.disabled = !(String(f.name).trim() && f.handleOk) || f.busy; };
@@ -2709,11 +2760,15 @@
           if (!f.handleTyped) hf.set(cleanHandle(f.name.replace(/\s+/g, '')));
           ready();
         } });
-      if (f.handle) hf.run();
+      // A claim starts with a username made from the name it's claiming.
+      if (f.claim && !f.handle && !f.handleTyped) hf.set(cleanHandle(String(f.name).replace(/\s+/g, '')));
+      else if (f.handle) hf.run();
       ready();
       return [
-        h('h2', { class: 'sh-title ca-title' }, 'Create a Greenroom Artist'),
-        h('p', { class: 'sh-sub' }, 'Name the artist and pick a username. You can change both at any time.'),
+        h('h2', { class: 'sh-title ca-title' }, f.claim ? 'Claim ' + f.name : 'Create a Greenroom Artist'),
+        h('p', { class: 'sh-sub' }, f.claim
+          ? 'Pick a username for ' + f.name + '. ' + (f.tours ? 'Its ' + plural(f.tours, 'tour') + ' will show on the profile. ' : '') + 'You can change the username at any time.'
+          : 'Name the artist and pick a username. You can change both at any time.'),
         h('form', { class: 'sh-form ca-form', novalidate: true,
           onsubmit: async function (e) {
             e.preventDefault();
@@ -2731,12 +2786,9 @@
               else saveFailed('artist', x);
             }
           } },
-          h('label', { class: 'ca-field' }, h('span', { class: 'ca-label' }, 'Artist name'), nameIn),
-          known.length ? h('div', { class: 'pf-chips ca-known' }, known.slice(0, 6).map(function (a) {
-            return h('button', { class: 'rv-chip', type: 'button', onclick: function () {
-              f.name = a; nameIn.value = a; if (!f.handleTyped) hf.set(cleanHandle(a.replace(/\s+/g, ''))); ready();
-            } }, a);
-          })) : null,
+          f.claim ? h('div', { class: 'ca-field fixed' }, h('span', { class: 'ca-label' }, 'Artist name'),
+              h('span', { class: 'ca-in' }, f.name))
+            : h('label', { class: 'ca-field' }, h('span', { class: 'ca-label' }, 'Artist name'), nameIn),
           h('label', { class: 'ca-field' }, h('span', { class: 'ca-label' }, 'Username'),
             h('span', { class: 'ca-line' }, h('span', { class: 'ca-at', 'aria-hidden': 'true' }, '@'), hf.input, hf.mark)),
           hf.said,
