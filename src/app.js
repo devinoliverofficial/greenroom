@@ -696,9 +696,12 @@
       else if (key !== prevKey && !(S.route && S.route.back === route) &&
         !(route.name === 'artist' && S.route && S.route.name === 'tour')) delete S.fromMap[key];
     }
-    // The menu slides in when you open it from your profile, not when you step back to it;
-    // opened afresh, its Budget drop-down is closed.
-    if (route.name === 'mainmenu' && S.route && S.route.name === 'home') { S.menuIn = true; S.mnBudget = false; S.mnArtist = null; }
+    // The menu slides in when you open it (the three lines), not when you step back to it.
+    // Opened from your profile, its Budget drop-down starts closed; from a page under it, it stays as you left it.
+    if (route.name === 'mainmenu' && route.fresh) {
+      S.menuIn = true;
+      if (S.route && S.route.name === 'home') { S.mnBudget = false; S.mnArtist = null; }
+    }
     // Leaving your profile: how far down its tabs you were, for the way back.
     if (S.route && S.route.name === 'home' && route.name !== 'home') S.homeY = window.scrollY;
     var backToTabs = route === PF_HOME && S.homeY;
@@ -3320,13 +3323,24 @@
     var live = entries.filter(function (e) { return tourIsLive(e[1]); })[0];
     return (live || entries[0])[0];
   }
-  // The header the menu and its two lists share: a round back button and the title in the middle.
-  function menuHead(title, backTo) {
+  /* The three lines, top right of your profile and of every page the menu
+     leads to: the menu, from wherever you are. Back from the menu returns to
+     the page you opened it on (as the two-tab money book, if you were in one). */
+  function menuBtn() {
+    return h('button', { class: 'iconbtn pf-menu', type: 'button', 'aria-label': 'Menu', onclick: openMenu }, icon('menu', 26));
+  }
+  function openMenu() {
+    var here = S.route || { name: 'home' };
+    if (here.name === 'tour' && S.book === here.id && !here.book) here = Object.assign({}, here, { book: true });
+    go({ name: 'mainmenu', back: here, fresh: true });
+  }
+  // The header the menu and the pages under it share: a round back button and the title in the middle; o.menu adds the three lines.
+  function menuHead(title, backTo, o) {
     return h('div', { class: 'headband' },
       h('header', { class: 'topbar' },
         h('span', { class: 'top-side' }),
         h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-        h('span', { class: 'top-side right' })),
+        h('span', { class: 'top-side right' }, o && o.menu ? menuBtn() : null)),
       h('div', { class: 'band-row mn-bar' },
         h('button', { class: 'sr-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 20)),
         h('h1', { class: 'mn-title' }, title)));
@@ -3414,7 +3428,7 @@
     var here = { name: 'tours', back: backTo };
     var entries = toursByNow();
     return h('div', { class: 'page home profile menu-page' },
-      menuHead('Tours', backTo),
+      menuHead('Tours', backTo, { menu: true }),
       dbBanner(),
       entries.length ? h('ul', { class: 'tour-list rows mn-list' }, entries.map(function (e) {
         return h('li', null, tourListRow(e, function () { openTour(e[0], 'details', here, 'Tours'); }));
@@ -3444,7 +3458,7 @@
     var here = { name: 'book', artist: name, back: backTo };
     var entries = bookTours(name);
     return h('div', { class: 'page home profile menu-page' },
-      menuHead(name || 'Budget', backTo),
+      menuHead(name || 'Budget', backTo, { menu: true }),
       dbBanner(),
       h('h2', { class: 'mn-h mn-over' }, 'Budget \u00b7 Tours'),
       entries.length ? h('ul', { class: 'tour-list rows mn-list' }, entries.map(function (e) {
@@ -3457,7 +3471,7 @@
     var here = { name: 'artists', back: backTo };
     var groups = tourGroups();
     return h('div', { class: 'page home profile menu-page' },
-      menuHead('Artists', backTo),
+      menuHead('Artists', backTo, { menu: true }),
       dbBanner(),
       groups.byArtist.size ? h('ul', { class: 'tour-list rows mn-list' }, Array.from(groups.byArtist, function (pair) {
         return h('li', null, artistRow(pair[0], pair[1], here, 'Artists'));
@@ -3766,8 +3780,7 @@
             pill ? h('span', { class: 'pill' }, pill) : null),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' },
-            h('button', { class: 'iconbtn pf-menu', type: 'button', 'aria-label': 'Menu',
-              onclick: function () { go({ name: 'mainmenu', back: { name: 'home' } }); } }, icon('menu', 26)))),
+            menuBtn())),
         who ? h('div', { class: 'band-row' }, accountTitle(who))
           : h('div', { class: 'band-row wordmark-row' },
               h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }))),
@@ -3919,9 +3932,7 @@
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' }, artistBack(name)),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-          h('span', { class: 'top-side right' },
-            h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
-              onclick: openSettingsSheet }, icon('more')))),
+          h('span', { class: 'top-side right' }, menuBtn())),
         h('div', { class: 'band-row' },
           h('h1', { class: 'band-name' }, name),
           sub ? h('p', { class: 'band-sub' }, sub) : null));
@@ -3937,9 +3948,7 @@
         h('header', { class: 'topbar' },
           h('span', { class: 'top-side' }, artistBack(name)),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-          h('span', { class: 'top-side right' },
-            h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Settings',
-              onclick: openSettingsSheet }, icon('more')))),
+          h('span', { class: 'top-side right' }, menuBtn())),
         h('div', { class: 'band-row' },
           h('h1', { class: 'band-name' }, name))),
       dbBanner(),
@@ -6066,7 +6075,8 @@
         canEditTour(id) ? h('button', {
           class: 'iconbtn', type: 'button', 'aria-label': 'Tour options',
           onclick: function () { openTourMenu(id); }
-        }, icon('more')) : h('span', { style: 'width:44px' })));
+        }, icon('more')) : null,
+        menuBtn()));
   }
 
 
