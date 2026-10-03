@@ -3643,9 +3643,11 @@
         h('span', null, t.name || 'Untitled tour'), icon('chevron', 14)),
       count > 1 ? h('button', { class: 'mn-change', type: 'button', onclick: function () { openTourPicker(id); } }, 'Change') : null);
   }
-  /* TODAY: where the tour is today (the show, or the day off and its hotel),
-     or the next show when the run hasn't started, then that day's sheet
-     under it. A day with nothing filled in shows nothing under it at all. */
+  /* TODAY: the tour name, New tour tasks for its managers right under it,
+     then where the tour is today (the show, or the day off and its hotel),
+     or the next show when the run hasn't started; how many days until a day
+     off; then that day's sheet. A day with nothing filled in shows nothing
+     under it at all. Check In sits at the bottom of the screen. */
   function pfToday(id, t, count) {
     var got = overviewDays(t);
     if (!got) return [pfTourBar(id, t, count, 'details'), emptyState('No dates yet', 'Once shows are on the run, today shows up here.')];
@@ -3671,18 +3673,28 @@
     // On a day off, the next show is one quiet line under it.
     var next = !s ? shows.filter(function (x) { return x.date > entry.date; })[0] : null;
     var sheet = daySheetNodes(s, off, { onlySet: true });
-    // Tonight, the day and the city on the left; the venue and its address on
-    // the right; Check In right under them.
+    var checkIn = isToday ? checkInBtn(id, entry.date, true) : null;
+    // Tonight, the day and the city on the left; the venue and its address on the right.
     return [
       pfTourBar(id, t, count, 'details'),
+      moneyLead(id) ? h('div', { class: 'pt-tasks' }, whatsNewBtn(id)) : null,
       dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, city, place, address,
         s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null),
+      pfOffCount(t),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
         [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
-      isToday ? checkInBtn(id, entry.date) : null,
-      moneyLead(id) ? h('div', { class: 'pt-tasks' }, whatsNewBtn(id)) : null,
-      sheet ? h('div', { class: 'pt-sheet' }, sheet) : null
+      sheet ? h('div', { class: 'pt-sheet' }, sheet) : null,
+      // Room at the end, so the last of the day sheet scrolls clear of Check In.
+      checkIn ? [h('div', { class: 'ci-room', 'aria-hidden': 'true' }), checkIn] : null
     ];
+  }
+  /* How many days until a day off, while the run is on and today's a show:
+     the same count as Overview's, in days. A day off already says so. */
+  function pfOffCount(t) {
+    var c = daysUntilOff(t);
+    if (!c || c.off) return null;
+    if (c.n === 1) return h('p', { class: 'pt-off' }, h('b', null, c.last ? 'Last show' : 'Day off'), c.last ? ' tonight' : ' tomorrow');
+    return h('p', { class: 'pt-off' }, h('b', { class: 'num' }, String(c.n)), ' days until day off');
   }
   /* A day in two columns: what and where on the left (the tag, the date, the
      city), the venue and its address on the right. */
@@ -6219,8 +6231,9 @@
 
   /* A tour page's green band, as slim as the GR mark: the mark, ⋯ and the
      three lines. The page's name sits under it, on the black. */
-  function tourBand(t, id, view) {
-    return h('div', { class: 'headband slim' }, tourTopbar(t, id, view));
+  // center: what rides the middle of the band in place of the GR mark (Chat's wordmark).
+  function tourBand(t, id, view, center) {
+    return h('div', { class: 'headband slim' }, tourTopbar(t, id, view, center));
   }
   // Budget's two tabs, above the chart: Expenses and Income.
   function bookStrip(id, current) {
@@ -6231,10 +6244,10 @@
         icon(t.icon, 20), h('span', null, t.label));
     }));
   }
-  function tourTopbar(t, id, view) {
+  function tourTopbar(t, id, view, center) {
     // No back button: your photo at the bottom takes you home, the three lines open the menu.
     return h('header', { class: 'topbar' }, h('span', { class: 'top-side' }),
-      h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+      center || h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
       h('div', { class: 'topbar-actions' },
         canEditTour(id) ? h('button', {
           class: 'iconbtn', type: 'button', 'aria-label': 'Tour options',
@@ -6371,8 +6384,9 @@
     };
 
     return h('div', { class: 'page tour has-tabs chat-page' },
-      tourBand(t, id, 'chat'),
-      h('h1', { class: 'tour-title' }, 'Chat'),
+      // The full Greenroom wordmark with Chat after it, sized to the slim band.
+      tourBand(t, id, 'chat', h('h1', { class: 'band-brand' },
+        h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }), h('span', { class: 'band-brand-t' }, 'Chat'))),
       dbBanner(),
       // The bus, barely there behind the conversation.
       h('div', { class: 'chat-bus', 'aria-hidden': 'true' }),
@@ -8014,12 +8028,12 @@
           onclick: function () { openGiveFlowers(id, p, data.left); } },
           data.left > 0 ? ['Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All ' + FLOWERS_EACH + ' given')));
   }
-  // Give flowers, centred, with this year's count under it, the way your profile shows it.
+  // Give flowers, centred under everyone's stats, with this year's count under it, the way your profile shows it.
   function fwMine(id, data, me) {
     if (!data.canGive) return null;
     var left = Math.max(0, data.left);
     var others = data.people.filter(function (p) { return p.userId !== me; });
-    return h('div', { class: 'fw-me-give fw-top' },
+    return h('div', { class: 'fw-me-give fw-under' },
       h('button', { class: 'fw-give', type: 'button', disabled: left <= 0 || !others.length,
         onclick: function () { pickFlowerPerson(id, others, left); } },
         'Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)),
@@ -8049,7 +8063,7 @@
       if (uid === me) return 'You';
       return by[uid] ? fwFirst(by[uid]) : (String(given || '').trim().split(/\s+/)[0] || 'Someone');
     };
-    if (!data.given.length) return h('p', { class: 'fw-none' }, 'No flowers yet. Be the first to give someone theirs.');
+    if (!data.given.length) return null;
     return [
       h('h2', { class: 'fw-h' }, 'Flowers given'),
       h('ul', { class: 'fw-feed' }, data.given.map(function (g) {
@@ -8080,13 +8094,14 @@
       }
     });
   }
-  /* Check In, at the top of your profile's Today: your way of saying you've
-     seen the day's info. Once a day, on a tour day. */
-  function checkInBtn(id, date) {
+  /* Check In, at the bottom of the screen on your profile's Today (pinned:
+     it stays put above the bottom bar): your way of saying you've seen the
+     day's info. Once a day, on a tour day. */
+  function checkInBtn(id, date, pinned) {
     var B = window.GR_BACKEND;
     if (S.mode !== 'db' || !B || !B.checkIn || !B.checkedIn) return null;
     var done = B.checkedIn(id, date);
-    return h('div', { class: 'ci-wrap' }, h('button', { class: 'ci-btn' + (done ? ' done' : ''), type: 'button', disabled: done,
+    return h('div', { class: 'ci-wrap' + (pinned ? ' pinned' : '') }, h('button', { class: 'ci-btn' + (done ? ' done' : ''), type: 'button', disabled: done,
       onclick: async function (e) {
         var b = e.currentTarget;
         b.disabled = true;
@@ -8179,8 +8194,8 @@
       ? emptyState('Flowers are for a signed-in tour', 'Once everyone’s signed in, each of you gets ' + FLOWERS_EACH + ' to give.')
       : !data ? fwLoading('Picking the flowers…')
       : data.error ? fwFailed(function () { B.flowersFor(id, true); })
-      : [fwMine(id, data, me),
-         h('ul', { class: 'fw-list' }, data.people.map(function (p) { return flowerCard(id, p, me, data); })),
+      : [h('ul', { class: 'fw-list' }, data.people.map(function (p) { return flowerCard(id, p, me, data); })),
+         fwMine(id, data, me),
          fwFeed(id, data, me)];
     return h('div', { class: 'page tour has-tabs fw-page' },
       tourBand(t, id, 'stats'),

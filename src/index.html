@@ -169,8 +169,6 @@ h1, h2, h3 { font-weight: 650; letter-spacing: -.018em; line-height: 1.12; margi
   opacity: .07; pointer-events: none; z-index: 0;
 }
 .chat-page .chat-list, .chat-page .chat-tools { position: relative; z-index: 1; }
-.chat-brand { display: flex; flex-direction: column; align-items: center; gap: 7px; margin: 0 0 12px; }
-.chat-label { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .01em; line-height: 1; color: var(--ink); }
 .wordmark-full {
   display: block; width: min(56vw, 210px); aspect-ratio: 400 / 83;
   background: var(--wordmark-img) center / contain no-repeat;
@@ -438,6 +436,21 @@ a.btn { text-decoration: none; }
 .headband.slim { padding: 0 18px; margin-bottom: 12px; }
 .headband.slim .topbar { min-height: 44px; }
 .headband.slim::after { bottom: -12px; height: 12px; }
+/* Chat's slim band: the full wordmark, then "Chat", on one line in the middle. */
+.topbar > .band-brand { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 8px; margin: 0; white-space: nowrap; pointer-events: none; }
+.band-brand .wordmark-full { width: calc(20px * 400 / 83); height: 20px; }
+.band-brand-t { font-size: 19px; font-weight: 800; letter-spacing: -.01em; line-height: 1; color: var(--ink); }
+/* Narrow phones (SE, mini with Display Zoom): smaller, so "Chat" clears the ⋯ beside it. */
+@media (max-width: 359px) {
+  .topbar > .band-brand { gap: 6px; }
+  .band-brand .wordmark-full { height: 15px; width: calc(15px * 400 / 83); }
+  .band-brand-t { font-size: 15px; }
+}
+/* On a band the wordmark is painted in the band's ink, like the splash's: black on the
+   green, light in Classic, where the band is see-through over black. */
+.headband .wordmark-full { background: none; background-color: var(--ink);
+  -webkit-mask: var(--wordmark-img) center / contain no-repeat; mask: var(--wordmark-img) center / contain no-repeat; }
 .page.tour > .tour-title { position: relative; z-index: 1; margin: 6px 0 12px; font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
 .page.tour > .title-row { position: relative; z-index: 1; margin: 6px 0 12px; }
 .page.tour > .title-row .tour-title { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
@@ -1831,7 +1844,6 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .fw-note { margin: 3px 0 0; font-size: 14px; line-height: 1.35; color: var(--ink-2); overflow-wrap: anywhere; }
 .fw-when { display: flex; align-items: center; gap: 14px; margin: 4px 0 0; font-size: 12.5px; color: var(--ink-3); }
 .fw-undo { appearance: none; border: 0; background: none; padding: 0; font: inherit; font-size: 12.5px; font-weight: 650; color: var(--pos); cursor: pointer; }
-.fw-none { position: relative; z-index: 1; margin: 24px 2px; text-align: center; font-size: 14px; color: var(--ink-3); }
 .fw-wait { position: relative; z-index: 1; margin-top: 24px; text-align: center; }
 .fw-fail { position: relative; z-index: 1; display: grid; justify-items: center; gap: 6px; }
 /* Give someone their flowers: tap how many. */
@@ -1871,10 +1883,15 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .pa-endorsed { padding: 6px 4px 6px 10px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .am-endorse { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 28px; margin-left: 6px; padding: 0 10px; border: 0; border-radius: 999px;
   background: var(--surface-2); color: var(--ink); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; white-space: nowrap; }
-.fw-me-give.fw-top { margin: 0 0 8px; }
+.fw-me-give.fw-under { margin: 4px 0 18px; }
 .fw-card .fw-give { font-size: 13px; }
-/* Check In, top of your profile's Today: pulses until you've checked in. */
+/* Check In: pulses until you've checked in. On your profile's Today it's
+   pinned to the bottom of the screen, just above the bottom bar. */
 .ci-wrap { position: relative; z-index: 1; display: flex; justify-content: center; margin: 2px 0 10px; }
+.ci-wrap.pinned { position: fixed; left: 0; right: 0; bottom: calc(55px + env(safe-area-inset-bottom, 0px) + 12px); /* the bottom bar's height, then a gap */
+  z-index: 39; margin: 0; pointer-events: none; }
+.ci-wrap.pinned .ci-btn { pointer-events: auto; padding: 12px 34px; font-size: 15px; }
+.ci-room { height: 64px; }
 .ci-btn { border: 0; border-radius: 999px; padding: 9px 24px; font: inherit; font-size: 14px; font-weight: 800; letter-spacing: .04em;
   background: var(--brand); color: var(--on-brand); cursor: pointer; animation: bopulse 1.4s ease-in-out infinite;
   box-shadow: 0 0 16px color-mix(in oklab, var(--brand), transparent 40%); }
@@ -2367,6 +2384,10 @@ button.acct-row:active { background: var(--surface-2); }
 .pt-today { margin: 0 2px 14px; text-align: center; }
 .pt-when { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; font-size: 13px; font-weight: 500; color: var(--ink-2); }
 .pt-tasks { position: relative; z-index: 1; margin: 0 0 12px; }
+/* Today: how many days until a day off, centred under the day. */
+.pt-off { position: relative; z-index: 1; margin: -4px 2px 14px; text-align: center; font-size: 14px; color: var(--ink-2); }
+.pt-off b { color: var(--ink); font-weight: 800; }
+.pt-off b.num { color: var(--pos); font-size: 20px; margin-right: 2px; }
 /* A day in two columns: tag, date and city left; venue and address right. */
 .pt-dayrow { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 2px 2px 14px; }
 .pt-dayrow-l { min-width: 0; flex: 1 1 auto; text-align: left; }

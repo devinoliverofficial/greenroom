@@ -30,6 +30,8 @@ shim = r"""<script>
         s0: { id: 's0', date: ymd(new Date(today.getTime() - 4 * 864e5)), city: 'Dallas, TX', venue: 'Granada',
           loggedAt: 1, income: { guarantee: 1500, merch: 900 }, merchCash: 400 },
         s00: { id: 's00', date: ymd(new Date(today.getTime() - 2 * 864e5)), city: 'Houston, TX', venue: 'White Oak' },
+        // Tomorrow too, so Today counts more than one day until the day off.
+        s1b: { id: 's1b', date: ymd(new Date(today.getTime() + 864e5)), city: 'San Antonio, TX', venue: 'Paper Tiger' },
         s2: { id: 's2', date: ymd(new Date(today.getTime() + 3 * 864e5)), city: 'Phoenix, AZ', venue: 'Crescent' } },
       // Merch cash spent on food and gas: the Expenses tab's Cash column.
       cashLog: { k1: { id: 'k1', date: ymd(new Date(today.getTime() - 3 * 864e5)), category: 'food', amount: 120, note: 'Catering run' },
