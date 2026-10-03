@@ -144,7 +144,8 @@ shim = r"""<script>
     // gave you two after Dallas, and two artist pages list Brent as crew.
     flowersFor: function (tourId) {
       var H = window.__harness, me = 'u-devin';
-      H.flowers = H.flowers || [{ id: 'f1', tour: 't1', from: 'u-brent', to: 'u-devin', n: 2, note: 'Killer set in Dallas', at: new Date(Date.now() - 2 * 864e5).toISOString() }];
+      H.flowers = H.flowers || [{ id: 'f1', tour: 't1', from: 'u-brent', to: 'u-devin', n: 2, note: 'Killer set in Dallas', category: 'talent', at: new Date(Date.now() - 2 * 864e5).toISOString() },
+        { id: 'f2', tour: 't1', from: 'u-jeff', to: 'u-brent', n: 3, note: 'Loaded the trailer solo', category: 'hustle', at: new Date(Date.now() - 864e5).toISOString() }];
       var sum = function (f) { return H.flowers.filter(f).reduce(function (a, x) { return a + x.n; }, 0); };
       var people = [
         { userId: 'u-devin', owner: true, name: 'Devin Oliver', handle: H.handle || '', avatar: '', tourRole: 'Artist', verified: true },
@@ -157,7 +158,7 @@ shim = r"""<script>
       }).sort(function (a, b) { return (b.here - a.here) || (b.owner - a.owner); });
       return { left: 10 - sum(function (x) { return x.from === me; }), canGive: true, people: people,
         given: H.flowers.filter(function (x) { return x.tour === tourId; }).slice().reverse().map(function (x) {
-          return { id: x.id, from: x.from, to: x.to, n: x.n, note: x.note, at: x.at, mine: x.from === me, fromName: '', toName: '' }; }) };
+          return { id: x.id, from: x.from, to: x.to, n: x.n, note: x.note, category: x.category || '', at: x.at, mine: x.from === me, fromName: '', toName: '' }; }) };
     },
     myFlowers: function () {
       var H = window.__harness, names = { 'u-brent': 'Brent Allen', 'u-jeff': 'Jeff Mora' };
@@ -165,7 +166,7 @@ shim = r"""<script>
       var got = H.flowers.filter(function (x) { return x.to === 'u-devin'; });
       return { counts: { flowers: got.reduce(function (a, x) { return a + x.n; }, 0), endorsements: devinActs().length, tours: 3 },
         left: 10 - H.flowers.filter(function (x) { return x.from === 'u-devin'; }).reduce(function (a, x) { return a + x.n; }, 0),
-        got: got.slice().reverse().map(function (x) { return { id: x.id, n: x.n, note: x.note, at: x.at, from: x.from, name: names[x.from] || '', avatar: '', tourId: x.tour, tour: 'Harness run' }; }) };
+        got: got.slice().reverse().map(function (x) { return { id: x.id, n: x.n, note: x.note, category: x.category || '', at: x.at, from: x.from, name: names[x.from] || '', avatar: '', tourId: x.tour, tour: 'Harness run' }; }) };
     },
     searchSuggestions: function () {
       var P = window.GR_BACKEND.people, row = function (uid) { var p = P[uid] || (uid === 'u-jeff' ? { name: 'Jeff Mora', handle: 'jeffmora', roles: ['FOH Engineer'], canOpen: true, followers: 3 } : {}); return Object.assign({ userId: uid, avatar: '', followers: 0, roles: [] }, p); };
@@ -180,11 +181,11 @@ shim = r"""<script>
     checkedIn: function (tourId, date) { return (window.__harness.checkins || []).indexOf(tourId + '|' + date) >= 0; },
     checkIn: function (tourId, date) { var H = window.__harness; H.checkins = (H.checkins || []).concat([tourId + '|' + date]); return Promise.resolve(); },
     newGiftId: function () { return 'g' + Date.now() + Math.random().toString(36).slice(2, 6); },
-    giveFlowers: function (tourId, uid, n, note, rid) {
+    giveFlowers: function (tourId, uid, n, note, rid, cat) {
       var H = window.__harness, d = window.GR_BACKEND.flowersFor(tourId);
       if (H.flowers.some(function (x) { return x.id === rid; })) return Promise.resolve({ left: d.left });
       if (n > d.left) { var e = new Error('none-left'); e.code = 'none-left'; return Promise.reject(e); }
-      H.flowers.push({ id: rid, tour: tourId, from: 'u-devin', to: uid, n: n, note: String(note || '').trim(), at: new Date().toISOString() });
+      H.flowers.push({ id: rid, tour: tourId, from: 'u-devin', to: uid, n: n, note: String(note || '').trim().slice(0, 100), category: cat || '', at: new Date().toISOString() });
       return Promise.resolve({ left: d.left - n });
     },
     takeBackFlowers: function (tourId, id) {
@@ -257,6 +258,10 @@ shim = r"""<script>
         iFollow: H.follows.some(function (x) { return x.a === 'u-devin' && x.b === uid; }),
         followsMe: H.follows.some(function (x) { return x.a === uid && x.b === 'u-devin'; }) };
       var so = H.social || {};
+      var names = { 'u-devin': 'Devin Oliver', 'u-brent': 'Brent Allen', 'u-jeff': 'Jeff Mora' };
+      window.GR_BACKEND.flowersFor('t1');
+      base.gotFlowers = (H.flowers || []).filter(function (x) { return x.to === uid; }).slice().reverse().map(function (x) {
+        return { id: x.id, n: x.n, note: x.note, category: x.category || '', at: x.at, from: x.from, name: names[x.from] || '', avatar: '' }; });
       if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', verified: true, bio: so.bio || '', roles: so.roles || [], tourRole: me.tour_role, avatar: so.photo || '', artists: so.artists || [],
         acts: devinActs(), flowers: 2, endorsements: devinActs().length,
         tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }], logos: {} }, base));

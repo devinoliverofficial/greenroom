@@ -866,9 +866,11 @@
     },
     // rid names this gift, so sending it again (a retry) never gives twice.
     newGiftId: newUuid,
-    giveFlowers: async function (tourId, userId, n, note, rid) {
-      var q = await sb.rpc('give_flowers', { t_id: tourId, to_user: userId, how_many: n, why: String(note || '').trim().slice(0, 140),
-        rid: rid || newUuid() });
+    // cat: what they're for, one of the ten (see FLOWER_CATS in the app).
+    giveFlowers: async function (tourId, userId, n, note, rid, cat) {
+      // Cut by whole characters, so an emoji at the end is never split in half.
+      var q = await sb.rpc('give_flowers', { t_id: tourId, to_user: userId, how_many: n, why: Array.from(String(note || '').trim()).slice(0, 100).join(''),
+        rid: rid || newUuid(), cat: cat || null });
       if (q.error) {
         if (/no flowers left/.test(q.error.message || '')) {
           // This phone's count was behind: fetch the real one before saying so.

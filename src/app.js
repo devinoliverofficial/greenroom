@@ -658,6 +658,8 @@
   /* ============================== Routing ============================== */
 
   function go(route) {
+    // On an artist account, home is that artist's page (see actingAs).
+    if (route.name === 'home' && actingAs()) { S.fromMap = {}; route = actHome(); }
     // OVERVIEW always opens on today's show, not wherever you last flipped to.
     if (route.name === 'tour' && route.view === 'details') S.dsIndex = null;
     // The tour you were last in is the one the menu's tour rows open.
@@ -748,6 +750,13 @@
     if (key) { try { sel = [a.selectionStart, a.selectionEnd]; } catch (e) { sel = null; } }
 
     var node;
+    if (S.loaded && S.route.name === 'act' && S.route.home) {
+      // The artist you were on is gone (deleted on another phone): back to your own page.
+      var gone = S.actCards && S.actCards[S.route.id];
+      if (gone && gone.gone && S.actAs === S.route.id) setActingAs(null);
+      if (!actingAs() || S.route.id !== actingAs()) S.route = PF_HOME;
+    }
+    if (S.loaded && S.route.name === 'home' && actingAs()) S.route = actHome();
     if (!S.loaded) node = viewLoading();
     else if (S.route.name === 'wizard') node = viewWizard();
     else if (S.route.name === 'tour') node = viewTour();
@@ -1909,11 +1918,27 @@
         : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
       card.bio ? h('p', { class: 'pf-bio' }, card.bio)
         : (edit ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add a short bio') : null),
-      edit ? h('div', { class: 'pf-actions three' },
-        h('button', { class: 'pf-btn', type: 'button', onclick: function () { openProfileSheet(); } }, 'Edit profile'),
-        uid ? h('button', { class: 'pf-btn', type: 'button', onclick: function () { openViewerExperience(); } }, 'View profile') : null,
-        dmOn() ? h('button', { class: 'pf-btn', type: 'button', onclick: function () { openInbox(); } }, 'Messages',
-          unread ? h('span', { class: 'dm-dot num', 'aria-label': unread + ' unread' }, String(unread)) : null) : null) : null);
+      edit ? h('div', { class: 'pf-actions three' + (tasksBtn() ? ' four' : '') },
+        // On a narrow phone with four buttons, Edit profile and View profile drop the word "profile".
+        h('button', { class: 'pf-btn', type: 'button', onclick: function () { openProfileSheet(); } },
+          h('span', { class: 'pf-btn-t' }, 'Edit', h('span', { class: 'pf-btn-x' }, ' profile'))),
+        uid ? h('button', { class: 'pf-btn', type: 'button', onclick: function () { openViewerExperience(); } },
+          h('span', { class: 'pf-btn-t' }, 'View', h('span', { class: 'pf-btn-x' }, ' profile'))) : null,
+        dmOn() ? h('button', { class: 'pf-btn', type: 'button', onclick: function () { openInbox(); } }, h('span', { class: 'pf-btn-t' }, 'Messages'),
+          unread ? h('span', { class: 'dm-dot num', 'aria-label': unread + ' unread' }, String(unread)) : null) : null,
+        tasksBtn()) : null);
+  }
+  /* New tour tasks, for the managers of the tour your profile follows: a
+     button beside Messages, glowing green while there are new tasks. */
+  function tasksBtn() {
+    var id = profileTourId();
+    if (!id || !getTour(id) || !moneyLead(id)) return null;
+    var st = taskState(id), n = st.tasks.length;
+    var shown = st.glow && st.fresh ? st.fresh : n;
+    return h('button', { class: 'pf-btn pf-tasks' + (st.glow ? ' on' : ''), type: 'button',
+        'aria-label': 'New tour tasks' + (n ? ', ' + plural(n, 'task') + (st.fresh ? ', ' + st.fresh + ' new' : '') : ''),
+        onclick: function () { openTaskDeck(id); } },
+      h('span', { class: 'pf-btn-t' }, 'Tasks'), n ? h('span', { class: 'dm-dot num' + (st.glow ? '' : ' quiet') }, String(shown)) : null);
   }
   /* Edit profile, laid out like a social app's: the photo up top, then a
      row each for name, @username, role and bio, then the artists you've
@@ -2121,7 +2146,8 @@
     var c = S.cards[uid] || (S.cards[uid] = { card: null, at: 0, asking: false, gone: false });
     // Asked afresh while an older ask is out (it was just changed): that answer is stale, ask again.
     if (fresh && c.asking) c.again = true;
-    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+    // Flowers given, taken back or removed since this card came: it asks again.
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3 || (S.flowersAt && c.at < S.flowersAt))) {
       c.asking = true;
       window.GR_BACKEND.profileCard(uid).then(function (card) {
         c.asking = false;
@@ -2139,7 +2165,11 @@
   function openProfile(uid) {
     if (!uid || !socialOn()) return;
     if (sheet) closeSheet(true);
-    if (uid === window.GR_BACKEND.uid()) { go({ name: 'home' }); return; }
+    if (uid === window.GR_BACKEND.uid()) {
+      if (actingAs()) { cardOf(uid, true); go({ name: 'profile', user: uid, preview: true, back: S.route }); }
+      else go({ name: 'home' });
+      return;
+    }
     var back = S.route && S.route.name === 'profile' ? (S.route.back || { name: 'home' }) : S.route;
     go({ name: 'profile', user: uid, back: back });
   }
@@ -2306,14 +2336,43 @@
           h('button', { class: 'pf-btn', type: 'button',
             onclick: preview ? justLooking('This is where people message you.') : function () { openDm(uid, peer); } }, 'Message'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openContact(uid, card); } }, 'Contact'))),
-      h('div', { class: 'vp-tabs', role: 'tablist' }, tabBtn('artists', 'Artists', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
+      h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('artists', 'Artists', 'people'), tabBtn('tours', 'Tours', 'tabmap'),
+        tabBtn('stats', 'Stats', 'tabstats')),
       tab === 'artists'
         ? (artistRows.length ? h('ul', { class: 'tour-list rows vp-list' }, artistRows)
             : emptyState('No artists yet', first + ' hasn\u2019t added any artists yet.'))
+        : tab === 'stats' ? personFlowers(card)
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', first + ' hasn\u2019t been on a tour in Greenroom yet.')),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
+  }
+  /* Someone's Stats tab: their three numbers, then every flower they've been
+     given, newest first: who sent it, what for, the date, and the note. */
+  function personFlowers(card) {
+    var got = Array.isArray(card.gotFlowers) ? card.gotFlowers : [];
+    return [
+      h('section', { class: 'fw-me vp-fw' }, fwStats(card.flowers, { endorsements: card.endorsements, tours: (card.tours || []).length })),
+      got.length ? h('ul', { class: 'fw-feed vp-fw-feed' }, got.map(function (g) {
+        var who = String(g.name || '').trim();
+        var face = personPhoto({ name: who || '?', avatar: g.avatar }, 'xs');
+        return h('li', { class: 'fw-gift' },
+          g.from ? h('button', { class: 'fw-gift-face', type: 'button', 'aria-label': 'Open ' + (who || 'their') + ' profile',
+            onclick: function () { openProfile(g.from); } }, face) : face,
+          h('div', { class: 'fw-gift-t' },
+            h('p', { class: 'fw-gift-l' }, h('strong', null, who || 'Someone'), ' \u00b7 ' + plural(g.n, 'flower') + ' ',
+              h('span', { 'aria-hidden': 'true' }, FLOWER), catTag(g.category)),
+            g.note ? h('p', { class: 'fw-note' }, '\u201c' + g.note + '\u201d') : null,
+            h('p', { class: 'fw-when' }, flowerDate(g.at))));
+      })) : null
+    ];
+  }
+  // The day flowers were given: "Oct 3", with the year when it isn't this one.
+  function flowerDate(at) {
+    var dt = new Date(at);
+    if (isNaN(dt)) return '';
+    var day = G.ymd(dt);
+    return dayMD(day) + (day.slice(0, 4) !== G.ymd(new Date()).slice(0, 4) ? ', ' + day.slice(0, 4) : '');
   }
   // Contact: what's on their contact card, for the people they tour with.
   function openContact(uid, card) {
@@ -2664,14 +2723,60 @@
           'aria-label': 'Your profiles: ' + (card.handle || who), onclick: function () { openAccounts(); } }, inner))
       : h('h1', { class: 'band-name vp-user mid' }, inner);
   }
+  /* Which of your accounts you're on: yourself, or an artist page you run.
+     Switched from the arrow by the name at the top, the way a social app
+     switches accounts, and kept on the phone, so the app opens where you
+     left it. On an artist, its page is home (the photo at the bottom is its
+     photo and takes you there), and your own page is like anyone else's to
+     it: tapping your name opens the viewer experience. Switch back from the
+     arrow by the artist's name. */
+  function actingKey() { var B = window.GR_BACKEND; return 'gr-acting:' + ((B && B.uid && B.uid()) || 'me'); }
+  function actingAs() {
+    if (!socialOn()) return null;
+    if (S.actAs === undefined) S.actAs = lsGet(actingKey()) || null;
+    if (!S.actAs) return null;
+    // A page that's gone, or isn't yours any more, puts you back on your own
+    // account (judged on a settled list, not one being fetched again after a change).
+    var a = myActs(), list = a.list;
+    if (list && !a.asking && !list.some(function (x) { return x.id === S.actAs && x.mine; })) { setActingAs(null); return null; }
+    return S.actAs;
+  }
+  function setActingAs(id) {
+    S.actAs = id || null;
+    lsSet(actingKey(), S.actAs || '');
+  }
+  function actHome() { return { name: 'act', id: S.actAs, manage: true, home: true }; }
+  // The artist you're on, for the photo at the bottom: its page if loaded, else its row in your list.
+  function actingCard() {
+    var id = actingAs();
+    if (!id) return null;
+    var c = S.actCards && S.actCards[id] && S.actCards[id].card;
+    var row = ((S.acts && S.acts.list) || []).filter(function (x) { return x.id === id; })[0];
+    return c || row || { id: id, name: '', handle: '', avatar: '' };
+  }
+  function switchAccount(id) {
+    if (sheet) closeSheet(true);
+    setActingAs(id);
+    if (id) actOf(id, true);
+    go(id ? actHome() : PF_HOME);
+  }
   function myActs(fresh) {
     var a = S.acts || (S.acts = { list: null, at: 0, asking: false });
     var B = window.GR_BACKEND;
     if (!socialOn() || !B.myArtists) return a;
+    // Asked afresh while an older ask is out (an artist was just made or deleted): that answer is stale.
+    if (fresh && a.asking) a.again = true;
     if (!a.asking && (fresh || Date.now() - a.at > 60e3)) {
       a.asking = true;
-      B.myArtists().then(function (rows) { a.list = rows; a.at = Date.now(); a.asking = false; if (a.onLoad) { var f = a.onLoad; a.onLoad = null; f(); } })
-        .catch(function () { a.asking = false; a.at = Date.now(); });
+      B.myArtists().then(function (rows) {
+        a.asking = false;
+        if (a.again) { a.again = false; myActs(true); return; }
+        a.list = rows; a.at = Date.now();
+        if (a.onLoad) { var f = a.onLoad; a.onLoad = null; f(); }
+        // The artist you're on isn't yours any more: redraw, which puts you back on your own account.
+        if (S.actAs && !rows.some(function (x) { return x.id === S.actAs && x.mine; })) render();
+      })
+        .catch(function () { a.asking = false; a.at = Date.now(); if (a.again) { a.again = false; myActs(true); } });
     }
     return a;
   }
@@ -2722,13 +2827,16 @@
     var tail = h('div', { class: 'acct-tail' });
     var fill = function () {
       var list = a.list;
+      var on = actingAs();
       box.replaceChildren.apply(box, !list ? [h('p', { class: 'note' }, 'Loading\u2026')] : list.map(function (x) {
-        return h('button', { class: 'acct-row', type: 'button', onclick: function () { openAct(x.id, true); } },
+        // An artist you run is an account to switch to; one that only lists you opens as anyone sees it.
+        return h('button', { class: 'acct-row', type: 'button',
+            onclick: function () { if (x.mine) switchAccount(x.id); else openAct(x.id); } },
           personPhoto(x, 'xs'),
           h('span', { class: 'lr-text' },
             h('span', { class: 'lr-title' }, x.handle),
             h('span', { class: 'lr-sub' }, x.name + (x.mine ? '' : x.kind === 'band' ? ' \u00b7 Band member' : ' \u00b7 Crew'))),
-          icon('chevron', 16));
+          x.mine && on === x.id ? h('span', { class: 'acct-on', 'aria-label': 'You are here' }, icon('check', 14)) : icon('chevron', 16));
       }));
       var can = list ? claimable() : [];
       tail.replaceChildren.apply(tail, [
@@ -2750,12 +2858,13 @@
       return [
         h('h2', { class: 'sh-title pe-title' }, 'Your profiles'),
         h('div', { class: 'acct-list' },
-          h('div', { class: 'acct-row me' },
+          h(actingAs() ? 'button' : 'div', { class: 'acct-row me', type: actingAs() ? 'button' : null,
+              onclick: actingAs() ? function () { switchAccount(null); } : null },
             personPhoto({ name: who, avatar: me.photo }, 'xs'),
             h('span', { class: 'lr-text' },
               h('span', { class: 'lr-title' }, me.handle || who),
               me.handle ? h('span', { class: 'lr-sub' }, who) : null),
-            h('span', { class: 'acct-on', 'aria-label': 'You are here' }, icon('check', 14))),
+            actingAs() ? icon('chevron', 16) : h('span', { class: 'acct-on', 'aria-label': 'You are here' }, icon('check', 14))),
           box, tail)
       ];
     }, { label: 'Your profiles', cls: 'acct-sheet' });
@@ -2916,7 +3025,7 @@
     var done = function () {
       if (o.wizard && band) { openAddMembers(artistId, 'crew', o); return; }
       closeSheet();
-      if (o.wizard) { toast((o.name || 'Artist') + ' is on Greenroom'); openAct(artistId, true); } else render(true);
+      if (o.wizard) { toast((o.name || 'Artist') + ' is on Greenroom'); myActs(true); switchAccount(artistId); } else render(true);
     };
     openSheet(function () {
       return [
@@ -2946,12 +3055,15 @@
           h('span', { class: 'top-side' }),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' })),
-        h('div', { class: 'band-row' }, h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title))));
+        h('div', { class: 'band-row' }, h('h1', { class: 'band-name vp-user mid' },
+          h('button', { class: 'acct-btn', type: 'button', 'aria-label': 'Your profiles: ' + title, onclick: function () { openAccounts(); } },
+            h('span', { class: 'vp-user-t' }, title), h('span', { class: 'acct-arrow', 'aria-hidden': 'true' }, icon('chevron', 16))))));
     };
     if (!card) {
       return h('div', { class: 'page home profile has-tabs' }, head('Artist'),
         c.gone ? emptyState('This artist isn\u2019t on Greenroom', 'The profile may have been removed.')
-          : c.failed ? emptyState('Couldn\u2019t load this artist', 'Check your signal and try again.')
+          : c.failed ? h('div', { class: 'fw-fail' }, emptyState('Couldn\u2019t load this artist', 'Check your signal and try again.'),
+              h('button', { class: 'btn ghost', type: 'button', onclick: function () { actOf(id, true); render(true); } }, 'Try again'))
           : h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading\u2026'),
         socialBar(''));
     }
@@ -3078,7 +3190,7 @@
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', manage ? 'Tours you file under ' + card.name + ' show up here.' : card.name + ' has no tours on Greenroom yet.')),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
-      socialBar(''));
+      socialBar(manage && id === actingAs() ? 'me' : ''));
   }
   function openActEdit(id, keep) {
     var B = window.GR_BACKEND;
@@ -3124,7 +3236,12 @@
                 body: 'The artist profile and its band and crew lists go. Anyone it endorsed keeps the endorsement. Your tours are not touched.',
                 action: 'Delete artist profile', danger: true,
                 onConfirm: async function () {
-                  try { await B.deleteArtist(id); delete S.actCards[id]; myActs(true); go({ name: 'home' }); toast('Artist profile deleted'); return true; }
+                  try {
+                    await B.deleteArtist(id); delete S.actCards[id];
+                    if (S.actAs === id) setActingAs(null); // back on your own account
+                    if (S.acts && S.acts.list) S.acts.list = S.acts.list.filter(function (x) { return x.id !== id; });
+                    myActs(true); go({ name: 'home' }); toast('Artist profile deleted'); return true;
+                  }
                   catch (x) { saveFailed('artist', x); return false; }
                 } });
             } }, icon('trash', 18), 'Delete artist profile'),
@@ -3142,20 +3259,26 @@
      to its top). Whatever tabs the page has sit either side of it. */
   function homeFace(current) {
     var me = myCard(), who = profileName(), on = current === 'me';
-    var face = h('span', { class: 'sb-face' + (me.photo ? ' has' : '') + (on ? ' on' : ''), 'aria-hidden': 'true' },
-      me.photo ? h('img', { src: me.photo, alt: '' }) : (who.trim().charAt(0).toUpperCase() || '?'));
-    var b = tabButton(on, 'Your profile', null, function () {
-      if (S.route && S.route.name === 'home') window.scrollTo({ top: 0, behavior: 'smooth' });
-      else go(PF_HOME); // back where you were on it
+    // On an artist account, the artist's photo, and home is its page.
+    var act = actingCard();
+    var photo = act ? String(act.avatar || '') : me.photo;
+    var letter = act ? String(act.name || act.handle || '?') : who;
+    var face = h('span', { class: 'sb-face' + (photo ? ' has' : '') + (on ? ' on' : ''), 'aria-hidden': 'true' },
+      photo ? h('img', { src: photo, alt: '' }) : (letter.trim().charAt(0).toUpperCase() || '?'));
+    var b = tabButton(on, act ? 'Your artist page' : 'Your profile', null, function () {
+      if (act ? (S.route && S.route.name === 'act' && S.route.manage && S.route.id === act.id) : (S.route && S.route.name === 'home')) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else go(PF_HOME); // back where you were on it (the artist's page, on an artist account)
     }, face);
     b.classList.add('dock-me');
     return b;
   }
+  function actingSig() { var a = actingCard(); return a ? a.id + ':' + String(a.avatar || '').length + ':' + (a.name || '') : ''; }
   function dock(left, right, current, sig, o) {
     o = o || {};
     var me = myCard();
     return h('nav', { class: 'tabbar dock' + (o.cls ? ' ' + o.cls : ''), 'aria-label': o.label || 'Greenroom',
-      'data-sig': 'dock|' + sig + '|' + current + '|' + me.photo.length + '|' + profileName() },
+      'data-sig': 'dock|' + sig + '|' + current + '|' + me.photo.length + '|' + profileName() + '|' + actingSig() },
       h('div', { class: 'dock-half left' }, left), homeFace(current), h('div', { class: 'dock-half right' }, right));
   }
   // The social pages' bar: Search on the left of your photo, and on its right
@@ -3674,13 +3797,12 @@
     var next = !s ? shows.filter(function (x) { return x.date > entry.date; })[0] : null;
     var sheet = daySheetNodes(s, off, { onlySet: true });
     var checkIn = isToday ? checkInBtn(id, entry.date, true) : null;
-    // Tonight, the day and the city on the left; the venue and its address on the right.
+    // Tonight, the day and the city on the left; the venue and its address in
+    // the middle; how many days until a day off in the right corner.
     return [
       pfTourBar(id, t, count, 'details'),
-      moneyLead(id) ? h('div', { class: 'pt-tasks' }, whatsNewBtn(id)) : null,
       dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, city, place, address,
-        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null),
-      pfOffCount(t),
+        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, pfOffCount(t)),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
         [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
       sheet ? h('div', { class: 'pt-sheet' }, sheet) : null,
@@ -3689,24 +3811,29 @@
     ];
   }
   /* How many days until a day off, while the run is on and today's a show:
-     the same count as Overview's, in days. A day off already says so. */
+     the same count as Overview's, in days, the number over the words. A day
+     off already says so. */
   function pfOffCount(t) {
     var c = daysUntilOff(t);
     if (!c || c.off) return null;
-    if (c.n === 1) return h('p', { class: 'pt-off' }, h('b', null, c.last ? 'Last show' : 'Day off'), c.last ? ' tonight' : ' tomorrow');
-    return h('p', { class: 'pt-off' }, h('b', { class: 'num' }, String(c.n)), ' days until day off');
+    if (c.n === 1) return h('p', { class: 'pt-off', 'aria-label': (c.last ? 'Last show' : 'Day off') + (c.last ? ' tonight' : ' tomorrow') },
+      h('b', null, c.last ? 'Last show' : 'Day off'), h('span', null, c.last ? 'tonight' : 'tomorrow'));
+    return h('p', { class: 'pt-off', 'aria-label': c.n + ' days until day off' },
+      h('b', { class: 'num' }, String(c.n)), h('span', null, 'days until'), h('span', null, 'day off'));
   }
-  /* A day in two columns: what and where on the left (the tag, the date, the
-     city), the venue and its address on the right. */
-  function dayRow(chip, date, city, place, address, extra) {
+  /* A day in three columns: what and where in the left corner (the tag, the
+     date, the city), the venue and its address in the middle, and corner
+     (Today's days until a day off) in the right corner. */
+  function dayRow(chip, date, city, place, address, extra, corner) {
     return h('div', { class: 'pt-dayrow' },
       h('div', { class: 'pt-dayrow-l' },
         chip || extra ? h('p', { class: 'pt-dr-chips' }, chip, extra) : null,
         h('p', { class: 'pt-dr-date' }, dayLong(date)),
         h('p', { class: 'pt-dr-city' }, city)),
-      place || address ? h('div', { class: 'pt-dayrow-r' },
+      h('div', { class: 'pt-dayrow-c' },
         place ? h('p', { class: 'pt-dr-venue' }, place) : null,
-        address ? h('a', { class: 'pt-dr-addr', href: mapsHref(address), target: '_blank', rel: 'noopener' }, address) : null) : null);
+        address ? h('a', { class: 'pt-dr-addr', href: mapsHref(address), target: '_blank', rel: 'noopener' }, address) : null),
+      h('div', { class: 'pt-dayrow-r' }, corner || null));
   }
   /* STATS: your flowers. The three numbers from every tour you've been on
      (flowers between the laurels, the trophy for the artists who list you
@@ -3724,11 +3851,6 @@
     var got = Array.isArray(mine.got) ? mine.got : [];
     return [
       h('section', { class: 'fw-me' }, fwStats(c.flowers, c)),
-      // Give flowers, centred under the numbers, and this year's count under it.
-      t ? h('div', { class: 'fw-me-give' },
-        h('button', { class: 'fw-give', type: 'button', onclick: function () { openTour(id, 'stats', PF_HOME, 'Profile'); } },
-          'Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)),
-        left == null ? null : h('p', { class: 'fw-me-left' }, left + ' left')) : null,
       got.length ? [
         h('h3', { class: 'fw-h' }, 'Your flowers'),
         h('ul', { class: 'fw-feed' }, got.map(function (g) {
@@ -3737,12 +3859,17 @@
             personPhoto({ name: who || '?', avatar: g.avatar }, 'xs'),
             h('div', { class: 'fw-gift-t' },
               h('p', { class: 'fw-gift-l' }, h('strong', null, who ? who.split(/\s+/)[0] : 'Someone'), ' gave you ' + plural(g.n, 'flower') + ' ',
-                h('span', { 'aria-hidden': 'true' }, FLOWER)),
+                h('span', { 'aria-hidden': 'true' }, FLOWER), catTag(g.category)),
               g.note ? h('p', { class: 'fw-note' }, '“' + g.note + '”') : null,
               h('p', { class: 'fw-when' }, [g.tour, dmWhen(g.at)].filter(Boolean).join(' · '),
                 h('button', { class: 'fw-undo', type: 'button', onclick: function () { removeGotFlowers(g); } }, 'Remove'))));
         }))
-      ] : null
+      ] : null,
+      // Give flowers at the bottom, centred, with this year's count under it.
+      t ? h('div', { class: 'fw-me-give fw-under' },
+        h('button', { class: 'fw-give', type: 'button', onclick: function () { openTour(id, 'stats', PF_HOME, 'Profile'); } },
+          'Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)),
+        left == null ? null : h('p', { class: 'fw-me-left' }, left + ' left')) : null
     ];
   }
   /* GUEST LIST: tonight's (or the next show's), with Add guest and Import
@@ -3772,14 +3899,16 @@
         h('h3', { class: 'pt-gl-title' }, 'Guest list'),
         h('p', { class: 'pt-gl-count' }, sum.names ? plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket') : 'No names yet')),
       rows.length ? h('div', { class: 'pt-sheet pt-gl' }, guestLedger(rows)) : null,
-      h('div', { class: 'pt-two' },
+      guestSendRow(id, t, s, list),
+      shows.length > 1 ? h('button', { class: 'pt-more', type: 'button',
+        onclick: function () { openTour(id, 'guests', PF_HOME, 'Profile'); } }, 'Other nights', icon('chevron', 14)) : null,
+      // Add guest and Import list stay at the bottom of the screen; room so the list scrolls clear of them.
+      h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
+      h('div', { class: 'pt-two pinned' },
         h('button', { class: 'pf-btn go', type: 'button',
           onclick: function () { openGuestForm(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } }, icon('plus', 16), 'Add guest'),
         h('button', { class: 'pf-btn', type: 'button',
-          onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } }, 'Import list')),
-      guestSendRow(id, t, s, list),
-      shows.length > 1 ? h('button', { class: 'pt-more', type: 'button',
-        onclick: function () { openTour(id, 'guests', PF_HOME, 'Profile'); } }, 'Other nights', icon('chevron', 14)) : null
+          onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } }, 'Import list'))
     ];
   }
   /* The artists' Greenroom pages this account is near (its own, the ones it's
@@ -6384,7 +6513,7 @@
     };
 
     return h('div', { class: 'page tour has-tabs chat-page' },
-      // The full Greenroom wordmark with Chat after it, sized to the slim band.
+      // The full Greenroom wordmark with Chat small under it, sized to the slim band.
       tourBand(t, id, 'chat', h('h1', { class: 'band-brand' },
         h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }), h('span', { class: 'band-brand-t' }, 'Chat'))),
       dbBanner(),
@@ -7351,24 +7480,6 @@
     return { tasks: tasks, fresh: fresh, glow: glow };
   }
 
-  function whatsNewBtn(tourId) {
-    var st = taskState(tourId);
-    var n = st.tasks.length;
-    var sub = !n ? 'All caught up'
-      : st.fresh ? st.fresh + ' new' + (n > st.fresh ? ' \u00b7 ' + (n - st.fresh) + ' waiting' : '')
-      : plural(n, 'task') + ' waiting';
-    return h('div', { class: 'wn-wrap' },
-      h('button', { class: 'wn-big' + (st.glow ? ' on' : ' seen'), type: 'button',
-        'aria-label': 'New tour tasks, ' + sub,
-        onclick: function () { openTaskDeck(tourId); } },
-        // Two sides of equal width, so the words sit dead centre under Invite crew.
-        h('span', { class: 'wn-side' }, h('span', { class: 'wn-ic', 'aria-hidden': 'true' }, icon('deck', 20))),
-        h('span', { class: 'wn-txt' }, h('span', { class: 'wn-t' }, 'NEW TOUR TASKS'), h('span', { class: 'wn-s' }, sub)),
-        h('span', { class: 'wn-side r' },
-          n ? h('span', { class: 'wn-count' }, String(st.glow && st.fresh ? st.fresh : n)) : null,
-          icon('chevron', 18))));
-  }
-
   /* The deck: one task at a time. Right (or "Handle now") goes there; left
      (or "Later") keeps it for later. Arrow keys work too. */
   function openTaskDeck(tourId) {
@@ -7970,6 +8081,17 @@
      profile's Stats tab. */
   var FLOWERS_EACH = 10;
   var FLOWER = '💐', TROPHY = '🏆';
+  // What flowers are for: one of these ten, picked when you give them.
+  var FLOWER_CATS = [['talent', 'Talent'], ['reliability', 'Reliability'], ['trust', 'Trust'], ['hustle', 'Hustle'],
+    ['versatility', 'Versatility'], ['adaptability', 'Adaptability'], ['communication', 'Communication'],
+    ['professionalism', 'Professionalism'], ['morale', 'Morale'], ['cleanliness', 'Cleanliness']];
+  var FLOWER_NOTE_MAX = 100;
+  function flowerCat(key) {
+    var c = FLOWER_CATS.filter(function (x) { return x[0] === key; })[0];
+    return c ? c[1] : '';
+  }
+  // The category as a small green tag (flowers from before categories have none).
+  function catTag(key) { var l = flowerCat(key); return l ? h('span', { class: 'fw-cat' }, l) : null; }
   function flowersOn() {
     var B = window.GR_BACKEND;
     return S.mode === 'db' && !!(B && B.flowersFor);
@@ -8028,7 +8150,7 @@
           onclick: function () { openGiveFlowers(id, p, data.left); } },
           data.left > 0 ? ['Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All ' + FLOWERS_EACH + ' given')));
   }
-  // Give flowers, centred under everyone's stats, with this year's count under it, the way your profile shows it.
+  // Give flowers, centred at the bottom of Crew Stats, with this year's count under it, the way your profile shows it.
   function fwMine(id, data, me) {
     if (!data.canGive) return null;
     var left = Math.max(0, data.left);
@@ -8073,7 +8195,7 @@
           h('div', { class: 'fw-gift-t' },
             h('p', { class: 'fw-gift-l' }, h('strong', null, nameOf(g.from, g.fromName)), ' gave ',
               h('strong', null, g.to === me ? 'you' : nameOf(g.to, g.toName)), ' ' + plural(g.n, 'flower') + ' ',
-              h('span', { 'aria-hidden': 'true' }, FLOWER)),
+              h('span', { 'aria-hidden': 'true' }, FLOWER), catTag(g.category)),
             g.note ? h('p', { class: 'fw-note' }, '“' + g.note + '”') : null,
             h('p', { class: 'fw-when' }, dmWhen(g.at),
               // Only this year's can be taken back: they go back into this year's 10.
@@ -8089,6 +8211,7 @@
       action: 'Take back',
       onConfirm: async function () {
         try { await B.takeBackFlowers(id, g.id); } catch (e) { toast('Couldn’t take them back just now.'); return false; }
+        S.flowersAt = Date.now();
         toast('Taken back');
         return true;
       }
@@ -8119,6 +8242,7 @@
       action: 'Remove', danger: true,
       onConfirm: async function () {
         try { await B.takeBackFlowers(g.tourId, g.id); } catch (e) { toast('Couldn’t remove them just now.'); return false; }
+        S.flowersAt = Date.now();
         toast('Removed');
         return true;
       }
@@ -8126,7 +8250,9 @@
   }
   // Give someone their flowers: tap how many, say what for if you like.
   function openGiveFlowers(id, p, left) {
-    var B = window.GR_BACKEND, n = 1, picks = [], giveBtn = null, note = null, mine = null;
+    var B = window.GR_BACKEND, n = 1, picks = [], giveBtn = null, note = null, mine = null, cat = '', cats = [];
+    // While a gift is on its way, the count and the reason stay as they were sent.
+    var sending = false;
     // One gift id per person until it lands, so a gift sent again (a retry,
     // or the sheet closed and opened again while it was on its way) gives once.
     var key = id + '|' + p.userId;
@@ -8136,6 +8262,9 @@
     var closeMine = function () { if (sheet && sheet.panel === mine) closeSheet(); };
     var paint = function () {
       picks.forEach(function (b, i) { b.classList.toggle('on', i < n); b.setAttribute('aria-pressed', i < n ? 'true' : 'false'); });
+      cats.forEach(function (b) { var on = b.getAttribute('data-cat') === cat; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+      // Nothing goes until you've said what for.
+      giveBtn.disabled = sending || !cat;
       giveBtn.replaceChildren('Give ' + plural(n, 'flower') + ' ', h('span', { 'aria-hidden': 'true' }, FLOWER));
     };
     openSheet(function (panel) {
@@ -8143,15 +8272,21 @@
       picks = [];
       for (var i = 1; i <= Math.min(left, FLOWERS_EACH); i++) (function (k) {
         picks.push(h('button', { class: 'fw-pick', type: 'button', 'aria-label': plural(k, 'flower'),
-          onclick: function () { n = k; paint(); } }, FLOWER));
+          onclick: function () { if (sending) return; n = k; paint(); } }, FLOWER));
       })(i);
-      note = h('input', { class: 'input', type: 'text', maxlength: '140', placeholder: 'What for? (optional)',
-        'aria-label': 'What for', autocomplete: 'off', enterkeyhint: 'done' });
+      cats = FLOWER_CATS.map(function (c) {
+        return h('button', { class: 'fw-catpick', type: 'button', 'data-cat': c[0], onclick: function () { if (sending) return; cat = c[0]; paint(); } }, c[1]);
+      });
+      note = h('input', { class: 'input', type: 'text', maxlength: String(FLOWER_NOTE_MAX), placeholder: 'A quick note (optional)',
+        'aria-label': 'A quick note', autocomplete: 'off', enterkeyhint: 'done' });
       giveBtn = h('button', { class: 'btn primary block', type: 'button', onclick: async function () {
+        if (!cat || sending) return;
+        sending = true;
         giveBtn.disabled = true;
         try {
-          await B.giveFlowers(id, p.userId, n, note.value, rid);
+          await B.giveFlowers(id, p.userId, n, note.value, rid, cat);
         } catch (e) {
+          sending = false;
           giveBtn.disabled = false;
           if (e && e.code === 'none-left') {
             // Fewer left than this phone thought (given from another phone): show the real count.
@@ -8164,7 +8299,9 @@
           toast('Couldn’t give them just now. Try again.');
           return;
         }
+        sending = false;
         delete S.giftIds[key];
+        S.flowersAt = Date.now(); // profiles showing flowers ask again
         closeMine();
         toast(fwFirst(p) + ' got their flowers ' + FLOWER);
         render(true);
@@ -8174,8 +8311,10 @@
         h('div', { class: 'fw-sh-head' }, personPhoto(p, 'sm'),
           h('div', null,
             h('h2', { class: 'sh-title' }, 'Give ' + fwFirst(p) + ' their flowers'),
-            h('p', { class: 'sh-sub' }, 'Tap how many. You have ' + left + ' of ' + FLOWERS_EACH + ' left this year.'))),
+            h('p', { class: 'sh-sub' }, left + ' left this year'))),
         h('div', { class: 'fw-picks', role: 'group', 'aria-label': 'How many flowers' }, picks),
+        h('h3', { class: 'fw-sh-h' }, 'What for?'),
+        h('div', { class: 'fw-cats', role: 'group', 'aria-label': 'What for' }, cats),
         note,
         h('div', { class: 'stack' }, giveBtn,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
@@ -8195,8 +8334,8 @@
       : !data ? fwLoading('Picking the flowers…')
       : data.error ? fwFailed(function () { B.flowersFor(id, true); })
       : [h('ul', { class: 'fw-list' }, data.people.map(function (p) { return flowerCard(id, p, me, data); })),
-         fwMine(id, data, me),
-         fwFeed(id, data, me)];
+         fwFeed(id, data, me),
+         fwMine(id, data, me)];
     return h('div', { class: 'page tour has-tabs fw-page' },
       tourBand(t, id, 'stats'),
       h('h1', { class: 'tour-title' }, 'Crew Stats'),
