@@ -116,10 +116,10 @@ shim = r"""<script>
     row: { switched_on: false, plan_name: '', since: null, last_run: null, last_status: '', source: 'plaid' },
     banks: [{ id: 'b1', name: 'Bank of America', status: 'ok' }, { id: 'b2', name: 'American Express', status: 'ITEM_LOGIN_REQUIRED' }],
     accounts: [
-      { id: 'ac1', name: 'Corp Account Bank Of America \u2013 4918', type: 'creditCard', mode: 'log' },
-      { id: 'ac2', name: 'Merch \u2013 1885', type: 'checking', mode: 'ask' },
-      { id: 'ac3', name: 'Business Adv Relationship \u2013 5370', type: 'checking', mode: 'ask' },
-      { id: 'ac4', name: 'Business Gold Card \u2013 1008', type: 'creditCard', mode: 'log' }
+      { id: 'ac1', name: 'Corp Account Bank Of America \u2013 4918', type: 'creditCard', mode: 'log', bank: 'b1' },
+      { id: 'ac2', name: 'Merch \u2013 1885', type: 'checking', mode: 'ask', bank: 'b1' },
+      { id: 'ac3', name: 'Business Adv Relationship \u2013 5370', type: 'checking', mode: 'ask', bank: 'b1' },
+      { id: 'ac4', name: 'Business Gold Card \u2013 1008', type: 'creditCard', mode: 'log', bank: 'b2' }
     ],
     items: [
       { id: 'y1', tour_id: 't1', date: d0, merchant: 'Buc-Ee\u2019s', amount: 64.12, category: null, account: 'Business Gold Card \u2013 1008', why: 'New merchant' },
@@ -263,7 +263,11 @@ shim = r"""<script>
       base.gotFlowers = (H.flowers || []).filter(function (x) { return x.to === uid; }).slice().reverse().map(function (x) {
         return { id: x.id, n: x.n, note: x.note, category: x.category || '', at: x.at, from: x.from, name: names[x.from] || '', avatar: '' }; });
       if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', verified: true, bio: so.bio || '', roles: so.roles || [], tourRole: me.tour_role, avatar: so.photo || '', artists: so.artists || [],
-        acts: devinActs(), flowers: 2, endorsements: devinActs().length,
+        // The pages that list the test Devin (his own included), then the ones that only endorsed him.
+        acts: (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-devin'; }); }).map(function (x) {
+          var m = x.members.filter(function (y) { return y.userId === 'u-devin'; })[0];
+          return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: m.kind, endorsed: !!m.endorsed, mine: true, declined: false }; }).concat(devinActs()),
+        flowers: 2, endorsements: devinActs().length + (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-devin' && m.endorsed; }); }).length,
         tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }], logos: {} }, base));
       if (uid === 'u-brent') return Promise.resolve(Object.assign({ userId: uid, name: 'Brent Allen', handle: 'brent', bio: 'Guitars, backline, bad jokes.',
         roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', avatar: '', artists: ['Sleeping With Sirens', 'I See Stars'],
@@ -538,12 +542,13 @@ shim = r"""<script>
         return Promise.resolve({ ok: true, left: F.banks.length });
       }
       if (action === 'disconnect') { window.__harness.feedFns.forEach(function (fn) { fn({ row: null, items: [], connectOnly: true }); }); return Promise.resolve({ ok: true }); }
-      if (action === 'status') return Promise.resolve({ ok: true, source: 'plaid', test: true, switchedOn: F.row.switched_on,
+      // F.live: answer as the real thing does (not Plaid's test mode), for trying the Cards tab.
+      if (action === 'status') return Promise.resolve({ ok: true, source: 'plaid', test: !F.live, switchedOn: F.row.switched_on,
         since: F.row.since, lastRun: F.row.last_run, lastStatus: 'ok', banks: JSON.parse(JSON.stringify(F.banks)),
         needsConnect: !F.banks.length,
         accounts: F.accounts.map(function (a) {
           var plaidCard = a.type === 'creditCard' ? 'credit' : 'debit';
-          return { id: a.id, name: a.name, type: a.type, mode: a.mode, card: a.card || plaidCard, plaidCard: plaidCard,
+          return { id: a.id, name: a.name, type: a.type, mode: a.mode, bank: a.bank, card: a.card || plaidCard, plaidCard: plaidCard,
             income: a.income || [], asked: !!a.asked };
         }) });
       // One account's answers, as the server keeps them.
@@ -556,7 +561,8 @@ shim = r"""<script>
       // Credit card balances, read when logging starts on a tour.
       if (action === 'balances') return Promise.resolve({ ok: true, test: false, balances: F.accounts.filter(function (a) {
         return (a.card || (a.type === 'creditCard' ? 'credit' : 'debit')) === 'credit' && a.mode !== 'off';
-      }).map(function (a, i) { return { id: a.id, name: a.name, balance: i ? 4210.55 : 27000 }; }) });
+      }).map(function (a, i) { return { id: a.id, name: a.name, balance: i ? 4210.55 : 27000,
+        bank: (F.banks.filter(function (b) { return b.id === a.bank; })[0] || {}).name || '' }; }) });
       if (action === 'setup' && typeof body.merchAccount === 'string') F.merchAccount = body.merchAccount;
       if (action === 'setup' && body.plan) { F.row.plan_name = body.plan === 'p1' ? 'I SEE STARS' : 'Personal Plan'; }
       if (action === 'setup') {

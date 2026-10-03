@@ -2280,8 +2280,22 @@
     var actNames = acts.map(function (a) { return String(a.name).trim().toLowerCase(); });
     var actRows = acts.map(function (a) {
       var n = (byArtist.get(Array.from(byArtist.keys()).filter(function (k) { return String(k).trim().toLowerCase() === String(a.name).trim().toLowerCase(); })[0]) || []).length;
+      // On the artist's own account, its row on someone it lists carries Endorse
+      // (unless they took its endorsement off before).
+      var canEndorse = !!(a.id && a.id === actingAs() && !a.endorsed && !a.past && !a.declined && B && B.endorse);
+      var endorseBtn = canEndorse ? h('button', { class: 'am-endorse', type: 'button', onclick: function () {
+        var who = uid === B.uid() ? 'you' : (card.name || 'they');
+        confirmSheet({ title: 'Endorse ' + (uid === B.uid() ? 'yourself' : (card.name || 'them')) + '?',
+          body: 'This says ' + who + ' really worked for ' + a.name + '. It shows on ' + (uid === B.uid() ? 'your' : 'their') +
+            ' page, and ' + a.name + ' can\u2019t take it back.',
+          action: 'Endorse',
+          onConfirm: async function () {
+            try { await B.endorse(a.id, uid); a.endorsed = true; cardOf(uid, true); actOf(a.id, true); toast((card.name || 'They') + ' is endorsed ' + TROPHY); return true; }
+            catch (x) { saveFailed('endorsement', x); return false; }
+          } });
+      } }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorse') : null;
       // An endorsement outlives the artist's page; one whose page is gone just shows.
-      return h('li', null, h(a.id ? 'button' : 'div', a.id ? { class: 'list-row art-row', type: 'button', onclick: function () { openAct(a.id); } }
+      return h('li', canEndorse ? { class: 'pa-li' } : null, h(a.id ? 'button' : 'div', a.id ? { class: 'list-row art-row', type: 'button', onclick: function () { openAct(a.id); } }
           : { class: 'list-row art-row still' },
         h('span', { class: 'avatar' + (a.avatar ? ' has photo' : ' letter') },
           a.avatar ? h('img', { class: 'brand-logo', src: a.avatar, alt: '' }) : String(a.name).trim().charAt(0).toUpperCase()),
@@ -2293,7 +2307,7 @@
         // Endorsed by this artist: the trophy on the right, the word under it.
         a.endorsed ? h('span', { class: 'vp-endorsed', 'aria-label': 'Endorsed by ' + a.name },
           h('span', { class: 'vp-endorsed-t', 'aria-hidden': 'true' }, TROPHY), h('span', { class: 'vp-endorsed-l' }, 'Endorsed'))
-          : icon('chevron', 18)));
+          : canEndorse ? null : icon('chevron', 18)), endorseBtn);
     });
     var artistRows = actRows.concat(Array.from(byArtist, function (pair) {
       if (actNames.indexOf(String(pair[0]).trim().toLowerCase()) >= 0) return null;
@@ -3105,10 +3119,12 @@
       var meId = B && B.uid ? B.uid() : null;
       // The trophy: the artist's word that this person really worked for them. For good.
       var trophy = m.endorsed ? h('span', { class: 'am-endorsed', 'aria-label': 'Endorsed by ' + card.name }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorsed')
-        : manage && m.userId && m.userId !== meId && !m.declined && B && B.endorse ? h('button', { class: 'am-endorse', type: 'button',
+        : manage && m.userId && !m.declined && B && B.endorse ? h('button', { class: 'am-endorse', type: 'button',
             onclick: function () {
               confirmSheet({ title: 'Endorse ' + (m.name || 'them') + '?',
-                body: 'This says ' + (m.name || 'they') + ' really worked for ' + card.name + '. It shows on their page, and it can\u2019t be taken back.',
+                body: m.userId === meId
+                  ? 'This says you really worked for ' + card.name + '. It shows on your page, and ' + card.name + ' can\u2019t take it back.'
+                  : 'This says ' + (m.name || 'they') + ' really worked for ' + card.name + '. It shows on their page, and it can\u2019t be taken back.',
                 action: 'Endorse',
                 onConfirm: async function () {
                   try { await B.endorse(id, m.userId); m.endorsed = true; actOf(id, true); if (m.userId) cardOf(m.userId, true); toast((m.name || 'They') + ' is endorsed ' + TROPHY); return true; }
@@ -4798,12 +4814,142 @@
     var b = String((G.isObj(card.feed) && card.feed.bank) || (G.isObj(card.owedNow) && card.owedNow.bank) || '').trim();
     return /^american express$/i.test(b) ? 'AMEX' : b;
   }
+  /* A card the way people say it: the bank, then the last digits of the
+     number. "AMEX (1008)". The feed writes a card as its name, then "··" and
+     the bank's 2 to 4 closing characters; older names end in four digits.
+     With no bank known, the account's own name leads; with no digits, the
+     bank and the account's name. */
+  function cardTail(name) {
+    var nm = String(name || '');
+    var m = /··\s*([A-Za-z0-9]{2,4})\s*$/.exec(nm) || /(\d{4})\s*$/.exec(nm);
+    return m ? m[1] : '';
+  }
+  function cardOwnName(name) {
+    return String(name || '').replace(/\s*··\s*[A-Za-z0-9]{2,4}\s*$/, '').replace(/[\s·–—.\-]*\d{4}\s*$/, '').trim();
+  }
+  function cardShort(name, bank) {
+    var b = String(bank || '').trim();
+    if (/^american express$/i.test(b)) b = 'AMEX';
+    var last = cardTail(name), own = cardOwnName(name);
+    if (b && last) return b + ' (' + last + ')';
+    if (b) return own && own.toLowerCase() !== b.toLowerCase() ? b + ' · ' + own : b;
+    return (own || 'Card') + (last ? ' (' + last + ')' : '');
+  }
+  /* Every card linked to this tour: the ones the card feed logs (kept on the
+     tour as feedCards, so the whole team sees them) and any credit card
+     already carried on it. A card is the same card by its bank id or its
+     name (a reissued card keeps its id and changes its name). Credit cards first. */
+  function tourCards(t) {
+    var out = [], used = [];
+    var debts = G.cardDebts(t).filter(function (d) { return G.isObj(d.feed) && d.feed.name; });
+    var reg = G.isObj(t && t.feedCards) ? t.feedCards : {};
+    Object.keys(reg).forEach(function (k) {
+      var c = reg[k];
+      if (!G.isObj(c) || !c.name) return;
+      var debt = debts.filter(function (d) { return used.indexOf(d) < 0 && (d.id === 'feed-' + k || d.feed.name === c.name); })[0] || null;
+      if (debt) used.push(debt);
+      out.push({ id: k, name: String(c.name), bank: String(c.bank || ''), kind: c.kind === 'debit' ? 'debit' : 'credit', debt: debt });
+    });
+    debts.forEach(function (d) {
+      if (used.indexOf(d) >= 0) return;
+      out.push({ id: String(d.id).replace(/^feed-/, ''), name: d.feed.name, bank: '', kind: 'credit', debt: d });
+    });
+    out.forEach(function (c) {
+      // Every name this card's charges may carry: the one it has now, and the one it came onto the tour with.
+      c.names = [c.name];
+      if (c.debt && c.debt.feed.name !== c.name) c.names.push(c.debt.feed.name);
+      if (!c.bank && c.debt) c.bank = String((c.debt.feed && c.debt.feed.bank) || (G.isObj(c.debt.owedNow) && c.debt.owedNow.bank) || '');
+      c.label = cardShort(c.name, c.bank);
+    });
+    // Two cards that would read the same get their own names added.
+    out.forEach(function (c) {
+      if (out.some(function (x) { return x !== c && x.label === c.label; })) c.clash = true;
+    });
+    out.forEach(function (c) { if (c.clash) { var own = cardOwnName(c.name); if (own && c.label.indexOf(own) < 0) c.label += ' · ' + own; } });
+    return out.sort(function (a, b) { return (a.kind === b.kind ? 0 : a.kind === 'credit' ? -1 : 1) || a.label.localeCompare(b.label); });
+  }
+  // The short name for the card a charge came from ("AMEX (1008)").
+  function cardLabelFor(t, account) {
+    var nm = String(account || '').trim();
+    if (!nm) return '';
+    var hit = function (x) { return x.names.indexOf(nm) >= 0; };
+    var c = tourCards(t).filter(hit)[0];
+    // Not on this tour's list (the Off Tour book keeps none): any of your tours that knows the card.
+    if (!c) allTourEntries().some(function (e) { c = tourCards(e[1]).filter(hit)[0]; return !!c; });
+    return c ? c.label : cardShort(nm, '');
+  }
+  // This tour's charges from one card (by any name it has had), oldest first.
+  function cardCharges(t, c) {
+    var names = typeof c === 'string' ? [c] : c.names || [c.name];
+    return G.rows(t && t.charges).filter(function (ch) { return names.indexOf(ch.account) >= 0 && G.num(ch.amount) !== 0; })
+      .sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
+  }
+  /* The owner's phone keeps the tour's list of linked cards in step with the
+     card feed, so a card connected after logging began still gets its line:
+     every card that logs expenses is listed (feedCards), and a credit card
+     that isn't carried on the tour yet has its balance read onto it. */
+  function syncCards(id, force) {
+    var B = window.GR_BACKEND;
+    // The creator's phone only, on a tour that logs cards, once the card feed has answered.
+    if (S.mode !== 'db' || !B || !B.feedCall || !createdTour(id) || !S.feed || S.feed.connectOnly || !feedLogs(id)) return;
+    S.cardSync = S.cardSync || {};
+    if (!force && S.cardSync[id] && Date.now() - S.cardSync[id] < 10 * 60e3) return;
+    S.cardSync[id] = Date.now();
+    B.feedCall('status').then(async function (st) {
+      var t = getTour(id);
+      if (!st || !st.ok || st.test || !t) return;
+      var accounts = Array.isArray(st.accounts) && !st.needsConnect ? st.accounts : [];
+      var banks = {};
+      (st.banks || []).forEach(function (b) { banks[b.id] = String(b.name || ''); });
+      var reg = G.isObj(t.feedCards) ? t.feedCards : {}, patch = {}, changed = 0, missing = [];
+      var w = G.cardWindow(t), today = G.tourToday();
+      var running = !isOffTour(t) && w && today >= w.from && today <= w.to;
+      var ended = !isOffTour(t) && w && today > w.to;
+      var onTour = function (name) {
+        return cardCharges(t, String(name)).length > 0 ||
+          G.cardDebts(t).some(function (d) { return G.isObj(d.feed) && d.feed.name === name; }) ||
+          feedWaiting(id).some(function (it) { return it.account === name; });
+      };
+      var logging = {};
+      // Connected but its questions never answered: it gets a "needs your answers" line, not a guess.
+      S.cardUnasked = S.cardUnasked || {};
+      S.cardUnasked[id] = accounts.filter(function (a) { return a && a.id && !a.asked && a.mode !== 'off'; });
+      accounts.forEach(function (a) {
+        // Cards that log expenses (answered, and not switched off).
+        if (!a || !a.id || !a.asked || a.mode === 'off') return;
+        logging[a.id] = true;
+        var want = { name: String(a.name || 'Card'), bank: banks[a.bank] || '', kind: a.card === 'debit' ? 'debit' : 'credit' };
+        var have = reg[a.id];
+        // A finished tour only lists cards that have something on it.
+        if (!G.isObj(have) && ended && !onTour(want.name)) return;
+        if (!G.isObj(have) || have.name !== want.name || have.bank !== want.bank || have.kind !== want.kind) { patch[a.id] = want; changed += 1; }
+        if (want.kind === 'credit' && !G.cardDebts(t).some(function (d) {
+          return d.id === 'feed-' + a.id || (G.isObj(d.feed) && d.feed.name === want.name);
+        })) missing.push(String(a.id));
+      });
+      // A card switched off or disconnected comes off the list, unless it has something on this tour.
+      Object.keys(reg).forEach(function (k) {
+        if (!G.isObj(reg[k]) || logging[k] || onTour(reg[k].name)) return;
+        patch[k] = null; changed += 1;
+      });
+      if (changed && !(await api.update(id, { feedCards: patch }))) { S.cardSync[id] = 0; return; }
+      // A credit card not on the tour yet: its balance is read onto it, while the
+      // tour is logging. Tried once a visit for each card, not every ten minutes.
+      S.cardTried = S.cardTried || {};
+      missing = missing.filter(function (k) { return !S.cardTried[id + ':' + k]; });
+      missing.forEach(function (k) { S.cardTried[id + ':' + k] = true; });
+      if (missing.length && running) await readCardBalances(id, missing);
+      render(true);
+    }).catch(function () { S.cardSync[id] = 0; });
+  }
   function cardRow(id, t, card, paidCell, creditCell, cashCell) {
     var sm = G.cardSummary(card, t);
     var bank = cardBank(card);
     var inner = [
       h('div', { class: 'row-label' },
-        h('span', { class: 'cc-name' }, card.label || card.feed.name, bank ? h('span', { class: 'cc-bank' }, bank) : null),
+        // The same short name the Cards tab gives it (its current name, if the bank reissued it).
+        h('span', { class: 'cc-name' }, (tourCards(t).filter(function (c) { return c.debt && c.debt.id === card.id; })[0] || {}).label ||
+          cardShort(card.feed.name || card.label, bank)),
         h('span', { class: 'hint' + (sm.remainder > 0.004 ? '' : ' done') },
           (sm.remainder > 0.004 ? money(sm.remainder) + ' to sort' : 'All sorted') +
           ' \u00b7 ' + (sm.owed > 0 ? money(sm.owed) + ' owed' : 'paid off'))),
@@ -4815,6 +4961,47 @@
     if (!canSeeMoney(id)) return h('div', { class: 'row ex-row cc-row' }, inner);
     return h('button', { class: 'row rowbtn ex-row cc-row', type: 'button',
       onclick: function () { openFeedCardSheet(id, card.id); } }, inner, icon('chevron', 18));
+  }
+  /* A linked card with no balance carried on the tour (a debit card, or a
+     credit card whose balance hasn't been read on yet): its line in
+     Expenses. Its charges already count under their categories, so the
+     columns stay empty; tapping it lists them. */
+  function plainCardRow(id, t, c) {
+    var list = cardCharges(t, c).filter(function (ch) { return !ch.accounted && ch.category; });
+    var total = list.reduce(function (n, ch) { return n + G.num(ch.amount); }, 0);
+    var dash = function (cls) { return h('span', { class: 'amt num ' + cls }, '\u2014'); };
+    var inner = [
+      h('div', { class: 'row-label' },
+        h('span', { class: 'cc-name' }, c.label),
+        h('span', { class: 'hint' }, (c.kind === 'debit' ? 'Debit card' : 'Credit card') +
+          (list.length ? ' \u00b7 ' + money(total) + ' \u00b7 ' + plural(list.length, 'charge') : ''))),
+      dash('glow ex-proj'), dash('ex-paid'), dash('ex-done'), dash('ex-cash')
+    ];
+    if (!canSeeMoney(id)) return h('div', { class: 'row ex-row cc-row' }, inner);
+    return h('button', { class: 'row rowbtn ex-row cc-row', type: 'button',
+      onclick: function () { openCardCharges(id, c); } }, inner, icon('chevron', 18));
+  }
+  // One card's charges on this tour: what, when, where it was filed, how much.
+  function openCardCharges(id, c) {
+    var t = getTour(id);
+    var cats = {};
+    G.chargeCategoriesFor(t).forEach(function (x) { cats[x.key] = x.label; });
+    var list = cardCharges(t, c);
+    var total = list.reduce(function (n, ch) { return ch.accounted ? n : n + G.num(ch.amount); }, 0);
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, c.label),
+        h('p', { class: 'sh-sub' }, (c.kind === 'debit' ? 'Debit card' : 'Credit card') + ' \u00b7 ' +
+          plural(list.length, 'charge') + ' \u00b7 ' + money(total)),
+        list.length ? h('div', { class: 'ledger logged' }, list.slice().reverse().map(function (ch) {
+          return h('div', { class: 'row' },
+            h('div', { class: 'row-label' }, ch.merchant || 'Charge',
+              h('span', { class: 'hint' }, [ch.date ? dayMD(ch.date) : '', cats[ch.category] || 'Not sorted',
+                ch.accounted ? 'already accounted for' : ''].filter(Boolean).join(' \u00b7 '))),
+            h('span', { class: 'amt num' + (ch.accounted ? ' quiet' : '') }, money(G.num(ch.amount))));
+        })) : null
+      ];
+    }, { label: c.label, cls: 'cat-sheet' });
   }
   /* One credit card: the balance it came into the tour with, where the sorted
      part of it went, what's still to sort, and what the card company is owed. */
@@ -5111,11 +5298,14 @@
     entries.sort(function (a, b) { return (b.owed - a.owed) || (b.spent - a.spent) || (b.proj - a.proj) || (a.i - b.i); });
     var rows = [];
     feedCards.forEach(function (card) { rowKey = 'feed:' + card.id; rows.push(cardRow(id, t, card, paidCell, creditCell, cashCell)); });
+    // Every other linked card (debit cards; a credit card whose balance isn't on the tour yet) has its line too.
+    tourCards(t).filter(function (c) { return !c.debt; }).forEach(function (c) { rows.push(plainCardRow(id, t, c)); });
+    if (!off) { syncCards(id); ensurePile(id); }
     entries.forEach(function (e) { rows.push(lineRow(e.l)); });
     // The bars' Expenses segments: crew, bus, each linked card by its name,
     // commission, the merch bill, and everything else together.
     var named = [['Crew', 'crew', 'crew'], ['Bus', 'bus', 'bus']]
-      .concat(feedCards.map(function (card) { return [cardBank(card) || card.label || 'Card', 'feed:' + card.id, 'lcard']; }))
+      .concat(feedCards.map(function (card) { return [cardShort(card.feed.name || card.label, cardBank(card)), 'feed:' + card.id, 'lcard']; }))
       .concat([['Commission', 'commission', 'comm'], ['Merch bill', 'merch', 'mbill']]);
     var spentAll = Object.keys(byRow).reduce(function (n, k) { return n + Math.max(0, byRow[k]); }, 0);
     var expParts = named.map(function (x) { return { label: x[0], v: Math.max(0, byRow[x[1]] || 0), cls: x[2] }; });
@@ -5140,9 +5330,9 @@
       : null;
     return [
       expenseSummary(c, expParts, off),
-      feedEntry(id),
+      // On a tour, Refresh Card Expenses lives on the Cards tab; the Off Tour book keeps it here.
+      off ? feedEntry(id) : null,
       baselineOffer,
-      off ? null : h('div', { class: 'mini-stack' }, cashLogEntry(id, t)),
       // The chart says it all: nothing under the Total.
       h('div', { class: 'ledger' }, rows)
     ];
@@ -5187,8 +5377,10 @@
     G.rows(t && t.charges).forEach(function (ch) {
       if (ch.category !== key) return;
       out.push({ date: ch.date || '', label: ch.merchant || 'Charge', amount: G.num(ch.amount),
-        detail: [ch.account || '', ch.cash ? 'Cash' : ch.paid ? 'Debit' : 'Credit', ch.by ? 'sorted by ' + ch.by : '',
+        detail: [ch.cash ? 'Cash' : ch.paid ? 'Debit' : 'Credit', ch.by ? 'sorted by ' + ch.by : '',
           ch.accounted ? 'already accounted for' : ''].filter(Boolean).join(' · '),
+        // The card it came from, by its short name.
+        card: cardLabelFor(t, ch.account),
         source: chargeSource(t, ch), chargeId: ch.id, counts: !ch.accounted });
     });
     G.rows(t && t.cashLog).forEach(function (x) {
@@ -5399,7 +5591,10 @@
         return h('div', { class: 'row' },
           h('div', { class: 'row-label' }, r.label,
             h('span', { class: 'hint' }, [r.date ? dayMD(r.date) : '', r.detail].filter(Boolean).join(' \u00b7 '))),
-          h('span', { class: 'src-tag src-' + r.source.toLowerCase() }, r.source),
+          // How it was logged, and under it the card it came from.
+          h('span', { class: 'src-col' },
+            h('span', { class: 'src-tag src-' + r.source.toLowerCase() }, r.source),
+            r.card ? h('span', { class: 'src-card' }, r.card) : null),
           h('span', { class: 'amt num' + (r.counts ? '' : ' quiet') }, money(r.amount)));
       }
       function removeEntry(r) {
@@ -6398,10 +6593,10 @@
   function tourBand(t, id, view, center) {
     return h('div', { class: 'headband slim' }, tourTopbar(t, id, view, center));
   }
-  // Budget's two tabs, above the chart: Expenses and Income.
+  // Budget's three tabs, above the chart: Expenses, Cards in the middle, Income.
   function bookStrip(id, current) {
-    return h('div', { class: 'vp-tabs pt-tabs bk-tabs', role: 'tablist' }, BOOK_TABS.map(function (v) {
-      var t = TOUR_TABS.filter(function (x) { return x.view === v; })[0], on = v === current;
+    return h('div', { class: 'vp-tabs pt-tabs bk-tabs three', role: 'tablist' }, BOOK_STRIP.map(function (t) {
+      var v = t.view, on = v === current;
       return h('button', { class: 'vp-tab pt-tab' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false',
         onclick: function () { if (!on || S.route.view !== v) go({ name: 'tour', id: id, view: v }); } },
         icon(t.icon, 20), h('span', null, t.label));
@@ -6434,7 +6629,9 @@
   /* A tour's tabs, either side of your photo. The money is one tab, Budget,
      which opens Expenses; Expenses and Income are two tabs above the chart
      there. GA never sees the Budget tab. */
-  var BOOK_TABS = ['costs', 'money'];
+  var BOOK_TABS = ['costs', 'cards', 'money'];
+  var BOOK_STRIP = [{ view: 'costs', label: 'Expenses', icon: 'tabcost' }, { view: 'cards', label: 'Cards', icon: 'card' },
+    { view: 'money', label: 'Income', icon: 'tabmoney' }];
   var BUDGET_TAB = { view: 'costs', label: 'Budget', icon: 'tabmoney', book: true };
   function tourTabs(id, current) {
     var money = canSeeMoney(id);
@@ -6997,6 +7194,15 @@
         dbBanner(),
         tabExpenses(id, t, c),
         tourTabs(id, 'costs'));
+    }
+    if (view === 'cards') {
+      return h('div', { class: 'page tour has-tabs exp-page' },
+        tourBand(t, id, 'cards'),
+        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+        bookStrip(id, 'cards'),
+        dbBanner(),
+        tabCards(id, t),
+        tourTabs(id, 'cards'));
     }
     if (view === 'daybyday') {
       return h('div', { class: 'page tour has-tabs exp-page' },
@@ -8036,23 +8242,11 @@
     var shows = c.allShows;
     var tonight = shows.filter(function (s) { return s.date === today; })[0];
     var logged = shows.filter(function (s) { return s.loggedAt; }).length;
-    // The whole run, travel and off days included — the schedule tells the truth.
-    var got = overviewDays(t);
-    var rowsOut;
-    if (got) {
-      var firstShow = got.days.filter(function (x) { return x.show; })[0];
-      var lastShow = got.days.slice().reverse().filter(function (x) { return x.show; })[0];
-      rowsOut = got.days.map(function (x) {
-        if (x.show) return showRow(id, x.show, today);
-        var travel = (firstShow && x.date < firstShow.date) || (lastShow && x.date > lastShow.date);
-        return offDayRow(t, x.date, travel);
-      });
-      shows.forEach(function (s) { // undated holds keep their place at the end
-        if (!G.parseDay(s.date)) rowsOut.push(showRow(id, s, today));
-      });
-    } else {
-      rowsOut = shows.map(function (s) { return showRow(id, s, today); });
-    }
+    // Only the nights income is logged for: no rehearsal, travel or off days.
+    // Dated shows in order; undated holds keep their place at the end.
+    var rowsOut = shows.filter(function (s) { return G.parseDay(s.date); }).sort(G.byDate)
+      .concat(shows.filter(function (s) { return !G.parseDay(s.date); }))
+      .map(function (s) { return showRow(id, s, today); });
     return [
       tonight ? tonightCard(id, tonight) : null,
       shows.length
@@ -8062,18 +8256,6 @@
             ? 'Add each date and city as they get confirmed.'
             : 'No dates have been added.')
     ];
-  }
-
-  function offDayRow(t, date, travel) {
-    var off = offDayFor(t, date);
-    var reh = isRehearsalDay(t, date);
-    return h('li', null, h('div', { class: 'show-row is-off' },
-      dateBlock(date),
-      h('div', { class: 'where' },
-        h('div', { class: 'city' }, off.city ||
-          (reh ? 'Rehearsal day' : travel ? 'Travel day' : 'Day off')),
-        off.hotel ? h('div', { class: 'venue' }, off.hotel) : null),
-      h('span', { class: 'tag quiet' }, reh ? 'Rehearsal' : travel ? 'Travel' : 'Off')));
   }
 
   function showRow(id, s, today) {
@@ -10741,18 +10923,6 @@
      of it is accounted for. Spending filed under a category counts toward the
      budget like any charge; a deposit or a hand-off just moves the cash. */
 
-  function cashLogEntry(id, t) {
-    var sum = G.cashSummary(t);
-    // Glows red while any of the table's cash is still unaccounted for.
-    var owed = sum.took > 0 && sum.left > 0.004;
-    return h('button', { class: 'btn ghost tile cash-entry' + (owed ? ' owed' : ''), type: 'button',
-      'aria-label': 'Merch cash log' + (owed ? ', ' + money(sum.left) + ' not accounted for yet' : ''),
-      onclick: function () { go({ name: 'tour', id: id, view: 'cashlog' }); } },
-      icon('cash', 18), h('span', null, 'MERCH CASH LOG'),
-      sum.took > 0 ? h('span', { class: 'ce-left num' + (sum.left > 0.004 ? ' neg' : ' pos') },
-        sum.left > 0.004 ? cashMoney(sum.left) + ' left' : 'All in') : null);
-  }
-
   // Cash comes in odd amounts: show the cents whenever there are any, so
   // what's on screen is exactly what's left to type in.
   function cashMoney(v) {
@@ -11759,6 +11929,9 @@
             icon('copy', 18), 'Tour closeout'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportsSheet(id); } },
             icon('history', 18), 'Card statement history'),
+          canSeeMoney(id) && !isOffTour(t) ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { closeSheet(true); go({ name: 'tour', id: id, view: 'cashlog' }); } },
+            icon('cash', 18), 'Merch cash log') : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLabelsSheet(); } },
             icon('tag', 18), 'Learned labels'),
           createdTour(id) || S.mode === 'local' ? h('button', {
@@ -13046,7 +13219,8 @@
   function feedWaiting(tourId) {
     var P = S.pile && S.pile[tourId];
     if (P && P.lead) return P.items || [];
-    if (!S.feed) return [];
+    // Your own feed's charges belong on the tours you made, never on someone else's.
+    if (!S.feed || !createdTour(tourId)) return [];
     return S.feed.items.filter(function (it) { return !it.tour_id || it.tour_id === tourId; });
   }
   function feedAgo(iso) {
@@ -13215,6 +13389,51 @@
         icon('card', 18), plural(n, 'new charge')) : null);
   }
 
+  /* CARDS, the middle tab of Budget: Refresh Card Expenses on top, then each
+     linked card by its short name ("AMEX (1008)") with how many new charges
+     are waiting on it. A card with new charges opens them to sort; one with
+     none opens what it has on this tour. */
+  function tabCards(id, t) {
+    syncCards(id);
+    var waiting = feedWaiting(id);
+    var cards = tourCards(t);
+    // A card with charges waiting that isn't on the list yet still shows.
+    waiting.forEach(function (it) {
+      var nm = String(it.account || '').trim();
+      if (nm && !cards.some(function (c) { return c.names.indexOf(nm) >= 0; })) cards.push({ id: nm, name: nm, names: [nm], bank: '', kind: '', debt: null, label: cardLabelFor(t, nm) });
+    });
+    var rows = cards.map(function (c) {
+      var n = waiting.filter(function (it) { return c.names.indexOf(String(it.account || '').trim()) >= 0; }).length;
+      var first = n ? String(waiting.filter(function (it) { return c.names.indexOf(String(it.account || '').trim()) >= 0; })[0].account || '').trim() : '';
+      return h('button', { class: 'row rowbtn card-line', type: 'button',
+        'aria-label': c.label + ', ' + plural(n, 'new charge'),
+        onclick: function () {
+          if (n) openFeedReview(id, null, first);
+          else if (c.debt) openFeedCardSheet(id, c.debt.id);
+          else openCardCharges(id, c);
+        } },
+        h('div', { class: 'row-label' }, c.label,
+          c.kind ? h('span', { class: 'hint' }, c.kind === 'debit' ? 'Debit card' : 'Credit card') : null),
+        h('span', { class: 'card-new' + (n ? ' on' : '') }, plural(n, 'new charge')),
+        icon('chevron', 18));
+    });
+    // Connected, but never told what it's for: one tap answers it, and then it's listed.
+    var unasked = createdTour(id) && S.cardUnasked && S.cardUnasked[id] ? S.cardUnasked[id] : [];
+    if (unasked.length) rows.push(h('button', { class: 'row rowbtn card-line ask', type: 'button',
+      onclick: function () { openAccountQuestions(unasked, 0, id); } },
+      h('div', { class: 'row-label' }, plural(unasked.length, 'new account'),
+        h('span', { class: 'hint' }, 'Needs your answers')),
+      icon('chevron', 18)));
+    var entry = feedEntry(id);
+    // Nothing to show, and nothing still on its way: say so rather than a blank page.
+    var loading = !!(S.pileBusy && S.pileBusy[id]) || (S.mode === 'db' && createdTour(id) && S.feed === undefined);
+    return [
+      entry,
+      rows.length ? h('div', { class: 'ledger cards-list' }, rows)
+        : entry || loading ? null : emptyState('No cards linked', 'Cards linked to this tour show up here.')
+    ];
+  }
+
   /* The tour manager (ALL ACCESS, tour role Tour Manager) works the owner's
      card charges: the same Refresh, the same pile. Whoever sorts a charge
      first files it, and it's gone from the other one's pile. */
@@ -13231,13 +13450,20 @@
       : { lead: false, items: [], at: Date.now() };
     return S.pile[tourId];
   }
-  function tmFeedEntry(id) {
+  // The Tour Manager's pile of the owner's charges for this tour, fetched when it's stale.
+  function ensurePile(id) {
     var B = window.GR_BACKEND;
-    if (S.mode !== 'db' || !B || !B.feedCall || !bookLead(id)) return null;
+    if (S.mode !== 'db' || !B || !B.feedCall || createdTour(id) || !bookLead(id)) return;
     var P = S.pile && S.pile[id];
     if ((!P || Date.now() - P.at > 120e3) && !(S.pileBusy && S.pileBusy[id])) {
       loadPile(id).then(function (np) { if (np.lead || (P && P.lead)) render(true); });
     }
+  }
+  function tmFeedEntry(id) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || !B.feedCall || !bookLead(id)) return null;
+    ensurePile(id);
+    var P = S.pile && S.pile[id];
     if (!P || !P.lead) return null;
     var n = (P.items || []).length;
     var label = h('span', null, 'Refresh Card Expenses');
@@ -13426,7 +13652,7 @@
             btn.disabled = false;
             if (!r || !r.ok) { saveFailed('cards:setup', r); return; }
             if (!last) openAccountQuestions(list, i + 1, tourId);
-            else openFeedSheet(tourId);
+            else { if (tourId) syncCards(tourId, true); openFeedSheet(tourId); }
           } }, last ? 'Done' : 'Next'),
           i > 0 ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openAccountQuestions(list, i - 1, tourId); } }, 'Back') : null)
@@ -13437,7 +13663,8 @@
   /* Logging starts on a tour: each credit card's balance is read once and
      put on the tour under Credit card. Its earlier charges move out of it as
      they're filed; payments later come off what's still owed. */
-  async function readCardBalances(tourId) {
+  // only: the account ids to add (a card connected mid-tour); without it, every logged credit card.
+  async function readCardBalances(tourId, only) {
     var B = window.GR_BACKEND;
     var r = null;
     try { r = await B.feedCall('balances'); } catch (e) { r = null; }
@@ -13447,21 +13674,38 @@
       return;
     }
     var t = getTour(tourId);
-    var have = {};
-    G.cardDebts(t).forEach(function (d) { if (d.feed) have[d.feed.name] = true; });
+    var have = {}, haveId = {};
+    G.cardDebts(t).forEach(function (d) { haveId[d.id] = true; if (d.feed) have[d.feed.name] = true; });
     var today = G.tourToday();
     var patch = {}, n = 0;
+    // The cards the bank reports right now, by id and by name.
+    var live = {}, liveName = {};
+    r.balances.forEach(function (b) { live['feed-' + b.id] = true; liveName[b.name] = true; });
+    var reissued = function (b) {
+      var bank = String(b.bank || '').trim().toLowerCase();
+      return !!bank && G.cardDebts(t).some(function (d) {
+        if (!G.isObj(d.feed) || live[d.id] || liveName[d.feed.name]) return false;
+        var its = String(d.feed.bank || (G.isObj(d.owedNow) && d.owedNow.bank) || '').trim().toLowerCase();
+        return its === bank;
+      });
+    };
     r.balances.forEach(function (b) {
       // Every logged credit card is tracked from here, even at $0 owed.
-      if (have[b.name] || !(b.balance >= 0)) return;
+      // Already carried on the tour (by its id or its name): its balance is never read over.
+      if (have[b.name] || haveId['feed-' + b.id] || !(b.balance >= 0)) return;
+      if (only && only.indexOf(String(b.id)) < 0) return;
+      // A card added mid-tour while the tour still carries one from the same bank that the
+      // bank no longer reports: most likely the same card reissued, so its balance isn't read again.
+      if (only && reissued(b)) return;
       patch['feed-' + b.id] = { label: b.name, amount: b.balance, kind: 'card', cutoff: today, breakdown: {},
         feed: { name: b.name, readAt: today, bank: b.bank || '' },
         owedNow: { amount: b.balance, at: new Date().toISOString(), bank: b.bank || '' }, createdAt: Date.now() + n };
       n += 1;
     });
     if (n && (await api.update(tourId, { debts: patch }))) {
-      toast(r.balances.filter(function (b) { return patch['feed-' + b.id] && b.balance > 0; }).map(function (b) {
-        return b.name + ' balance ' + money(b.balance);
+      var owed = r.balances.filter(function (b) { return patch['feed-' + b.id] && b.balance > 0; });
+      if (owed.length) toast(owed.map(function (b) {
+        return cardShort(b.name, b.bank) + ' balance ' + money(b.balance);
       }).join(', ') + ' logged under Credit card');
     }
   }
