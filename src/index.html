@@ -1135,6 +1135,8 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .crew-list .role-tag { max-width: 100%; padding: 3px 9px; border-radius: 10px;
   white-space: normal; text-align: center; line-height: 1.25;   /* a long role wraps, never cut */
   font-size: 11px; font-weight: 600; letter-spacing: 0; }
+/* The Overview's roles: just the green word, no bubble. */
+.crew-sym .crew-side .role-tag, .crew-sym .crew-side .role-tag.aa { background: none; padding: 0; border-radius: 0; font-size: 12.5px; font-weight: 600; }
 .crew-call { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 999px;
   border: 1px solid var(--line); color: var(--pos); }
 
