@@ -145,7 +145,7 @@ shim = r"""<script>
         p.counts = { flowers: sum(function (x) { return x.to === p.userId; }), endorsements: p.userId === 'u-brent' ? 2 : 0, tours: p.userId === 'u-devin' ? 3 : 1 };
         return p;
       }).sort(function (a, b) { return (b.here - a.here) || (b.owner - a.owner); });
-      return { left: 10 - sum(function (x) { return x.tour === tourId && x.from === me; }), canGive: true, people: people,
+      return { left: 10 - sum(function (x) { return x.from === me; }), canGive: true, people: people,
         given: H.flowers.filter(function (x) { return x.tour === tourId; }).slice().reverse().map(function (x) {
           return { id: x.id, from: x.from, to: x.to, n: x.n, note: x.note, at: x.at, mine: x.from === me, fromName: '', toName: '' }; }) };
     },
@@ -154,6 +154,7 @@ shim = r"""<script>
       window.GR_BACKEND.flowersFor('t1');
       var got = H.flowers.filter(function (x) { return x.to === 'u-devin'; });
       return { counts: { flowers: got.reduce(function (a, x) { return a + x.n; }, 0), endorsements: 0, tours: 3 },
+        left: 10 - H.flowers.filter(function (x) { return x.from === 'u-devin'; }).reduce(function (a, x) { return a + x.n; }, 0),
         got: got.slice().reverse().map(function (x) { return { id: x.id, n: x.n, note: x.note, at: x.at, from: x.from, name: names[x.from] || '', avatar: '', tourId: x.tour, tour: 'Harness run' }; }) };
     },
     searchSuggestions: function () {
@@ -161,6 +162,9 @@ shim = r"""<script>
       return Promise.resolve({ following: [Object.assign(row('u-brent'), { iFollow: true })], crew: [row('u-jeff')],
         artists: (window.__harness.acts || []).map(function (a) { return { id: a.id, handle: a.handle, name: a.name, avatar: '' }; }) });
     },
+    facesFor: function () { return {}; },
+    checkedIn: function (tourId, date) { return (window.__harness.checkins || []).indexOf(tourId + '|' + date) >= 0; },
+    checkIn: function (tourId, date) { var H = window.__harness; H.checkins = (H.checkins || []).concat([tourId + '|' + date]); return Promise.resolve(); },
     newGiftId: function () { return 'g' + Date.now() + Math.random().toString(36).slice(2, 6); },
     giveFlowers: function (tourId, uid, n, note, rid) {
       var H = window.__harness, d = window.GR_BACKEND.flowersFor(tourId);

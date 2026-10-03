@@ -3289,11 +3289,7 @@
       oninput: function (e) { st.q = e.target.value; run(); } });
     run();
     return h('div', { class: 'page home profile has-tabs search-page' },
-      h('div', { class: 'headband' },
-        h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' }),
-          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-          h('span', { class: 'top-side right' })),
+      h('div', { class: 'sr-top' },
         h('div', { class: 'band-row sr-bar' },
           h('form', { class: 'sr-pill', role: 'search',
             // The Search key keeps what you looked for in Recent, under a clock.
@@ -3621,6 +3617,7 @@
     var next = !s ? shows.filter(function (x) { return x.date > entry.date; })[0] : null;
     var sheet = daySheetNodes(s, off, { onlySet: true });
     return [
+      isToday ? checkInBtn(id, entry.date) : null,
       pfTourBar(id, t, count, 'details'),
       h('div', { class: 'pt-today' },
         h('p', { class: 'pt-when' }, h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), dayLong(entry.date),
@@ -3635,8 +3632,9 @@
   }
   /* STATS: your flowers. The three numbers from every tour you've been on
      (flowers between the laurels, the trophy for the artists who list you
-     as their crew, your tours), how many you've still to give on the tour
-     you're in, and the flowers you've been given, with who and what for. */
+     as their crew, your tours), Give flowers with how many of this year's 10
+     you've still to give, and the flowers you've been given, with who and
+     what for. */
   function pfStats(id, t, count) {
     var B = window.GR_BACKEND;
     if (!flowersOn()) return emptyState('Flowers are for signed-in tours', 'Sign in and the people you tour with can give you your flowers.');
@@ -3644,16 +3642,15 @@
     if (!mine) return fwLoading('Picking your flowers…');
     if (mine.error) return fwFailed(function () { B.myFlowers(true); });
     var c = mine.counts || {};
-    var here = t ? B.flowersFor(id) : null;
+    var left = typeof mine.left === 'number' ? Math.max(0, mine.left) : null;
     var got = Array.isArray(mine.got) ? mine.got : [];
     return [
       h('section', { class: 'fw-me' }, fwStats(c.flowers, c)),
-      t && here && !here.error && here.canGive ? h('div', { class: 'fw-left' },
-        h('p', { class: 'fw-left-t' }, here.left > 0
-          ? [plural(here.left, 'flower') + ' left to give on ', h('strong', null, t.name || 'this tour')]
-          : ['All ' + FLOWERS_EACH + ' given on ', h('strong', null, t.name || 'this tour')]),
-        h('button', { class: 'pf-btn go', type: 'button', onclick: function () { openTour(id, 'stats', PF_HOME, 'Profile'); } },
-          here.left > 0 ? 'Give flowers' : 'See the crew')) : null,
+      // Give flowers, centred under the numbers, and this year's count under it.
+      t ? h('div', { class: 'fw-me-give' },
+        h('button', { class: 'fw-give', type: 'button', onclick: function () { openTour(id, 'stats', PF_HOME, 'Profile'); } },
+          'Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)),
+        left == null ? null : h('p', { class: 'fw-me-left' }, left + ' left')) : null,
       got.length ? [
         h('h3', { class: 'fw-h' }, 'Your flowers'),
         h('ul', { class: 'fw-feed' }, got.map(function (g) {
@@ -6075,6 +6072,20 @@
 
   /* ============================== Tour view ============================== */
 
+  /* A tour page's green band, as slim as the GR mark: the mark, ⋯ and the
+     three lines. The page's name sits under it, on the black. */
+  function tourBand(t, id, view) {
+    return h('div', { class: 'headband slim' }, tourTopbar(t, id, view));
+  }
+  // Budget's two tabs, above the chart: Expenses and Income.
+  function bookStrip(id, current) {
+    return h('div', { class: 'vp-tabs pt-tabs bk-tabs', role: 'tablist' }, BOOK_TABS.map(function (v) {
+      var t = TOUR_TABS.filter(function (x) { return x.view === v; })[0], on = v === current;
+      return h('button', { class: 'vp-tab pt-tab' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false',
+        onclick: function () { if (!on || S.route.view !== v) go({ name: 'tour', id: id, view: v }); } },
+        icon(t.icon, 20), h('span', null, t.label));
+    }));
+  }
   function tourTopbar(t, id, view) {
     // No back button: your photo at the bottom takes you home, the three lines open the menu.
     return h('header', { class: 'topbar' }, h('span', { class: 'top-side' }),
@@ -6100,19 +6111,17 @@
   ];
 
   /* A tour's tabs, either side of your photo. The money is one tab, Budget,
-     which opens the tour's money book: Expenses and Income, either side of
-     your photo, the same two tabs the menu's Budget leads to. GA never sees
-     the Budget tab. */
+     which opens Expenses; Expenses and Income are two tabs above the chart
+     there. GA never sees the Budget tab. */
   var BOOK_TABS = ['costs', 'money'];
   var BUDGET_TAB = { view: 'costs', label: 'Budget', icon: 'tabmoney', book: true };
   function tourTabs(id, current) {
     var money = canSeeMoney(id);
-    var tabs = money && BOOK_TABS.indexOf(current) >= 0
-      ? BOOK_TABS.map(function (v) { return TOUR_TABS.filter(function (t) { return t.view === v; })[0]; })
-      : TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
-    if (money && tabs.length > 2) tabs.splice(1, 0, BUDGET_TAB);
+    var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
+    if (money) tabs.splice(1, 0, BUDGET_TAB);
     var buttons = tabs.map(function (t) {
-      var on = !t.book && t.view === current;
+      // Budget is lit on Expenses and Income (their own two tabs sit above the chart).
+      var on = t.book ? BOOK_TABS.indexOf(current) >= 0 : t.view === current;
       return tabButton(on, t.label, t.icon, function () {
         if (!on || (S.route.view || 'details') !== t.view) go({ name: 'tour', id: id, view: t.view });
       });
@@ -6217,12 +6226,8 @@
     };
 
     return h('div', { class: 'page tour has-tabs chat-page' },
-      h('div', { class: 'headband' },
-        tourTopbar(t, id, 'chat'),
-        // The chat wears the full wordmark, with the page's name small under it.
-        h('div', { class: 'chat-brand' },
-          h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }),
-          h('h1', { class: 'chat-label' }, 'Chat'))),
+      tourBand(t, id, 'chat'),
+      h('h1', { class: 'tour-title' }, 'Chat'),
       dbBanner(),
       // The bus, barely there behind the conversation.
       h('div', { class: 'chat-bus', 'aria-hidden': 'true' }),
@@ -6593,9 +6598,8 @@
      Both other doors read from what lands here. */
   function viewAddShows(id, t) {
     return h('div', { class: 'page tour has-tabs' },
-      h('div', { class: 'headband' },
-        tourTopbar(t, id, 'addshows'),
-        h('h1', { class: 'tour-title' }, 'Add shows')),
+      tourBand(t, id, 'addshows'),
+      h('h1', { class: 'tour-title' }, 'Add shows'),
       dbBanner(),
       addShowsBody(id, t),
       tourTabs(id, 'details'));
@@ -6665,27 +6669,27 @@
     var c = G.calc(t);
     if (view === 'costs') {
       return h('div', { class: 'page tour has-tabs exp-page' },
-        h('div', { class: 'headband' },
-          tourTopbar(t, id, 'costs'),
-          h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
+        tourBand(t, id, 'costs'),
+        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+        bookStrip(id, 'costs'),
         dbBanner(),
         tabExpenses(id, t, c),
         tourTabs(id, 'costs'));
     }
     if (view === 'daybyday') {
       return h('div', { class: 'page tour has-tabs exp-page' },
-        h('div', { class: 'headband' },
-          tourTopbar(t, id, 'daybyday'),
-          h('h1', { class: 'tour-title' }, 'Day by day')),
+        tourBand(t, id, 'daybyday'),
+        h('h1', { class: 'tour-title' }, 'Day by day'),
+        bookStrip(id, 'costs'),
         dbBanner(),
         tabDays(id, t, c),
         tourTabs(id, 'costs'));
     }
     if (view === 'cashlog') {
       return h('div', { class: 'page tour has-tabs exp-page' },
-        h('div', { class: 'headband' },
-          tourTopbar(t, id, 'cashlog'),
-          h('h1', { class: 'tour-title' }, 'MERCH CASH LOG')),
+        tourBand(t, id, 'cashlog'),
+        h('h1', { class: 'tour-title' }, 'MERCH CASH LOG'),
+        bookStrip(id, 'costs'),
         dbBanner(),
         cashLogBody(id, t),
         tourTabs(id, 'costs'));
@@ -6693,9 +6697,9 @@
     var body = tabShows(id, t, c);
 
     return h('div', { class: 'page tour has-tabs budget-page' },
-      h('div', { class: 'headband' },
-        tourTopbar(t, id, 'money'),
-        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
+      tourBand(t, id, 'money'),
+      h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+      bookStrip(id, 'money'),
       dbBanner(),
       !t.setupDone && canEditTour(id)
         ? h('div', { class: 'banner' },
@@ -6834,10 +6838,13 @@
     var widest = 0;
     Array.prototype.forEach.call(rowsEl, function (r) {
       var lab = r.querySelector('.row-label');
-      Array.prototype.forEach.call(lab.childNodes, function (n) {
+      // With a photo: the photo, its gap, and the wider of the name and the line under it.
+      var who = lab.querySelector('.crew-who'), pic = lab.querySelector('.crew-face');
+      var extra = who && pic ? pic.getBoundingClientRect().width + 8 : 0;
+      Array.prototype.forEach.call((who || lab).childNodes, function (n) {
         var rg = document.createRange();
         rg.selectNodeContents(n);
-        var w = rg.getBoundingClientRect().width;
+        var w = rg.getBoundingClientRect().width + extra;
         if (w > widest) widest = w;
       });
     });
@@ -6854,6 +6861,7 @@
     var manages = owns || tourRole(tourId) === 'editor';
     S.crewCache = S.crewCache || {};
     var cached = S.crewCache[tourId] || null;
+    var faces = (S.mode === 'db' && B.facesFor && B.facesFor(tourId)) || {};
     var list = h('div', { class: 'ledger crew-list crew-sym' },
       cached ? null : h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading\u2026')));
 
@@ -6901,12 +6909,17 @@
       // Access sits under the name; the role is the green badge in the middle.
       var access = m.owner ? 'Creator' : (m.role === 'editor' ? 'All Access' : 'GA');
       var canOpen = !pending && m.userId && socialOn();
+      // Their profile photo beside the name (the first letter until they add one).
+      var face = personPhoto({ name: title, avatar: (m.userId && faces[m.userId]) || '' }, 'xs crew-face');
       return h('div', { class: 'row crew-row' },
-        h('div', { class: 'row-label' },
-          canOpen ? h('button', { class: 'crew-name', type: 'button', 'aria-label': 'Open ' + title + '\u2019s profile',
-            onclick: function () { openProfile(m.userId); } }, title) : title,
-          h('span', { class: 'hint crew-sub' }, access,
-            pending ? h('span', { class: 'pending' }, ' \u00b7 Pending') : null)),
+        h('div', { class: 'row-label crew-label' },
+          canOpen ? h('button', { class: 'crew-face-btn', type: 'button', tabindex: '-1', 'aria-hidden': 'true',
+            onclick: function () { openProfile(m.userId); } }, face) : face,
+          h('div', { class: 'crew-who' },
+            canOpen ? h('button', { class: 'crew-name', type: 'button', 'aria-label': 'Open ' + title + '\u2019s profile',
+              onclick: function () { openProfile(m.userId); } }, title) : h('span', { class: 'crew-name' }, title),
+            h('span', { class: 'hint crew-sub' }, access,
+              pending ? h('span', { class: 'pending' }, ' \u00b7 Pending') : null))),
         h('div', { class: 'crew-side' },
           // Every badge sits in the same-width slot, so the roles line up in
           // one column; someone without a role just leaves the slot empty.
@@ -7523,19 +7536,17 @@
     }
     if (view === 'details') {
       return h('div', { class: 'page tour has-tabs' },
-        h('div', { class: 'headband' },
-          tourTopbar(t, id, view),
-          h('div', { class: 'title-row' },
-            h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
-            offCounter(t))),
+        tourBand(t, id, view),
+        h('div', { class: 'title-row' },
+          h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+          offCounter(t)),
         dbBanner(),
         overviewBody(id, t),
         tourTabs(id, view));
     }
     return h('div', { class: 'page tour has-tabs' + (view === 'guests' ? ' guest-page' : ' ds-page') },
-      h('div', { class: 'headband' },
-        tourTopbar(t, id, view),
-        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
+      tourBand(t, id, view),
+      h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
       dbBanner(),
       view === 'guests' ? guestsBody(id, t) : detailsBody(id, t, 'sheet'),
       tourTabs(id, view));
@@ -7770,9 +7781,9 @@
      Devin: "each person when they sign on gets 10 flowers that they can hand
      out... giving someone their flowers, like credit where credit is due.
      Keep this thing positive: instead of reviewing a crew member you're
-     simply giving someone their flowers." Everyone on a tour has 10 for it,
-     to give to anyone else on it, a few at a time, with a line on what for
-     if they like. The crew stack up the way a social app heads a profile:
+     simply giving someone their flowers," and "10 flowers to hand out once a
+     year." Everyone has 10 a year, given on a tour to anyone else on it, a
+     few at a time, with a line on what for if they like. The crew stack up the way a social app heads a profile:
      photo, name, and three numbers. Flowers on this tour between two
      laurels, the trophy for the artists who list them as their crew, and
      their tours. Your own flowers add up across every tour on your
@@ -7828,7 +7839,7 @@
           onclick: function () { openGiveFlowers(id, p, data.left); } },
           data.left > 0 ? ['Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All ' + FLOWERS_EACH + ' given')));
   }
-  // Your 10 for this tour: a flower for each one still to give.
+  // Your 10 for the year: a flower for each one still to give.
   function fwMine(data) {
     if (!data.canGive) return null;
     var left = Math.max(0, data.left), dots = [];
@@ -7836,8 +7847,8 @@
     return h('section', { class: 'fw-mine' },
       h('div', { class: 'fw-dots', 'aria-hidden': 'true' }, dots),
       h('p', { class: 'fw-mine-t' }, left
-        ? 'You have ' + left + ' of your ' + FLOWERS_EACH + ' flowers left to give on this tour.'
-        : 'You’ve given all ' + FLOWERS_EACH + ' of your flowers on this tour.'));
+        ? 'You have ' + left + ' of your ' + FLOWERS_EACH + ' flowers left to give this year.'
+        : 'You’ve given all ' + FLOWERS_EACH + ' of your flowers this year.'));
   }
   // Who gave whom flowers on this tour, newest first. Yours can be taken back.
   function fwFeed(id, data, me) {
@@ -7860,7 +7871,8 @@
               h('span', { 'aria-hidden': 'true' }, FLOWER)),
             g.note ? h('p', { class: 'fw-note' }, '“' + g.note + '”') : null,
             h('p', { class: 'fw-when' }, dmWhen(g.at),
-              g.mine ? h('button', { class: 'fw-undo', type: 'button', onclick: function () { takeBackFlowers(id, g); } }, 'Take back') : null)));
+              // Only this year's can be taken back: they go back into this year's 10.
+              g.mine && g.thisYear !== false ? h('button', { class: 'fw-undo', type: 'button', onclick: function () { takeBackFlowers(id, g); } }, 'Take back') : null)));
       }))
     ];
   }
@@ -7868,7 +7880,7 @@
     var B = window.GR_BACKEND;
     confirmSheet({
       title: 'Take back ' + plural(g.n, 'flower') + '?',
-      body: 'They go back with the rest of your ' + FLOWERS_EACH + ' for this tour.',
+      body: 'They go back into your ' + FLOWERS_EACH + ' for the year.',
       action: 'Take back',
       onConfirm: async function () {
         try { await B.takeBackFlowers(id, g.id); } catch (e) { toast('Couldn’t take them back just now.'); return false; }
@@ -7876,6 +7888,21 @@
         return true;
       }
     });
+  }
+  /* Check In, at the top of your profile's Today: your way of saying you've
+     seen the day's info. Once a day, on a tour day. */
+  function checkInBtn(id, date) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || !B.checkIn || !B.checkedIn) return null;
+    var done = B.checkedIn(id, date);
+    return h('div', { class: 'ci-wrap' }, h('button', { class: 'ci-btn' + (done ? ' done' : ''), type: 'button', disabled: done,
+      onclick: async function (e) {
+        var b = e.currentTarget;
+        b.disabled = true;
+        try { await B.checkIn(id, date); } catch (x) { b.disabled = false; toast('Couldn\u2019t check in. Try again.'); return; }
+        hornSplash('Checked in!', dayMD(date));
+        render(true);
+      } }, done ? '\u2705 Checked in' : 'Check In'));
   }
   // Flowers given to you that you'd rather not keep (and their note) come off.
   function removeGotFlowers(g) {
@@ -7925,7 +7952,7 @@
             var d = B.flowersFor(id), have = d && !d.error ? d.left : 0;
             closeMine();
             render(true);
-            toast(have > 0 ? 'You have ' + plural(have, 'flower') + ' left on this tour.' : 'You’ve given all ' + FLOWERS_EACH + ' on this tour.');
+            toast(have > 0 ? 'You have ' + plural(have, 'flower') + ' left this year.' : 'You’ve given all ' + FLOWERS_EACH + ' this year.');
             return;
           }
           toast('Couldn’t give them just now. Try again.');
@@ -7941,7 +7968,7 @@
         h('div', { class: 'fw-sh-head' }, personPhoto(p, 'sm'),
           h('div', null,
             h('h2', { class: 'sh-title' }, 'Give ' + fwFirst(p) + ' their flowers'),
-            h('p', { class: 'sh-sub' }, 'Tap how many. You have ' + left + ' of ' + FLOWERS_EACH + ' left on this tour.'))),
+            h('p', { class: 'sh-sub' }, 'Tap how many. You have ' + left + ' of ' + FLOWERS_EACH + ' left this year.'))),
         h('div', { class: 'fw-picks', role: 'group', 'aria-label': 'How many flowers' }, picks),
         note,
         h('div', { class: 'stack' }, giveBtn,
@@ -7965,9 +7992,8 @@
          h('ul', { class: 'fw-list' }, data.people.map(function (p) { return flowerCard(id, p, me, data); })),
          fwFeed(id, data, me)];
     return h('div', { class: 'page tour has-tabs fw-page' },
-      h('div', { class: 'headband' },
-        tourTopbar(t, id, 'stats'),
-        h('h1', { class: 'tour-title' }, 'Crew Stats')),
+      tourBand(t, id, 'stats'),
+      h('h1', { class: 'tour-title' }, 'Crew Stats'),
       dbBanner(),
       body,
       tourTabs(id, 'stats'));
@@ -8012,9 +8038,8 @@
     var cal = calendarRows(id, t);
     var rowsOut = cal.rows, pastBtn = cal.pastBtn;
     return h('div', { class: 'page tour has-tabs' },
-      h('div', { class: 'headband' },
-        tourTopbar(t, id, 'calendar'),
-        h('h1', { class: 'tour-title' }, 'Calendar')),
+      tourBand(t, id, 'calendar'),
+      h('h1', { class: 'tour-title' }, 'Calendar'),
       dbBanner(),
       canEditTour(id) ? h('button', { class: 'btn quiet glow block add-more', type: 'button',
         onclick: function () { openAddShowsMenu(id); } }, icon('plus', 18), 'ADD MORE SHOWS') : null,
@@ -8071,8 +8096,8 @@
       daySheetBtn(id, date, from, fromLabel),
       right));
   }
-  /* Logging card charges: a big 🤘 pops and rocks, and throws a ring of
-     smaller ones, with the words under it. */
+  /* Checking in, and logging card charges: a big 🤘 pops and rocks, and
+     throws a ring of smaller ones, with the words under it. */
   function hornSplash(big, sub) {
     var bits = [];
     if (!reduced()) for (var i = 0; i < 12; i++) {
@@ -8299,7 +8324,7 @@
 
   function viewTourDetails(id, t) {
     return h('div', { class: 'page tour' },
-      h('div', { class: 'headband' }, tourTopbar(t, id, 'details')),
+      tourBand(t, id, 'details'),
       dbBanner(),
       detailsBody(id, t));
   }
@@ -8458,7 +8483,7 @@
   function detailsBody(id, t, only) {
     var got = overviewDays(t);
     if (!got) {
-      return [h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+      return [
         emptyState('No dates yet', 'Once shows are on the run, each one gets its own day sheet here.'),
         canWrite() ? h('div', { class: 'btnrow' },
           h('button', { class: 'btn quiet', type: 'button',
