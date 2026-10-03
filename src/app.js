@@ -3438,16 +3438,12 @@
     // Expenses and Income live under Budget, and the guest list under your profile, so the tour's own rows leave them out.
     var tabs = !t ? [] : TOUR_TABS.filter(function (x) { return ['money', 'costs', 'guests'].indexOf(x.view) < 0; });
     var first = S.menuIn; S.menuIn = false;
-    var pickTour = function () { openTourPicker(); };
     // One list, no rules between: the money first, then the tour you're in, then Settings.
     return h('div', { class: 'page home menu-page has-tabs' + (first ? ' mn-in' : '') },
       menuHead(null),
       dbBanner(),
       h('section', { class: 'mn-group' },
         budgetRows(here),
-        h('div', { class: 'mn-head mn-tour' },
-          h('h2', { class: 'mn-h' }, t ? (t.name || 'Untitled tour') : 'Your tour'),
-          entries.length > 1 ? h('button', { class: 'mn-change', type: 'button', onclick: pickTour }, 'Change') : null),
         (t && !t.setupDone && canEditTour(id))
           ? menuRow('edit', 'Finish setting up', function () { openTour(id, 'details', here, 'Menu'); }, 'Add its shows to open the rest')
         : t ? tabs.map(function (x) {
