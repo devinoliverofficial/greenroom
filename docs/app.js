@@ -99,6 +99,12 @@
       return out.concat(Array.isArray(v) ? flatten(v) : [v]);
     }, []);
   }
+  // Fill an element with these pieces, skipping any that aren't there. (The
+  // browser's own append / replaceChildren print the word "null" for those.)
+  function fillEl(el, kids) {
+    el.replaceChildren.apply(el, flatten([kids]).filter(function (x) { return x != null && x !== false; }));
+    return el;
+  }
 
   var ICONS = {
     plus: '<path d="M12 5v14M5 12h14"/>',
@@ -5499,7 +5505,7 @@
       var paid = G.num(line.paid);
       var settled = paidPart(t, key);
       var p = rec.projected;
-      readout.append(
+      fillEl(readout, [
         h('div', null, h('span', null, 'Projected'), h('strong', { class: 'num' }, p == null ? 'Not set' : money(p))),
         h('div', null, h('span', null, 'Spent so far'), h('strong', { class: 'num' }, money(paid))),
         paid > 0 ? h('div', null, h('span', null, '\u21b3 Credit'), h('strong', { class: 'num' }, money(paid - settled))) : null,
@@ -5507,7 +5513,7 @@
         cashPart(t, key) > 0 ? h('div', null, h('span', null, '\u21b3 Cash'), h('strong', { class: 'num' }, money(cashPart(t, key)))) : null,
         p == null ? h('div', null, h('span', null, 'Counts as'), h('strong', { class: 'num' }, money(paid)))
           : paid > p ? h('div', null, h('span', null, 'Over by'), h('strong', { class: 'num neg' }, money(paid - p)))
-          : h('div', null, h('span', null, 'Left to pay'), h('strong', { class: 'num' }, money(p - paid))));
+          : h('div', null, h('span', null, 'Left to pay'), h('strong', { class: 'num' }, money(p - paid)))]);
 
       var box = h('div');
       function draw() {
@@ -5516,7 +5522,8 @@
           // it, or change the whole total. Every change is kept, so it's
           // always clear how the number got where it is.
           var had = rec.projected != null ? G.num(rec.projected) : 0;
-          var amt = null;
+          // New total opens with the total as it is, ready to be changed.
+          var amt = pmode === 'set' && had > 0 ? had : null;
           var preview = h('p', { class: 'note proj-preview' });
           var showPreview = function () {
             if (pmode === 'add') preview.textContent = amt > 0 ? money(had) + ' + ' + money(amt) + ' = ' + money(had + amt)
@@ -5524,12 +5531,17 @@
             else preview.textContent = 'Now ' + money(had) + '. What you type replaces it.';
           };
           var input = moneyInput({
-            id: 'cat-proj', value: null, label: cat.label + (pmode === 'add' ? ' amount to add' : ' new total'),
+            id: 'cat-proj', value: amt, label: cat.label + (pmode === 'add' ? ' amount to add' : ' new total'),
             placeholder: '\u2014', last: true, onValue: function (v) { amt = v > 0 ? v : null; showPreview(); }
+          });
+          // Tapping into the filled-in total selects it, so typing replaces it.
+          var typed = input.querySelector('input');
+          if (typed && amt) typed.addEventListener('focus', function () {
+            setTimeout(function () { try { typed.setSelectionRange(0, typed.value.length); } catch (e) { /* not selectable */ } }, 0);
           });
           showPreview();
           var history = G.rows(G.isObj(t.projLog) ? t.projLog[key] : null).sort(function (a, b) { return G.num(b.at) - G.num(a.at); });
-          box.replaceChildren(
+          fillEl(box, [
             segmented(['Add to total', 'New total'], pmode === 'add' ? 0 : 1, function (i) {
               pmode = i ? 'set' : 'add'; draw();
             }, 'Add to the total or type a new total'),
@@ -5537,7 +5549,12 @@
               e.preventDefault();
               blurActive();
               if (pmode === 'add' && !(amt > 0)) { toast('Type how much to add'); return; }
-              var next = pmode === 'add' ? Math.round((had + amt) * 100) / 100 : (amt > 0 ? amt : null);
+              // The total as it stands right now (someone may have changed it since this sheet opened).
+              var nowRec = G.normExpenses((getTour(id) || t || {}).expenses)[key];
+              var hadNow = nowRec && nowRec.projected != null ? G.num(nowRec.projected) : 0;
+              // New total left as it was filled in: nothing to save.
+              if (pmode === 'set' && had > 0 && amt === had) { closeSheet(); return; }
+              var next = pmode === 'add' ? Math.round((hadNow + amt) * 100) / 100 : (amt > 0 ? amt : null);
               var patch = { expenses: {}, projLog: {} };
               patch.expenses[key] = { projected: next };
               patch.projLog[key] = {};
@@ -5563,7 +5580,7 @@
                   h('span', { class: 'row-label' }, x.add ? '+' + money(G.num(x.add)) : (x.total ? 'Set to ' + money(G.num(x.total)) : 'Cleared'),
                     h('span', { class: 'hint' }, [when, x.by].filter(Boolean).join(' \u00b7 '))),
                   h('span', { class: 'amt num' }, x.total ? money(G.num(x.total)) : '\u2014'));
-              }))) : null);
+              }))) : null]);
         } else if (kind === 'spent' || kind === 'paid' || kind === 'cash') {
           box.replaceChildren(paidLogForm(id, key, cat.label, null, kind));
         } else box.replaceChildren();
@@ -5574,8 +5591,11 @@
         cat.note ? h('p', { class: 'sh-sub' }, cat.note) : null,
         readout,
         canWrite() ? [
-          segmented(['Projection', 'Credit', 'Debit', 'Cash'], -1, function (i) { kind = ['projected', 'spent', 'paid', 'cash'][i]; draw(); },
-            'Projection, credit, debit or cash'),
+          segmented(['Projection', 'Credit', 'Debit', 'Cash'], -1, function (i) {
+            kind = ['projected', 'spent', 'paid', 'cash'][i]; draw();
+            // The form it opens comes into view, not left below the fold.
+            requestAnimationFrame(function () { try { box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { /* older phones */ } });
+          }, 'Projection, credit, debit or cash'),
           box
         ] : null,
         loggedButton(id, key, function () { openCategorySheet(id, key); })
@@ -8501,7 +8521,7 @@
       var counts = {};
       votes.forEach(function (v) { counts[v.choice] = (counts[v.choice] || 0) + 1; });
       var top = Math.max.apply(null, [0].concat(p.options.map(function (o) { return counts[o.id] || 0; })));
-      box.replaceChildren(
+      fillEl(box, [
         h('p', { class: 'sh-sub' }, closed ? 'Voting closed ' + closesText(p.closesAt) + '.'
           : 'Vote by ' + closesText(p.closesAt) + '. You can change your vote until then.'),
         h('div', { class: 'ledger poll' }, p.options.map(function (o) {
@@ -8532,7 +8552,7 @@
                 try { await B.deletePoll(id, date); toast('Poll deleted'); return true; }
                 catch (e) { toast('Couldn’t do that. Try again.'); return false; }
               } });
-          } }, 'Delete poll')) : null);
+          } }, 'Delete poll')) : null]);
     }
     draw();
     openSheet(function () {
@@ -8981,7 +9001,8 @@
         } else {
           // An off day keeps its town, so the day picker still says where you are.
           patch = { offDays: {} };
-          patch.offDays[date] = String(off.city || '').trim() ? { city: off.city } : null;
+          patch.offDays[date] = String(off.city || '').trim()
+            ? { city: off.city, hotel: '', wifi: '', wifiPass: '', rooms: '', notes: '', plans: [] } : null;
         }
         var ok = await api.update(tourId, patch);
         if (ok) toast('Day sheet cleared');

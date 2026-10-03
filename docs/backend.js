@@ -66,7 +66,12 @@
     });
   }
 
+  // When each tour was last saved from this phone: a refetch that set off
+  // before then is carrying the older copy, and mustn't put it back. Counted,
+  // not timed, so a phone's clock being set back can't confuse it.
+  var wroteAt = {}, tick = 0;
   async function refetch() {
+    var asked = ++tick;
     var tours = await sb.from('tours').select('id, owner_id, doc');
     if (tours.error) throw tours.error;
     // GA crew can't read a tour's money: the database hands them its own
@@ -75,11 +80,18 @@
     var full = {};
     tours.data.forEach(function (r) { full[r.id] = true; });
     var rows = tours.data.concat(ga.error ? [] : ga.data.filter(function (r) { return !full[r.id]; }));
+    var before = cache.tours, stale = false;
+    // The GA copies couldn't be read this time: keep the ones already here.
+    if (ga.error && before) before.forEach(function (doc, id) { if (!full[id]) rows.push({ id: id, owner_id: doc._ownerId, doc: doc, kept: true }); });
     cache.tours = new Map(rows.map(function (r) {
+      if (r.kept) return [r.id, r.doc];
+      // Saved from here after this refetch set off: what's here is newer.
+      if (wroteAt[r.id] && wroteAt[r.id] >= asked && before && before.has(r.id)) { stale = true; return [r.id, before.get(r.id)]; }
       var doc = isObj(r.doc) ? r.doc : {};
       doc._ownerId = r.owner_id; // lets the UI know whose tour this is
       return [r.id, doc];
     }));
+    if (stale) scheduleRefetch();
     var labels = await sb.from('labels').select('id, doc');
     if (labels.error) throw labels.error;
     cache.labels = new Map(labels.data.map(function (r) { return [r.id, r.doc]; }));
@@ -106,11 +118,19 @@
     if (!asks.error) cache.asks = asks.data;
     emit('tours'); emit('labels');
   }
-  function scheduleRefetch() {
+  // A refetch that fails (no signal as the phone wakes) is tried again, a few
+  // times, further apart each time; anything that asks for one starts over.
+  var refetchOwed = false, refetchTries = 0, liveOnce = false;
+  function scheduleRefetch(wait) {
     clearTimeout(refetchTimer);
+    refetchOwed = true;
     refetchTimer = setTimeout(function () {
-      refetch().catch(function () { /* next event tries again */ });
-    }, 250);
+      refetch().then(function () { refetchOwed = false; refetchTries = 0; }, function () {
+        if (!session || document.visibilityState === 'hidden' || refetchTries >= 5) return; // the next event tries again
+        refetchTries += 1;
+        scheduleRefetch(Math.min(30000, 3000 * Math.pow(2, refetchTries - 1)));
+      });
+    }, typeof wait === 'number' ? wait : 250);
   }
 
   /* ---------------- The db capability ---------------- */
@@ -153,6 +173,22 @@
           var cur = cache[table].get(id);
           if (!cur) throw err('invalid_argument');
           var next = deepMerge(clone(cur), clone(patch));
+          if (table === 'tours') {
+            // A tour's save sends only the change; the server merges it into
+            // the tour as it stands right now and hands the result back. (The
+            // whole tour used to go up from this phone's copy, so a phone with
+            // an older copy put back what someone else had just changed.)
+            var pq = await sb.rpc('patch_tour', { t_id: id, patch: stripped(patch) });
+            if (pq.error && !patchMissing(pq.error)) throw mapError(pq.error);
+            if (!pq.error) {
+              if (isObj(pq.data)) { next = pq.data; next._ownerId = cur._ownerId; }
+              wroteAt[id] = ++tick;
+              cache.tours.set(id, next);
+              emit('tours');
+              return;
+            }
+            // The server doesn't have patch_tour (yet): save the old way.
+          }
           var uq = sb.from(table)
             .update({ doc: stripped(next), updated_at: new Date().toISOString() })
             .eq('id', id);
@@ -160,6 +196,7 @@
           var q = await uq.select('id');
           if (q.error) throw mapError(q.error);
           if (!q.data || !q.data.length) throw err('permission'); // RLS said no
+          if (table === 'tours') wroteAt[id] = ++tick;
           cache[table].set(id, next);
           emit(table);
         },
@@ -175,6 +212,26 @@
       };
     }
   };
+  /* Back from the background with a newer Greenroom out: load it, so a phone
+     left open for days isn't still running old code. Only when nothing is
+     open or being typed, so nothing is lost. */
+  function newBuildCheck() {
+    var mine = window.GREENROOM_BUILD;
+    if (!mine || typeof fetch !== 'function') return;
+    fetch('sw.js', { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (txt) {
+      var m = /greenroom-(\d{8}-\d{6})/.exec(txt || '');
+      if (!m || m[1] === mine || m[1] < mine) return;
+      var a = document.activeElement;
+      var typing = !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable));
+      if (typing || document.querySelector('#sheet-root .sheet') || document.visibilityState === 'hidden') return;
+      window.location.reload();
+    }).catch(function () { /* next time */ });
+  }
+  // patch_tour isn't on the server: the only reason to fall back to the whole-tour save.
+  function patchMissing(e) {
+    return !!e && (e.code === 'PGRST202' || e.code === '42883' ||
+      /could not find the function|function .*patch_tour.* does not exist/i.test(String(e.message || '')));
+  }
   function mapError(e) {
     var msg = String(e && e.message || '');
     if (/permission|policy|denied|42501/i.test(msg)) return err('permission');
@@ -1480,10 +1537,12 @@
       if (hiddenAt && Date.now() - hiddenAt > 30e3) {
         freshToken(false).then(function () { flushErrors(); }).catch(function () { /* next tap tries */ });
         flowersChanged(); // gifts while the phone slept never came down the live line
-      }
+        if (session) { refetchTries = 0; scheduleRefetch(); } // nor did anyone's changes to the tours
+        newBuildCheck();
+      } else if (refetchOwed && session) { refetchTries = 0; scheduleRefetch(); }
       hiddenAt = 0;
     });
-    window.addEventListener('online', function () { flushErrors(); });
+    window.addEventListener('online', function () { flushErrors(); if (session) { refetchTries = 0; scheduleRefetch(); } });
     var got = await sb.auth.getSession();
     session = got.data ? got.data.session : null;
     var note = '';
@@ -1703,7 +1762,13 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ari_asks' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feed_items' }, feedChanged)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dms' }, dmChanged)
-      .subscribe();
+      // The live line dropped and came back (a tunnel, a dead spot): what was
+      // missed in between never comes down it, so ask again.
+      .subscribe(function (status) {
+        if (status !== 'SUBSCRIBED') return;
+        if (liveOnce && session) { refetchTries = 0; scheduleRefetch(); }
+        liveOnce = true;
+      });
     resolvers.db(db);
     resolvers.user(user);
     resolvers.sample(sample);
