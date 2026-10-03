@@ -885,7 +885,7 @@
       await Promise.all([loadFlowers(tourId), loadMyFlowers()]);
       return q.data;
     },
-    // Take back flowers you gave, or remove ones given to you.
+    // Remove flowers given to you (giving is final: the giver can't take them back).
     takeBackFlowers: async function (tourId, id) {
       var q = await sb.from('flowers').delete().eq('id', id).select('id');
       if (q.error) throw mapError(q.error);

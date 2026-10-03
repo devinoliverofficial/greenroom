@@ -3889,21 +3889,33 @@
     var list = guestsFor(t, id, s.id);
     var sum = G.guestSummary(list);
     var rows = guestRowsFor(id, s, list, backend, myUid, refresh);
-    // The show, small, on one line at the top; the list itself is the page.
+    var when = s.date === today ? 'Tonight' : s.date > today ? 'Next show' : 'Last show';
+    var venue = String(s.venue || '').trim(), city = String(s.city || '').trim();
+    var address = String((G.isObj(s.daySheet) && s.daySheet.venueAddress) || '').trim();
+    // Where: the address (it names the city), else the city under the venue.
+    var town = city.split(',')[0].trim().toLowerCase();
+    var where = address ? (town && address.toLowerCase().indexOf(town) < 0 ? city + ' \u00b7 ' + address : address)
+      : (venue ? city : '');
+    // Laid out like the references: the show on one card (when, then the
+    // venue, then where, with directions on the right), then the list under
+    // a plain header with Other nights on its right.
     return [
       bar,
-      // Tonight in the middle, then the day laid out like Today's.
-      h('p', { class: 'pt-gl-chip' },
-        h('span', { class: 'pt-chip' + (s.date === today ? ' on' : '') }, s.date === today ? 'Tonight' : s.date > today ? 'Next show' : 'Last show')),
-      dayRow(null, s.date, s.city || 'Show', String(s.venue || '').trim(),
-        String((G.isObj(s.daySheet) && s.daySheet.venueAddress) || '').trim()),
-      h('div', { class: 'pt-gl-head' },
-        h('h3', { class: 'pt-gl-title' }, 'Guest list'),
-        h('p', { class: 'pt-gl-count' }, sum.names ? plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket') : 'No names yet')),
+      h('div', { class: 'gl-show' },
+        h('div', { class: 'gl-show-t' },
+          h('p', { class: 'gl-show-when' + (s.date === today ? ' on' : '') }, when + ' \u00b7 ' + dayLong(s.date)),
+          h('p', { class: 'gl-show-venue' }, venue || city || 'Show'),
+          where ? h('p', { class: 'gl-show-where' }, where) : null),
+        address ? h('a', { class: 'gl-show-go', href: mapsHref(address), target: '_blank', rel: 'noopener',
+          'aria-label': 'Directions to ' + (venue || address) }, icon('tabmap', 20)) : null),
+      h('div', { class: 'gl-head' },
+        h('div', null,
+          h('h3', { class: 'gl-head-t' }, 'Guest list'),
+          h('p', { class: 'gl-head-n' }, plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket'))),
+        shows.length > 1 ? h('button', { class: 'gl-head-more', type: 'button',
+          onclick: function () { openTour(id, 'guests', PF_HOME, 'Profile'); } }, 'Other nights') : null),
       rows.length ? h('div', { class: 'pt-sheet pt-gl' }, guestLedger(rows)) : null,
       guestSendRow(id, t, s, list),
-      shows.length > 1 ? h('button', { class: 'pt-more', type: 'button',
-        onclick: function () { openTour(id, 'guests', PF_HOME, 'Profile'); } }, 'Other nights', icon('chevron', 14)) : null,
       // Add guest and Import list stay at the bottom of the screen; room so the list scrolls clear of them.
       h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
       h('div', { class: 'pt-two pinned' },
@@ -8179,7 +8191,7 @@
       ];
     }, { label: 'Give flowers' });
   }
-  // Who gave whom flowers on this tour, newest first. Yours can be taken back.
+  // Who gave whom flowers on this tour, newest first. Giving is final: nothing here takes them back.
   function fwFeed(id, data, me) {
     var by = {};
     data.people.forEach(function (p) { by[p.userId] = p; });
@@ -8199,25 +8211,9 @@
               h('strong', null, g.to === me ? 'you' : nameOf(g.to, g.toName)), ' ' + plural(g.n, 'flower') + ' ',
               h('span', { 'aria-hidden': 'true' }, FLOWER), catTag(g.category)),
             g.note ? h('p', { class: 'fw-note' }, '“' + g.note + '”') : null,
-            h('p', { class: 'fw-when' }, dmWhen(g.at),
-              // Only this year's can be taken back: they go back into this year's 10.
-              g.mine && g.thisYear !== false ? h('button', { class: 'fw-undo', type: 'button', onclick: function () { takeBackFlowers(id, g); } }, 'Take back') : null)));
+            h('p', { class: 'fw-when' }, dmWhen(g.at))));
       }))
     ];
-  }
-  function takeBackFlowers(id, g) {
-    var B = window.GR_BACKEND;
-    confirmSheet({
-      title: 'Take back ' + plural(g.n, 'flower') + '?',
-      body: 'They go back into your ' + FLOWERS_EACH + ' for the year.',
-      action: 'Take back',
-      onConfirm: async function () {
-        try { await B.takeBackFlowers(id, g.id); } catch (e) { toast('Couldn’t take them back just now.'); return false; }
-        S.flowersAt = Date.now();
-        toast('Taken back');
-        return true;
-      }
-    });
   }
   /* Check In, at the bottom of the screen on your profile's Today (pinned:
      it stays put above the bottom bar): your way of saying you've seen the
