@@ -29,7 +29,11 @@
   var resetting = false;   // arrived by a password-reset link
   var session = null;
   var cache = { tours: new Map(), labels: new Map(), guests: [], notes: [], polls: [], votes: [], requests: [],
-    stats: [], rounds: [], gbVotes: [], asks: [] };
+    asks: [] };
+  // Flowers: each tour's crew and gifts, and your own, asked for when a page
+  // shows them and kept until something changes.
+  var flowerCache = {}, flowerAsk = {}, flowerGen = {}, myFlowerCache = null, myFlowerAsk = null, myFlowerGen = 0, flowerTimer = 0;
+  var FLOWERS_FRESH = 60e3; // asked again after a minute anyway: people join, phones sleep through changes
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
 
@@ -91,15 +95,6 @@
     if (!cal[0].error) cache.polls = cal[0].data;
     if (!cal[1].error) cache.votes = cal[1].data;
     if (!cal[2].error) cache.requests = cal[2].data;
-    // Crew Stats and the game ball.
-    var fun = await Promise.all([
-      sb.from('crew_stats').select('*'),
-      sb.from('game_ball_rounds').select('*').order('round'),
-      sb.from('game_ball_votes').select('*')
-    ]);
-    if (!fun[0].error) cache.stats = fun[0].data;
-    if (!fun[1].error) cache.rounds = fun[1].data;
-    if (!fun[2].error) cache.gbVotes = fun[2].data;
     // Ari's questions to the tour manager (only they and ALL ACCESS see them).
     var asks = await sb.from('ari_asks').select('*').order('created_at');
     if (!asks.error) cache.asks = asks.data;
@@ -234,6 +229,15 @@
   function newRowId() {
     try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* older phones */ }
     return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+  }
+  // A real uuid, on phones without randomUUID too (the database checks the shape).
+  function newUuid() {
+    try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* older phones */ }
+    var b = new Uint8Array(16), i;
+    try { crypto.getRandomValues(b); } catch (e) { for (i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256); }
+    b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+    var x = Array.prototype.map.call(b, function (v) { return (v + 256).toString(16).slice(1); }).join('');
+    return x.slice(0, 8) + '-' + x.slice(8, 12) + '-' + x.slice(12, 16) + '-' + x.slice(16, 20) + '-' + x.slice(20);
   }
 
   /* ---------------- The sample capability ---------------- */
@@ -780,59 +784,46 @@
       if (!q.data || !q.data.length) throw err('permission');
       await refetch();
     },
-    /* Crew Stats. A person is 'owner' or 'e:' + their invite email. */
-    statsFor: function (tourId) {
-      return cache.stats.filter(function (x) { return x.tour_id === tourId; }).map(function (x) {
-        return { id: x.id, person: x.person, stat: x.stat, day: x.day, mine: !!session && x.added_by === session.user.id, at: x.created_at };
-      });
+    /* Flowers. Everyone on a tour has 10 to give to the others on it. The
+       getters answer at once from what this phone has (null while it's
+       first being fetched, { error: true } if that failed) and fetch again
+       when something has changed; the page redraws when the answer lands. */
+    flowersFor: function (tourId, fresh) {
+      var c = flowerCache[tourId];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadFlowers(tourId);
+      return c ? c.data : null;
     },
-    // Stats save fast: the row goes straight into what this phone knows,
-    // without reloading everything (live updates bring everyone else's).
-    addStat: async function (tourId, person, stat) {
-      var rid = newRowId();
-      var q = await sb.from('crew_stats').insert({ id: rid, tour_id: tourId, person: person, stat: stat }).select('*');
-      // Already there: a repeat of one that got through.
-      if (q.error && q.error.code === '23505') { await refetch(); return rid; }
-      if (q.error) throw mapError(q.error);
-      var row = q.data && q.data[0];
-      if (row && !cache.stats.some(function (x) { return x.id === row.id; })) cache.stats.push(row);
-      return row ? row.id : null;
+    myFlowers: function (fresh) {
+      var c = myFlowerCache;
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadMyFlowers();
+      return c ? c.data : null;
     },
-    // Check yourself in on a day's sheet (the database knows who you are).
-    checkIn: async function (tourId, date) {
-      var q = await sb.rpc('check_in', { t_id: tourId, d: date });
-      if (q.error) throw mapError(q.error);
-      await refetch();
+    // rid names this gift, so sending it again (a retry) never gives twice.
+    newGiftId: newUuid,
+    giveFlowers: async function (tourId, userId, n, note, rid) {
+      var q = await sb.rpc('give_flowers', { t_id: tourId, to_user: userId, how_many: n, why: String(note || '').trim().slice(0, 140),
+        rid: rid || newUuid() });
+      if (q.error) {
+        if (/no flowers left/.test(q.error.message || '')) {
+          // This phone's count was behind: fetch the real one before saying so.
+          flowerGen[tourId] = (flowerGen[tourId] || 0) + 1;
+          await loadFlowers(tourId);
+          throw err('none-left');
+        }
+        throw mapError(q.error);
+      }
+      flowerGen[tourId] = (flowerGen[tourId] || 0) + 1;
+      await loadFlowers(tourId);
+      return q.data;
     },
-    removeStat: async function (id) {
-      var q = await sb.from('crew_stats').delete().eq('id', id).select('id');
-      if (q.error) throw mapError(q.error);
-      if (!q.data || !q.data.length) throw err('permission');
-      cache.stats = cache.stats.filter(function (x) { return x.id !== id; });
-    },
-    gameBall: function (tourId) {
-      return {
-        rounds: cache.rounds.filter(function (g) { return g.tour_id === tourId; }).map(function (g) {
-          return { round: g.round, opensAt: g.opens_at, closesAt: g.closes_at, status: g.status, winner: g.winner, reason: g.winner_reason };
-        }),
-        votes: cache.gbVotes.filter(function (v) { return v.tour_id === tourId; }).map(function (v) {
-          return { round: v.round, voter: v.voter, voterName: v.voter_name, person: v.person, reason: v.reason, mine: !!session && v.voter === session.user.id };
-        })
-      };
-    },
-    voteGameBall: async function (tourId, round, person, reason) {
-      var q = await sb.from('game_ball_votes').upsert({ tour_id: tourId, round: round, voter: session.user.id, person: person,
-        reason: String(reason || '').trim().slice(0, 200) }, { onConflict: 'tour_id,round,voter' });
-      if (q.error) throw mapError(q.error);
-      await refetch();
-    },
-    // A tie: the tour manager makes the call.
-    callGameBall: async function (tourId, round, person, reason) {
-      var q = await sb.from('game_ball_rounds').update({ status: 'won', winner: person, winner_reason: reason || '' })
-        .eq('tour_id', tourId).eq('round', round).select('round');
+    // Take back flowers you gave, or remove ones given to you.
+    takeBackFlowers: async function (tourId, id) {
+      var q = await sb.from('flowers').delete().eq('id', id).select('id');
       if (q.error) throw mapError(q.error);
       if (!q.data || !q.data.length) throw err('permission');
-      await refetch();
+      flowerGen[tourId] = (flowerGen[tourId] || 0) + 1;
+      myFlowerGen += 1;
+      await Promise.all([loadFlowers(tourId), loadMyFlowers()]);
     },
     guestsFor: function (tourId, showId) {
       return cache.guests.filter(function (g) {
@@ -1032,6 +1023,52 @@
         window.GR_BACKEND.feedCall('sync').catch(function () { /* next open tries again */ });
       }
     } catch (e) { /* the feed is a convenience, never a blocker */ }
+  }
+  /* One question in flight at a time. A request that set off before the
+     latest change (an older generation) isn't reused, and what it brings
+     back only stands until the newer answer lands. A failed request keeps
+     what was there and tries again a minute later; with nothing there, the
+     page says so and offers Try again. */
+  function settle(old, q, gen, now) {
+    if (q && !q.error && isObj(q.data)) return { data: q.data, at: Date.now(), stale: gen !== now };
+    if (old && old.data && !old.data.error) return { data: old.data, at: Date.now(), stale: false };
+    return { data: { error: true }, at: Date.now(), stale: false };
+  }
+  function loadFlowers(tourId) {
+    var gen = flowerGen[tourId] || 0, ask = flowerAsk[tourId];
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.rpc('tour_flowers', { t_id: tourId }).then(function (q) { return q; }, function () { return null; })
+      .then(function (q) {
+        flowerCache[tourId] = settle(flowerCache[tourId], q, gen, flowerGen[tourId] || 0);
+        if (flowerAsk[tourId] === p) delete flowerAsk[tourId];
+        emit('tours');
+      });
+    p.gen = gen;
+    flowerAsk[tourId] = p;
+    return p;
+  }
+  function loadMyFlowers() {
+    var gen = myFlowerGen, ask = myFlowerAsk;
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.rpc('my_flowers').then(function (q) { return q; }, function () { return null; })
+      .then(function (q) {
+        myFlowerCache = settle(myFlowerCache, q, gen, myFlowerGen);
+        if (myFlowerAsk === p) myFlowerAsk = null;
+        emit('tours');
+      });
+    p.gen = gen;
+    myFlowerAsk = p;
+    return p;
+  }
+  // Someone gave (or took back) flowers, or the phone woke up: what's shown is asked for again.
+  function flowersChanged() {
+    clearTimeout(flowerTimer);
+    flowerTimer = setTimeout(function () {
+      Object.keys(flowerCache).forEach(function (k) { flowerGen[k] = (flowerGen[k] || 0) + 1; flowerCache[k].stale = true; });
+      myFlowerGen += 1;
+      if (myFlowerCache) myFlowerCache.stale = true;
+      emit('tours');
+    }, 300);
   }
   function feedChanged() {
     clearTimeout(feedTimer);
@@ -1373,6 +1410,7 @@
       if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
       if (hiddenAt && Date.now() - hiddenAt > 30e3) {
         freshToken(false).then(function () { flushErrors(); }).catch(function () { /* next tap tries */ });
+        flowersChanged(); // gifts while the phone slept never came down the live line
       }
       hiddenAt = 0;
     });
@@ -1589,9 +1627,7 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_polls' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_votes' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'day_requests' }, scheduleRefetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'crew_stats' }, scheduleRefetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_ball_rounds' }, scheduleRefetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_ball_votes' }, scheduleRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'flowers' }, flowersChanged)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'labels' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, scheduleRefetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, scheduleRefetch)

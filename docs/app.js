@@ -362,21 +362,6 @@
   function emptyState(title, body) {
     return h('div', { class: 'empty' }, h('h3', null, title), body ? h('p', null, body) : null);
   }
-  function backBtn(tour) {
-    var f = S.route && S.route.name === 'tour' ? cameFrom('tour:' + S.route.id) : null;
-    if (f) {
-      return h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go(f.back); } },
-        icon('back'), h('span', null, f.label));
-    }
-    var artist = tour ? String(tour.artist || '').trim() : '';
-    if (artist) {
-      return h('button', { class: 'iconbtn back', type: 'button',
-        onclick: function () { go({ name: 'artist', artist: artist }); } },
-        icon('back'), h('span', null, artist.length > 14 ? 'Tours' : artist));
-    }
-    return h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go({ name: 'home' }); } },
-      icon('back'), h('span', null, 'Tours'));
-  }
   function dbBanner() {
     if (!S.dbError) return null;
     return h('div', { class: 'banner' }, h('span', null,
@@ -677,11 +662,6 @@
     if (route.name === 'tour' && route.view === 'details') S.dsIndex = null;
     // The tour you were last in is the one the menu's tour rows open.
     if (route.name === 'tour' && route.id) rememberTour(route.id);
-    // A tour opened from the menu's Budget shows two tabs, Expenses and
-    // Income, for as long as you stay on its money pages.
-    if (route.name === 'tour' && route.book) S.book = route.id;
-    else if (!(route.name === 'tour' && route.id === S.book &&
-      ['costs', 'money', 'daybyday', 'cashlog'].indexOf(route.view) >= 0)) S.book = null;
     // A page reached from the menu (or its Tours / Artists lists) goes back
     // there, however many tabs you visit inside it. Home wipes the slate.
     if (route.name === 'home') S.fromMap = {};
@@ -733,7 +713,7 @@
     if (from) { S.dsIndex = null; S.glTour = null; S.glShow = null; }
     // Its money pages open without its shows, so the book skips the setup detour.
     if (t && !t.setupDone && canEditTour(id) && !book) go({ name: 'wizard', id: id, step: clampStep(t.setupStep), from: from || null, fromLabel: fromLabel || null });
-    else go({ name: 'tour', id: id, view: typeof view === 'string' ? view : 'menu', from: from || null, fromLabel: fromLabel || null, book: !!book });
+    else go({ name: 'tour', id: id, view: typeof view === 'string' ? view : 'menu', from: from || null, fromLabel: fromLabel || null });
   }
   // A hard close and reopen always lands on the Artists screen — the top of
   // the app, not wherever the last session wandered.
@@ -2186,7 +2166,6 @@
   function viewerHead(title, checked, backTo) {
     return h('div', { class: 'headband dark vp-head' },
       h('header', { class: 'topbar vp-top' },
-        h('button', { class: 'iconbtn vp-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 30)),
         h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title), checked ? verifiedBadge() : null),
         h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' })));
   }
@@ -2200,10 +2179,11 @@
     var justLooking = function (what) { return function () { toast(what); }; };
     var head = function (title, checked) { return viewerHead(title, checked, backTo); };
     if (!card) {
-      return h('div', { class: 'page home profile' }, head('Profile'),
+      return h('div', { class: 'page home profile has-tabs' }, head('Profile'),
         c.gone ? emptyState('This profile isn\u2019t available', 'You can see the profiles of people you\u2019ve toured with.')
           : c.failed ? emptyState('Couldn\u2019t load this profile', 'Check your signal and try again.')
-          : h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading\u2026'));
+          : h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading\u2026'),
+        socialBar(''));
     }
     var roles = personRoles(card);
     var tours = Array.isArray(card.tours) ? card.tours : [];
@@ -2465,12 +2445,10 @@
       S.dmJump = false;
       requestAnimationFrame(function () { window.scrollTo(0, document.documentElement.scrollHeight); });
     }
-    return h('div', { class: 'page home dm-page' },
+    return h('div', { class: 'page home dm-page has-tabs' },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' },
-            h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go(backTo); } },
-              icon('back'), h('span', null, 'Back'))),
+          h('span', { class: 'top-side' }),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' })),
         h('div', { class: 'band-row' },
@@ -2479,7 +2457,8 @@
         : list.length ? h('div', { class: 'dm-list' }, list)
         : h('p', { class: 'note dm-empty' }, 'No messages yet. Say hello.'),
       h('form', { class: 'chat-form dm-form', onsubmit: send, novalidate: true },
-        h('div', { class: 'chat-field' }, input, sendBtn)));
+        h('div', { class: 'chat-field' }, input, sendBtn)),
+      socialBar(''));
   }
   function openInbox() {
     var d = loadThreads(true);
@@ -2946,18 +2925,17 @@
       if (!(S.route.manage && (!card || card.mine))) return viewerHead(title, false, backTo);
       return h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' },
-            h('button', { class: 'iconbtn back', type: 'button', onclick: function () { go(backTo); } },
-              icon('back'), h('span', null, 'Back'))),
+          h('span', { class: 'top-side' }),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' })),
         h('div', { class: 'band-row' }, h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title))));
     };
     if (!card) {
-      return h('div', { class: 'page home profile' }, head('Artist'),
+      return h('div', { class: 'page home profile has-tabs' }, head('Artist'),
         c.gone ? emptyState('This artist isn\u2019t on Greenroom', 'The profile may have been removed.')
           : c.failed ? emptyState('Couldn\u2019t load this artist', 'Check your signal and try again.')
-          : h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading\u2026'));
+          : h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading\u2026'),
+        socialBar(''));
     }
     var members = Array.isArray(card.members) ? card.members : [];
     var bandList = members.filter(function (m) { return m.kind === 'band'; });
@@ -3101,16 +3079,33 @@
      Search on the left, your own photo on the right: the photo takes you to
      your profile from anywhere. (Inside a tour, the tour's own tabs sit
      there instead.) More doors can join these two later. */
-  function socialBar(current) {
-    if (!socialOn()) return null;
-    var me = myCard(), who = profileName();
-    var face = h('span', { class: 'sb-face' + (me.photo ? ' has' : '') + (current === 'me' ? ' on' : ''), 'aria-hidden': 'true' },
+  /* The bar along the bottom of every page: your photo dead centre, and one
+     tap on it always brings you home to your profile (on your profile, back
+     to its top). Whatever tabs the page has sit either side of it. */
+  function homeFace(current) {
+    var me = myCard(), who = profileName(), on = current === 'me';
+    var face = h('span', { class: 'sb-face' + (me.photo ? ' has' : '') + (on ? ' on' : ''), 'aria-hidden': 'true' },
       me.photo ? h('img', { src: me.photo, alt: '' }) : (who.trim().charAt(0).toUpperCase() || '?'));
-    return h('nav', { class: 'tabbar social-bar', 'aria-label': 'Greenroom',
-      'data-sig': 'social|' + current + '|' + me.photo.length + '|' + who,
-      style: 'grid-template-columns: repeat(2, 1fr)' },
-      tabButton(current === 'search', 'Search', 'search', function () { if (current !== 'search') go({ name: 'search', back: S.route, focus: true }); }),
-      tabButton(current === 'me', 'Profile', null, function () { if (current !== 'me') go({ name: 'home' }); }, face));
+    var b = tabButton(on, 'Your profile', null, function () {
+      if (S.route && S.route.name === 'home') window.scrollTo({ top: 0, behavior: 'smooth' });
+      else go(PF_HOME); // back where you were on it
+    }, face);
+    b.classList.add('dock-me');
+    return b;
+  }
+  function dock(left, right, current, sig, o) {
+    o = o || {};
+    var me = myCard();
+    return h('nav', { class: 'tabbar dock' + (o.cls ? ' ' + o.cls : ''), 'aria-label': o.label || 'Greenroom',
+      'data-sig': 'dock|' + sig + '|' + current + '|' + me.photo.length + '|' + profileName() },
+      h('div', { class: 'dock-half left' }, left), homeFace(current), h('div', { class: 'dock-half right' }, right));
+  }
+  // The social pages' bar: Search beside your photo.
+  function socialBar(current) {
+    var search = socialOn() ? tabButton(current === 'search', 'Search', 'search', function () {
+      if (current !== 'search') go({ name: 'search', back: S.route, focus: true });
+    }) : null;
+    return dock([search], [], current, 'social', { cls: 'social-bar' });
   }
   /* Search, the way a social app does it: a back arrow and one rounded box
      across the top. Before you type, it lists what you opened lately
@@ -3253,7 +3248,6 @@
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' })),
         h('div', { class: 'band-row sr-bar' },
-          h('button', { class: 'sr-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 20)),
           h('form', { class: 'sr-pill', role: 'search',
             // The Search key keeps what you looked for in Recent, under a clock.
             onsubmit: function (e) {
@@ -3324,26 +3318,25 @@
     return (live || entries[0])[0];
   }
   /* The three lines, top right of your profile and of every page the menu
-     leads to: the menu, from wherever you are. Back from the menu returns to
-     the page you opened it on (as the two-tab money book, if you were in one). */
+     leads to: the menu, from wherever you are. */
   function menuBtn() {
     return h('button', { class: 'iconbtn pf-menu', type: 'button', 'aria-label': 'Menu', onclick: openMenu }, icon('menu', 26));
   }
   function openMenu() {
-    var here = S.route || { name: 'home' };
-    if (here.name === 'tour' && S.book === here.id && !here.book) here = Object.assign({}, here, { book: true });
-    go({ name: 'mainmenu', back: here, fresh: true });
+    go({ name: 'mainmenu', back: S.route || { name: 'home' }, fresh: true });
   }
-  // The header the menu and the pages under it share: a round back button and the title in the middle; o.menu adds the three lines.
-  function menuHead(title, backTo, o) {
-    return h('div', { class: 'headband' },
-      h('header', { class: 'topbar' },
-        h('span', { class: 'top-side' }),
-        h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-        h('span', { class: 'top-side right' }, o && o.menu ? menuBtn() : null)),
-      h('div', { class: 'band-row mn-bar' },
-        h('button', { class: 'sr-back', type: 'button', 'aria-label': 'Back', onclick: function () { go(backTo); } }, icon('back', 20)),
-        h('h1', { class: 'mn-title' }, title)));
+  /* The top of the menu and the pages under it: no band at all, just the GR
+     mark in green, centred, the way someone else's profile wears it; o.menu
+     adds the three lines. A page's name (if it has one) sits under it. */
+  function menuHead(title, o) {
+    return [
+      h('div', { class: 'headband dark mn-top' },
+        h('header', { class: 'topbar' },
+          h('span', { class: 'top-side' }),
+          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+          h('span', { class: 'top-side right' }, o && o.menu ? menuBtn() : null))),
+      title ? h('h1', { class: 'mn-page-t' }, title) : null
+    ];
   }
   // o.open: a row that drops more rows down under it (true or false); o.face: a picture in place of the icon; o.cls.
   function menuRow(ic, label, onTap, sub, o) {
@@ -3404,8 +3397,8 @@
     var first = S.menuIn; S.menuIn = false;
     var pickTour = function () { openTourPicker(); };
     // One list, no rules between: the money first, then the tour you're in, then Settings.
-    return h('div', { class: 'page home menu-page' + (first ? ' mn-in' : '') },
-      menuHead('Menu', backTo),
+    return h('div', { class: 'page home menu-page has-tabs' + (first ? ' mn-in' : '') },
+      menuHead(null),
       dbBanner(),
       h('section', { class: 'mn-group' },
         budgetRows(here),
@@ -3419,7 +3412,8 @@
         }) : h('p', { class: 'mn-none' }, canWrite()
           ? 'No tours yet. Tap + on your profile to add an artist, then their first tour.'
           : 'No tours have been shared with you yet.'),
-        menuRow('gear', 'Settings', function () { openSettingsSheet(); })));
+        menuRow('gear', 'Settings', function () { openSettingsSheet(); })),
+      socialBar(''));
   }
   /* Every tour you're on, all artists together: on the road first, then the
      newest. A tour opened from here comes back here. */
@@ -3427,14 +3421,15 @@
     var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
     var here = { name: 'tours', back: backTo };
     var entries = toursByNow();
-    return h('div', { class: 'page home profile menu-page' },
-      menuHead('Tours', backTo, { menu: true }),
+    return h('div', { class: 'page home profile menu-page has-tabs' },
+      menuHead('Tours', { menu: true }),
       dbBanner(),
       entries.length ? h('ul', { class: 'tour-list rows mn-list' }, entries.map(function (e) {
         return h('li', null, tourListRow(e, function () { openTour(e[0], 'details', here, 'Tours'); }));
       })) : emptyState('No tours yet', canWrite()
         ? 'Tap + on your profile to add an artist, then their first tour.'
-        : 'Nothing has been shared with you yet.'));
+        : 'Nothing has been shared with you yet.'),
+      socialBar(''));
   }
   // A tour as a row in a list: its artist's picture, its name, and where it stands (on the road, or its dates).
   function tourListRow(e, onTap) {
@@ -3457,27 +3452,29 @@
     var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
     var here = { name: 'book', artist: name, back: backTo };
     var entries = bookTours(name);
-    return h('div', { class: 'page home profile menu-page' },
-      menuHead(name || 'Budget', backTo, { menu: true }),
+    return h('div', { class: 'page home profile menu-page has-tabs' },
+      menuHead(name || 'Budget', { menu: true }),
       dbBanner(),
       h('h2', { class: 'mn-h mn-over' }, 'Budget \u00b7 Tours'),
       entries.length ? h('ul', { class: 'tour-list rows mn-list' }, entries.map(function (e) {
         return h('li', null, tourListRow(e, function () { openTour(e[0], 'costs', here, 'Tours', true); }));
-      })) : emptyState('No tours here', 'Tours whose budget you can see show up here.'));
+      })) : emptyState('No tours here', 'Tours whose budget you can see show up here.'),
+      socialBar(''));
   }
   // Your artists, each opening its own page of tours (and Off Tour). An artist opened from here comes back here.
   function viewAllArtists() {
     var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
     var here = { name: 'artists', back: backTo };
     var groups = tourGroups();
-    return h('div', { class: 'page home profile menu-page' },
-      menuHead('Artists', backTo, { menu: true }),
+    return h('div', { class: 'page home profile menu-page has-tabs' },
+      menuHead('Artists', { menu: true }),
       dbBanner(),
       groups.byArtist.size ? h('ul', { class: 'tour-list rows mn-list' }, Array.from(groups.byArtist, function (pair) {
         return h('li', null, artistRow(pair[0], pair[1], here, 'Artists'));
       })) : emptyState('No artists yet', canWrite()
         ? 'Tap + on your profile to add your artist, then their first tour.'
-        : 'Nothing has been shared with you yet.'));
+        : 'Nothing has been shared with you yet.'),
+      socialBar(''));
   }
 
   /* ---- The tabs under your own profile. ----
@@ -3486,7 +3483,7 @@
      one), ARTISTS (who you work for, names only), TOURS (every run with its
      dates, laid out like the calendar, with the Day sheet, Special requests
      and vote buttons, and no way to add shows from here), GUEST LIST
-     (tonight's) and STATS (your own Crew Stats, nobody else's). Today, Stats and Guest list read the tour
+     (tonight's) and STATS (your flowers, from every tour). Today, Stats and Guest list read the tour
      you were last in, the same one the menu's rows open. Switching tabs
      redraws in place; nothing here is a route. */
   var PF_TABS = [
@@ -3586,64 +3583,44 @@
         address ? h('a', { class: 'pt-addr', href: mapsHref(address), target: '_blank', rel: 'noopener' }, address) : null,
         next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
           [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null),
-      sheet ? [isToday ? checkInBtn(id, entry.date, true) : null, h('div', { class: 'pt-sheet' }, sheet)] : null
+      sheet ? h('div', { class: 'pt-sheet' }, sheet) : null
     ];
   }
-  // You, on a tour's stat sheet: the creator is 'owner'; everyone else goes by the email they were invited on.
-  function myPersonKey(id) {
-    var B = window.GR_BACKEND;
-    if (!B) return null;
-    if (B.ownsTour && B.ownsTour(id)) return 'owner';
-    var uid = B.uid && B.uid();
-    var rows = S.crewCache && S.crewCache[id] && S.crewCache[id].rows;
-    // Not asked for yet on this tour: ask once, and draw again when it's in.
-    if (!rows && S.mode === 'db' && B.crew) {
-      S.crewCache = S.crewCache || {};
-      S.crewAsk = S.crewAsk || {};
-      if (!S.crewAsk[id]) {
-        S.crewAsk[id] = true;
-        B.crew(id).then(function (got) { S.crewCache[id] = { rows: got, at: Date.now() }; render(true); })
-          .catch(function () { /* the sign-in email stands in */ });
-      }
-    }
-    var mine = rows && uid ? rows.filter(function (m) { return m.userId === uid; })[0] : null;
-    if (mine) return personKey(mine);
-    var e = B.email && B.email();
-    return e ? 'e:' + String(e).toLowerCase() : null;
-  }
-  /* STATS: your own numbers on this tour, one line per stat. Adding to them
-     stays on the tour's Crew Stats, where the whole crew is. */
+  /* STATS: your flowers. The three numbers from every tour you've been on
+     (flowers between the laurels, the trophy for the artists who list you
+     as their crew, your tours), how many you've still to give on the tour
+     you're in, and the flowers you've been given, with who and what for. */
   function pfStats(id, t, count) {
     var B = window.GR_BACKEND;
-    var bar = pfTourBar(id, t, count, 'stats');
-    if (!(S.mode === 'db' && B && B.statsFor)) return [bar, emptyState('No stats here', 'Crew Stats are kept with a signed-in tour.')];
-    var key = myPersonKey(id);
-    var stats = B.statsFor(id);
-    var gb = B.gameBall ? B.gameBall(id) : { rounds: [] };
-    var pend = S.statPending || {};
-    var count1 = function (st) {
-      return st.balls ? gb.rounds.filter(function (g) { return g.status === 'won' && g.winner === key; }).length
-        : stats.filter(function (x) { return x.person === key && x.stat === st.key; }).length + (pend[key + '|' + st.key] || 0);
-    };
-    var days = {};
-    stats.forEach(function (x) { if (x.person === key && x.stat === 'checkin' && x.day) days[x.day] = true; });
-    var d0 = G.tourToday(); if (!days[d0]) d0 = G.addDays(d0, -1);
-    var streak = 0; while (days[d0]) { streak += 1; d0 = G.addDays(d0, -1); }
-    var holder = gameBallHolder(id);
+    if (!flowersOn()) return emptyState('Flowers are for signed-in tours', 'Sign in and the people you tour with can give you your flowers.');
+    var mine = B.myFlowers();
+    if (!mine) return fwLoading('Picking your flowers…');
+    if (mine.error) return fwFailed(function () { B.myFlowers(true); });
+    var c = mine.counts || {};
+    var here = t ? B.flowersFor(id) : null;
+    var got = Array.isArray(mine.got) ? mine.got : [];
     return [
-      bar,
-      (holder && holder.winner === key) ? h('p', { class: 'pt-ball' }, '\ud83c\udfc8 You have the game ball') : null,
-      h('div', { class: 'pt-stats' }, STATS.map(function (st) {
-        var n = count1(st);
-        return h('div', { class: 'pt-stat' + (n ? '' : ' zero') },
-          h('span', { class: 'pt-emoji', 'aria-hidden': 'true' }, st.emoji),
-          h('span', { class: 'lr-text' },
-            h('span', { class: 'pt-stat-l' }, st.label),
-            (st.key === 'checkin' && streak > 1) ? h('span', { class: 'lr-sub' }, '\ud83d\udd25 ' + streak + '-day streak') : null),
-          h('strong', { class: 'pt-stat-n num' }, String(n)));
-      })),
-      h('button', { class: 'pt-more', type: 'button', onclick: function () { openTour(id, 'stats', PF_HOME, 'Profile'); } },
-        'See the whole crew', icon('chevron', 14))
+      h('section', { class: 'fw-me' }, fwStats(c.flowers, c)),
+      t && here && !here.error && here.canGive ? h('div', { class: 'fw-left' },
+        h('p', { class: 'fw-left-t' }, here.left > 0
+          ? [plural(here.left, 'flower') + ' left to give on ', h('strong', null, t.name || 'this tour')]
+          : ['All ' + FLOWERS_EACH + ' given on ', h('strong', null, t.name || 'this tour')]),
+        h('button', { class: 'pf-btn go', type: 'button', onclick: function () { openTour(id, 'stats', PF_HOME, 'Profile'); } },
+          here.left > 0 ? 'Give flowers' : 'See the crew')) : null,
+      got.length ? [
+        h('h3', { class: 'fw-h' }, 'Your flowers'),
+        h('ul', { class: 'fw-feed' }, got.map(function (g) {
+          var who = String(g.name || '').trim();
+          return h('li', { class: 'fw-gift' },
+            personPhoto({ name: who || '?', avatar: g.avatar }, 'xs'),
+            h('div', { class: 'fw-gift-t' },
+              h('p', { class: 'fw-gift-l' }, h('strong', null, who ? who.split(/\s+/)[0] : 'Someone'), ' gave you ' + plural(g.n, 'flower') + ' ',
+                h('span', { 'aria-hidden': 'true' }, FLOWER)),
+              g.note ? h('p', { class: 'fw-note' }, '“' + g.note + '”') : null,
+              h('p', { class: 'fw-when' }, [g.tour, dmWhen(g.at)].filter(Boolean).join(' · '),
+                h('button', { class: 'fw-undo', type: 'button', onclick: function () { removeGotFlowers(g); } }, 'Remove'))));
+        }))
+      ] : h('p', { class: 'fw-none' }, 'No flowers yet. They come from the people you tour with.')
     ];
   }
   /* GUEST LIST: tonight's (or the next show's), with Add guest and Import
@@ -3737,7 +3714,7 @@
         : 'Nothing has been shared with you yet.');
     };
     var body = tab === 'today' ? (t ? pfToday(id, t, entries.length) : none())
-      : tab === 'stats' ? (t ? pfStats(id, t, entries.length) : none())
+      : tab === 'stats' ? pfStats(id, t, entries.length)
       : tab === 'guests' ? (t ? pfGuests(id, t, entries.length) : none())
       : tab === 'tours' ? pfTours()
       : pfArtists(byArtist, declared, loose);
@@ -3770,7 +3747,7 @@
       var k = a.toLowerCase();
       return !Array.from(byArtist.keys()).some(function (b) { return String(b).toLowerCase() === k; });
     });
-    return h('div', { class: 'page home profile' + (socialOn() ? ' has-tabs' : '') },
+    return h('div', { class: 'page home profile pf-home has-tabs' },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
           // Top left, where a social app keeps it: + adds an artist, then their tours.
@@ -3906,31 +3883,23 @@
       delete S.drafts.newArtist;
       go({ name: 'artist', artist: name });
     };
-    return h('div', { class: 'page home' },
+    return h('div', { class: 'page home has-tabs' },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('button', { class: 'iconbtn back', type: 'button',
-            onclick: function () { delete S.drafts.newArtist; go({ name: 'home' }); } },
-            icon('back'), h('span', null, 'Profile')),
+          h('span', { class: 'top-side' }),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-          h('div', { class: 'topbar-actions' }, h('span', { style: 'width:44px' })))),
+          h('span', { class: 'top-side right' }, menuBtn()))),
       h('form', { class: 'sh-form', onsubmit: submit, novalidate: true, style: 'margin-top:18px' },
         field('Artist', input),
-        h('button', { class: 'btn primary block', type: 'submit', style: 'margin-top:18px' }, 'Save')));
+        h('button', { class: 'btn primary block', type: 'submit', style: 'margin-top:18px' }, 'Save')),
+      socialBar(''));
   }
 
   /* One artist's tours. */
-  // Back from an artist's page: to the Artists list if that's how you came, else your profile.
-  function artistBack(name) {
-    var f = cameFrom('artist:' + name);
-    return h('button', { class: 'iconbtn back', type: 'button',
-      onclick: function () { if (f) delete S.fromMap['artist:' + name]; go(f ? f.back : { name: 'home' }); } },
-      icon('back'), h('span', null, f ? f.label : 'Profile'));
-  }
   function bandHead(name, sub) {
     return h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' }, artistBack(name)),
+          h('span', { class: 'top-side' }),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' }, menuBtn())),
         h('div', { class: 'band-row' },
@@ -3943,10 +3912,10 @@
     var entries = allTourEntries().filter(function (e) { return artistOf(e[1]) === name; });
     var pill = homePill();
     var tabs = artistTabs(name, 'tours');
-    return h('div', { class: 'page home' + (tabs ? ' has-tabs' : '') },
+    return h('div', { class: 'page home has-tabs' },
       h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' }, artistBack(name)),
+          h('span', { class: 'top-side' }),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
           h('span', { class: 'top-side right' }, menuBtn())),
         h('div', { class: 'band-row' },
@@ -4123,8 +4092,10 @@
     var step = S.route.step || 1;
     var t = id ? getTour(id) : null;
     if (id && !t) {
-      return h('div', { class: 'page' },
-        h('header', { class: 'topbar' }, backBtn()), emptyState('Saving the tour…', null));
+      return h('div', { class: 'page has-tabs' },
+        h('header', { class: 'topbar' }),
+        S.pending[id] ? emptyState('Saving the tour…', null) : emptyState('This tour isn’t here anymore', 'It may have been deleted.'),
+        socialBar(''));
     }
     var exit = function () { return id ? go({ name: 'tour', id: id, view: 'menu' }) : go({ name: 'home' }); };
     var head = h('div', { class: 'wz-head' },
@@ -4140,7 +4111,7 @@
     // Costs and debts are no longer asked here — the Expenses tab owns both.
     if (step >= 2) body = wzShows(id, t);
     else body = wzName(id, t);
-    return h('div', { class: 'page wizard' }, head, body);
+    return h('div', { class: 'page wizard has-tabs' }, head, body, socialBar(''));
   }
 
   function wzFoot(back, label, onNext) {
@@ -6058,18 +6029,8 @@
   /* ============================== Tour view ============================== */
 
   function tourTopbar(t, id, view) {
-    // Inside a tour the tabs do the moving, so back always leaves it —
-    // except the subpages, which step back to the tab they hang off.
-    var sub = view === 'daybyday' || view === 'cashlog';
-    var cal = view === 'calendar';
-    var back = view === 'addshows' || sub || cal
-      ? h('button', { class: 'iconbtn back', type: 'button',
-          onclick: function () {
-            go({ name: 'tour', id: id, view: sub ? 'costs' : 'details' });
-          } },
-          icon('back'), h('span', null, sub ? 'Expenses' : cal ? 'Overview' : 'Tour'))
-      : backBtn(t);
-    return h('header', { class: 'topbar' }, back,
+    // No back button: your photo at the bottom takes you home, the three lines open the menu.
+    return h('header', { class: 'topbar' }, h('span', { class: 'top-side' }),
       h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
       h('div', { class: 'topbar-actions' },
         canEditTour(id) ? h('button', {
@@ -6091,25 +6052,27 @@
     { view: 'chat', label: 'Chat', icon: 'tabchat' }
   ];
 
-  // A tour opened from the menu's Budget is its money book: Expenses and Income, nothing else.
+  /* A tour's tabs, either side of your photo. The money is one tab, Budget,
+     which opens the tour's money book: Expenses and Income, either side of
+     your photo, the same two tabs the menu's Budget leads to. GA never sees
+     the Budget tab. */
   var BOOK_TABS = ['costs', 'money'];
-  function inBook(id) { return S.book === id && canSeeMoney(id); }
+  var BUDGET_TAB = { view: 'costs', label: 'Budget', icon: 'tabmoney', book: true };
   function tourTabs(id, current) {
-    var tabs = canSeeMoney(id) ? TOUR_TABS : TOUR_TABS.filter(function (t) {
-      return t.view !== 'money' && t.view !== 'costs';
+    var money = canSeeMoney(id);
+    var tabs = money && BOOK_TABS.indexOf(current) >= 0
+      ? BOOK_TABS.map(function (v) { return TOUR_TABS.filter(function (t) { return t.view === v; })[0]; })
+      : TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
+    if (money && tabs.length > 2) tabs.splice(1, 0, BUDGET_TAB);
+    var buttons = tabs.map(function (t) {
+      var on = !t.book && t.view === current;
+      return tabButton(on, t.label, t.icon, function () {
+        if (!on || (S.route.view || 'details') !== t.view) go({ name: 'tour', id: id, view: t.view });
+      });
     });
-    if (inBook(id) && BOOK_TABS.indexOf(current) >= 0) {
-      tabs = BOOK_TABS.map(function (v) { return TOUR_TABS.filter(function (t) { return t.view === v; })[0]; });
-    }
-    return h('nav', { class: 'tabbar' + (tabs.length === 2 ? ' book-tabs' : ''), 'aria-label': 'Tour sections',
-      'data-sig': id + '|' + current + '|' + tabs.map(function (t) { return t.view; }).join(','),
-      style: 'grid-template-columns: repeat(' + tabs.length + ', 1fr)' },
-      tabs.map(function (t) {
-        var on = t.view === current;
-        return tabButton(on, t.label, t.icon, function () {
-          if (!on || (S.route.view || 'details') !== t.view) go({ name: 'tour', id: id, view: t.view });
-        });
-      }));
+    var half = Math.ceil(buttons.length / 2);
+    return dock(buttons.slice(0, half), buttons.slice(half), '',
+      id + '|' + current + '|' + tabs.map(function (t) { return t.label; }).join(','), { label: 'Tour sections' });
   }
   function tabButton(on, label, iconName, goThere, face) {
         var down = null;
@@ -6134,16 +6097,14 @@
           onclick: goThere
         }, face || icon(iconName, 23), h('span', null, label));
   }
-  // The band page's two tabs: TOUR and OFF TOUR (the owner and ALL ACCESS only).
+  // The band page's two tabs either side of your photo: TOUR and OFF TOUR (the owner and ALL ACCESS only).
   function artistTabs(name, current) {
-    if (!canSeeOffTour(name)) return null;
-    var tabs = [{ view: 'tours', label: 'TOUR', icon: 'tabmap' }, { view: 'off', label: 'OFF TOUR', icon: 'tabcost' }];
-    return h('nav', { class: 'tabbar band-tabs', 'aria-label': name + ' sections',
-      'data-sig': 'band|' + name + '|' + current, style: 'grid-template-columns: repeat(2, 1fr)' },
-      tabs.map(function (t) {
-        var on = t.view === current;
-        return tabButton(on, t.label, t.icon, function () { if (!on) go({ name: 'artist', artist: name, view: t.view }); });
-      }));
+    if (!canSeeOffTour(name)) return dock([], [], '', 'band|' + name);
+    var tabs = [{ view: 'tours', label: 'TOUR', icon: 'tabmap' }, { view: 'off', label: 'OFF TOUR', icon: 'tabcost' }].map(function (t) {
+      var on = t.view === current;
+      return tabButton(on, t.label, t.icon, function () { if (!on) go({ name: 'artist', artist: name, view: t.view }); });
+    });
+    return dock([tabs[0]], [tabs[1]], '', 'band|' + name + '|' + current, { cls: 'band-tabs', label: name + ' sections' });
   }
 
 
@@ -6584,12 +6545,13 @@
   /* The shows door: every way dates get onto the tour, one place, once.
      Both other doors read from what lands here. */
   function viewAddShows(id, t) {
-    return h('div', { class: 'page tour' },
+    return h('div', { class: 'page tour has-tabs' },
       h('div', { class: 'headband' },
         tourTopbar(t, id, 'addshows'),
         h('h1', { class: 'tour-title' }, 'Add shows')),
       dbBanner(),
-      addShowsBody(id, t));
+      addShowsBody(id, t),
+      tourTabs(id, 'details'));
   }
 
   /* Everywhere shows come from, in one place — its own page from the wizard,
@@ -6634,9 +6596,10 @@
     var tab = S.route.tab || 'shows';
     var t = getTour(id);
     if (!t) {
-      return h('div', { class: 'page' },
-        h('header', { class: 'topbar' }, backBtn()),
-        emptyState('This tour isn’t here anymore', 'It may have been deleted.'));
+      return h('div', { class: 'page has-tabs' },
+        h('header', { class: 'topbar' }),
+        emptyState('This tour isn’t here anymore', 'It may have been deleted.'),
+        socialBar(''));
     }
     if (view === 'addshows') return viewAddShows(id, t);
     if (view === 'menu') view = 'details';
@@ -6883,10 +6846,8 @@
       wnHost.replaceChildren.apply(wnHost, managesTour(tourId, rows) ? [whatsNewBtn(tourId)] : []);
     }
     if (owns || cached) fillWhatsNew(cached ? cached.rows : []);
-    var ball = gameBallHolder(tourId);
     function crewRow(m) {
       var title = m.name || m.username || m.email;
-      if (ball && ball.winner === personKey(m)) title = title + ' \ud83c\udfc8';
       // Invited but no account yet: "Pending", and no contact buttons until
       // they sign up and their own card fills in.
       var pending = !m.joined;
@@ -7758,286 +7719,211 @@
     }, dateBlock(s.date), whereBlock(s), log, total));
   }
 
-  /* ============================== Crew Stats ==============================
-     The fun side of the tour, one column per person. Anyone adds beers and
-     joints; the tour manager adds the rest. The game ball is voted on after
-     the first show, every week, and after the last show. */
-  var STATS = [
-    { key: 'beer', unit: ['beer', 'beers'],  label: 'Beers', emoji: '🍺', title: 'Party Animal', anyone: true },
-    { key: 'joint', unit: ['joint', 'joints'],  label: 'Joints', emoji: '🌿', title: 'Smoke Show', anyone: true },
-    { key: 'checkin', unit: ['check in', 'check in’s'],  label: 'Check In’s', emoji: '✅', title: 'Always Ready', self: true },
-    { key: 'bus', unit: ['bus clean', 'bus cleans'],  label: 'Bus cleans', emoji: '🧽', title: 'Bus Hero' },
-    { key: 'late', unit: ['time late', 'times late'],  label: 'Late to soundcheck', emoji: '⏰', title: 'Fashionably Late' },
-    { key: 'laminate', unit: ['laminate lost', 'laminates lost'],  label: 'Laminates lost', emoji: '🪪', title: 'Lost & Found' },
-    { key: 'gameball', unit: ['game ball', 'game balls'],  label: 'Game balls', emoji: '🏈', title: 'MVP', balls: true }
-  ];
-  function personKey(m) { return m.owner ? 'owner' : 'e:' + String(m.invitedEmail || m.email || '').toLowerCase(); }
-  function firstName(m) { return String(m.name || m.username || m.email || 'Crew').trim().split(/\s+/)[0]; }
-  // Who holds the game ball: the latest round with a winner.
-  function gameBallHolder(id) {
+  /* ============================== Crew Stats: Flowers ==============================
+     Devin: "each person when they sign on gets 10 flowers that they can hand
+     out... giving someone their flowers, like credit where credit is due.
+     Keep this thing positive: instead of reviewing a crew member you're
+     simply giving someone their flowers." Everyone on a tour has 10 for it,
+     to give to anyone else on it, a few at a time, with a line on what for
+     if they like. The crew stack up the way a social app heads a profile:
+     photo, name, and three numbers. Flowers on this tour between two
+     laurels, the trophy for the artists who list them as their crew, and
+     their tours. Your own flowers add up across every tour on your
+     profile's Stats tab. */
+  var FLOWERS_EACH = 10;
+  var FLOWER = '💐', TROPHY = '🏆';
+  function flowersOn() {
     var B = window.GR_BACKEND;
-    var gb = B && B.gameBall ? B.gameBall(id) : { rounds: [] };
-    var won = gb.rounds.filter(function (g) { return g.status === 'won' && g.winner; })
-      .sort(function (a, b) { return String(b.round).localeCompare(String(a.round)); });
-    return won[0] || null;
+    return S.mode === 'db' && !!(B && B.flowersFor);
   }
-  // The vote days: the first show, every 7 days after, and the last show.
-  function gameBallDays(t) {
-    var d = G.rows(t && t.shows).map(function (s) { return s.date; }).filter(G.parseDay).sort();
-    if (!d.length) return [];
-    var out = [];
-    for (var r = d[0]; r <= d[d.length - 1]; r = G.addDays(r, 7)) out.push(r);
-    if (out.indexOf(d[d.length - 1]) < 0) out.push(d[d.length - 1]);
-    return out;
+  // A laurel branch each side of a number, the way a social app crowns a favourite.
+  var LAUREL = '<svg viewBox="0 0 12 24" aria-hidden="true"><path class="lau-stem" d="M9.2 23.2C3.6 19.6 2 12.6 4.9 3.6"/>' +
+    '<ellipse cx="4.1" cy="19.4" rx="1.55" ry="3" transform="rotate(-58 4.1 19.4)"/>' +
+    '<ellipse cx="2.7" cy="14.3" rx="1.5" ry="2.9" transform="rotate(-34 2.7 14.3)"/>' +
+    '<ellipse cx="2.7" cy="9.2" rx="1.45" ry="2.8" transform="rotate(-14 2.7 9.2)"/>' +
+    '<ellipse cx="4.7" cy="4" rx="1.35" ry="2.7" transform="rotate(14 4.7 4)"/>' +
+    '<ellipse cx="7.6" cy="17.1" rx="1.25" ry="2.5" transform="rotate(42 7.6 17.1)"/>' +
+    '<ellipse cx="6.6" cy="11.6" rx="1.2" ry="2.4" transform="rotate(26 6.6 11.6)"/></svg>';
+  function laurels(inner) {
+    var branch = function (flip) {
+      var s = h('span', { class: 'lau' + (flip ? ' flip' : ''), 'aria-hidden': 'true' });
+      s.innerHTML = LAUREL;
+      return s;
+    };
+    return h('span', { class: 'laurels' }, branch(false), h('span', { class: 'lau-n' }, inner), branch(true));
   }
-
-  // The stat you're looking at, kept per phone.
-  function statPick(id, set) {
-    var k = 'gr-stat-pick';
-    try {
-      if (set) { localStorage.setItem(k, set); return set; }
-      return localStorage.getItem(k) || 'beer';
-    } catch (e) { S.statPickMem = set || S.statPickMem || 'beer'; return S.statPickMem; }
+  function fwName(p) { return String((p && p.name) || (p && p.handle ? '@' + p.handle : '') || 'Someone').trim(); }
+  function fwFirst(p) { return fwName(p).split(/\s+/)[0]; }
+  function fwStat(num, label) {
+    return h('div', { class: 'fw-stat' }, h('strong', { class: 'fw-n num' }, num), h('span', { class: 'fw-l' }, label));
   }
-  // Clean, drawn + and − (the text characters sat crooked in the circles).
-  function stepIcon(plus) {
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '18'); svg.setAttribute('height', '18');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.innerHTML = plus ? '<path d="M12 5v14M5 12h14"/>' : '<path d="M5 12h14"/>';
-    return svg;
+  // The three numbers: flowers (here, or everywhere), the trophy, the tours.
+  function fwStats(flowers, c) {
+    c = c || {};
+    var e = c.endorsements || 0, n = c.tours || 0;
+    return h('div', { class: 'fw-stats' },
+      fwStat(laurels(String(flowers || 0)), flowers === 1 ? 'flower' : 'flowers'),
+      fwStat([h('span', { class: 'fw-emo', 'aria-hidden': 'true' }, TROPHY), String(e)], e === 1 ? 'endorsement' : 'endorsements'),
+      fwStat(String(n), n === 1 ? 'tour' : 'tours'));
   }
-  function stepStat(id, person, st, up, owner, before, redraw) {
+  // One person on the tour: photo, name, the three numbers, and Give flowers.
+  function flowerCard(id, p, me, data) {
+    var mine = p.userId === me;
+    return h('li', { class: 'fw-card' + (mine ? ' me' : '') },
+      h('button', { class: 'fw-face', type: 'button', 'aria-label': mine ? 'Your profile' : 'Open ' + fwName(p) + '’s profile',
+        onclick: function () { openProfile(p.userId); } }, personPhoto(p, 'fw-photo')),
+      h('div', { class: 'fw-side' },
+        h('p', { class: 'fw-name' }, h('span', { class: 'fw-name-t' }, fwName(p)), p.verified ? verifiedBadge('sm') : null,
+          mine ? h('span', { class: 'fw-you' }, 'You') : null),
+        p.tourRole ? h('p', { class: 'fw-role' }, p.tourRole) : null,
+        fwStats(p.here, p.counts),
+        mine || !data.canGive ? null : h('button', { class: 'fw-give', type: 'button', disabled: data.left <= 0,
+          onclick: function () { openGiveFlowers(id, p, data.left); } },
+          data.left > 0 ? ['Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All ' + FLOWERS_EACH + ' given')));
+  }
+  // Your 10 for this tour: a flower for each one still to give.
+  function fwMine(data) {
+    if (!data.canGive) return null;
+    var left = Math.max(0, data.left), dots = [];
+    for (var i = 0; i < FLOWERS_EACH; i++) dots.push(h('span', { class: 'fw-dot' + (i < left ? ' on' : '') }, FLOWER));
+    return h('section', { class: 'fw-mine' },
+      h('div', { class: 'fw-dots', 'aria-hidden': 'true' }, dots),
+      h('p', { class: 'fw-mine-t' }, left
+        ? 'You have ' + left + ' of your ' + FLOWERS_EACH + ' flowers left to give on this tour.'
+        : 'You’ve given all ' + FLOWERS_EACH + ' of your flowers on this tour.'));
+  }
+  // Who gave whom flowers on this tour, newest first. Yours can be taken back.
+  function fwFeed(id, data, me) {
+    var by = {};
+    data.people.forEach(function (p) { by[p.userId] = p; });
+    var nameOf = function (uid, given) {
+      if (uid === me) return 'You';
+      return by[uid] ? fwFirst(by[uid]) : (String(given || '').trim().split(/\s+/)[0] || 'Someone');
+    };
+    if (!data.given.length) return h('p', { class: 'fw-none' }, 'No flowers yet. Be the first to give someone theirs.');
+    return [
+      h('h2', { class: 'fw-h' }, 'Flowers given'),
+      h('ul', { class: 'fw-feed' }, data.given.map(function (g) {
+        var giver = by[g.from] || { name: g.fromName || '?' };
+        return h('li', { class: 'fw-gift' },
+          personPhoto(giver, 'xs'),
+          h('div', { class: 'fw-gift-t' },
+            h('p', { class: 'fw-gift-l' }, h('strong', null, nameOf(g.from, g.fromName)), ' gave ',
+              h('strong', null, g.to === me ? 'you' : nameOf(g.to, g.toName)), ' ' + plural(g.n, 'flower') + ' ',
+              h('span', { 'aria-hidden': 'true' }, FLOWER)),
+            g.note ? h('p', { class: 'fw-note' }, '“' + g.note + '”') : null,
+            h('p', { class: 'fw-when' }, dmWhen(g.at),
+              g.mine ? h('button', { class: 'fw-undo', type: 'button', onclick: function () { takeBackFlowers(id, g); } }, 'Take back') : null)));
+      }))
+    ];
+  }
+  function takeBackFlowers(id, g) {
     var B = window.GR_BACKEND;
-    var key = person.key + '|' + st.key;
-    var pend = S.statPending || (S.statPending = {});
-    pend[key] = (pend[key] || 0) + (up ? 1 : -1);
-    S.statBump = { stat: st.key, person: person.key };
-    if (S.statShown && S.statShown.stat === st.key) S.statOrder = { stat: st.key, keys: S.statShown.keys.slice(), until: Date.now() + 1500 };
-    clearTimeout(S.statResort);
-    S.statResort = setTimeout(function () { S.statOrder = null; if (S.route && S.route.view === 'stats') redraw(); }, 1600);
-    redraw();
-    var n = before + (up ? 1 : -1);
-    if (up && n > 0 && n % 10 === 0) { confetti(); toast(st.emoji + ' ' + n + ' ' + st.unit[1] + ' for ' + person.first + '!'); }
-    S.statChain = (S.statChain || Promise.resolve()).then(async function () {
-      try {
-        if (up) await B.addStat(id, person.key, st.key);
-        else {
-          var take = B.statsFor(id).filter(function (x) { return x.person === person.key && x.stat === st.key && (owner || x.mine); })
-            .sort(function (a, b) { return String(b.at).localeCompare(String(a.at)); })[0];
-          if (!take) throw new Error('nothing');
-          await B.removeStat(take.id);
-        }
-      } catch (x) { if (x && x.message === 'nothing') toast('You can only take back ones you added.'); else saveFailed('crew stats', x); }
-      pend[key] = (pend[key] || 0) - (up ? 1 : -1);
-      if (S.route && S.route.view === 'stats') redraw();
+    confirmSheet({
+      title: 'Take back ' + plural(g.n, 'flower') + '?',
+      body: 'They go back with the rest of your ' + FLOWERS_EACH + ' for this tour.',
+      action: 'Take back',
+      onConfirm: async function () {
+        try { await B.takeBackFlowers(id, g.id); } catch (e) { toast('Couldn’t take them back just now.'); return false; }
+        toast('Taken back');
+        return true;
+      }
     });
   }
-  // A player card: everything one person has on the tour.
-  function openPlayerCard(id, person, stats, gb, owner) {
-    var n = function (k) { return stats.filter(function (x) { return x.person === person.key && x.stat === k; }).length; };
-    var balls = gb.rounds.filter(function (g) { return g.status === 'won' && g.winner === person.key; }).length;
-    openSheet(function () {
-      return [
-        h('div', { class: 'pc-head' },
-          h('div', { class: 'pc-mono', 'aria-hidden': 'true' }, person.first.charAt(0).toUpperCase()),
-          h('div', null, h('h2', { class: 'sh-title pc-name' }, person.name), person.role ? h('p', { class: 'sh-sub' }, person.role) : null)),
-        h('div', { class: 'pc-grid' }, STATS.map(function (st) {
-          return h('div', { class: 'pc-cell' },
-            h('span', { class: 'pc-n' }, String(st.balls ? balls : n(st.key))),
-            h('span', { class: 'pc-l' }, h('span', { 'aria-hidden': 'true' }, st.emoji + ' '), st.label));
-        }))
-      ];
-    }, { label: person.name });
-  }
-
-  function viewStats(id, t) {
+  // Flowers given to you that you'd rather not keep (and their note) come off.
+  function removeGotFlowers(g) {
     var B = window.GR_BACKEND;
-    var body = h('div', { class: 'stats-body' }, h('p', { class: 'note' }, 'Loading the crew…'));
-    function draw(crew) {
-      var people = crew.map(function (m) { return { key: personKey(m), name: m.name || m.username || m.email || 'Crew', first: firstName(m), role: m.tourRole || '' }; });
-      var stats = B && B.statsFor ? B.statsFor(id) : [];
-      var gb = B && B.gameBall ? B.gameBall(id) : { rounds: [], votes: [] };
-      var holder = gameBallHolder(id);
-      var nameOf = function (k) { var p = people.filter(function (x) { return x.key === k; })[0]; return p ? p.name : 'Someone'; };
-      var pend = S.statPending || (S.statPending = {});
-      var count = function (k, stat) {
-        return stats.filter(function (x) { return x.person === k && x.stat === stat; }).length + (pend[k + '|' + stat] || 0);
-      };
-      var balls = function (k) { return gb.rounds.filter(function (g) { return g.status === 'won' && g.winner === k; }).length; };
-      var owner = createdTour(id);
-
-      // The game ball, up top.
-      var parts = [];
-      var open = gb.rounds.filter(function (g) { return g.status === 'open' && Date.parse(g.closesAt) > Date.now(); })[0];
-      var tie = gb.rounds.filter(function (g) { return g.status === 'tie'; })[0];
-      parts.push(h('div', { class: 'gb-card' },
-        h('div', { class: 'gb-ball', 'aria-hidden': 'true' }, '🏈'),
-        h('div', { class: 'gb-text' },
-          holder ? [h('div', { class: 'gb-who' }, nameOf(holder.winner) + ' has the game ball'),
-            holder.reason ? h('div', { class: 'gb-why' }, '“' + holder.reason + '”') : null]
-            : [h('div', { class: 'gb-who' }, 'No game ball yet'),
-              h('div', { class: 'gb-why' }, (function () {
-                var days = gameBallDays(t); var today = G.tourToday();
-                var next = days.filter(function (d) { return d >= today; })[0];
-                return next ? 'The first vote opens ' + dayLong(next) + ', the night of the show.' : 'Add shows and the votes line up.';
-              })())])));
-      if (open) {
-        var mine = gb.votes.filter(function (v) { return v.round === open.round && v.mine; })[0];
-        parts.push(h('button', { class: 'btn primary block gb-vote' + (mine ? ' voted' : ''), type: 'button',
-          onclick: function () { openGameBallVote(id, open, people); } },
-          mine ? 'You voted for ' + nameOf(mine.person) + ' · change' : '🏈 Vote for the game ball'),
-          h('p', { class: 'note gb-note' }, 'Voting closes ' + closesText(open.closesAt) + '.'));
+    confirmSheet({
+      title: 'Remove ' + plural(g.n, 'flower') + '?',
+      body: 'They come off your flowers, note and all.',
+      action: 'Remove', danger: true,
+      onConfirm: async function () {
+        try { await B.takeBackFlowers(g.tourId, g.id); } catch (e) { toast('Couldn’t remove them just now.'); return false; }
+        toast('Removed');
+        return true;
       }
-      if (tie) {
-        var tv = gb.votes.filter(function (v) { return v.round === tie.round; });
-        var tally = {}; tv.forEach(function (v) { tally[v.person] = (tally[v.person] || 0) + 1; });
-        var top = Math.max.apply(null, [0].concat(Object.keys(tally).map(function (k) { return tally[k]; })));
-        var tied = Object.keys(tally).filter(function (k) { return tally[k] === top; });
-        parts.push(h('div', { class: 'gb-tie' },
-          h('p', { class: 'note' }, 'It’s a tie for ' + dayMD(tie.round) + '’s game ball. ' + (owner ? 'Make the call:' : 'The tour manager makes the call.')),
-          owner ? h('div', { class: 'btnrow' }, tied.map(function (k) {
-            var why = (tv.filter(function (v) { return v.person === k; })[0] || {}).reason || '';
-            return h('button', { class: 'btn quiet sm', type: 'button', onclick: async function () {
-              try { await B.callGameBall(id, tie.round, k, why); toast('🏈 ' + nameOf(k) + ' gets the game ball'); }
-              catch (x) { toast('Couldn’t do that. Try again.'); }
-              render(true);
-            } }, nameOf(k));
-          })) : null));
-      }
-
-      // One stat at a time: pick it, then its leaderboard.
-      var valueOf = function (k, st) { return st.balls ? balls(k) : count(k, st.key); };
-      var streakOf = function (k) {
-        var days = {}; stats.forEach(function (x) { if (x.person === k && x.stat === 'checkin' && x.day) days[x.day] = true; });
-        var d = G.tourToday(); if (!days[d]) d = G.addDays(d, -1);
-        var n = 0; while (days[d]) { n += 1; d = G.addDays(d, -1); }
-        return n;
-      };
-      var pick = statPick(id);
-      var cur = STATS.filter(function (x) { return x.key === pick; })[0] || STATS[0];
-      var chips = h('div', { class: 'st-chips', role: 'tablist', 'aria-label': 'Pick a stat',
-        onscroll: function (e) { S.chipScroll = e.currentTarget.scrollLeft; } }, STATS.map(function (st) {
-        var on = st.key === cur.key;
-        return h('button', { class: 'st-chip' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': String(on),
-          onclick: function () { statPick(id, st.key); draw(crew); } },
-          h('span', { 'aria-hidden': 'true' }, st.emoji), st.label);
-      }));
-      parts.push(chips);
-      requestAnimationFrame(function () { chips.scrollLeft = S.chipScroll || 0; });
-
-      // While someone's tapping, the rows hold still (so the next tap lands
-      // on the same person); they re-sort a moment after the tapping stops.
-      var hold = S.statOrder && S.statOrder.stat === cur.key && Date.now() < S.statOrder.until ? S.statOrder.keys : null;
-      var ranked = people.map(function (p) { return { p: p, n: valueOf(p.key, cur) }; })
-        .sort(hold ? function (a, b) {
-          var ia = hold.indexOf(a.p.key), ib = hold.indexOf(b.p.key);
-          return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
-        } : function (a, b) { return b.n - a.n || a.p.name.localeCompare(b.p.name); });
-      S.statShown = { stat: cur.key, keys: ranked.map(function (r) { return r.p.key; }) };
-      var rankOf = function (n) { return 1 + ranked.filter(function (x) { return x.n > n; }).length; };
-      var top = ranked.reduce(function (m, r) { return Math.max(m, r.n); }, 0);
-      var leaders = ranked.filter(function (r) { return r.n === top && top > 0; });
-      var can = !cur.self && !cur.balls && (cur.anyone || owner);
-      var bump = S.statBump && S.statBump.stat === cur.key ? S.statBump.person : null;
-      S.statBump = null;
-      parts.push(h('section', { class: 'lb-card' },
-        h('div', { class: 'lb-head' },
-          h('span', { class: 'lb-emoji', 'aria-hidden': 'true' }, cur.emoji),
+    });
+  }
+  // Give someone their flowers: tap how many, say what for if you like.
+  function openGiveFlowers(id, p, left) {
+    var B = window.GR_BACKEND, n = 1, picks = [], giveBtn = null, note = null, mine = null;
+    // One gift id per person until it lands, so a gift sent again (a retry,
+    // or the sheet closed and opened again while it was on its way) gives once.
+    var key = id + '|' + p.userId;
+    S.giftIds = S.giftIds || {};
+    if (!S.giftIds[key] && B.newGiftId) S.giftIds[key] = B.newGiftId();
+    var rid = S.giftIds[key] || null;
+    var closeMine = function () { if (sheet && sheet.panel === mine) closeSheet(); };
+    var paint = function () {
+      picks.forEach(function (b, i) { b.classList.toggle('on', i < n); b.setAttribute('aria-pressed', i < n ? 'true' : 'false'); });
+      giveBtn.replaceChildren('Give ' + plural(n, 'flower') + ' ', h('span', { 'aria-hidden': 'true' }, FLOWER));
+    };
+    openSheet(function (panel) {
+      mine = panel;
+      picks = [];
+      for (var i = 1; i <= Math.min(left, FLOWERS_EACH); i++) (function (k) {
+        picks.push(h('button', { class: 'fw-pick', type: 'button', 'aria-label': plural(k, 'flower'),
+          onclick: function () { n = k; paint(); } }, FLOWER));
+      })(i);
+      note = h('input', { class: 'input', type: 'text', maxlength: '140', placeholder: 'What for? (optional)',
+        'aria-label': 'What for', autocomplete: 'off', enterkeyhint: 'done' });
+      giveBtn = h('button', { class: 'btn primary block', type: 'button', onclick: async function () {
+        giveBtn.disabled = true;
+        try {
+          await B.giveFlowers(id, p.userId, n, note.value, rid);
+        } catch (e) {
+          giveBtn.disabled = false;
+          if (e && e.code === 'none-left') {
+            // Fewer left than this phone thought (given from another phone): show the real count.
+            var d = B.flowersFor(id), have = d && !d.error ? d.left : 0;
+            closeMine();
+            render(true);
+            toast(have > 0 ? 'You have ' + plural(have, 'flower') + ' left on this tour.' : 'You’ve given all ' + FLOWERS_EACH + ' on this tour.');
+            return;
+          }
+          toast('Couldn’t give them just now. Try again.');
+          return;
+        }
+        delete S.giftIds[key];
+        closeMine();
+        toast(fwFirst(p) + ' got their flowers ' + FLOWER);
+        render(true);
+      } });
+      paint();
+      return [
+        h('div', { class: 'fw-sh-head' }, personPhoto(p, 'sm'),
           h('div', null,
-            h('div', { class: 'lb-title' }, cur.label),
-            h('div', { class: 'lb-sub' }, leaders.length === 1 ? cur.title + ': ' + leaders[0].p.first
-              : leaders.length > 1 ? cur.title + ': a ' + leaders.length + '-way tie' : 'Nobody on the board yet'))),
-        ranked.length ? h('ol', { class: 'lb-list' }, ranked.map(function (r) {
-          var rank = rankOf(r.n);
-          var medal = r.n > 0 && rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : null;
-          var mineToTake = stats.filter(function (x) { return x.person === r.p.key && x.stat === cur.key && (owner || x.mine); }).length +
-            (pend[r.p.key + '|' + cur.key] || 0) > 0;
-          var streak = cur.key === 'checkin' ? streakOf(r.p.key) : 0;
-          var holds = holder && holder.winner === r.p.key;
-          return h('li', { class: 'lb-row' + (r.n > 0 && r.n === top ? ' lead' : '') },
-            h('span', { class: 'lb-rank' + (medal ? ' medal' : '') }, medal || (r.n > 0 ? String(rank) : '–')),
-            h('button', { class: 'lb-name', type: 'button', onclick: function () { openPlayerCard(id, r.p, stats, gb, owner); } },
-              h('span', { class: 'lb-n1' }, r.p.name, holds ? h('span', { class: 'lb-ball', 'aria-label': 'has the game ball' }, ' 🏈') : null),
-              h('span', { class: 'lb-n2' }, [r.p.role, streak > 1 ? '🔥 ' + streak + '-day streak' : ''].filter(Boolean).join(' · ') || ' ')),
-            h('span', { class: 'lb-count' + (bump === r.p.key ? ' bump' : '') }, String(r.n)),
-            can ? h('span', { class: 'lb-step' },
-              h('button', { class: 'lb-b minus', type: 'button', disabled: !mineToTake, 'aria-label': 'Take one ' + cur.label.toLowerCase() + ' from ' + r.p.name,
-                onclick: function () { stepStat(id, r.p, cur, false, owner, r.n, function () { draw(crew); }); } }, stepIcon(false)),
-              h('button', { class: 'lb-b plus', type: 'button', 'aria-label': 'Add one ' + cur.label.toLowerCase() + ' for ' + r.p.name,
-                onclick: function () { stepStat(id, r.p, cur, true, owner, r.n, function () { draw(crew); }); } }, stepIcon(true))) : null);
-        })) : h('p', { class: 'note' }, 'Invite the crew from the Overview and they show up here.'),
-        h('p', { class: 'lb-foot' }, cur.balls ? 'Won by vote after the first show, every week, and after the last show.'
-          : cur.self ? 'Counts itself: tap Check In at the top of each day sheet.'
-          : cur.anyone ? 'Anyone can add. Take back ones you added with −.'
-          : owner ? 'Only you add these.' : 'The tour manager adds these.')));
-
-      // Past votes, everyone's picks and why.
-      var past = gb.rounds.filter(function (g) { return g.status !== 'open'; }).sort(function (a, b) { return String(b.round).localeCompare(String(a.round)); });
-      if (past.length) {
-        parts.push(h('h3', { class: 'sh-h3' }, 'Game ball history'), h('div', { class: 'ledger' }, past.map(function (g) {
-          var vs = gb.votes.filter(function (v) { return v.round === g.round; });
-          return h('div', { class: 'row' }, h('div', { class: 'row-label' },
-            dayMD(g.round) + ' · ' + (g.winner ? nameOf(g.winner) : g.status === 'tie' ? 'Tie' : 'No votes'),
-            h('span', { class: 'hint' }, vs.length ? vs.map(function (v) { return v.voterName + ' → ' + nameOf(v.person) + ': “' + v.reason + '”'; }).join(' · ') : 'Nobody voted')));
-        })));
-      }
-      body.replaceChildren.apply(body, parts);
-    }
-    S.crewCache = S.crewCache || {};
-    var cached = S.crewCache[id];
-    if (cached) draw(cached.rows);
-    if (B && B.crew && S.mode === 'db' && (!cached || Date.now() - cached.at > 60e3)) {
-      B.crew(id).then(function (rows) { S.crewCache[id] = { rows: rows, at: Date.now() }; draw(rows); })
-        .catch(function () { if (!cached) body.replaceChildren(h('p', { class: 'note' }, 'Couldn’t load the crew.')); });
-    }
-    return h('div', { class: 'page tour has-tabs' },
+            h('h2', { class: 'sh-title' }, 'Give ' + fwFirst(p) + ' their flowers'),
+            h('p', { class: 'sh-sub' }, 'Tap how many. You have ' + left + ' of ' + FLOWERS_EACH + ' left on this tour.'))),
+        h('div', { class: 'fw-picks', role: 'group', 'aria-label': 'How many flowers' }, picks),
+        note,
+        h('div', { class: 'stack' }, giveBtn,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
+      ];
+    }, { label: 'Give flowers' });
+  }
+  function fwLoading(what) { return h('p', { class: 'note fw-wait' }, what); }
+  function fwFailed(again) {
+    return h('div', { class: 'fw-fail' }, emptyState('Couldn’t load the flowers', 'Check your signal and try again.'),
+      h('button', { class: 'btn ghost', type: 'button', onclick: function () { again(); render(true); } }, 'Try again'));
+  }
+  function viewStats(id, t) {
+    var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
+    var data = flowersOn() ? B.flowersFor(id) : null;
+    var body = !flowersOn()
+      ? emptyState('Flowers are for a signed-in tour', 'Once everyone’s signed in, each of you gets ' + FLOWERS_EACH + ' to give.')
+      : !data ? fwLoading('Picking the flowers…')
+      : data.error ? fwFailed(function () { B.flowersFor(id, true); })
+      : [fwMine(data),
+         h('ul', { class: 'fw-list' }, data.people.map(function (p) { return flowerCard(id, p, me, data); })),
+         fwFeed(id, data, me)];
+    return h('div', { class: 'page tour has-tabs fw-page' },
       h('div', { class: 'headband' },
         tourTopbar(t, id, 'stats'),
         h('h1', { class: 'tour-title' }, 'Crew Stats')),
       dbBanner(),
       body,
       tourTabs(id, 'stats'));
-  }
-  function openGameBallVote(id, round, people) {
-    var B = window.GR_BACKEND;
-    var gb = B.gameBall(id);
-    var mine = gb.votes.filter(function (v) { return v.round === round.round && v.mine; })[0];
-    var f = { person: mine ? mine.person : '', reason: mine ? mine.reason : '' };
-    var list = h('div', { class: 'ledger poll' });
-    function draw() {
-      var votes = B.gameBall(id).votes.filter(function (v) { return v.round === round.round; });
-      list.replaceChildren.apply(list, people.map(function (p) {
-        var who = votes.filter(function (v) { return v.person === p.key; });
-        return h('button', { class: 'row poll-opt' + (f.person === p.key ? ' mine' : ''), type: 'button',
-          onclick: function () { f.person = p.key; draw(); } },
-          h('span', { class: 'poll-dot' }, f.person === p.key ? icon('check', 14) : null),
-          h('div', { class: 'row-label' }, p.name,
-            h('span', { class: 'hint' }, who.length ? who.map(function (v) { return v.voterName + ': “' + v.reason + '”'; }).join(' · ') : 'No votes yet')),
-          h('span', { class: 'amt num' }, String(who.length)));
-      }));
-    }
-    draw();
-    var why = h('input', { class: 'input', type: 'text', maxlength: 200, autocomplete: 'off', value: f.reason,
-      placeholder: 'Why? e.g. loaded out solo in the rain', 'aria-label': 'Why they get the game ball',
-      oninput: function (e) { f.reason = e.target.value; } });
-    openSheet(function () {
-      return [
-        h('h2', { class: 'sh-title' }, '🏈 Game ball'),
-        h('p', { class: 'sh-sub' }, 'Who earned it, and why? Voting closes ' + closesText(round.closesAt) + '.'),
-        list,
-        field('Why?', why),
-        h('div', { class: 'stack' },
-          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
-            if (!f.person) { toast('Pick who gets it'); return; }
-            if (!f.reason.trim()) { toast('Say why they earned it'); why.focus(); return; }
-            e.currentTarget.disabled = true;
-            try { await B.voteGameBall(id, round.round, f.person, f.reason); }
-            catch (x) { e.currentTarget.disabled = false; toast(Date.parse(round.closesAt) <= Date.now() ? 'Voting has closed.' : 'Couldn’t vote. Try again.'); return; }
-            closeSheet(); toast('🏈 Vote in'); render(true);
-          } }, mine ? 'Change my vote' : 'Vote'))
-      ];
-    }, { label: 'Game ball vote' });
   }
 
   /* ============================== Calendar ==============================
@@ -8138,23 +8024,8 @@
       daySheetBtn(id, date, from, fromLabel),
       right));
   }
-  /* Check In: at the top of the day sheet, each person's way of saying
-     they've seen the day's info. Once a day, counted in Crew Stats. */
-  function checkInBtn(id, date, hasSheet) {
-    var B = window.GR_BACKEND;
-    if (!hasSheet || !B || !B.checkIn || S.mode !== 'db') return null;
-    var done = B.statsFor(id).some(function (x) { return x.stat === 'checkin' && x.day === date && x.mine; });
-    return h('div', { class: 'ci-wrap' }, h('button', { class: 'ci-btn' + (done ? ' done' : ''), type: 'button', disabled: done,
-      onclick: async function (e) {
-        e.currentTarget.disabled = true;
-        try { await B.checkIn(id, date); hornSplash('Checked in!', dayMD(date)); }
-        catch (x) { e.currentTarget.disabled = false; toast('Couldn’t check in. Try again.'); return; }
-        render(true);
-      } }, done ? '✅ Checked in' : 'Check In'));
-  }
-
-  /* Checking in, and logging card charges: a big 🤘 pops and rocks, and
-     throws a ring of smaller ones, with the words under it. */
+  /* Logging card charges: a big 🤘 pops and rocks, and throws a ring of
+     smaller ones, with the words under it. */
   function hornSplash(big, sub) {
     var bits = [];
     if (!reduced()) for (var i = 0; i < 12; i++) {
@@ -8675,7 +8546,7 @@
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
     // Check In sits right under the venue's name.
-    if (only === 'sheet') return [rail, placeEl, checkInBtn(id, entry.date, lines.length > 0), body, pollRow, editRow, copyBtn];
+    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, copyBtn];
 
     return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn];
   }

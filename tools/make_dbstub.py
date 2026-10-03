@@ -130,38 +130,42 @@ shim = r"""<script>
       'Guitar Tech', 'Drum Tech', 'Assistant', 'FOH Engineer', 'Monitors', 'Friend', 'Family Member', 'Liaison', 'Dancer'],
     email: function () { return 'devin@example.com'; },
     uid: function () { return 'u-devin'; },
-    // Crew Stats and the game ball, in memory.
-    statsFor: function (tourId) {
-      return (window.__harness.stats || []).filter(function (x) { return x.tour_id === tourId; })
-        .map(function (x) { return { id: x.id, person: x.person, stat: x.stat, day: x.day, mine: x.added_by === 'u-devin', at: x.created_at }; });
+    // Flowers, in memory. Devin (you), Brent and Jeff are on the tour; Brent
+    // gave you two after Dallas, and two artist pages list Brent as crew.
+    flowersFor: function (tourId) {
+      var H = window.__harness, me = 'u-devin';
+      H.flowers = H.flowers || [{ id: 'f1', tour: 't1', from: 'u-brent', to: 'u-devin', n: 2, note: 'Killer set in Dallas', at: new Date(Date.now() - 2 * 864e5).toISOString() }];
+      var sum = function (f) { return H.flowers.filter(f).reduce(function (a, x) { return a + x.n; }, 0); };
+      var people = [
+        { userId: 'u-devin', owner: true, name: 'Devin Oliver', handle: H.handle || '', avatar: '', tourRole: 'Artist', verified: true },
+        { userId: 'u-brent', owner: false, name: 'Brent Allen', handle: 'brent', avatar: '', tourRole: 'Guitar Tech', verified: false },
+        { userId: 'u-jeff', owner: false, name: 'Jeff Mora', handle: 'jeffmora', avatar: '', tourRole: 'FOH Engineer', verified: false }
+      ].map(function (p) {
+        p.here = sum(function (x) { return x.tour === tourId && x.to === p.userId; });
+        p.counts = { flowers: sum(function (x) { return x.to === p.userId; }), endorsements: p.userId === 'u-brent' ? 2 : 0, tours: p.userId === 'u-devin' ? 3 : 1 };
+        return p;
+      }).sort(function (a, b) { return (b.here - a.here) || (b.owner - a.owner); });
+      return { left: 10 - sum(function (x) { return x.tour === tourId && x.from === me; }), canGive: true, people: people,
+        given: H.flowers.filter(function (x) { return x.tour === tourId; }).slice().reverse().map(function (x) {
+          return { id: x.id, from: x.from, to: x.to, n: x.n, note: x.note, at: x.at, mine: x.from === me, fromName: '', toName: '' }; }) };
     },
-    checkIn: function (tourId, date) {
-      var H = window.__harness;
-      var have = (H.stats || []).some(function (x) { return x.tour_id === tourId && x.stat === 'checkin' && x.day === date && x.person === 'owner'; });
-      if (!have) H.stats = (H.stats || []).concat([{ id: 'ci' + Date.now(), tour_id: tourId, person: 'owner', stat: 'checkin', day: date, added_by: 'u-devin', created_at: new Date().toISOString() }]);
-      return Promise.resolve();
+    myFlowers: function () {
+      var H = window.__harness, names = { 'u-brent': 'Brent Allen', 'u-jeff': 'Jeff Mora' };
+      window.GR_BACKEND.flowersFor('t1');
+      var got = H.flowers.filter(function (x) { return x.to === 'u-devin'; });
+      return { counts: { flowers: got.reduce(function (a, x) { return a + x.n; }, 0), endorsements: 0, tours: 3 },
+        got: got.slice().reverse().map(function (x) { return { id: x.id, n: x.n, note: x.note, at: x.at, from: x.from, name: names[x.from] || '', avatar: '', tourId: x.tour, tour: 'Harness run' }; }) };
     },
-    addStat: function (tourId, person, stat) {
-      var H = window.__harness, id = 'st' + Date.now() + Math.random().toString(36).slice(2, 5);
-      H.stats = (H.stats || []).concat([{ id: id, tour_id: tourId, person: person, stat: stat, added_by: 'u-devin', created_at: new Date().toISOString() }]);
-      return Promise.resolve(id);
+    newGiftId: function () { return 'g' + Date.now() + Math.random().toString(36).slice(2, 6); },
+    giveFlowers: function (tourId, uid, n, note, rid) {
+      var H = window.__harness, d = window.GR_BACKEND.flowersFor(tourId);
+      if (H.flowers.some(function (x) { return x.id === rid; })) return Promise.resolve({ left: d.left });
+      if (n > d.left) { var e = new Error('none-left'); e.code = 'none-left'; return Promise.reject(e); }
+      H.flowers.push({ id: rid, tour: tourId, from: 'u-devin', to: uid, n: n, note: String(note || '').trim(), at: new Date().toISOString() });
+      return Promise.resolve({ left: d.left - n });
     },
-    removeStat: function (id) { window.__harness.stats = (window.__harness.stats || []).filter(function (x) { return x.id !== id; }); return Promise.resolve(); },
-    gameBall: function (tourId) {
-      var H = window.__harness;
-      return { rounds: (H.rounds || []).filter(function (g) { return g.tour_id === tourId; }).map(function (g) {
-          return { round: g.round, opensAt: g.opens_at, closesAt: g.closes_at, status: g.status, winner: g.winner, reason: g.winner_reason }; }),
-        votes: (H.gbVotes || []).filter(function (v) { return v.tour_id === tourId; }).map(function (v) {
-          return { round: v.round, voter: v.voter, voterName: v.voter_name, person: v.person, reason: v.reason, mine: v.voter === 'u-devin' }; }) };
-    },
-    voteGameBall: function (tourId, round, person, reason) {
-      var H = window.__harness;
-      H.gbVotes = (H.gbVotes || []).filter(function (v) { return !(v.tour_id === tourId && v.round === round && v.voter === 'u-devin'); });
-      H.gbVotes.push({ tour_id: tourId, round: round, voter: 'u-devin', voter_name: 'Devin Oliver', person: person, reason: reason });
-      return Promise.resolve();
-    },
-    callGameBall: function (tourId, round, person, reason) {
-      (window.__harness.rounds || []).forEach(function (g) { if (g.tour_id === tourId && g.round === round) { g.status = 'won'; g.winner = person; g.winner_reason = reason; } });
+    takeBackFlowers: function (tourId, id) {
+      window.__harness.flowers = window.__harness.flowers.filter(function (x) { return x.id !== id; });
       return Promise.resolve();
     },
     // The calendar, in memory: polls, votes, special requests.
