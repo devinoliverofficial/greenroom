@@ -1900,7 +1900,11 @@
           h('div', { class: 'pf-stats' },
             stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
             stat(counts.followers, counts.followers === 1 ? 'follower' : 'followers', uid ? function () { openFollowList(uid, 'followers'); } : null),
-            stat(counts.following, 'following', uid ? function () { openFollowList(uid, 'following'); } : null)))),
+            stat(counts.following, 'following', uid ? function () { openFollowList(uid, 'following'); } : null)),
+          (function () {
+            var B = window.GR_BACKEND, mine = flowersOn() && B.myFlowers ? B.myFlowers() : null;
+            return mine && !mine.error && mine.counts ? flowerLine(mine.counts.flowers, mine.counts.endorsements) : null;
+          })())),
       roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 '))
         : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
       card.bio ? h('p', { class: 'pf-bio' }, card.bio)
@@ -2115,11 +2119,15 @@
   function cardOf(uid, fresh) {
     S.cards = S.cards || {};
     var c = S.cards[uid] || (S.cards[uid] = { card: null, at: 0, asking: false, gone: false });
+    // Asked afresh while an older ask is out (it was just changed): that answer is stale, ask again.
+    if (fresh && c.asking) c.again = true;
     if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
       c.asking = true;
       window.GR_BACKEND.profileCard(uid).then(function (card) {
-        c.card = card; c.gone = !card; c.at = Date.now(); c.asking = false; c.failed = false; render();
-      }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); render(); });
+        c.asking = false;
+        if (c.again) { c.again = false; cardOf(uid, true); return; }
+        c.card = card; c.gone = !card; c.at = Date.now(); c.failed = false; render();
+      }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); if (c.again) { c.again = false; cardOf(uid, true); } render(); });
     }
     return c;
   }
@@ -2236,14 +2244,20 @@
     var actNames = acts.map(function (a) { return String(a.name).trim().toLowerCase(); });
     var actRows = acts.map(function (a) {
       var n = (byArtist.get(Array.from(byArtist.keys()).filter(function (k) { return String(k).trim().toLowerCase() === String(a.name).trim().toLowerCase(); })[0]) || []).length;
-      return h('li', null, h('button', { class: 'list-row art-row', type: 'button', onclick: function () { openAct(a.id); } },
+      // An endorsement outlives the artist's page; one whose page is gone just shows.
+      return h('li', null, h(a.id ? 'button' : 'div', a.id ? { class: 'list-row art-row', type: 'button', onclick: function () { openAct(a.id); } }
+          : { class: 'list-row art-row still' },
         h('span', { class: 'avatar' + (a.avatar ? ' has photo' : ' letter') },
           a.avatar ? h('img', { class: 'brand-logo', src: a.avatar, alt: '' }) : String(a.name).trim().charAt(0).toUpperCase()),
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title' }, a.name),
-          h('span', { class: 'lr-sub vp-vouch' }, a.kind === 'band' ? 'Band member' : 'Crew', verifiedBadge('sm'),
-            n ? ' \u00b7 ' + plural(n, 'tour') : '')),
-        icon('chevron', 18)));
+          a.past ? h('span', { class: 'lr-sub' }, (a.kind === 'band' ? 'Former band member' : 'Former crew') + (n ? ' \u00b7 ' + plural(n, 'tour') : ''))
+            : h('span', { class: 'lr-sub vp-vouch' }, a.kind === 'band' ? 'Band member' : 'Crew', verifiedBadge('sm'),
+              n ? ' \u00b7 ' + plural(n, 'tour') : '')),
+        // Endorsed by this artist: the trophy on the right, the word under it.
+        a.endorsed ? h('span', { class: 'vp-endorsed', 'aria-label': 'Endorsed by ' + a.name },
+          h('span', { class: 'vp-endorsed-t', 'aria-hidden': 'true' }, TROPHY), h('span', { class: 'vp-endorsed-l' }, 'Endorsed'))
+          : icon('chevron', 18)));
     });
     var artistRows = actRows.concat(Array.from(byArtist, function (pair) {
       if (actNames.indexOf(String(pair[0]).trim().toLowerCase()) >= 0) return null;
@@ -2282,7 +2296,8 @@
               pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
               pfStat(G.num(card.followers), G.num(card.followers) === 1 ? 'follower' : 'followers',
                 function () { openFollowList(uid, 'followers', card.name); }),
-              pfStat(G.num(card.following), 'following', function () { openFollowList(uid, 'following', card.name); })))),
+              pfStat(G.num(card.following), 'following', function () { openFollowList(uid, 'following', card.name); })),
+            flowerLine(card.flowers, card.endorsements))),
         roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 ')) : null,
         card.bio ? h('p', { class: 'pf-bio' }, card.bio) : null,
         (card.followsMe && !preview) ? h('p', { class: 'pf-note' }, first + ' follows you') : null,
@@ -2663,11 +2678,14 @@
   function actOf(id, fresh) {
     S.actCards = S.actCards || {};
     var c = S.actCards[id] || (S.actCards[id] = { card: null, at: 0, asking: false, gone: false });
+    if (fresh && c.asking) c.again = true;
     if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
       c.asking = true;
       window.GR_BACKEND.artistCard(id).then(function (card) {
-        c.card = card; c.gone = !card; c.at = Date.now(); c.asking = false; c.failed = false; render();
-      }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); render(); });
+        c.asking = false;
+        if (c.again) { c.again = false; actOf(id, true); return; }
+        c.card = card; c.gone = !card; c.at = Date.now(); c.failed = false; render();
+      }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); if (c.again) { c.again = false; actOf(id, true); } render(); });
     }
     return c;
   }
@@ -2966,9 +2984,23 @@
           h('span', { class: 'lr-title fl-name' }, m.name || 'Someone', m.verified ? verifiedBadge() : null),
           (m.handle || roles.length) ? h('span', { class: 'lr-sub' },
             [m.handle ? '@' + m.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')) : null)];
+      var meId = B && B.uid ? B.uid() : null;
+      // The trophy: the artist's word that this person really worked for them. For good.
+      var trophy = m.endorsed ? h('span', { class: 'am-endorsed', 'aria-label': 'Endorsed by ' + card.name }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorsed')
+        : manage && m.userId && m.userId !== meId && !m.declined && B && B.endorse ? h('button', { class: 'am-endorse', type: 'button',
+            onclick: function () {
+              confirmSheet({ title: 'Endorse ' + (m.name || 'them') + '?',
+                body: 'This says ' + (m.name || 'they') + ' really worked for ' + card.name + '. It shows on their page, and it can\u2019t be taken back.',
+                action: 'Endorse',
+                onConfirm: async function () {
+                  try { await B.endorse(id, m.userId); m.endorsed = true; actOf(id, true); if (m.userId) cardOf(m.userId, true); toast((m.name || 'They') + ' is endorsed ' + TROPHY); return true; }
+                  catch (x) { saveFailed('endorsement', x); return false; }
+                } });
+            } }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorse') : null;
       return h('li', { class: 'am-li' },
         m.canOpen ? h('button', { class: 'fl-row', type: 'button', onclick: function () { openProfile(m.userId); } }, inner)
           : h('div', { class: 'fl-row' }, inner),
+        trophy,
         manage ? h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Remove ' + (m.name || 'them'),
           onclick: function () {
             confirmSheet({ title: 'Remove ' + (m.name || 'them') + ' from ' + card.name + '?', body: 'You can add them again any time.',
@@ -3089,7 +3121,7 @@
             save,
             h('button', { class: 'btn danger block', type: 'button', onclick: function () {
               confirmSheet({ title: 'Delete ' + card.name + '\u2019s profile?',
-                body: 'The artist profile and its band and crew lists go. Your tours are not touched.',
+                body: 'The artist profile and its band and crew lists go. Anyone it endorsed keeps the endorsement. Your tours are not touched.',
                 action: 'Delete artist profile', danger: true,
                 onConfirm: async function () {
                   try { await B.deleteArtist(id); delete S.actCards[id]; myActs(true); go({ name: 'home' }); toast('Artist profile deleted'); return true; }
@@ -3761,26 +3793,73 @@
      artist with a Greenroom page opens it the way anyone else sees it (the
      viewer experience); their tours are the next tab. */
   function pfArtists(byArtist, declared, loose) {
-    if (!byArtist.size && !declared.length) {
+    var B = window.GR_BACKEND;
+    var meCard = socialOn() ? cardOf(B.uid()).card : null;
+    var ends = ((meCard && Array.isArray(meCard.acts)) ? meCard.acts : []).filter(function (x) { return x && x.endorsed && x.name; });
+    var names = Array.from(byArtist.keys()).concat(declared);
+    var pages = artistPagesByName();
+    // A name gets the trophy when exactly one endorsement fits it (the page
+    // by that name first); names aren't unique, so the rest get rows of their own.
+    var used = [];
+    var trophyFor = function (name) {
+      var key = String(name).trim().toLowerCase(), page = pages[key];
+      var fit = ends.filter(function (x) { return used.indexOf(x) < 0 && String(x.name).trim().toLowerCase() === key; });
+      var pick = (page && fit.filter(function (x) { return x.id === page.id; })[0]) || (fit.length === 1 ? fit[0] : null);
+      if (pick) used.push(pick);
+      return pick;
+    };
+    var named = names.map(function (a) { return { name: a, endorsed: trophyFor(a) }; });
+    // An artist that endorsed you shows here even when none of your tours is theirs.
+    var extra = ends.filter(function (x) { return used.indexOf(x) < 0; });
+    if (!names.length && !extra.length) {
       return emptyState('No artists yet', loose.length
         ? 'Your tours are under Tours. Open one, then \u22ef, then Name and artist, to file it under its artist.'
         : canWrite() ? 'Tap + to add your artist, then their first tour.'
         : 'Nothing has been shared with you yet.');
     }
-    var pages = artistPagesByName();
+    // The trophy: tap it to see who endorsed you, and remove it if it isn't right.
+    var trophy = function (x) {
+      var face = [h('span', { class: 'vp-endorsed-t', 'aria-hidden': 'true' }, TROPHY), h('span', { class: 'vp-endorsed-l' }, 'Endorsed')];
+      if (!x.eid || !B.removeEndorsement) return h('span', { class: 'vp-endorsed', 'aria-label': 'Endorsed by ' + x.name }, face);
+      return h('button', { class: 'vp-endorsed pa-endorsed', type: 'button', 'aria-label': 'Endorsed by ' + x.name,
+        onclick: function () {
+          confirmSheet({ title: 'Endorsed by ' + x.name,
+            body: x.name + ' endorsed you: their word that you really worked for them. Everyone who can see your page sees it. Remove it only if it isn\u2019t right.',
+            action: 'Remove endorsement', danger: true,
+            onConfirm: async function () {
+              try {
+                await B.removeEndorsement(x.eid);
+                // Off the page now, before the fresh answer comes back.
+                var mc = cardOf(B.uid());
+                if (mc.card && Array.isArray(mc.card.acts)) {
+                  mc.card.acts = mc.card.acts.filter(function (y) { return y.eid !== x.eid; });
+                  mc.card.endorsements = Math.max(0, G.num(mc.card.endorsements) - 1);
+                }
+                cardOf(B.uid(), true); toast('Endorsement removed'); return true;
+              }
+              catch (e) { saveFailed('endorsement', e); return false; }
+            } });
+        } }, face);
+    };
+    var row = function (name, page, logo, endorsed, sub) {
+      var inner = [
+        h('span', { class: 'avatar' + (logo ? ' has' : ' letter') + (page && page.avatar ? ' photo' : ''), 'aria-hidden': 'true' },
+          logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(name).trim().charAt(0).toUpperCase()),
+        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, name),
+          (sub || (page && page.handle)) ? h('span', { class: 'lr-sub' }, sub || page.handle) : null)];
+      var main = page && page.id
+        ? h('button', { class: 'list-row art-row', type: 'button', onclick: function () { openAct(page.id); } }, inner, endorsed ? null : icon('chevron', 18))
+        : h('div', { class: 'list-row art-row still' }, inner);
+      return endorsed ? h('li', { class: 'pa-li' }, main, trophy(endorsed)) : h('li', null, main);
+    };
     return h('ul', { class: 'tour-list rows' },
-      Array.from(byArtist.keys()).concat(declared).map(function (a) {
-        var page = pages[String(a).trim().toLowerCase()];
-        var logo = (page && page.avatar) || artistLogo(a);
-        var inner = [
-          h('span', { class: 'avatar' + (logo ? ' has' : ' letter') + (page && page.avatar ? ' photo' : ''), 'aria-hidden': 'true' },
-            logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(a).trim().charAt(0).toUpperCase()),
-          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a),
-            page && page.handle ? h('span', { class: 'lr-sub' }, page.handle) : null)];
-        return h('li', null, page
-          ? h('button', { class: 'list-row art-row', type: 'button', onclick: function () { openAct(page.id); } }, inner, icon('chevron', 18))
-          : h('div', { class: 'list-row art-row still' }, inner));
-      }));
+      named.map(function (n) {
+        var page = pages[String(n.name).trim().toLowerCase()];
+        return row(n.name, page, (page && page.avatar) || artistLogo(n.name), n.endorsed);
+      }).concat(extra.map(function (x) {
+        return row(x.name, x.id ? { id: x.id, handle: x.handle, avatar: x.avatar } : null, x.avatar || artistLogo(x.name), x,
+          x.id ? null : 'No longer on Greenroom');
+      })));
   }
   /* TOURS: each run by name. Tap one and its dates drop down under it, laid
      out like the tour's calendar: a show with Day sheet and Special
@@ -7896,6 +7975,15 @@
       return s;
     };
     return h('span', { class: 'laurels' }, branch(false), h('span', { class: 'lau-n' }, inner), branch(true));
+  }
+  // Under someone's tours / followers / following, a size smaller: their flowers and their endorsements.
+  function flowerLine(flowers, endorsements) {
+    if (flowers == null && endorsements == null) return null;
+    var f = G.num(flowers), e = G.num(endorsements);
+    return h('div', { class: 'pf-flowers' },
+      h('span', { class: 'pf-fl' }, laurels(String(f)), h('span', { class: 'pf-fl-l' }, f === 1 ? 'flower' : 'flowers')),
+      h('span', { class: 'pf-fl' }, h('span', { class: 'pf-fl-n' }, h('span', { 'aria-hidden': 'true' }, TROPHY), String(e)),
+        h('span', { class: 'pf-fl-l' }, e === 1 ? 'endorsement' : 'endorsements')));
   }
   function fwName(p) { return String((p && p.name) || (p && p.handle ? '@' + p.handle : '') || 'Someone').trim(); }
   function fwFirst(p) { return fwName(p).split(/\s+/)[0]; }

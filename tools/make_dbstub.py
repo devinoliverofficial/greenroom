@@ -96,6 +96,14 @@ shim = r"""<script>
   window.claude = { use: function (n) { return Promise.resolve(n === 'db' ? db : (n === 'sample' ? fakeSample : null)); } };
   var me = { first_name: 'Devin', last_name: 'Oliver', full_name: 'Devin Oliver', username: 'Devin Oliver',
     phone: '555-0100', tour_role: 'Artist' };
+  // The artists that endorsed the test Devin: one still on Greenroom, one whose page is gone.
+  function devinActs() {
+    var H = window.__harness;
+    if (!H.devinActs) H.devinActs = [
+      { id: 'a-sws', name: 'Sleeping With Sirens', handle: 'sws', avatar: '', kind: 'crew', endorsed: true, eid: 'e-sws' },
+      { id: null, name: 'Old Band', handle: '', avatar: '', kind: 'band', endorsed: true, past: true, eid: 'e-old' }];
+    return H.devinActs;
+  }
   window.__harness = { me: me, crew: [
     { owner: true, role: 'owner', userId: 'u-devin', name: 'Devin Oliver', email: 'devin@example.com', phone: '555-0100', tourRole: 'Artist', joined: true },
     { owner: false, role: 'editor', manager: true, userId: 'u-brent', name: 'Brent Allen', email: 'brent@example.com', invitedEmail: 'brent@example.com', phone: '(313) 555-0142', tourRole: 'Guitar Tech', joined: true },
@@ -153,7 +161,7 @@ shim = r"""<script>
       var H = window.__harness, names = { 'u-brent': 'Brent Allen', 'u-jeff': 'Jeff Mora' };
       window.GR_BACKEND.flowersFor('t1');
       var got = H.flowers.filter(function (x) { return x.to === 'u-devin'; });
-      return { counts: { flowers: got.reduce(function (a, x) { return a + x.n; }, 0), endorsements: 0, tours: 3 },
+      return { counts: { flowers: got.reduce(function (a, x) { return a + x.n; }, 0), endorsements: devinActs().length, tours: 3 },
         left: 10 - H.flowers.filter(function (x) { return x.from === 'u-devin'; }).reduce(function (a, x) { return a + x.n; }, 0),
         got: got.slice().reverse().map(function (x) { return { id: x.id, n: x.n, note: x.note, at: x.at, from: x.from, name: names[x.from] || '', avatar: '', tourId: x.tour, tour: 'Harness run' }; }) };
     },
@@ -163,6 +171,8 @@ shim = r"""<script>
         artists: (window.__harness.acts || []).map(function (a) { return { id: a.id, handle: a.handle, name: a.name, avatar: '' }; }) });
     },
     facesFor: function () { return {}; },
+    removeEndorsement: function (eid) { var H = window.__harness; H.devinActs = devinActs().filter(function (x) { return x.eid !== eid; }); return Promise.resolve(); },
+    endorse: function (aid, uid) { var H = window.__harness, a = (H.acts || []).filter(function (x) { return x.id === aid; })[0]; if (a) a.members.forEach(function (m) { if (m.userId === uid) m.endorsed = true; }); return Promise.resolve(); },
     followArtist: function (id) { var H = window.__harness; H.artistFollows = (H.artistFollows || []).concat([id]); return Promise.resolve(); },
     unfollowArtist: function (id) { var H = window.__harness; H.artistFollows = (H.artistFollows || []).filter(function (x) { return x !== id; }); return Promise.resolve(); },
     checkedIn: function (tourId, date) { return (window.__harness.checkins || []).indexOf(tourId + '|' + date) >= 0; },
@@ -246,10 +256,13 @@ shim = r"""<script>
         followsMe: H.follows.some(function (x) { return x.a === uid && x.b === 'u-devin'; }) };
       var so = H.social || {};
       if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', verified: true, bio: so.bio || '', roles: so.roles || [], tourRole: me.tour_role, avatar: so.photo || '', artists: so.artists || [],
+        acts: devinActs(), flowers: 2, endorsements: devinActs().length,
         tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }], logos: {} }, base));
       if (uid === 'u-brent') return Promise.resolve(Object.assign({ userId: uid, name: 'Brent Allen', handle: 'brent', bio: 'Guitars, backline, bad jokes.',
         roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', avatar: '', artists: ['Sleeping With Sirens', 'I See Stars'],
-        acts: (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-brent'; }); }).map(function (x) { return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: x.members.filter(function (m) { return m.userId === 'u-brent'; })[0].kind }; }),
+        acts: (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-brent'; }); }).map(function (x) { return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: x.members.filter(function (m) { return m.userId === 'u-brent'; })[0].kind, endorsed: !!x.members.filter(function (m) { return m.userId === 'u-brent'; })[0].endorsed }; })
+          .concat([{ id: null, name: 'Old Band', handle: '', avatar: '', kind: 'crew', endorsed: true, past: true }]),
+        flowers: 3, endorsements: 1 + (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-brent' && m.endorsed; }); }).length,
         tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true },
                 { id: 'x9', artist: 'Other Band', name: 'Spring Fling', first: '2026-03-02', last: '2026-04-11', shows: 28, mine: false }], logos: {} }, base));
       return Promise.resolve(null);
@@ -326,7 +339,7 @@ shim = r"""<script>
       var fol = (H.artistFollows || []).indexOf(a.id) >= 0;
       return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '', mine: true,
         iFollow: fol, followers: (a.followers || 0) + (fol ? 1 : 0),
-        members: a.members.map(function (m) { return Object.assign({ userId: m.userId, kind: m.kind, avatar: '' }, P[m.userId], m.userId === 'u-devin' ? { handle: H.handle || '' } : {}); }),
+        members: a.members.map(function (m) { return Object.assign({ userId: m.userId, kind: m.kind, avatar: '', endorsed: !!m.endorsed }, P[m.userId], m.userId === 'u-devin' ? { handle: H.handle || '' } : {}); }),
         tours: a.name.toLowerCase() === 'i see stars' ? [{ id: 't1', artist: a.name, name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }] : [] });
     },
     artistTourCard: function () { return Promise.resolve(null); },

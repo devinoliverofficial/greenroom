@@ -475,6 +475,19 @@
       if (q.error) throw mapError(q.error);
       return Array.isArray(q.data) ? q.data : [];
     },
+    // An artist endorses someone on its band or crew: for good, no taking it back.
+    endorse: async function (artistId, userId) {
+      var q = await sb.from('artist_endorsements').insert({ artist_id: artistId, user_id: userId, endorsed_by: session.user.id });
+      if (q.error && q.error.code !== '23505') throw mapError(q.error);
+      flowersStale(); emit('tours');
+    },
+    // The one person who can remove an endorsement is the one it was given
+    // to. Already gone (say, from their other phone) counts as done.
+    removeEndorsement: async function (id) {
+      var q = await sb.rpc('remove_endorsement', { e_id: id });
+      if (q.error) throw mapError(q.error);
+      flowersStale(); emit('tours');
+    },
     // Following an artist's page.
     followArtist: async function (artistId) {
       var q = await sb.from('artist_follows').upsert({ user_id: session.user.id, artist_id: artistId },
