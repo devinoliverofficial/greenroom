@@ -3100,12 +3100,16 @@
       'data-sig': 'dock|' + sig + '|' + current + '|' + me.photo.length + '|' + profileName() },
       h('div', { class: 'dock-half left' }, left), homeFace(current), h('div', { class: 'dock-half right' }, right));
   }
-  // The social pages' bar: Search beside your photo.
+  // The social pages' bar: Search on the left of your photo, and on its right
+  // a shortcut to the Overview of the tour you're on (the one the profile's
+  // Today follows).
   function socialBar(current) {
     var search = socialOn() ? tabButton(current === 'search', 'Search', 'search', function () {
       if (current !== 'search') go({ name: 'search', back: S.route, focus: true });
     }) : null;
-    return dock([search], [], current, 'social', { cls: 'social-bar' });
+    var tid = profileTourId();
+    var overview = tid ? tabButton(false, 'Overview', 'tabmap', function () { openTour(tid, 'details', S.route, 'Back'); }) : null;
+    return dock([search], [overview], current, 'social|' + (tid || ''), { cls: 'social-bar' });
   }
   /* Search, the way a social app does it: a back arrow and one rounded box
      across the top. Before you type, it lists what you opened lately
@@ -3190,15 +3194,58 @@
       registeredArtists().forEach(function (a) { if (a.toLowerCase().indexOf(t) >= 0) folders[a.toLowerCase()] = a; });
       return { tours: tours, folders: Object.keys(folders).map(function (k) { return folders[k]; }) };
     };
+    /* Before you type: who you're most likely after, no instructions. What
+       you opened lately (Recent), then the people you follow, the people you
+       tour with, the artists (their pages, then your own artist folders),
+       and your tours. Nobody shows twice. */
+    var suggested = function () {
+      var list = recents(), shown = st.all ? list : list.slice(0, 5), seen = {};
+      var d = S.searchSug && S.searchSug.data;
+      var key = function (it) { return it.kind === 'folder' || it.kind === 'artist' ? 'a:' + String(it.kind === 'artist' ? (it.name || it.letter) : it.id).toLowerCase() : it.kind + ':' + it.id; };
+      shown.forEach(function (it) { seen[it.kind + ':' + it.id] = seen[key(it)] = true; });
+      var section = function (title, items, more) {
+        items = items.filter(function (it) {
+          var k = it.kind + ':' + it.id, k2 = key(it);
+          if (seen[k] || seen[k2]) return false;
+          seen[k] = seen[k2] = true;
+          return true;
+        });
+        return items.length ? [h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, title), more || null),
+          h('div', { class: 'sr-list' }, items.map(function (it) { return row(it); }))] : null;
+      };
+      var artists = d ? (d.artists || []).map(function (a) { var it = asItem.artist(a); it.name = a.name; return it; }) : [];
+      var folders = registeredArtists().concat(Array.from(tourGroups().byArtist.keys())).filter(function (a, i, all) { return all.indexOf(a) === i; });
+      var tours = toursByNow().slice(0, 6).map(function (e) {
+        var t = e[1], dates = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+        return asItem.tour({ id: e[0], name: t.name, artist: artistOf(t), first: dates[0], last: dates[dates.length - 1] });
+      });
+      return [
+        list.length ? [h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, 'Recent'),
+            list.length > shown.length ? h('button', { class: 'sr-all', type: 'button', onclick: function () { st.all = true; paint(); } }, 'See all') : null),
+          h('div', { class: 'sr-list' }, shown.map(function (it) { return row(it, function () { forget(it); paint(); }); }))] : null,
+        d ? section('Following', (d.following || []).map(asItem.person)) : null,
+        d ? section('People you tour with', (d.crew || []).map(asItem.person)) : null,
+        section('Artists', artists.concat(folders.map(asItem.folder))),
+        section('Your tours', tours)
+      ];
+    };
+    // Asked once a visit, and again after a few minutes.
+    if (B && B.searchSuggestions && socialOn()) {
+      var sug = S.searchSug;
+      if (!sug || (!sug.asking && Date.now() - sug.at > 180e3)) {
+        S.searchSug = { data: sug ? sug.data : null, at: Date.now(), asking: true };
+        B.searchSuggestions().then(function (d) { S.searchSug = { data: d, at: Date.now() }; }, function () {
+          S.searchSug = { data: sug ? sug.data : null, at: Date.now() };
+        }).then(function () {
+          if (results.isConnected) paint();
+          else if (S.route && S.route.name === 'search') render(true);
+        });
+      }
+    }
     var paint = function () {
       var q = st.q.trim();
       if (q.replace(/^@/, '').length < 2) {
-        var list = recents(), shown = st.all ? list : list.slice(0, 7);
-        results.replaceChildren.apply(results, list.length ? [
-          h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, 'Recent'),
-            list.length > shown.length ? h('button', { class: 'sr-all', type: 'button', onclick: function () { st.all = true; paint(); } }, 'See all') : null),
-          h('div', { class: 'sr-list' }, shown.map(function (it) { return row(it, function () { forget(it); paint(); }); }))
-        ] : [h('p', { class: 'note sr-hint' }, 'Search people, artists and tours. People are found by name if you tour with them, and by @username if you don\u2019t.')]);
+        results.replaceChildren.apply(results, flatten(suggested()).filter(Boolean));
         return;
       }
       var mine = local(q.replace(/^@/, ''));

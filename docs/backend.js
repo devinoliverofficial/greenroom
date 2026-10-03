@@ -458,6 +458,12 @@
     /* Artist profiles: a band or act with a username, a photo, and its band
        and crew, each a Greenroom account its owner found by search. Open to
        everyone signed in; only the owner changes one. */
+    // Search before you type: people you follow, people you tour with, artists.
+    searchSuggestions: async function () {
+      var q = await sb.rpc('search_suggestions');
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
     myArtists: async function () {
       var q = await sb.rpc('my_artists');
       if (q.error) throw mapError(q.error);

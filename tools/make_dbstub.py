@@ -156,6 +156,11 @@ shim = r"""<script>
       return { counts: { flowers: got.reduce(function (a, x) { return a + x.n; }, 0), endorsements: 0, tours: 3 },
         got: got.slice().reverse().map(function (x) { return { id: x.id, n: x.n, note: x.note, at: x.at, from: x.from, name: names[x.from] || '', avatar: '', tourId: x.tour, tour: 'Harness run' }; }) };
     },
+    searchSuggestions: function () {
+      var P = window.GR_BACKEND.people, row = function (uid) { var p = P[uid] || (uid === 'u-jeff' ? { name: 'Jeff Mora', handle: 'jeffmora', roles: ['FOH Engineer'], canOpen: true, followers: 3 } : {}); return Object.assign({ userId: uid, avatar: '', followers: 0, roles: [] }, p); };
+      return Promise.resolve({ following: [Object.assign(row('u-brent'), { iFollow: true })], crew: [row('u-jeff')],
+        artists: (window.__harness.acts || []).map(function (a) { return { id: a.id, handle: a.handle, name: a.name, avatar: '' }; }) });
+    },
     newGiftId: function () { return 'g' + Date.now() + Math.random().toString(36).slice(2, 6); },
     giveFlowers: function (tourId, uid, n, note, rid) {
       var H = window.__harness, d = window.GR_BACKEND.flowersFor(tourId);
