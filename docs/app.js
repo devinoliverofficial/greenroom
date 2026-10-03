@@ -2997,6 +2997,30 @@
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, t.name || 'Untitled tour'), h('span', { class: 'lr-sub' }, span)),
         icon('chevron', 18)));
     });
+    // Anyone can follow an artist's page; shown at once, put back if it didn't take.
+    var following = false;
+    var setFollow = async function (on) {
+      if (following || !!card.iFollow === on) return;
+      following = true;
+      card.iFollow = on; card.followers = Math.max(0, G.num(card.followers) + (on ? 1 : -1));
+      render(true);
+      try {
+        await (on ? B.followArtist(id) : B.unfollowArtist(id));
+        actOf(id, true);
+        S.searchSug = null; // Search's Artists list puts the ones you follow first
+      } catch (e) {
+        card.iFollow = !on; card.followers = Math.max(0, G.num(card.followers) + (on ? -1 : 1));
+        saveFailed('follow', e); render(true);
+      }
+      following = false;
+    };
+    var followBtn = !B || !B.followArtist ? null : card.iFollow
+      ? h('button', { class: 'pf-btn on', type: 'button', 'aria-label': 'Following ' + card.name + '. Tap to unfollow.',
+          onclick: function () {
+            confirmSheet({ title: 'Unfollow ' + card.name + '?', body: 'You can follow them again any time.',
+              action: 'Unfollow', danger: true, onConfirm: function () { setFollow(false); return true; } });
+          } }, 'Following', icon('chevron', 14))
+      : h('button', { class: 'pf-btn go', type: 'button', onclick: function () { setFollow(true); } }, 'Follow');
     return h('div', { class: 'page home profile has-tabs' },
       head(card.handle),
       h('section', { class: 'pf vp', 'aria-label': card.name + ' profile' },
@@ -3007,13 +3031,15 @@
             h('strong', { class: 'vp-name' }, card.name),
             h('div', { class: 'pf-stats' },
               pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
+              pfStat(G.num(card.followers), G.num(card.followers) === 1 ? 'follower' : 'followers'),
               pfStat(bandList.length, 'band', function () { pickTab('band'); }),
               pfStat(crewList.length, 'crew', function () { pickTab('crew'); })))),
         h('p', { class: 'pf-roles' }, 'Artist'),
         card.bio ? h('p', { class: 'pf-bio' }, card.bio)
           : (manage ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
         manage ? h('div', { class: 'pf-actions' },
-          h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist')) : null),
+          h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist'))
+          : followBtn ? h('div', { class: 'pf-actions' }, followBtn) : null),
       h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Band', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
       tab === 'band' ? people(bandList, 'band')
         : tab === 'crew' ? people(crewList, 'crew')
@@ -3452,6 +3478,7 @@
           ? 'No tours yet. Tap + on your profile to add an artist, then their first tour.'
           : 'No tours have been shared with you yet.'),
         menuRow('gear', 'Settings', function () { openSettingsSheet(); })),
+      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
   }
   /* Every tour you're on, all artists together: on the road first, then the

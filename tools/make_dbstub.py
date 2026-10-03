@@ -163,6 +163,8 @@ shim = r"""<script>
         artists: (window.__harness.acts || []).map(function (a) { return { id: a.id, handle: a.handle, name: a.name, avatar: '' }; }) });
     },
     facesFor: function () { return {}; },
+    followArtist: function (id) { var H = window.__harness; H.artistFollows = (H.artistFollows || []).concat([id]); return Promise.resolve(); },
+    unfollowArtist: function (id) { var H = window.__harness; H.artistFollows = (H.artistFollows || []).filter(function (x) { return x !== id; }); return Promise.resolve(); },
     checkedIn: function (tourId, date) { return (window.__harness.checkins || []).indexOf(tourId + '|' + date) >= 0; },
     checkIn: function (tourId, date) { var H = window.__harness; H.checkins = (H.checkins || []).concat([tourId + '|' + date]); return Promise.resolve(); },
     newGiftId: function () { return 'g' + Date.now() + Math.random().toString(36).slice(2, 6); },
@@ -321,7 +323,9 @@ shim = r"""<script>
     artistCard: function (id) {
       var H = window.__harness, P = window.GR_BACKEND.people, a = (H.acts || []).filter(function (x) { return x.id === id; })[0];
       if (!a) return Promise.resolve(null);
+      var fol = (H.artistFollows || []).indexOf(a.id) >= 0;
       return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '', mine: true,
+        iFollow: fol, followers: (a.followers || 0) + (fol ? 1 : 0),
         members: a.members.map(function (m) { return Object.assign({ userId: m.userId, kind: m.kind, avatar: '' }, P[m.userId], m.userId === 'u-devin' ? { handle: H.handle || '' } : {}); }),
         tours: a.name.toLowerCase() === 'i see stars' ? [{ id: 't1', artist: a.name, name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }] : [] });
     },

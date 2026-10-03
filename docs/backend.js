@@ -475,6 +475,16 @@
       if (q.error) throw mapError(q.error);
       return Array.isArray(q.data) ? q.data : [];
     },
+    // Following an artist's page.
+    followArtist: async function (artistId) {
+      var q = await sb.from('artist_follows').upsert({ user_id: session.user.id, artist_id: artistId },
+        { onConflict: 'user_id,artist_id', ignoreDuplicates: true });
+      if (q.error) throw mapError(q.error);
+    },
+    unfollowArtist: async function (artistId) {
+      var q = await sb.from('artist_follows').delete().eq('user_id', session.user.id).eq('artist_id', artistId);
+      if (q.error) throw mapError(q.error);
+    },
     artistCard: async function (id) {
       var q = await sb.rpc('artist_card', { a_id: id });
       if (q.error) throw mapError(q.error);

@@ -2304,6 +2304,8 @@ button.acct-row:active { background: var(--surface-2); }
 .mn-row:active { background: var(--surface); }
 .mn-ic { flex: none; width: 24px; height: 24px; display: grid; place-items: center; color: var(--ink); }
 .mn-ic .ic svg { stroke-width: 1.8; }
+/* The menu's icons in green. */
+.menu-page .mn-ic { color: var(--pos); }
 .mn-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .mn-label { font-size: 16px; font-weight: 400; letter-spacing: -.005em; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mn-sub { font-size: 13px; line-height: 1.3; color: var(--ink-2); }
@@ -2326,7 +2328,7 @@ button.acct-row:active { background: var(--surface-2); }
 .mn-list { position: relative; z-index: 1; }
 /* The menu slides in from the right the first time it draws, like a page being pushed. */
 @keyframes mn-in { from { transform: translateX(22px); opacity: 0; } to { transform: none; opacity: 1; } }
-.menu-page.mn-in > :not(.headband):not(.tabbar) { animation: mn-in .2s ease-out both; }
+.menu-page.mn-in > :not(.headband):not(.tabbar):not(.home-mark) { animation: mn-in .2s ease-out both; }
 @media (prefers-reduced-motion: reduce) { .menu-page.mn-in > :not(.headband) { animation: none; } }
 /* The tabs under your own profile, and what sits under them. Black, white
    text, green for what's live or tappable; the profile's own type sizes
