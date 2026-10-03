@@ -3865,8 +3865,10 @@
                 h('button', { class: 'fw-undo', type: 'button', onclick: function () { removeGotFlowers(g); } }, 'Remove'))));
         }))
       ] : null,
-      // Give flowers at the bottom, centred, with this year's count under it.
-      t ? h('div', { class: 'fw-me-give fw-under' },
+      // Give flowers pinned at the bottom of the screen, with this year's count
+      // under it (room first, so the list scrolls clear of it).
+      t ? h('div', { class: 'fw-room', 'aria-hidden': 'true' }) : null,
+      t ? h('div', { class: 'fw-me-give pinned' },
         h('button', { class: 'fw-give', type: 'button', onclick: function () { openTour(id, 'stats', PF_HOME, 'Profile'); } },
           'Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)),
         left == null ? null : h('p', { class: 'fw-me-left' }, left + ' left')) : null
@@ -8150,16 +8152,16 @@
           onclick: function () { openGiveFlowers(id, p, data.left); } },
           data.left > 0 ? ['Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All ' + FLOWERS_EACH + ' given')));
   }
-  // Give flowers, centred at the bottom of Crew Stats, with this year's count under it, the way your profile shows it.
+  // Give flowers, pinned at the bottom of the screen on Crew Stats, with this year's count under it, the way your profile shows it.
   function fwMine(id, data, me) {
     if (!data.canGive) return null;
     var left = Math.max(0, data.left);
     var others = data.people.filter(function (p) { return p.userId !== me; });
-    return h('div', { class: 'fw-me-give fw-under' },
+    return [h('div', { class: 'fw-room', 'aria-hidden': 'true' }), h('div', { class: 'fw-me-give pinned' },
       h('button', { class: 'fw-give', type: 'button', disabled: left <= 0 || !others.length,
         onclick: function () { pickFlowerPerson(id, others, left); } },
         'Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)),
-      h('p', { class: 'fw-me-left' }, left + ' left'));
+      h('p', { class: 'fw-me-left' }, left + ' left'))];
   }
   // Who gets them: everyone else on the tour, then the same sheet as their card's button.
   function pickFlowerPerson(id, people, left) {

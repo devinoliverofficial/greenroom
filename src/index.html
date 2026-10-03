@@ -1855,7 +1855,14 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .pa-endorsed { padding: 6px 4px 6px 10px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .am-endorse { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 28px; margin-left: 6px; padding: 0 10px; border: 0; border-radius: 999px;
   background: var(--surface-2); color: var(--ink); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; white-space: nowrap; }
-.fw-me-give.fw-under { margin: 4px 0 18px; }
+/* Give flowers on Crew Stats and your profile's Stats: pinned at the bottom of
+   the screen, just above the bottom bar, on a fade so the list slips under it. */
+.fw-me-give.pinned { position: fixed; left: 0; right: 0; bottom: calc(55px + env(safe-area-inset-bottom, 0px)); z-index: 39;
+  max-width: 600px; margin: 0 auto; padding: 18px 18px 10px;
+  background: linear-gradient(to bottom, color-mix(in oklab, var(--bg), transparent 100%), var(--bg) 35%); }
+.fw-room { height: 100px; }
+/* A tour's bottom bar has labels under its icons, so it stands taller than the profile's. */
+.page.tour .fw-me-give.pinned { bottom: calc(63px + env(safe-area-inset-bottom, 0px)); }
 .fw-card .fw-give { font-size: 13px; }
 /* Check In: pulses until you've checked in. On your profile's Today it's
    pinned to the bottom of the screen, just above the bottom bar. */
