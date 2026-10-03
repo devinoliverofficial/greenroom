@@ -7926,16 +7926,32 @@
           onclick: function () { openGiveFlowers(id, p, data.left); } },
           data.left > 0 ? ['Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All ' + FLOWERS_EACH + ' given')));
   }
-  // Your 10 for the year: a flower for each one still to give.
-  function fwMine(data) {
+  // Give flowers, centred, with this year's count under it, the way your profile shows it.
+  function fwMine(id, data, me) {
     if (!data.canGive) return null;
-    var left = Math.max(0, data.left), dots = [];
-    for (var i = 0; i < FLOWERS_EACH; i++) dots.push(h('span', { class: 'fw-dot' + (i < left ? ' on' : '') }, FLOWER));
-    return h('section', { class: 'fw-mine' },
-      h('div', { class: 'fw-dots', 'aria-hidden': 'true' }, dots),
-      h('p', { class: 'fw-mine-t' }, left
-        ? 'You have ' + left + ' of your ' + FLOWERS_EACH + ' flowers left to give this year.'
-        : 'You’ve given all ' + FLOWERS_EACH + ' of your flowers this year.'));
+    var left = Math.max(0, data.left);
+    var others = data.people.filter(function (p) { return p.userId !== me; });
+    return h('div', { class: 'fw-me-give fw-top' },
+      h('button', { class: 'fw-give', type: 'button', disabled: left <= 0 || !others.length,
+        onclick: function () { pickFlowerPerson(id, others, left); } },
+        'Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)),
+      h('p', { class: 'fw-me-left' }, left + ' left'));
+  }
+  // Who gets them: everyone else on the tour, then the same sheet as their card's button.
+  function pickFlowerPerson(id, people, left) {
+    var mine = null;
+    openSheet(function (panel) {
+      mine = panel;
+      return [
+        h('h2', { class: 'sh-title' }, 'Give flowers to\u2026'),
+        h('div', { class: 'fl-list' }, people.map(function (p) {
+          return h('button', { class: 'fl-row', type: 'button',
+            onclick: function () { if (sheet && sheet.panel === mine) closeSheet(true); openGiveFlowers(id, p, left); } },
+            personPhoto(p, 'xs'),
+            h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, fwName(p)), p.tourRole ? h('span', { class: 'lr-sub' }, p.tourRole) : null));
+        }))
+      ];
+    }, { label: 'Give flowers' });
   }
   // Who gave whom flowers on this tour, newest first. Yours can be taken back.
   function fwFeed(id, data, me) {
@@ -8075,7 +8091,7 @@
       ? emptyState('Flowers are for a signed-in tour', 'Once everyone’s signed in, each of you gets ' + FLOWERS_EACH + ' to give.')
       : !data ? fwLoading('Picking the flowers…')
       : data.error ? fwFailed(function () { B.flowersFor(id, true); })
-      : [fwMine(data),
+      : [fwMine(id, data, me),
          h('ul', { class: 'fw-list' }, data.people.map(function (p) { return flowerCard(id, p, me, data); })),
          fwFeed(id, data, me)];
     return h('div', { class: 'page tour has-tabs fw-page' },
