@@ -3639,20 +3639,30 @@
     // On a day off, the next show is one quiet line under it.
     var next = !s ? shows.filter(function (x) { return x.date > entry.date; })[0] : null;
     var sheet = daySheetNodes(s, off, { onlySet: true });
+    // Tonight, the day and the city on the left; the venue and its address on
+    // the right; Check In right under them.
     return [
+      pfTourBar(id, t, count, 'details'),
+      dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, city, place, address,
+        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null),
+      next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
+        [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
       isToday ? checkInBtn(id, entry.date) : null,
       moneyLead(id) ? h('div', { class: 'pt-tasks' }, whatsNewBtn(id)) : null,
-      pfTourBar(id, t, count, 'details'),
-      h('div', { class: 'pt-today' },
-        h('p', { class: 'pt-when' }, h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), dayLong(entry.date),
-          s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null),
-        h('p', { class: 'pt-city' }, city),
-        place ? h('p', { class: 'pt-venue' }, place) : null,
-        address ? h('a', { class: 'pt-addr', href: mapsHref(address), target: '_blank', rel: 'noopener' }, address) : null,
-        next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
-          [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null),
       sheet ? h('div', { class: 'pt-sheet' }, sheet) : null
     ];
+  }
+  /* A day in two columns: what and where on the left (the tag, the date, the
+     city), the venue and its address on the right. */
+  function dayRow(chip, date, city, place, address, extra) {
+    return h('div', { class: 'pt-dayrow' },
+      h('div', { class: 'pt-dayrow-l' },
+        chip || extra ? h('p', { class: 'pt-dr-chips' }, chip, extra) : null,
+        h('p', { class: 'pt-dr-date' }, dayLong(date)),
+        h('p', { class: 'pt-dr-city' }, city)),
+      place || address ? h('div', { class: 'pt-dayrow-r' },
+        place ? h('p', { class: 'pt-dr-venue' }, place) : null,
+        address ? h('a', { class: 'pt-dr-addr', href: mapsHref(address), target: '_blank', rel: 'noopener' }, address) : null) : null);
   }
   /* STATS: your flowers. The three numbers from every tour you've been on
      (flowers between the laurels, the trophy for the artists who list you
@@ -3688,7 +3698,7 @@
               h('p', { class: 'fw-when' }, [g.tour, dmWhen(g.at)].filter(Boolean).join(' · '),
                 h('button', { class: 'fw-undo', type: 'button', onclick: function () { removeGotFlowers(g); } }, 'Remove'))));
         }))
-      ] : h('p', { class: 'fw-none' }, 'No flowers yet. They come from the people you tour with.')
+      ] : null
     ];
   }
   /* GUEST LIST: tonight's (or the next show's), with Add guest and Import
@@ -3709,9 +3719,11 @@
     // The show, small, on one line at the top; the list itself is the page.
     return [
       bar,
-      h('p', { class: 'pt-gl-show' },
-        h('span', { class: 'pt-chip' + (s.date === today ? ' on' : '') }, s.date === today ? 'Tonight' : s.date > today ? 'Next show' : 'Last show'),
-        h('span', null, [dayLong(s.date), s.city || 'Show', String(s.venue || '').trim()].filter(Boolean).join(' \u00b7 '))),
+      // Tonight in the middle, then the day laid out like Today's.
+      h('p', { class: 'pt-gl-chip' },
+        h('span', { class: 'pt-chip' + (s.date === today ? ' on' : '') }, s.date === today ? 'Tonight' : s.date > today ? 'Next show' : 'Last show')),
+      dayRow(null, s.date, s.city || 'Show', String(s.venue || '').trim(),
+        String((G.isObj(s.daySheet) && s.daySheet.venueAddress) || '').trim()),
       h('div', { class: 'pt-gl-head' },
         h('h3', { class: 'pt-gl-title' }, 'Guest list'),
         h('p', { class: 'pt-gl-count' }, sum.names ? plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket') : 'No names yet')),
