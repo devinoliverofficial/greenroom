@@ -3641,6 +3641,7 @@
     var sheet = daySheetNodes(s, off, { onlySet: true });
     return [
       isToday ? checkInBtn(id, entry.date) : null,
+      moneyLead(id) ? h('div', { class: 'pt-tasks' }, whatsNewBtn(id)) : null,
       pfTourBar(id, t, count, 'details'),
       h('div', { class: 'pt-today' },
         h('p', { class: 'pt-when' }, h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), dayLong(entry.date),
@@ -3705,13 +3706,16 @@
     var list = guestsFor(t, id, s.id);
     var sum = G.guestSummary(list);
     var rows = guestRowsFor(id, s, list, backend, myUid, refresh);
+    // The show, small, on one line at the top; the list itself is the page.
     return [
       bar,
-      h('div', { class: 'pt-today' },
-        h('p', { class: 'pt-when' }, h('span', { class: 'pt-chip' + (s.date === today ? ' on' : '') }, s.date === today ? 'Tonight' : s.date > today ? 'Next show' : 'Last show'), dayLong(s.date)),
-        h('p', { class: 'pt-city' }, s.city || 'Show'),
-        h('p', { class: 'pt-venue' }, [String(s.venue || '').trim(), sum.names ? plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket') : 'No names yet'].filter(Boolean).join(' \u00b7 '))),
-      rows.length ? h('div', { class: 'pt-sheet' }, guestLedger(rows)) : null,
+      h('p', { class: 'pt-gl-show' },
+        h('span', { class: 'pt-chip' + (s.date === today ? ' on' : '') }, s.date === today ? 'Tonight' : s.date > today ? 'Next show' : 'Last show'),
+        h('span', null, [dayLong(s.date), s.city || 'Show', String(s.venue || '').trim()].filter(Boolean).join(' \u00b7 '))),
+      h('div', { class: 'pt-gl-head' },
+        h('h3', { class: 'pt-gl-title' }, 'Guest list'),
+        h('p', { class: 'pt-gl-count' }, sum.names ? plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket') : 'No names yet')),
+      rows.length ? h('div', { class: 'pt-sheet pt-gl' }, guestLedger(rows)) : null,
       h('div', { class: 'pt-two' },
         h('button', { class: 'pf-btn go', type: 'button',
           onclick: function () { openGuestForm(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } }, icon('plus', 16), 'Add guest'),
@@ -5098,7 +5102,7 @@
       var cat = G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0] || { label: key };
       var list = categoryEntries(t, key);
       var total = list.reduce(function (a, r) { return r.counts ? a + r.amount : a; }, 0);
-      var lead = S.mode === 'db' && moneyLead(id);
+      var lead = S.mode === 'db' && bookLead(id) && serverLead(id);
       var slides = function (r) { return lead && r.source === 'PLAID' && /^p/.test(String(r.chargeId || '')); };
       // Logged by hand (a payment, a merch cash entry, a typed-in total): Edit or Delete.
       var mine = function (r) { return canWrite() && canEditTour(id) && (r.typed || r.cashId || (r.chargeId && r.source === 'MANUAL')); };
@@ -6846,6 +6850,8 @@
      the screen updates. It's asked for again at most once a minute, and only
      redrawn when someone actually changed. */
   function forgetCrew(tourId) {
+    // Asked for again next time it's needed (who manages may have changed).
+    if (S.crewAsk) { if (tourId) delete S.crewAsk[tourId]; else S.crewAsk = {}; }
     if (!S.crewCache) return;
     if (tourId) delete S.crewCache[tourId]; else S.crewCache = {};
   }
@@ -6935,6 +6941,8 @@
         // The tour manager and ALL ACCESS, never on the Creator's row: swipe
         // left to edit someone or kick them off the tour.
         if (!manages || m.owner || !m.invitedEmail) return row;
+        // A Manager is the creator's to edit or take off the tour.
+        if (m.manager && !owns) return row;
         var who = m.name || m.username || m.email;
         return swipeable(row, null, who, { open: 196, cls: 'in-list kick', actions: [
           { text: 'Edit', cls: 'edit', onClick: function () { openCrewEdit(tourId, m); } },
@@ -6942,22 +6950,16 @@
         ] });
       }));
       requestAnimationFrame(sizeColumns);
-      fillWhatsNew(rows);
     }
     // What's new?, under Invite crew: the Creator sees it straight away; the
     // tour manager once the crew list says who they are.
-    var wnHost = h('div', { class: 'wn-host' });
-    function fillWhatsNew(rows) {
-      wnHost.replaceChildren.apply(wnHost, managesTour(tourId, rows) ? [whatsNewBtn(tourId)] : []);
-    }
-    if (owns || cached) fillWhatsNew(cached ? cached.rows : []);
     function crewRow(m) {
       var title = m.name || m.username || m.email;
       // Invited but no account yet: "Pending", and no contact buttons until
       // they sign up and their own card fills in.
       var pending = !m.joined;
       // Access sits under the name; the role is the green badge in the middle.
-      var access = m.owner ? 'Creator' : (m.role === 'editor' ? 'All Access' : 'GA');
+      var access = m.owner ? 'Creator' : m.manager ? 'Manager' : (m.role === 'editor' ? 'All Access' : 'GA');
       var canOpen = !pending && m.userId && socialOn();
       // Their profile photo beside the name (the first letter until they add one).
       var face = personPhoto({ name: title, avatar: (m.userId && faces[m.userId]) || '' }, 'xs crew-face');
@@ -7006,8 +7008,7 @@
       manages ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
         h('button', { class: 'crew-invite', type: 'button',
           onclick: function () { openInviteSheet(tourId); } },
-          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew')) : null,
-      wnHost
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Invite crew')) : null
     ];
   }
 
@@ -7053,6 +7054,15 @@
         .catch(function () { /* this phone still remembers */ });
     }
   }
+  /* The tour's managers: the creator, and anyone the creator made a Manager
+     (All Access plus the card refresh, the polls, Ari's questions, alerts
+     and New tour tasks). Read from the crew list, asked once per tour. */
+  function isMe(m) {
+    var B = window.GR_BACKEND;
+    var uid = B && B.uid ? B.uid() : null, me = String((B && B.email && B.email()) || '').trim().toLowerCase();
+    if (uid && m.userId) return m.userId === uid;
+    return !!me && [m.email, m.invitedEmail].some(function (e) { return String(e || '').trim().toLowerCase() === me; });
+  }
   function moneyLead(tourId) {
     var B = window.GR_BACKEND;
     if (S.mode !== 'db') return true;
@@ -7064,26 +7074,39 @@
       if (!S.crewAsk[tourId] && B && B.crew) {
         S.crewAsk[tourId] = true;
         B.crew(tourId).then(function (rows) { S.crewCache[tourId] = { rows: rows, at: Date.now() }; render(true); })
-          .catch(function () { /* stays "waiting on the tour manager" */ });
+          .catch(function () { delete S.crewAsk[tourId]; /* asked again next time */ });
       }
       return false;
     }
-    var me = String((B && B.email && B.email()) || '').trim().toLowerCase();
-    return !!me && cached.rows.some(function (m) {
-      return !m.owner && m.role === 'editor' && /^\s*tour manager\s*$/i.test(String(m.tourRole || '')) &&
-        [m.email, m.invitedEmail].some(function (e) { return String(e || '').trim().toLowerCase() === me; });
-    });
+    return cached.rows.some(function (m) { return !m.owner && m.role === 'editor' && m.manager && isMe(m); });
   }
-  function managesTour(tourId, rows) {
-    if (S.mode !== 'db') return true;
+  /* A band's Off Tour book has no crew of its own: a Manager on any of the
+     band's tours manages it, the same as the database says. */
+  function bookLead(tourId) {
+    var t = getTour(tourId);
+    if (t && isOffTour(t)) {
+      var B = window.GR_BACKEND;
+      if (S.mode !== 'db' || (B && B.ownsTour && B.ownsTour(tourId))) return true;
+      return bandTours(artistOf(t)).some(function (e) { return moneyLead(e[0]); });
+    }
+    return moneyLead(tourId);
+  }
+  /* The card feed (undo a charge, the pile, Refresh) and the alert siren are
+     still checked by the server the old way: a Manager there also needs the
+     tour role "Tour Manager". Shown only when the server will say yes. */
+  function serverLead(tourId) {
     var B = window.GR_BACKEND;
-    if (B && B.ownsTour && B.ownsTour(tourId)) return true;
-    var me = String((B && B.email && B.email()) || '').trim().toLowerCase();
-    return !!me && (rows || []).some(function (m) {
-      return !m.owner && /^\s*tour manager\s*$/i.test(String(m.tourRole || '')) &&
-        [m.email, m.invitedEmail].some(function (e) { return String(e || '').trim().toLowerCase() === me; });
+    if (S.mode !== 'db' || (B && B.ownsTour && B.ownsTour(tourId))) return true;
+    var t = getTour(tourId), ids = t && isOffTour(t) ? bandTours(artistOf(t)).map(function (e) { return e[0]; }) : [tourId];
+    return ids.some(function (x) {
+      var c = S.crewCache && S.crewCache[x];
+      if (!c) { moneyLead(x); return false; }
+      return c.rows.some(function (m) {
+        return !m.owner && m.role === 'editor' && m.manager && isMe(m) && /^\s*tour manager\s*$/i.test(String(m.tourRole || ''));
+      });
     });
   }
+  function managesTour(tourId) { return moneyLead(tourId); }
 
   // Every task on the tour right now, most pressing first. `open` goes there.
   function tourTasks(tourId, rec) {
@@ -7460,7 +7483,8 @@
   function openCrewEdit(tourId, m) {
     var who = m.name || m.username || m.email;
     var base = m.base || { tourRole: '', phone: '', email: m.invitedEmail };
-    var f = { tourRole: m.tourRole || '', phone: m.phone || '', email: m.email || '', access: m.role === 'editor' ? 'editor' : 'viewer' };
+    var f = { tourRole: m.tourRole || '', phone: m.phone || '', email: m.email || '', access: m.manager ? 'manager' : (m.role === 'editor' ? 'editor' : 'viewer') };
+    var levels = createdTour(tourId) ? ['viewer', 'editor', 'manager'] : ['viewer', 'editor'];
     openSheet(function () {
       var submit = async function (e) {
         e.preventDefault();
@@ -7488,8 +7512,9 @@
           field('Email', h('input', { class: 'input', type: 'email', value: f.email, maxlength: 120, autocomplete: 'off',
             placeholder: 'Email', oninput: function (e) { f.email = e.target.value; } })),
           h('h3', { class: 'sh-h3' }, 'Access'),
-          segmented(['GA', 'ALL ACCESS'], f.access === 'editor' ? 1 : 0, function (i) { f.access = i ? 'editor' : 'viewer'; }, 'Access'),
-          h('p', { class: 'note' }, 'GA sees the shows, day sheets and guest list. ALL ACCESS also sees the money, and can edit or kick crew.'),
+          segmented(['GA', 'ALL ACCESS', 'MANAGER'].slice(0, levels.length), Math.max(0, levels.indexOf(f.access)), function (i) { f.access = levels[i]; }, 'Access'),
+          h('p', { class: 'note' }, 'GA sees the shows, day sheets and guest list. ALL ACCESS also sees the money, and can edit or kick crew. ' +
+            'MANAGER is ALL ACCESS plus the card refresh, the polls and New tour tasks; only the tour\u2019s creator makes someone a Manager.'),
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
@@ -10826,8 +10851,9 @@
               shown ? m.invited_email : null,
               !m.user_id ? h('span', { class: 'crew-sub pending' }, (shown ? ' \u00b7 ' : '') + 'Pending') : null)),
           h('span', { class: 'role-tag' + (m.role === 'editor' ? ' aa' : '') },
-            m.role === 'editor' ? 'ALL ACCESS' : 'GA'),
-          runs ? h('button', {
+            m.manager && m.role === 'editor' ? 'MANAGER' : m.role === 'editor' ? 'ALL ACCESS' : 'GA'),
+          // A Manager is the creator's to take off the tour.
+          runs && (owns || !m.manager) ? h('button', {
             class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + m.invited_email,
             onclick: async function () {
               try { await B.uninvite(tourId, m.invited_email); forgetCrew(tourId); toast('Removed'); refresh(); }
@@ -10936,10 +10962,14 @@
         emailI,
         phoneI,
         roleBtn,
-        h('div', { style: 'display:flex;gap:10px;align-items:center;margin-top:10px' },
-          segmented(['GA', 'ALL ACCESS'], 0, function (i) { role = i ? 'editor' : 'viewer'; },
-            'Invite role'),
-          h('button', { class: 'btn primary', type: 'submit', style: 'flex:1' }, 'Invite')));
+        // The tour's creator can invite someone straight in as a Manager.
+        createdTour(tourId)
+          ? h('div', { style: 'display:grid;gap:10px;margin-top:10px' },
+              segmented(['GA', 'ALL ACCESS', 'MANAGER'], 0, function (i) { role = ['viewer', 'editor', 'manager'][i]; }, 'Invite role'),
+              h('button', { class: 'btn primary block', type: 'submit' }, 'Invite'))
+          : h('div', { style: 'display:flex;gap:10px;align-items:center;margin-top:10px' },
+              segmented(['GA', 'ALL ACCESS'], 0, function (i) { role = i ? 'editor' : 'viewer'; }, 'Invite role'),
+              h('button', { class: 'btn primary', type: 'submit', style: 'flex:1' }, 'Invite')));
     }
 
     return h('div', null, past, list, form);
@@ -11152,7 +11182,7 @@
       return [
         h('h2', { class: 'sh-title' }, 'Tour alerts'),
         h('div', { class: 'stack' },
-          (createdTour(tourId) || moneyLead(tourId)) ? h('button', { class: 'btn primary block', type: 'button',
+          (createdTour(tourId) || (moneyLead(tourId) && serverLead(tourId))) ? h('button', { class: 'btn primary block', type: 'button',
             onclick: function () { openAlertSheet(tourId); } }, icon('bell', 18), 'Send Tour Alert') : null,
           phone)
       ];
@@ -12914,7 +12944,7 @@
   }
   function tmFeedEntry(id) {
     var B = window.GR_BACKEND;
-    if (S.mode !== 'db' || !B || !B.feedCall || !leadsTour(id)) return null;
+    if (S.mode !== 'db' || !B || !B.feedCall || !bookLead(id)) return null;
     var P = S.pile && S.pile[id];
     if ((!P || Date.now() - P.at > 120e3) && !(S.pileBusy && S.pileBusy[id])) {
       loadPile(id).then(function (np) { if (np.lead || (P && P.lead)) render(true); });

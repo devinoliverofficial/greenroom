@@ -2338,13 +2338,21 @@ button.acct-row:active { background: var(--surface-2); }
 .pt-tab span:not(.ic) { white-space: nowrap; }
 /* Tall enough that a short tab doesn't yank the page back up when you switch to it. */
 .pt-body { position: relative; z-index: 1; padding-top: 6px; min-height: calc(100vh - 170px); min-height: calc(100dvh - 170px); }
-.pt-tourbar { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 4px 2px 10px; }
+.pt-tourbar { display: flex; align-items: baseline; justify-content: center; flex-wrap: wrap; column-gap: 12px; margin: 4px 2px 10px; }
 .pt-tourname { display: inline-flex; align-items: center; gap: 4px; min-width: 0; appearance: none; border: 0; background: none; padding: 2px 0;
   font: inherit; font-size: 14px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
 .pt-tourname span:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pt-tourname .ic { flex: none; color: var(--ink-3); }
-.pt-today { margin: 0 2px 14px; }
-.pt-when { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; font-size: 13px; font-weight: 500; color: var(--ink-2); }
+/* Today (and the top of Guest list): centred under the tabs. */
+.pt-today { margin: 0 2px 14px; text-align: center; }
+.pt-when { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.pt-tasks { position: relative; z-index: 1; margin: 0 0 12px; }
+/* Guest list: the show small and centred on top, the list the main thing. */
+.pt-gl-show { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 8px;
+  margin: 0 2px 16px; font-size: 13px; line-height: 1.35; color: var(--ink-3); text-align: center; }
+.pt-gl-head { position: relative; z-index: 1; margin: 0 2px 12px; text-align: center; }
+.pt-gl-title { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+.pt-gl-count { margin: 3px 0 0; font-size: 13.5px; color: var(--ink-2); }
 .pt-chip { padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink); font-size: 11.5px; font-weight: 700; letter-spacing: .02em; }
 .pt-chip.on { background: var(--brand); color: var(--on-brand); }
 .pt-chip.sold { background: none; box-shadow: inset 0 0 0 1px var(--neg); color: var(--neg); }

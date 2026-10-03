@@ -589,7 +589,7 @@
     /* The tour's phone book: everyone invited, plus the manager who owns it. */
     crew: async function (tourId) {
       var mq = await sb.from('members')
-        .select('invited_email, role, user_id, display_name, phone, tour_role, overrides')
+        .select('invited_email, role, user_id, display_name, phone, tour_role, overrides, manager')
         .eq('tour_id', tourId).order('created_at');
       if (mq.error) throw mapError(mq.error);
       var rows = mq.data || [];
@@ -624,7 +624,7 @@
         };
         var ov = isObj(r.overrides) ? r.overrides : {};
         out.push({
-          owner: false, role: r.role, userId: r.user_id || null,
+          owner: false, role: r.role, manager: !!r.manager && r.role === 'editor', userId: r.user_id || null,
           name: pr.full_name || r.display_name || '',
           username: pr.username || '',
           email: ov.email || base.email,
@@ -657,7 +657,7 @@
       return !!(doc && session && doc._ownerId === session.user.id);
     },
     members: async function (tourId) {
-      var q = await sb.from('members').select('invited_email, role, user_id, display_name')
+      var q = await sb.from('members').select('invited_email, role, user_id, display_name, manager')
         .eq('tour_id', tourId).order('created_at');
       if (q.error) throw mapError(q.error);
       return q.data;
@@ -705,14 +705,19 @@
       var first = String(x.first || full.split(/\s+/)[0] || '').trim();
       var last = String(x.last || full.split(/\s+/).slice(1).join(' ') || '').trim();
       var tourRole = String(x.tourRole || '').trim().slice(0, 40);
-      var q = await sb.from('members').upsert({
+      // A Manager is All Access with the manager mark (only the creator's mark sticks).
+      var mgr = role === 'manager';
+      if (mgr) role = 'editor';
+      var row = {
         tour_id: tourId,
         invited_email: addr,
         role: role === 'editor' ? 'editor' : 'viewer',
         display_name: String(name || '').trim().slice(0, 60),
         phone: String(phone || '').trim().slice(0, 30),
         tour_role: tourRole
-      });
+      };
+      if (mgr) row.manager = true;
+      var q = await sb.from('members').upsert(row);
       if (q.error) throw mapError(q.error);
       // Remembered for the next tour's invites. A nicety: never blocks the invite.
       try {
@@ -751,8 +756,9 @@
     },
     uninvite: async function (tourId, email) {
       var q = await sb.from('members').delete()
-        .eq('tour_id', tourId).eq('invited_email', email);
+        .eq('tour_id', tourId).eq('invited_email', email).select('invited_email');
       if (q.error) throw mapError(q.error);
+      if (!q.data || !q.data.length) throw err('permission');
     },
     uid: function () { return session && session.user ? session.user.id : null; },
     /* The calendar. Everyone on the tour sees every poll, vote and request;
