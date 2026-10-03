@@ -3699,7 +3699,28 @@
         onclick: function () { openTour(id, 'guests', PF_HOME, 'Profile'); } }, 'Other nights', icon('chevron', 14)) : null
     ];
   }
-  // ARTISTS: who you work for, and who you've said you toured with. Names only: their tours are the next tab.
+  /* The artists' Greenroom pages this account is near (its own, the ones it's
+     on, the ones whose tours it's on), by name, so a name can open its page.
+     Shares Search's answer; asked once a visit. */
+  function artistPagesByName() {
+    var B = window.GR_BACKEND;
+    if (!(socialOn() && B && B.searchSuggestions)) return {};
+    var sug = S.searchSug;
+    if (!sug || (!sug.asking && Date.now() - sug.at > 180e3)) {
+      S.searchSug = { data: sug ? sug.data : null, at: Date.now(), asking: true };
+      B.searchSuggestions().then(function (d) { S.searchSug = { data: d, at: Date.now() }; }, function () {
+        S.searchSug = { data: sug ? sug.data : null, at: Date.now() };
+      }).then(function () { render(true); });
+    }
+    var out = {};
+    ((S.searchSug && S.searchSug.data && S.searchSug.data.artists) || []).forEach(function (a) {
+      out[String(a.name || '').trim().toLowerCase()] = a;
+    });
+    return out;
+  }
+  /* ARTISTS: who you work for, and who you've said you toured with. An
+     artist with a Greenroom page opens it the way anyone else sees it (the
+     viewer experience); their tours are the next tab. */
   function pfArtists(byArtist, declared, loose) {
     if (!byArtist.size && !declared.length) {
       return emptyState('No artists yet', loose.length
@@ -3707,13 +3728,19 @@
         : canWrite() ? 'Tap + to add your artist, then their first tour.'
         : 'Nothing has been shared with you yet.');
     }
+    var pages = artistPagesByName();
     return h('ul', { class: 'tour-list rows' },
       Array.from(byArtist.keys()).concat(declared).map(function (a) {
-        var logo = artistLogo(a);
-        return h('li', null, h('div', { class: 'list-row art-row still' },
-          h('span', { class: 'avatar' + (logo ? ' has' : ' letter'), 'aria-hidden': 'true' },
+        var page = pages[String(a).trim().toLowerCase()];
+        var logo = (page && page.avatar) || artistLogo(a);
+        var inner = [
+          h('span', { class: 'avatar' + (logo ? ' has' : ' letter') + (page && page.avatar ? ' photo' : ''), 'aria-hidden': 'true' },
             logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(a).trim().charAt(0).toUpperCase()),
-          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a))));
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a),
+            page && page.handle ? h('span', { class: 'lr-sub' }, page.handle) : null)];
+        return h('li', null, page
+          ? h('button', { class: 'list-row art-row', type: 'button', onclick: function () { openAct(page.id); } }, inner, icon('chevron', 18))
+          : h('div', { class: 'list-row art-row still' }, inner));
       }));
   }
   /* TOURS: each run by name. Tap one and its dates drop down under it, laid
