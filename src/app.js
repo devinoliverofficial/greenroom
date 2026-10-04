@@ -776,6 +776,7 @@
     else if (S.route.name === 'tours') node = viewAllTours();
     else if (S.route.name === 'artists') node = viewAllArtists();
     else if (S.route.name === 'book') node = viewBook();
+    else if (S.route.name === 'merchroom') node = viewMerchroom();
     else node = viewHome();
     // The tab bar stays the same element when nothing about it changed, so a
     // tap on it always lands.
@@ -3272,6 +3273,128 @@
     }, { label: 'Edit artist', cls: 'pe-sheet' });
   }
 
+  /* MERCHROOM (MODEL7MERCH): the merch table's own room. Phase 0: the band's
+     Square account, connected by a token that Greenroom can write but never
+     read back, synced by the server every few minutes; each night's card
+     sales and tips land on that night's show by themselves. Sandbox (test
+     mode) only for now: fake money until the real account is blessed. */
+  function squareInfo(fresh) {
+    var B = window.GR_BACKEND;
+    var c = S.square || (S.square = { row: null, nights: [], at: 0, asking: false, failed: false, none: false });
+    if (S.mode !== 'db' || !B || !B.squareState) { c.none = true; return c; }
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      Promise.all([B.squareState(), B.squareNights()]).then(function (got) {
+        c.row = got[0]; c.nights = got[1] || []; c.none = !got[0];
+        c.at = Date.now(); c.asking = false; c.failed = false; render();
+      }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); render(); });
+    }
+    return c;
+  }
+  // Card taps land in UTC; a show night is picked by pulling the clock back
+  // ten hours (the night turns over at 6am New York / 3am LA), the same rule
+  // the server uses to lay them on the show.
+  function squareNightsRows(nights) {
+    var by = {};
+    nights.forEach(function (p) {
+      if (p.status && p.status !== 'COMPLETED') return;
+      // Same rule as the server: pull back ten hours, then take the UTC date.
+      var k = new Date(new Date(p.created_at).getTime() - 10 * 3600e3).toISOString().slice(0, 10);
+      var b = by[k] || (by[k] = { sales: 0, tips: 0, taps: 0 });
+      b.sales += G.num(p.amount) - G.num(p.refunded); b.tips += G.num(p.tip); b.taps += 1;
+    });
+    var days = Object.keys(by).sort().reverse();
+    return days.map(function (d) {
+      var b = by[d];
+      // The show that night, if one of your tours has it.
+      var city = '';
+      allTourEntries().some(function (e) {
+        return G.rows(e[1].shows).some(function (x) {
+          if (x.date !== d) return false;
+          city = String(x.city || '').split(',')[0]; return true;
+        });
+      });
+      return h('div', { class: 'row' },
+        h('div', { class: 'row-label' }, dayMD(d) + (city ? ' \u00b7 ' + city : ''),
+          h('span', { class: 'hint' }, plural(b.taps, 'tap') + ' \u00b7 ' + money(b.tips) + ' tips' + (city ? ' \u00b7 on the show' : ''))),
+        h('span', { class: 'amt num' }, money(b.sales)));
+    });
+  }
+  function viewMerchroom() {
+    var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
+    var c = squareInfo();
+    var row = c.row;
+    var ago = row && row.last_sync ? feedAgo(row.last_sync) : 'not yet';
+    var statusLine = c.failed ? 'Couldn\u2019t check Square just now. It tries again on its own.'
+      : !row ? ''
+      : row.status === 'bad_token' ? 'Square refused the token. Paste a fresh one.'
+      : row.status === 'error' ? (row.detail || 'Square had trouble. It tries again every few minutes.')
+      : row.status === 'new' || !row.location_id ? 'Connecting\u2026 first sync lands within five minutes.'
+      : (row.location_name || row.merchant || 'Connected') + ' \u00b7 synced ' + ago;
+    var body;
+    if (c.none && !row && !c.failed) {
+      body = [
+        h('div', { class: 'mr-card' },
+          h('h3', { class: 'mr-t' }, 'Square', h('span', { class: 'mr-badge' }, 'TEST')),
+          h('p', { class: 'mr-p' }, 'The card reader for the merch table. The band\u2019s own Square account takes the money \u2014 fans to Square to the bank, never through Greenroom \u2014 and every tap shows up here on its night, tips and all.'),
+          h('p', { class: 'mr-p' }, 'Right now this is Square\u2019s test world: pretend cards, pretend money, zero risk.'),
+          h('button', { class: 'btn primary block', type: 'button', onclick: function () { openSquareConnect(); } },
+            icon('card', 18), 'Connect Square (test)'))
+      ];
+    } else {
+      var nights = squareNightsRows(c.nights);
+      body = [
+        h('div', { class: 'mr-card' },
+          h('h3', { class: 'mr-t' }, 'Square',
+            row && row.env !== 'production' ? h('span', { class: 'mr-badge' }, 'TEST') : null),
+          h('p', { class: 'mr-p' + (row && (row.status === 'bad_token' || row.status === 'error') ? ' bad' : '') },
+            c.asking && !row ? 'Looking\u2026' : statusLine || 'Not connected yet.'),
+          h('div', { class: 'pt-two' },
+            c.failed && !row ? h('button', { class: 'pf-btn', type: 'button', onclick: function () { squareInfo(true); render(true); } }, 'Try again')
+              : h('button', { class: 'pf-btn', type: 'button', onclick: function () { openSquareConnect(row); } },
+                  row ? 'Replace token' : 'Connect'),
+            row ? h('button', { class: 'pf-btn', type: 'button', onclick: function () {
+              confirmSheet({ title: 'Disconnect Square?', body: 'Greenroom stops reading the account. Nights already on your shows stay.',
+                action: 'Disconnect', danger: true,
+                onConfirm: async function () {
+                  try { await window.GR_BACKEND.squareDisconnect(); squareInfo(true); toast('Square disconnected'); return true; }
+                  catch (e) { saveFailed('square', e); return false; }
+                } });
+            } }, 'Disconnect') : null)),
+        nights.length ? [h('h3', { class: 'mn-h mn-over' }, 'Nights'), h('div', { class: 'ledger' }, nights)]
+          : row && row.status === 'ok' ? h('p', { class: 'note' }, 'No card taps read yet. The first sale shows up within five minutes of being rung.') : null
+      ];
+    }
+    return h('div', { class: 'page home profile menu-page has-tabs' },
+      menuHead('Merchroom', { menu: true }),
+      dbBanner(),
+      body,
+      socialBar(''));
+  }
+  // The token goes in once and can never be read back out of the app.
+  function openSquareConnect(row) {
+    var B = window.GR_BACKEND;
+    openSheet(function () {
+      var input = h('input', { class: 'input', type: 'password', autocomplete: 'off', autocapitalize: 'none',
+        placeholder: 'Sandbox access token', 'aria-label': 'Square sandbox access token' });
+      return [
+        h('h2', { class: 'sh-title' }, row ? 'Replace the Square token' : 'Connect Square'),
+        h('p', { class: 'sh-sub' }, 'From developer.squareup.com: open your application, switch the dashboard to Sandbox, and copy the Sandbox access token.'),
+        h('p', { class: 'note' }, 'It\u2019s stored where only Greenroom\u2019s server can read it \u2014 the app (and anyone in it) can\u2019t get it back out. Test mode reads fake money only.'),
+        input,
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+            var tok = input.value.trim();
+            if (!tok) { toast('Paste the token first.'); return; }
+            var b = e.currentTarget; b.disabled = true;
+            try { await B.squareConnect(tok); } catch (x) { b.disabled = false; saveFailed('square', x); return; }
+            closeSheet(); squareInfo(true); toast('Connected \u2014 first sync lands within five minutes');
+          } }, 'Save'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+      ];
+    }, { label: 'Connect Square' });
+  }
+
   /* ---- The bar along the bottom of the social pages. ----
      Search on the left, your own photo on the right: the photo takes you to
      your profile from anywhere. (Inside a tour, the tour's own tabs sit
@@ -3647,6 +3770,7 @@
       dbBanner(),
       h('section', { class: 'mn-group' },
         budgetRows(here),
+        menuRow('tag', 'Merchroom', function () { go({ name: 'merchroom', back: here }); }),
         (t && !t.setupDone && canEditTour(id))
           ? menuRow('edit', 'Finish setting up', function () { openTour(id, 'details', here, 'Menu'); }, 'Add its shows to open the rest')
         : t ? tabs.map(function (x) {
@@ -10463,6 +10587,14 @@
       var depositRow = h('div', { class: 'row mx-row' },
         h('div', { class: 'row-label' }, 'Deposit', depositHint),
         depositAmt);
+      // The night as Square saw it (MODEL7MERCH): taps, tips, and the net once known.
+      var ms = G.isObj(s.merchSquare) ? s.merchSquare : null;
+      var squareRow = !ms ? null : h('div', { class: 'row mx-row' },
+        h('div', { class: 'row-label' }, 'Square' + (ms.env !== 'production' ? ' (test)' : ''),
+          h('span', { class: 'hint' }, plural(G.num(ms.taps), 'tap') + ' \u00b7 incl. ' + money(G.num(ms.tips)) + ' tips' +
+            (G.num(ms.refunds) > 0 ? ' \u00b7 ' + money(G.num(ms.refunds)) + ' refunded' : '') +
+            (ms.net != null ? ' \u00b7 ' + money(G.num(ms.net)) + ' after fees' : ''))),
+        h('span', { class: 'amt num mx-val known' }, money(G.num(ms.sales) - G.num(ms.refunds))));
       function updateDeposit() {
         var due = G.merchDue({ income: draft, merchCash: merchCash, merchCardDeposit: merchCardDeposit });
         depositRow.hidden = !(draft.merch > 0 && due > 0);
@@ -10646,6 +10778,7 @@
             h('span', { class: 'row-label' }, '$ per head'),
             perHeadEl));
           rows.push(depositRow);
+          if (squareRow) rows.push(squareRow);
         } else if (f.key === 'buyouts') {
           rows.push(h('div', { class: 'row' },
             h('div', { class: 'row-label' },

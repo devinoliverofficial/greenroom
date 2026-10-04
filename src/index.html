@@ -2358,6 +2358,14 @@ button.acct-row:active { background: var(--surface-2); }
 /* The menu and the pages under it: no band, the GR mark alone in green, centred. */
 .headband.dark.mn-top { margin-bottom: 6px; padding-bottom: 0; }
 .headband.dark.mn-top .topbar { min-height: 50px; }
+/* Merchroom: the Square card and its TEST pill. */
+.mr-card { position: relative; z-index: 1; margin: 2px 0 20px; padding: 16px; border-radius: 14px; background: var(--surface); }
+.mr-t { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 19px; font-weight: 700; letter-spacing: -.01em; }
+.mr-badge { padding: 2px 8px; border-radius: 999px; background: color-mix(in oklab, var(--brand), transparent 82%);
+  color: var(--pos); font-size: 11px; font-weight: 800; letter-spacing: .06em; }
+.mr-p { margin: 0 0 10px; font-size: 14px; line-height: 1.45; color: var(--ink-2); }
+.mr-p.bad { color: var(--neg); font-weight: 600; }
+.mr-card .pt-two { margin-top: 4px; }
 .mn-page-t { position: relative; z-index: 1; margin: 2px 0 10px; font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
 .mn-none { margin: 4px 0 8px; font-size: 14px; line-height: 1.4; color: var(--ink-2); }
 .mn-list { position: relative; z-index: 1; }

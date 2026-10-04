@@ -545,6 +545,32 @@
       if (q.error) throw mapError(q.error);
       flowersStale(); emit('tours');
     },
+    /* ---- Square (MODEL7MERCH, sandbox phase). The token is write-only:
+       the table's column grants let it be saved, never read back. ---- */
+    squareState: async function () {
+      var q = await sb.from('square_connect')
+        .select('env, merchant, location_id, location_name, status, detail, last_sync, connected_at')
+        .maybeSingle();
+      if (q.error) throw mapError(q.error);
+      return q.data || null;
+    },
+    squareNights: async function () {
+      var since = new Date(Date.now() - 60 * 864e5).toISOString();
+      var q = await sb.from('square_payments').select('id, created_at, amount, tip, refunded, status')
+        .gte('created_at', since).order('created_at', { ascending: true }).limit(1000);
+      if (q.error) throw mapError(q.error);
+      return q.data || [];
+    },
+    squareConnect: async function (token) {
+      var q = await sb.from('square_connect').upsert(
+        { owner_id: session.user.id, env: 'sandbox', token: String(token || '').trim(), status: 'new' },
+        { onConflict: 'owner_id' });
+      if (q.error) throw mapError(q.error);
+    },
+    squareDisconnect: async function () {
+      var q = await sb.from('square_connect').delete().eq('owner_id', session.user.id);
+      if (q.error) throw mapError(q.error);
+    },
     // Following an artist's page.
     followArtist: async function (artistId) {
       var q = await sb.from('artist_follows').upsert({ user_id: session.user.id, artist_id: artistId },

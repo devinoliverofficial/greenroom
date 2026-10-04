@@ -28,7 +28,8 @@ shim = r"""<script>
         daySheet: { doors: '7:00 PM', venueAddress: '912 Red River St, Austin, TX 78701' } },
         // Two nights already played and one ahead, for the Calendar's past days.
         s0: { id: 's0', date: ymd(new Date(today.getTime() - 4 * 864e5)), city: 'Dallas, TX', venue: 'Granada',
-          loggedAt: 1, income: { guarantee: 1500, merch: 900 }, merchCash: 400 },
+          loggedAt: 1, income: { guarantee: 1500, merch: 900 }, merchCash: 400,
+          merchSquare: { sales: 1480, tips: 118, taps: 37, env: 'sandbox', net: 1551.4 } },
         s00: { id: 's00', date: ymd(new Date(today.getTime() - 2 * 864e5)), city: 'Houston, TX', venue: 'White Oak' },
         // Tomorrow too, so Today counts more than one day until the day off.
         s1b: { id: 's1b', date: ymd(new Date(today.getTime() + 864e5)), city: 'San Antonio, TX', venue: 'Paper Tiger' },
@@ -176,6 +177,32 @@ shim = r"""<script>
     facesFor: function () { return {}; },
     removeEndorsement: function (eid) { var H = window.__harness; H.devinActs = devinActs().filter(function (x) { return x.eid !== eid; }); return Promise.resolve(); },
     endorse: function (aid, uid) { var H = window.__harness, a = (H.acts || []).filter(function (x) { return x.id === aid; })[0]; if (a) a.members.forEach(function (m) { if (m.userId === uid) m.endorsed = true; }); return Promise.resolve(); },
+    /* Square, in memory (MODEL7MERCH): connected to the sandbox with two test nights. */
+    squareState: function () {
+      var H = window.__harness;
+      if (H.square === undefined) H.square = { env: 'sandbox', merchant: 'MLZE3W9FYYE1Q', location_id: 'LH2B1ZQ4', location_name: 'Merch Table',
+        status: 'ok', detail: '', last_sync: new Date(Date.now() - 3 * 60e3).toISOString(), connected_at: new Date(Date.now() - 864e5).toISOString() };
+      return Promise.resolve(H.square);
+    },
+    squareNights: function () {
+      var H = window.__harness;
+      if (!H.square) return Promise.resolve([]);
+      if (!H.squarePays) {
+        var mk = function (daysAgo, hourUTC, amount, tip, i) {
+          var d = new Date(); d.setUTCDate(d.getUTCDate() - daysAgo); d.setUTCHours(hourUTC, 10 + i * 7, 0, 0);
+          return { id: 'sqp' + daysAgo + '-' + i, created_at: d.toISOString(), amount: amount, tip: tip, status: 'COMPLETED' };
+        };
+        H.squarePays = [mk(1, 2, 45, 5, 0), mk(1, 2, 90, 0, 1), mk(1, 3, 35, 7, 2), mk(0, 1, 60, 10, 0), mk(0, 2, 25, 0, 1)];
+      }
+      return Promise.resolve(H.squarePays);
+    },
+    squareConnect: function (tok) {
+      var H = window.__harness;
+      H.square = { env: 'sandbox', merchant: '', location_id: '', location_name: '', status: 'new', detail: '',
+        last_sync: null, connected_at: new Date().toISOString() };
+      return Promise.resolve();
+    },
+    squareDisconnect: function () { window.__harness.square = null; window.__harness.squarePays = null; return Promise.resolve(); },
     followArtist: function (id) { var H = window.__harness; H.artistFollows = (H.artistFollows || []).concat([id]); return Promise.resolve(); },
     unfollowArtist: function (id) { var H = window.__harness; H.artistFollows = (H.artistFollows || []).filter(function (x) { return x !== id; }); return Promise.resolve(); },
     checkedIn: function (tourId, date) { return (window.__harness.checkins || []).indexOf(tourId + '|' + date) >= 0; },
