@@ -10474,7 +10474,7 @@
               ? ' \u00b7 ' + money(Math.abs(off)) + (off > 0 ? ' more' : ' less') + ' than the Settlement' + (off > 0 ? ' (card tips?)' : '')
               : '')
           : merchCardDeposit != null
-            ? 'atVenu card payout: card sales less fees, 2 business days after'
+            ? 'atVenu card payout (sales + tips \u2212 fees), usually lands 3 business days after'
             : 'Net minus cash, due in the bank';
         depositAmt.textContent = money(landed ? G.num(s.merchDeposit) : due);
         depositAmt.classList.toggle('known', !!recv.merch);
