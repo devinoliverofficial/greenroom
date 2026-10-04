@@ -203,6 +203,44 @@ shim = r"""<script>
       return Promise.resolve();
     },
     squareDisconnect: function () { window.__harness.square = null; window.__harness.squarePays = null; return Promise.resolve(); },
+    /* New income, in memory: two bank deposits no matcher claimed (one
+       atVenu-looking near s0's night, one plain). catalogIncome mirrors the
+       real RPC: merch/guarantee with a show write the received fields;
+       anything whole-tour lands in doc.otherIncome; skip just clears it. */
+    incomeNew: function () {
+      var H = window.__harness;
+      if (!H.deposits) {
+        var day = function (daysAgo) { var d = new Date(Date.now() - daysAgo * 864e5); return d.toISOString().slice(0, 10); };
+        H.deposits = [
+          { id: 'dep1', date: day(1), amount: 912.34, atvenu: true, matched: false },
+          { id: 'dep2', date: day(3), amount: 1500.5, atvenu: false, matched: false }
+        ];
+      }
+      return Promise.resolve(H.deposits.filter(function (d) { return !d.matched; }).map(function (d) {
+        return { id: d.id, date: d.date, amount: d.amount, atvenu: d.atvenu };
+      }));
+    },
+    catalogIncome: async function (depId, opts) {
+      var H = window.__harness, o = opts || {};
+      H.catalogued = (H.catalogued || []).concat([{ id: depId, tourId: o.tourId || null, showId: o.showId || null, kind: o.kind }]);
+      var dep = (H.deposits || []).filter(function (d) { return d.id === depId; })[0];
+      if (!dep) return { ok: false, why: 'gone' };
+      if (dep.matched) return { ok: false, why: 'done' };
+      dep.matched = true;
+      if (o.kind === 'skip') return { ok: true };
+      if (o.showId && (o.kind === 'merch' || o.kind === 'guarantee')) {
+        var sh = {};
+        sh[o.showId] = o.kind === 'merch'
+          ? { merchReceived: true, merchReceivedAt: dep.date, merchDeposit: dep.amount }
+          : { guaranteeReceived: true, guaranteeReceivedAt: dep.date, guaranteeDeposit: dep.amount };
+        await db.doc('tours/' + o.tourId).update({ shows: sh });
+        return { ok: true };
+      }
+      var oi = {};
+      oi[depId] = { date: dep.date, amount: dep.amount, kind: o.kind, at: Date.now() };
+      await db.doc('tours/' + o.tourId).update({ otherIncome: oi });
+      return { ok: true };
+    },
     followArtist: function (id) { var H = window.__harness; H.artistFollows = (H.artistFollows || []).concat([id]); return Promise.resolve(); },
     unfollowArtist: function (id) { var H = window.__harness; H.artistFollows = (H.artistFollows || []).filter(function (x) { return x !== id; }); return Promise.resolve(); },
     checkedIn: function (tourId, date) { return (window.__harness.checkins || []).indexOf(tourId + '|' + date) >= 0; },

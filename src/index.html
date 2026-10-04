@@ -1631,6 +1631,15 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .rv-sheet .stack .btn { min-height: 44px; font-size: 14px; }
 .rv-sheet .btn.quiet.block { min-height: 40px; font-size: 13px; }
 .rv-check { flex: none; width: 22px; height: 22px; margin: 9px 0 0; accent-color: var(--brand); }
+/* New income review (Cards tab): one block per bank deposit. */
+.iv-list { display: grid; gap: 10px; }
+.iv-row .rv-fields { width: 100%; }
+.iv-sels { display: grid; gap: 8px; }
+.iv-sels select { width: 100%; }
+.iv-act { margin-top: 2px; justify-content: space-between; }
+/* Other income, under the nights on the Income tab and on the Off Tour book. */
+.oi-head { margin: 22px 2px 8px; font-size: 13px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
+.off-page .oi-head { margin-top: 12px; }
 .rv-fields { flex: 1; min-width: 0; display: grid; gap: 8px; }
 .rv-line { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr); gap: 8px; }
 .rv-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }

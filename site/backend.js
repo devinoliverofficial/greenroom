@@ -571,6 +571,27 @@
       var q = await sb.from('square_connect').delete().eq('owner_id', session.user.id);
       if (q.error) throw mapError(q.error);
     },
+    /* ---- New income: bank deposits on watched accounts (date and amount
+       only) that no matcher claimed. RLS hands them to their owner alone. ---- */
+    incomeNew: async function () {
+      var q = await sb.from('merch_deposits').select('id, date, amount, atvenu')
+        .eq('matched', false).order('date', { ascending: false }).limit(200);
+      if (q.error) throw mapError(q.error);
+      return q.data || [];
+    },
+    // Says what a deposit was and which book it belongs to. kind 'skip'
+    // clears it for good; a showId pins merch or a guarantee to one night.
+    catalogIncome: async function (depId, opts) {
+      var o = opts || {};
+      var q = await sb.rpc('catalog_income', {
+        dep_id: String(depId), t_id: o.tourId || null, s_id: o.showId || null, kind: String(o.kind || '') });
+      if (q.error) throw mapError(q.error);
+      var out = isObj(q.data) ? q.data : { ok: false };
+      // The write landed inside the database; pull the books fresh so the
+      // phone shows it without waiting on realtime.
+      if (out.ok && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
+      return out;
+    },
     // Following an artist's page.
     followArtist: async function (artistId) {
       var q = await sb.from('artist_follows').upsert({ user_id: session.user.id, artist_id: artistId },

@@ -1341,5 +1341,57 @@
     });
   })();
 
+  /* ---- Other income: royalties, advances and payouts on the book itself
+     (tour.otherIncome), catalogued from bank deposits. ---- */
+  (function () {
+    var tour = {
+      shows: keyed([{ id: 's1', date: '2026-05-10', city: 'Austin', loggedAt: 1,
+        income: { guarantee: 1000, merch: 0 }, guaranteeReceived: true }]),
+      otherIncome: {
+        dRoy: { date: '2026-05-12', amount: 500, kind: 'royalties', at: 1 },
+        dAdv: { date: '2026-05-20', amount: 2000, kind: 'advance', at: 2 },
+        dBad: null
+      },
+      expenses: {},
+      commission: { management: { mode: 'pct', value: 10 } }
+    };
+    test('other income counts in the tour income and net', function () {
+      var c = G.calc(tour);
+      eq(c.showIncome, 1000, 'show income alone');
+      eq(c.otherIncome, 2500, 'other income total');
+      eq(c.income, 3500, 'income carries both');
+      eq(c.otherRows.length, 2, 'a null entry is no row');
+      eq(c.otherRows[0].kind, 'royalties', 'rows sorted by date');
+    });
+    test('commission stays figured on the shows money alone', function () {
+      var c = G.calc(tour);
+      near(c.commissionProjected, 100, 'management 10% of 1000, not 3500');
+      near(c.net, 3500 - c.out, 'net still income less out');
+      // The report's path: a rule with no base falls back to the income
+      // argument, which must be the shows' money, never income + other.
+      near(G.commissionLine({ key: 'management', label: 'Management', basis: 'income' },
+        { mode: 'pct', value: 10 }, c.showIncome, c.guarantees), 100, 'fallback basis is show income');
+    });
+    test('upTo keeps the chart honest about other income dates', function () {
+      eq(G.calc(tour, { upTo: '2026-05-15' }).otherIncome, 500, 'only what landed by then');
+      eq(G.calc(tour, { upTo: '2026-05-09' }).income, 0, 'nothing before the night');
+    });
+    test('balance series walks other income days', function () {
+      var series = G.balanceSeries(tour);
+      eq(series[series.length - 1].date >= '2026-05-20', true, 'series reaches the advance');
+      var may12 = series.filter(function (p) { return p.date === '2026-05-12'; })[0];
+      near(may12.income, 1500, 'royalties in by May 12');
+    });
+    test('closeout carries other income', function () {
+      var csv = G.closeoutCSVs(tour)['shows.csv'];
+      eq(csv.indexOf('Other income') >= 0, true, 'line present');
+      eq(csv.indexOf('Royalties') >= 0, true, 'kind named');
+    });
+    test('other income kind labels', function () {
+      eq(G.otherKindLabel('advance'), 'Advance', 'known kind');
+      eq(G.otherKindLabel('mystery'), 'Income', 'unknown kind says Income');
+    });
+  })();
+
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };
 })();

@@ -53,6 +53,20 @@
     { key: 'misc', label: 'Misc' }
   ];
 
+  /* Income catalogued onto the book itself, not one night (tour.otherIncome,
+     keyed by the bank deposit that brought it): royalties, an advance, or
+     merch and guarantees that belong to no one show. */
+  var OTHER_INCOME_KINDS = [
+    { key: 'merch', label: 'Merch' },
+    { key: 'guarantee', label: 'Guarantee' },
+    { key: 'royalties', label: 'Royalties' },
+    { key: 'advance', label: 'Advance' }
+  ];
+  function otherKindLabel(kind) {
+    var hit = OTHER_INCOME_KINDS.filter(function (k) { return k.key === kind; })[0];
+    return hit ? hit.label : 'Income';
+  }
+
   var CREW_TITLES = ['Tour manager', 'FOH engineer', 'Monitor engineer', 'Lighting director',
     'Guitar tech', 'Drum tech', 'Merch manager', 'Driver'];
   var DEBT_CHIPS = ['Credit card', 'Loan', 'Gear payment'];
@@ -585,8 +599,17 @@
         incomeBy[f.key] += f.key === 'buyouts' ? buyoutIncome(s) : num(inc[f.key]);
       });
     });
-    income = INCOME_FIELDS.reduce(function (t, f) { return t + incomeBy[f.key]; }, 0);
+    var showIncome = INCOME_FIELDS.reduce(function (t, f) { return t + incomeBy[f.key]; }, 0);
     guarantees = incomeBy.guarantee;
+
+    // Income on the book itself (royalties, an advance, a payout that
+    // belongs to no one night). It counts in the tour's income and net;
+    // commission stays figured on the shows' money alone.
+    var otherRows = rows(tour && tour.otherIncome).filter(function (x) {
+      return !upTo || (x.date && x.date <= upTo);
+    }).sort(byDate);
+    var other = otherRows.reduce(function (t, x) { return t + num(x.amount); }, 0);
+    income = showIncome + other;
 
     // A charge marked "already accounted for" is filed for the record but
     // never counted again — its money is already in the budget as paid.
@@ -634,14 +657,14 @@
       });
     });
 
-    var commissionProjected = commissionTotal(tour && tour.commission, income, guarantees, incomeBy);
+    var commissionProjected = commissionTotal(tour && tour.commission, showIncome, guarantees, incomeBy);
     // What the booking agent has earned so far, and what they hold as an
     // advance (every guarantee that came by agency deposit, all of it). The
     // advance is out of the band's hands whether or not it's earned yet, so
     // the agent's commission counts as at least what's held; everyone else's
     // commission is still owed on top of it.
     var agentOwed = commissionLine(COMMISSION_LINES.filter(function (l) { return l.key === 'agent'; })[0],
-      normCommission(tour && tour.commission).agent, income, guarantees, incomeBy);
+      normCommission(tour && tour.commission).agent, showIncome, guarantees, incomeBy);
     var agencyShows = agencyAdvance(shows);
     var advance = agencyShows.reduce(function (t, x) { return t + x.amount; }, 0);
     var commissionCommitted = (commissionProjected - agentOwed) + Math.max(agentOwed, advance);
@@ -668,6 +691,7 @@
 
     return {
       shows: shows, allShows: allShows, income: income, guarantees: guarantees, incomeBy: incomeBy,
+      showIncome: showIncome, otherIncome: other, otherRows: otherRows,
       lines: lines, fixed: fixed,
       commission: commissionEffective, commissionProjected: commissionProjected,
       agencyShows: agencyShows, agencyAdvance: advance, agentOwed: agentOwed,
@@ -710,10 +734,13 @@
     var charges = rows(tour && tour.charges).filter(function (x) { return parseDay(x.date); });
     var cash = rows(tour && tour.cashLog).filter(function (x) { return parseDay(x.date); });
 
+    var otherInc = rows(tour && tour.otherIncome).filter(function (x) { return parseDay(x.date); });
+
     var days = dated.map(function (s) { return s.date; })
       .concat(extras.map(function (x) { return x.date; }))
       .concat(charges.map(function (x) { return x.date; }))
-      .concat(cash.map(function (x) { return x.date; }));
+      .concat(cash.map(function (x) { return x.date; }))
+      .concat(otherInc.map(function (x) { return x.date; }));
     if (!days.length) return [];
 
     days.sort();
@@ -1176,6 +1203,12 @@
         INCOME_FIELDS.map(function (f) { return incomeOf(s, f.key) || ''; }),
         [showIncomeTotal(s) || '', settlementNoteText(s)]));
     });
+    // Income on the book itself, under the nights: its amount lands in the
+    // same column the show totals use, so the file still sums to the tour.
+    c.otherRows.forEach(function (x) {
+      showRows.push([x.date || '', 'Other income', otherKindLabel(x.kind), ''].concat(
+        INCOME_FIELDS.map(function () { return ''; }), [num(x.amount), '']));
+    });
 
     var expRows = [['Category', 'Projected', 'Actual paid', 'Variance', 'Counted']];
     c.lines.forEach(function (l) {
@@ -1222,7 +1255,7 @@
           return lbl.charAt(0).toUpperCase() + lbl.slice(1) + ' ' +
             money(commissionBase(r, c.incomeBy) || 0);
         })() : '',
-        round(commissionLine(line, r, c.income, c.guarantees, c.incomeBy))]);
+        round(commissionLine(line, r, c.showIncome, c.guarantees, c.incomeBy))]);
     });
     commRows.push(['TOTAL', '', '', round(c.commission)]);
 
@@ -1279,6 +1312,7 @@
     TYPED_CATEGORIES: TYPED_CATEGORIES,
     COMMISSION_LINES: COMMISSION_LINES, commissionLines: commissionLines,
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
+    OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
     CHARGE_CATEGORIES: CHARGE_CATEGORIES,
     extraCategories: extraCategories, typedCategoriesFor: typedCategoriesFor,
     chargeCategoriesFor: chargeCategoriesFor, slugCategory: slugCategory,

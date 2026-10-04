@@ -4445,8 +4445,13 @@
       body = ownsBand(name) ? h('p', { class: 'note', style: 'margin-top:24px' }, 'Starting the Off Tour book\u2026')
         : emptyState('Nothing off tour yet', 'Once the tour manager starts ' + name + '\u2019s Off Tour book, it shows up here.');
     } else {
+      var oc = G.calc(t);
       body = [h('p', { class: 'note off-intro' }, 'What the band spends between tours. Card charges from off the road land here to sort; ' +
-        'anything for the next tour can go straight to it.'), tabExpenses(id, t, G.calc(t), { off: true })];
+        'anything for the next tour can go straight to it.'),
+        // Income catalogued onto the Off Tour book (royalties, advances)
+        // sits above the spending, so the money in is never invisible.
+        otherIncomeList(id, oc),
+        tabExpenses(id, t, oc, { off: true })];
     }
     return h('div', { class: 'page home has-tabs exp-page off-page' },
       bandHead(name, 'Off Tour'), dbBanner(), body, artistTabs(name, 'off'));
@@ -5931,12 +5936,14 @@
       function refresh() {
         var agentNow = 0;
         var kids = G.commissionLines(d.commission).map(function (line) {
-          var v = G.commissionLine(line, d.commission[line.key], base.income, base.guarantees, base.incomeBy);
+          // Commission is figured on the shows' money; income catalogued on
+          // the book itself (royalties, advances) stays out of it.
+          var v = G.commissionLine(line, d.commission[line.key], base.showIncome, base.guarantees, base.incomeBy);
           if (line.key === 'agent') agentNow = v;
           return h('div', null, h('span', null, line.label), h('strong', { class: 'num' }, money(v)));
         });
         kids.push(h('div', null, h('span', null, 'Commission so far'),
-          h('strong', { class: 'num' }, money(G.commissionTotal(d.commission, base.income, base.guarantees, base.incomeBy)))));
+          h('strong', { class: 'num' }, money(G.commissionTotal(d.commission, base.showIncome, base.guarantees, base.incomeBy)))));
         // The booking agent's cut on guarantees that came by agency deposit is already paid.
         // Guarantees that came by agency deposit: the booking agent holds all
         // of each one as an advance on their commission for the whole tour.
@@ -8378,8 +8385,57 @@
            h('ul', { class: 'shows' }, rowsOut)]
         : emptyState('No shows yet', canWrite()
             ? 'Add each date and city as they get confirmed.'
-            : 'No dates have been added.')
+            : 'No dates have been added.'),
+      otherIncomeList(id, c)
     ];
+  }
+
+  /* Income on the book itself, under the nights: royalties, an advance, a
+     payout that belongs to no one show — catalogued from the Cards tab. It
+     counts in the tour's income; a tap can take a wrong one off the book
+     (the deposit stays catalogued and won't come back as new income). */
+  function otherIncomeList(id, c) {
+    var list = (c && c.otherRows) || [];
+    if (!list.length) return null;
+    var total = list.reduce(function (t, x) { return t + G.num(x.amount); }, 0);
+    return [
+      h('h3', { class: 'oi-head' }, 'Other income'),
+      h('div', { class: 'ledger oi-list' },
+        list.map(function (x) {
+          var label = G.otherKindLabel(x.kind);
+          var inner = [
+            h('div', { class: 'row-label' }, label,
+              h('span', { class: 'hint' }, dayMD(x.date))),
+            h('span', { class: 'amt num' }, money(G.num(x.amount)))];
+          if (!canEditTour(id)) return h('div', { class: 'row' }, inner);
+          return h('button', { class: 'row rowbtn', type: 'button',
+            'aria-label': label + ' ' + money(G.num(x.amount)),
+            onclick: function () { openOtherIncome(id, x); } }, inner);
+        }).concat(h('div', { class: 'row total' },
+          h('span', null, 'Other income'),
+          h('strong', { class: 'amt num' }, money(total)))))
+    ];
+  }
+  function openOtherIncome(id, x) {
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, G.otherKindLabel(x.kind)),
+        h('p', { class: 'sh-sub' }, dayMD(x.date) + ' · ' + money(G.num(x.amount))),
+        h('p', { class: 'note' }, 'Logged from a bank deposit on the Cards tab. ' +
+          'Taking it off the book doesn’t bring the deposit back as new income.'),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn block danger', type: 'button', onclick: async function (e) {
+            e.currentTarget.disabled = true;
+            var patch = { otherIncome: {} };
+            patch.otherIncome[x.id] = null;
+            if (!(await api.update(id, patch))) { e.currentTarget.disabled = false; return; }
+            closeSheet();
+            toast('Taken off the book');
+            render(true);
+          } }, 'Take it off the book'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Keep it'))
+      ];
+    }, { label: G.otherKindLabel(x.kind) });
   }
 
   function showRow(id, s, today) {
@@ -10539,6 +10595,11 @@
           patch[showId].merchReceivedAt = null;
           patch[showId].merchDeposit = null;
         }
+        // Unticking the guarantee clears its landed deposit the same way.
+        if (!(draft.guarantee > 0 && recv.guarantee)) {
+          patch[showId].guaranteeReceivedAt = null;
+          patch[showId].guaranteeDeposit = null;
+        }
         if (!(await api.update(id, { shows: patch }))) return;
         closeSheet();
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft, flags: flagsNow } }).net;
@@ -10795,6 +10856,14 @@
               h('label', { for: 'inc-guarantee' }, f.label),
               receivedBox('guarantee', 'Guarantee')),
             mkInput));
+          // The deposit that ticked it, when the bank showed one (matched by
+          // the feed, or catalogued from the Cards tab).
+          if (s.guaranteeReceivedAt && G.num(s.guaranteeDeposit) > 0) {
+            rows.push(h('div', { class: 'row mx-row' },
+              h('div', { class: 'row-label' }, 'Deposit',
+                h('span', { class: 'hint' }, 'Landed ' + dayMD(s.guaranteeReceivedAt) + ' · seen in the bank')),
+              h('span', { class: 'amt num mx-val known' }, money(G.num(s.guaranteeDeposit)))));
+          }
           rows.push(h('div', { class: 'row mx-row' },
             h('label', { class: 'row-label', for: 'inc-tax' }, 'Taxes withheld',
               h('span', { class: 'hint' }, 'Taken out of the guarantee, if any')),
@@ -11952,6 +12021,12 @@
           G.INCOME_FIELDS.map(function (f) { return G.incomeOf(sh, f.key) ? money(G.incomeOf(sh, f.key)) : '\u2014'; }),
           [money(G.showIncomeTotal(sh))]));
       }),
+      // Income on the book itself, under the nights, so the column still
+      // adds up to the tour's total income.
+      c.otherRows.map(function (x) {
+        return repRow([dayMD(x.date), 'Other income \u00b7 ' + G.otherKindLabel(x.kind)].concat(
+          G.INCOME_FIELDS.map(function () { return '\u2014'; }), [money(G.num(x.amount))]));
+      }),
       repRow(['', 'Total'].concat(G.INCOME_FIELDS.map(function (f) {
         var sum = shows.reduce(function (a, sh) { return a + G.incomeOf(sh, f.key); }, 0);
         return sum ? money(sum) : '\u2014';
@@ -11968,11 +12043,13 @@
       h('thead', null, repRow(['Line', 'Deal', 'Base', 'Amount'])),
       h('tbody', null, G.commissionLines(comm).map(function (line) {
         var r = comm[line.key];
+        // Commission is figured on the shows' money; income catalogued on
+        // the book itself (royalties, advances) stays out of it.
         return repRow([line.label,
           r.mode === 'pct' ? r.value + '%' : 'Flat',
           r.mode === 'pct' ? (line.basis === 'guarantee' ? 'Guarantees, ' + money(c.guarantees)
-            : 'All income, ' + money(c.income)) : '\u2014',
-          money(G.commissionLine(line, r, c.income, c.guarantees))]);
+            : 'Show income, ' + money(c.showIncome)) : '\u2014',
+          money(G.commissionLine(line, r, c.showIncome, c.guarantees, c.incomeBy))]);
       }),
       repRow(['Total commission', '', '', money(c.commission)], 'rp-total')));
 
@@ -13526,6 +13603,221 @@
      linked card by its short name ("AMEX (1008)") with how many new charges
      are waiting on it. A card with new charges opens them to sort; one with
      none opens what it has on this tour. */
+  /* ---- New income (the Cards tab's other half). The bank feed keeps every
+     deposit on a watched account — date and amount, nothing else — and the
+     matchers claim what they recognise. Whatever's left waits here for the
+     tour manager to say what it was: merch, a guarantee, royalties or an
+     advance, onto Off Tour, the current tour or an upcoming one, the same
+     way charges are sorted. Owner only: it's their bank. ---- */
+  function incomeReady(id) {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.incomeNew) && createdTour(id) && !!(S.feed && S.feed.row);
+  }
+  async function loadIncomeNew() {
+    var B = window.GR_BACKEND;
+    S.incomeBusy = true;
+    var items = null;
+    try { items = await B.incomeNew(); } catch (e) { items = null; }
+    S.incomeBusy = false;
+    S.incomeNew = { items: items || [], at: Date.now(), failed: !items };
+    return S.incomeNew;
+  }
+  // Fetched when stale, like the Tour Manager's pile.
+  function ensureIncomeNew(id) {
+    if (!incomeReady(id)) return;
+    var P = S.incomeNew;
+    if ((!P || Date.now() - P.at > 120e3) && !S.incomeBusy) {
+      loadIncomeNew().then(function () { render(true); });
+    }
+  }
+  /* One sheet, every waiting deposit: what it was, and which book it lands
+     on. Merch and a guarantee can pin to one night (the dropdown); Whole
+     tour writes it on the book itself. Clearing one is final. */
+  function openIncomeReview(tourId) {
+    var B = window.GR_BACKEND;
+    var base = getTour(tourId) || {};
+    var band = artistOf(base);
+    var curTour = isOffTour(base) ? (band ? currentTourOf(band) : null) : { id: tourId, name: base.name || 'This tour' };
+    var ups = band ? upcomingToursOf(band, tourId) : [];
+    var dests = band ? [
+      ['off', 'Off Tour', ''],
+      ['cur', 'Current Tour', curTour ? '' : 'No tour is running today'],
+      ['up', 'Upcoming Tour', ups.length ? '' : 'No upcoming tours yet']
+    ] : [];
+    var live = ((S.incomeNew && S.incomeNew.items) || []).map(function (d) {
+      return { id: String(d.id), date: String(d.date || ''), amount: G.num(d.amount), av: !!d.atvenu,
+        dest: curTour ? 'cur' : 'off', upTo: ups.length ? ups[0].id : null,
+        kind: d.atvenu ? 'merch' : '', show: '', showTouched: false, armed: false };
+    });
+    if (!live.length) { toast('No new income'); return; }
+    // The book a deposit lands on (null = the Off Tour book, made if needed).
+    function landsOn(r) {
+      if (r.dest === 'off') return null;
+      if (r.dest === 'up' && r.upTo) return r.upTo;
+      return curTour ? curTour.id : tourId;
+    }
+    function showChoices(r) {
+      var tid = landsOn(r);
+      if (!tid || (r.kind !== 'merch' && r.kind !== 'guarantee')) return null;
+      var t2 = getTour(tid);
+      // Only nights where that money is actually logged — the same rule the
+      // automatic matchers use. Pinning a guarantee to a night that has none
+      // would be wiped by the income sheet's next save; Whole tour keeps it.
+      var list = G.rows(t2 && t2.shows).filter(function (s) {
+        return G.parseDay(s.date) && s.loggedAt &&
+          G.num(s.income && s.income[r.kind === 'merch' ? 'merch' : 'guarantee']) > 0;
+      }).sort(G.byDate).reverse();
+      return list.length ? list : null;
+    }
+    // Which nights are still waiting on this money.
+    function owedBit(r, s) {
+      if (r.kind === 'merch') return !!s.loggedAt && s.merchReceived === false && G.merchDue(s) > 0;
+      return !!s.loggedAt && s.guaranteeReceived === false && G.num(s.income && s.income.guarantee) > 0;
+    }
+    function defaultShow(r, choices) {
+      var best = '', bd = Infinity;
+      choices.forEach(function (s) {
+        if (!owedBit(r, s)) return;
+        var gap = Math.abs(G.daysBetween(s.date, r.date));
+        if (gap < bd) { bd = gap; best = s.id; }
+      });
+      return best;
+    }
+    var listHost = h('div', { class: 'iv-list' });
+    function drop(r) {
+      live = live.filter(function (x) { return x !== r; });
+      if (S.incomeNew && S.incomeNew.items) {
+        S.incomeNew.items = S.incomeNew.items.filter(function (d) { return String(d.id) !== r.id; });
+      }
+      if (!live.length) { closeSheet(); render(true); return; }
+      draw();
+      render(true);
+    }
+    async function logOne(r, row) {
+      if (r.busy) return;
+      if (!r.kind) { toast('Pick what it was'); return; }
+      // Everything this call needs, read before any waiting; the row is
+      // frozen (busy) so nothing can change under it either way.
+      var pick = { showId: r.show || null, kind: r.kind };
+      var wantsOff = !landsOn(r);
+      r.busy = true; row.redraw();
+      var tid = landsOn(r);
+      if (wantsOff) {
+        tid = offTourOf(band) || await ensureOffTour(band);
+        if (!tid) { r.busy = false; row.redraw(); saveFailed('income:off'); return; }
+      }
+      var out = null, bad = null;
+      try { out = await B.catalogIncome(r.id, { tourId: tid, showId: pick.showId, kind: pick.kind }); }
+      catch (e) { bad = e; }
+      // 'done': a matcher claimed it first — same ending, the money is logged.
+      if (!out || (!out.ok && out.why !== 'done')) {
+        r.busy = false; row.redraw();
+        saveFailed('income:log', bad || out); return;
+      }
+      toast(out.why === 'done' ? 'Already logged' : 'Logged ' + G.moneyCents(r.amount));
+      drop(r);
+    }
+    async function skipOne(r, row) {
+      if (r.busy) return;
+      // Two taps: clearing is final, so the first one asks.
+      if (!r.armed) { r.armed = true; row.redraw(); return; }
+      r.busy = true; row.redraw();
+      var out = null, bad = null;
+      try { out = await B.catalogIncome(r.id, { kind: 'skip' }); }
+      catch (e) { bad = e; }
+      if (!out || (!out.ok && out.why !== 'done')) {
+        r.armed = false; r.busy = false; row.redraw();
+        saveFailed('income:skip', bad || out); return;
+      }
+      // 'done': a matcher logged it first, so it was never cleared.
+      toast(out.why === 'done' ? 'Already logged' : 'Cleared');
+      drop(r);
+    }
+    function destPills(r, redraw) {
+      if (!dests.length) return null;
+      var upSel = ups.length ? h('select', { class: 'input sm rv-upsel', 'aria-label': 'Which upcoming tour',
+        disabled: r.busy || null,
+        onchange: function (e) { r.upTo = e.target.value; r.showTouched = false; r.show = ''; redraw(); } },
+        ups.map(function (u) { return h('option', { value: u.id }, u.name + ' · starts ' + dayMD(u.start)); })) : null;
+      if (upSel) { upSel.value = r.upTo || ''; upSel.hidden = r.dest !== 'up'; }
+      return h('div', { class: 'rv-dwrap' },
+        h('div', { class: 'rv-dest', role: 'group', 'aria-label': 'Log this deposit to' },
+          h('span', { class: 'rv-dlabel' }, 'Log to'),
+          dests.map(function (d) {
+            return h('button', { class: 'rv-dpill' + (r.dest === d[0] ? ' on' : '') + (d[2] ? ' na' : ''), type: 'button',
+              title: d[2] || (d[0] === 'cur' && curTour ? curTour.name : null), 'aria-disabled': d[2] ? 'true' : null,
+              onclick: function () {
+                if (r.busy) return;
+                if (d[2]) { toast(d[2]); return; }
+                r.dest = d[0]; r.showTouched = false; r.show = '';
+                redraw();
+              } }, d[1]);
+          })),
+        upSel);
+    }
+    function rowEl(r) {
+      var wrap = h('div', { class: 'rv-row on iv-row' });
+      var row = { redraw: redraw };
+      function redraw() {
+        var kindSel = h('select', { class: 'input sm', 'aria-label': 'What this deposit was',
+          disabled: r.busy || null,
+          onchange: function (e) { r.kind = e.target.value; r.showTouched = false; r.show = ''; redraw(); } },
+          h('option', { value: '' }, 'What was it?'),
+          G.OTHER_INCOME_KINDS.map(function (k) { return h('option', { value: k.key }, k.label); }));
+        kindSel.value = r.kind;
+        var choices = showChoices(r);
+        var showSel = null;
+        if (choices) {
+          if (!r.showTouched) r.show = defaultShow(r, choices);
+          showSel = h('select', { class: 'input sm', 'aria-label': 'Which show',
+            disabled: r.busy || null,
+            onchange: function (e) { r.show = e.target.value; r.showTouched = true; } },
+            h('option', { value: '' }, 'Whole tour'),
+            choices.map(function (s) {
+              return h('option', { value: s.id },
+                [dayMD(s.date), s.city || s.venue || 'Show'].filter(Boolean).join(' · ') +
+                (owedBit(r, s) ? ' · owed' : ''));
+            }));
+          showSel.value = r.show || '';
+        } else {
+          r.show = '';
+        }
+        var logBtn = h('button', { class: 'btn sm primary', type: 'button', disabled: r.busy || null },
+          r.busy ? 'Logging…' : 'Log');
+        var aside = h('button', { class: 'linkbtn rv-aside', type: 'button', disabled: r.busy || null },
+          r.armed ? 'Clear it for good?' : 'Not tour income — clear it');
+        logBtn.onclick = function () { logOne(r, row); };
+        aside.onclick = function () { skipOne(r, row); };
+        fillEl(wrap,
+          h('div', { class: 'rv-fields' },
+            h('div', { class: 'rv-head' },
+              h('span', { class: 'rv-name' }, 'Bank deposit'),
+              h('span', { class: 'amt num' }, G.moneyCents(r.amount))),
+            h('div', { class: 'rv-sub' }, dayMD(r.date),
+              r.av ? h('span', { class: 'rv-flag' }, 'Looks like atVenu') : null),
+            destPills(r, redraw),
+            h('div', { class: 'iv-sels' }, kindSel, showSel),
+            h('div', { class: 'rv-act iv-act' }, logBtn, aside)));
+      }
+      redraw();
+      return wrap;
+    }
+    function draw() {
+      fillEl(listHost, live.map(rowEl));
+    }
+    draw();
+    openSheet(function (panel) {
+      panel.classList.add('rv-sheet');
+      return [
+        h('h2', { class: 'sh-title' }, 'New income'),
+        h('p', { class: 'sh-sub' }, 'Deposits into your watched accounts. Say what each one was and it’s on the books.'),
+        listHost,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
+      ];
+    }, { label: 'New income' });
+  }
+
   function tabCards(id, t) {
     syncCards(id);
     var waiting = feedWaiting(id);
@@ -13557,6 +13849,28 @@
       h('div', { class: 'row-label' }, plural(unasked.length, 'new account'),
         h('span', { class: 'hint' }, 'Needs your answers')),
       icon('chevron', 18)));
+    // Under the cards: the money coming IN. Deposits no matcher claimed
+    // wait here to be catalogued, the same way charges are sorted.
+    if (incomeReady(id)) {
+      ensureIncomeNew(id);
+      var incs = (S.incomeNew && S.incomeNew.items) || [];
+      var nInc = incs.length;
+      // A failed read says so; it never passes as a quiet zero.
+      var incFailed = !!(S.incomeNew && S.incomeNew.failed);
+      rows.push(h('button', { class: 'row rowbtn card-line', type: 'button',
+        'aria-label': 'Income, ' + (incFailed ? 'couldn’t check' : nInc + ' new'),
+        onclick: function () {
+          if (nInc) { openIncomeReview(id); return; }
+          if (incFailed) { S.incomeNew = null; ensureIncomeNew(id); toast('Trying the bank again…'); return; }
+          toast(S.incomeBusy || !S.incomeNew ? 'Checking the bank…'
+            : 'No new income. Deposits on your watched accounts land here.');
+        } },
+        h('div', { class: 'row-label' }, 'Income',
+          h('span', { class: 'hint' }, 'Bank deposits')),
+        h('span', { class: 'card-new' + (nInc ? ' on' : '') },
+          incFailed ? 'couldn’t check' : nInc + ' new income'),
+        icon('chevron', 18)));
+    }
     var entry = feedEntry(id);
     // Nothing to show, and nothing still on its way: say so rather than a blank page.
     var loading = !!(S.pileBusy && S.pileBusy[id]) || (S.mode === 'db' && createdTour(id) && S.feed === undefined);
@@ -13644,6 +13958,8 @@
       return;
     }
     if (!r.test) await celebratePayments(id, G.num(r.paidOff));
+    // The sync may have brought deposits in (or matched some): read them fresh.
+    if (incomeReady(id)) { S.incomeNew = null; ensureIncomeNew(id); }
     // Test mode says what it would have done; the pile (older, real charges) waits.
     if (!r.test && feedWaiting(id).length) openFeedReview(id);
     else toast(feedResult(r));
