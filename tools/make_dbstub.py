@@ -203,6 +203,49 @@ shim = r"""<script>
       return Promise.resolve();
     },
     squareDisconnect: function () { window.__harness.square = null; window.__harness.squarePays = null; return Promise.resolve(); },
+    /* Tour history, in memory: the key saved, I See Stars synced with an
+       ISS-shaped summary (the real page reads ~735 shows / 34 tours). */
+    setlistState: function () {
+      var H = window.__harness;
+      if (H.setlist === undefined) H.setlist = { status: 'ok', detail: '', last_sync: new Date(Date.now() - 9 * 60e3).toISOString(),
+        connected_at: new Date(Date.now() - 864e5).toISOString() };
+      return Promise.resolve(H.setlist);
+    },
+    setlistConnect: function () {
+      window.__harness.setlist = { status: 'new', detail: '', last_sync: null, connected_at: new Date().toISOString() };
+      return Promise.resolve();
+    },
+    setlistDisconnect: function () { window.__harness.setlist = null; return Promise.resolve(); },
+    artistHistory: function (artistId) {
+      var H = window.__harness;
+      H.histories = H.histories || {};
+      var a = (H.acts || []).filter(function (x) { return x.id === artistId; })[0];
+      // Seeded once; after Turn off it stays off, like the real table.
+      if (!H.histSeeded && a && /i see stars/i.test(a.name || '')) {
+        H.histSeeded = true;
+        H.histories[artistId] = { artist_id: artistId, status: 'ok', detail: '', total: 735, pages: 37, next_page: 0,
+          synced_at: new Date(Date.now() - 36e5).toISOString(),
+          mb_url: 'https://www.setlist.fm/setlists/i-see-stars-3bd2d464.html',
+          summary: { shows: 735, tours: 34, countries: 33, cities: 212, firstYear: 2007, lastYear: 2026,
+            years: { 2026: 44, 2025: 21, 2024: 86 },
+            toursList: [ { name: '10 Years In The Black', n: 33, first: '2016-11-01', last: '2017-02-18' },
+              { name: 'Treehouse Tour', n: 39, first: '2016-06-01', last: '2016-08-12' } ],
+            countriesList: [ { name: 'United States', n: 595 }, { name: 'United Kingdom', n: 27 } ] } };
+      }
+      return Promise.resolve(H.histories[artistId] || null);
+    },
+    historyStart: function (artistId) {
+      var H = window.__harness;
+      H.histories = H.histories || {};
+      H.histories[artistId] = { artist_id: artistId, status: 'finding', detail: '', total: 0, pages: 0, next_page: 1,
+        synced_at: null, mb_url: '', summary: {} };
+      return Promise.resolve({ ok: true });
+    },
+    historyStop: function (artistId) {
+      var H = window.__harness;
+      if (H.histories) delete H.histories[artistId];
+      return Promise.resolve({ ok: true });
+    },
     /* New income, in memory: two bank deposits no matcher claimed (one
        atVenu-looking near s0's night, one plain). catalogIncome mirrors the
        real RPC: merch/guarantee with a show write the received fields;

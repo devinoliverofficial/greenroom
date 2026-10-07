@@ -571,6 +571,42 @@
       var q = await sb.from('square_connect').delete().eq('owner_id', session.user.id);
       if (q.error) throw mapError(q.error);
     },
+    /* ---- Tour history (setlist.fm). The key is write-only, like Square's:
+       saved or replaced, never read back. The history row itself is as
+       public as the artist page. ---- */
+    setlistState: async function () {
+      var q = await sb.from('setlist_connect')
+        .select('status, detail, last_sync, connected_at').maybeSingle();
+      if (q.error) throw mapError(q.error);
+      return q.data || null;
+    },
+    setlistConnect: async function (token) {
+      var q = await sb.from('setlist_connect').upsert(
+        { owner_id: session.user.id, token: String(token || '').trim(), status: 'new' },
+        { onConflict: 'owner_id' });
+      if (q.error) throw mapError(q.error);
+    },
+    setlistDisconnect: async function () {
+      var q = await sb.from('setlist_connect').delete().eq('owner_id', session.user.id);
+      if (q.error) throw mapError(q.error);
+    },
+    artistHistory: async function (artistId) {
+      var q = await sb.from('artist_history')
+        .select('artist_id, status, detail, total, pages, next_page, summary, synced_at, mb_url')
+        .eq('artist_id', artistId).maybeSingle();
+      if (q.error) throw mapError(q.error);
+      return q.data || null;
+    },
+    historyStart: async function (artistId) {
+      var q = await sb.rpc('artist_history_start', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    historyStop: async function (artistId) {
+      var q = await sb.rpc('artist_history_stop', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
     /* ---- New income: bank deposits on watched accounts (date and amount
        only) that no matcher claimed. RLS hands them to their owner alone. ---- */
     incomeNew: async function () {

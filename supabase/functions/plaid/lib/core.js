@@ -67,6 +67,16 @@
     return hit ? hit.label : 'Income';
   }
 
+  // Road-history milestones: the biggest round number of shows passed.
+  var HISTORY_TIERS = [1000, 750, 500, 250, 100, 50];
+  function historyTier(shows) {
+    var n = num(shows);
+    for (var i = 0; i < HISTORY_TIERS.length; i++) {
+      if (n >= HISTORY_TIERS[i]) return HISTORY_TIERS[i];
+    }
+    return 0;
+  }
+
   var CREW_TITLES = ['Tour manager', 'FOH engineer', 'Monitor engineer', 'Lighting director',
     'Guitar tech', 'Drum tech', 'Merch manager', 'Driver'];
   var DEBT_CHIPS = ['Credit card', 'Loan', 'Gear payment'];
@@ -1313,6 +1323,7 @@
     COMMISSION_LINES: COMMISSION_LINES, commissionLines: commissionLines,
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
     OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
+    HISTORY_TIERS: HISTORY_TIERS, historyTier: historyTier,
     CHARGE_CATEGORIES: CHARGE_CATEGORIES,
     extraCategories: extraCategories, typedCategoriesFor: typedCategoriesFor,
     chargeCategoriesFor: chargeCategoriesFor, slugCategory: slugCategory,

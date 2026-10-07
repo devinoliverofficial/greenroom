@@ -1393,5 +1393,15 @@
     });
   })();
 
+  /* ---- Road-history tiers (tour history, setlist.fm). ---- */
+  test('history tiers land on the biggest round number passed', function () {
+    eq(G.historyTier(0), 0, 'nothing yet');
+    eq(G.historyTier(49), 0, 'under the first rung');
+    eq(G.historyTier(50), 50, 'first rung');
+    eq(G.historyTier(735), 500, 'I See Stars today');
+    eq(G.historyTier(1000), 1000, 'the big one');
+    eq(G.historyTier(2500), 1000, 'tops out at the big one');
+  });
+
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };
 })();

@@ -3204,8 +3204,10 @@
         h('p', { class: 'pf-roles' }, 'Artist'),
         card.bio ? h('p', { class: 'pf-bio' }, card.bio)
           : (manage ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
+        historyBlock(id, manage),
         manage ? h('div', { class: 'pf-actions' },
-          h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist'))
+          h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist'),
+          h('button', { class: 'pf-btn', type: 'button', onclick: function () { openHistorySheet(id, card.name); } }, 'Tour history'))
           : followBtn ? h('div', { class: 'pf-actions' }, followBtn) : null),
       h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Band', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
       tab === 'band' ? people(bandList, 'band')
@@ -3215,6 +3217,188 @@
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(manage && id === actingAs() ? 'me' : ''));
   }
+  /* ---- Tour history (the road story). setlist.fm — the fans' setlist
+     archive — holds nearly every night a band ever played. The server reads
+     it with the owner's key (write-only, like Square's) and boils it down
+     to one summary per artist page: shows, tours, countries, cities. Their
+     data, so their credit: the block links back to setlist.fm. ---- */
+  function histOf(id, fresh) {
+    var B = window.GR_BACKEND;
+    S.histCards = S.histCards || {};
+    var c = S.histCards[id] || (S.histCards[id] = { row: null, at: 0, asking: false, none: false });
+    if (S.mode !== 'db' || !B || !B.artistHistory) { c.none = true; return c; }
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      B.artistHistory(id).then(function (row) {
+        c.row = row; c.at = Date.now(); c.asking = false; c.failed = false; render();
+      }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); render(); });
+    }
+    return c;
+  }
+  // The one key per account, like squareInfo for Square.
+  function setlistInfo(fresh) {
+    var B = window.GR_BACKEND;
+    var c = S.setlist || (S.setlist = { row: null, at: 0, asking: false, none: false });
+    if (S.mode !== 'db' || !B || !B.setlistState) { c.none = true; return c; }
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      B.setlistState().then(function (row) {
+        c.row = row; c.none = !row; c.at = Date.now(); c.asking = false; c.failed = false; render();
+      }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); render(); });
+    }
+    return c;
+  }
+  function histStatusLine(row) {
+    if (!row) return '';
+    if (row.status === 'finding') return 'Finding the band on setlist.fm…';
+    if (row.status === 'syncing') {
+      return 'Reading the road history…' +
+        (row.pages > 0 ? ' page ' + Math.min(G.num(row.next_page) || 1, row.pages) + ' of ' + row.pages : '');
+    }
+    if (row.status === 'bad_token') return 'setlist.fm refused the key — replace it.';
+    if (row.status === 'error') return row.detail || 'setlist.fm had trouble. It tries again on its own.';
+    if (row.status === 'ok') {
+      var sum = G.isObj(row.summary) ? row.summary : {};
+      return 'Synced · ' + plural(G.num(sum.shows), 'show') +
+        (row.synced_at ? ' · ' + feedAgo(row.synced_at) : '');
+    }
+    return 'Switched on — the first read lands within minutes.';
+  }
+  // The stats strip on the artist page: for everyone once the numbers are
+  // in; while it's still reading, the owner sees how far along it is.
+  function historyBlock(id, manage) {
+    var c = histOf(id);
+    var row = c.row;
+    var sum = row && G.isObj(row.summary) ? row.summary : null;
+    if (sum && G.num(sum.shows) > 0) {
+      var tier = G.historyTier(sum.shows);
+      return h('div', { class: 'hist-card' },
+        h('div', { class: 'pf-stats hist-stats' },
+          pfStat(G.num(sum.shows), G.num(sum.shows) === 1 ? 'show' : 'shows'),
+          pfStat(G.num(sum.tours), G.num(sum.tours) === 1 ? 'tour' : 'tours'),
+          pfStat(G.num(sum.countries), G.num(sum.countries) === 1 ? 'country' : 'countries'),
+          pfStat(G.num(sum.cities), G.num(sum.cities) === 1 ? 'city' : 'cities')),
+        h('p', { class: 'hist-line' },
+          tier ? h('span', { class: 'hist-tier' }, tier + '+ shows') : null,
+          (sum.firstYear ? 'On the road since ' + sum.firstYear + ' · ' : ''),
+          // Credit where the data lives; only their own link is trusted.
+          h('a', { class: 'hist-src', target: '_blank', rel: 'noopener',
+            href: /^https:\/\/www\.setlist\.fm\//.test(String(row.mb_url || '')) ? row.mb_url : 'https://www.setlist.fm' },
+            'setlist.fm')));
+    }
+    if (manage && row) {
+      return h('p', { class: 'hist-note' }, histStatusLine(row), ' · ',
+        h('a', { class: 'hist-src', href: 'https://www.setlist.fm', target: '_blank', rel: 'noopener' }, 'setlist.fm'));
+    }
+    return null;
+  }
+  // The owner's switchboard: the key, and the switch per artist page. The
+  // sheet reads the key row and the history row itself, and redraws when
+  // the answers land (the first open would otherwise race them).
+  function openHistorySheet(id, name) {
+    var B = window.GR_BACKEND;
+    var host = h('div');
+    var got = { done: false, key: null, row: null };
+    function load() {
+      Promise.all([
+        B && B.setlistState ? B.setlistState().catch(function () { return null; }) : Promise.resolve(null),
+        B && B.artistHistory ? B.artistHistory(id).catch(function () { return null; }) : Promise.resolve(null)
+      ]).then(function (ans) {
+        got.done = true; got.key = ans[0]; got.row = ans[1];
+        // Keep the page's own caches in step.
+        if (S.setlist) { S.setlist.row = ans[0]; S.setlist.none = !ans[0]; S.setlist.at = Date.now(); }
+        if (S.histCards && S.histCards[id]) { S.histCards[id].row = ans[1]; S.histCards[id].at = Date.now(); }
+        draw();
+      });
+    }
+    function draw() {
+      var kids = [];
+      if (!got.done) {
+        kids.push(h('p', { class: 'note' }, 'Looking…'));
+      } else if (!got.key) {
+        kids.push(
+          h('p', { class: 'note' }, 'First, the key: sign in at setlist.fm, then Settings → API. It’s free and instant.'),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'button',
+              onclick: function () { openSetlistConnect(false, id, name); } }, 'Paste the setlist.fm key')));
+      } else {
+        kids.push(h('p', { class: 'note' }, got.key.status === 'bad_token'
+          ? 'setlist.fm refused the key. Paste a fresh one.'
+          : 'Key saved — stored where only Greenroom’s server can read it.'));
+        if (!got.row) {
+          kids.push(h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+              var b = e.currentTarget; b.disabled = true;
+              try { await B.historyStart(id); } catch (x) { b.disabled = false; saveFailed('history', x); return; }
+              histOf(id, true); closeSheet();
+              toast('On — the first numbers land within minutes');
+            } }, 'Turn on for ' + (name || 'this artist')),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { openSetlistConnect(true, id, name); } }, 'Replace the key')));
+        } else {
+          kids.push(h('p', { class: 'note' }, histStatusLine(got.row)));
+          kids.push(h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+              var b = e.currentTarget; b.disabled = true;
+              try { await B.historyStart(id); } catch (x) { b.disabled = false; saveFailed('history', x); return; }
+              histOf(id, true); closeSheet(); toast('Reading it fresh');
+            } }, 'Sync fresh'),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { openSetlistConnect(true, id, name); } }, 'Replace the key'),
+            h('button', { class: 'btn danger block', type: 'button', onclick: function () {
+              confirmSheet({ title: 'Turn off tour history?', body: 'The numbers come off ' + (name || 'the page') +
+                  '. Switch it back on any time — the road story reads back in fresh within a couple of hours.',
+                action: 'Turn off', danger: true,
+                onConfirm: async function () {
+                  try { await B.historyStop(id); histOf(id, true); toast('Tour history off'); return true; }
+                  catch (e) { saveFailed('history', e); return false; }
+                } });
+            } }, 'Turn off')));
+        }
+        // Their data, their credit — the link rides along in the sheet too.
+        kids.push(h('p', { class: 'note' }, 'Fan-logged data from ',
+          h('a', { class: 'hist-src', href: 'https://www.setlist.fm', target: '_blank', rel: 'noopener' }, 'setlist.fm'),
+          ' — a missing night just hasn’t been logged there yet.'));
+      }
+      fillEl(host, kids);
+    }
+    draw(); load();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Tour history'),
+        h('p', { class: 'sh-sub' }, 'The band’s whole road story — every show, tour, country and city — ' +
+          'read from setlist.fm, the fans’ setlist archive, and counted on the page by itself.'),
+        host
+      ];
+    }, { label: 'Tour history' });
+  }
+  // The key goes in once and can never be read back out of the app.
+  function openSetlistConnect(hasKey, artistId, name) {
+    var B = window.GR_BACKEND;
+    openSheet(function () {
+      var input = h('input', { class: 'input', type: 'password', autocomplete: 'off', autocapitalize: 'none',
+        placeholder: 'setlist.fm API key', 'aria-label': 'setlist.fm API key' });
+      return [
+        h('h2', { class: 'sh-title' }, hasKey ? 'Replace the setlist.fm key' : 'Connect setlist.fm'),
+        h('p', { class: 'sh-sub' }, 'From setlist.fm: sign in, then Settings → API → your API key.'),
+        h('p', { class: 'note' }, 'It’s stored where only Greenroom’s server can read it — the app (and anyone in it) can’t get it back out.'),
+        input,
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+            var tok = input.value.trim();
+            if (!tok) { toast('Paste the key first.'); return; }
+            var b = e.currentTarget; b.disabled = true;
+            try { await B.setlistConnect(tok); } catch (x) { b.disabled = false; saveFailed('history', x); return; }
+            setlistInfo(true);
+            closeSheet();
+            if (artistId) openHistorySheet(artistId, name);
+            else toast('Key saved');
+          } }, 'Save'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+      ];
+    }, { label: 'Connect setlist.fm' });
+  }
+
   function openActEdit(id, keep) {
     var B = window.GR_BACKEND;
     var card = S.actCards && S.actCards[id] && S.actCards[id].card;
