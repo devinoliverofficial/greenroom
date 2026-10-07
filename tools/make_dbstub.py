@@ -376,12 +376,14 @@ shim = r"""<script>
           var m = x.members.filter(function (y) { return y.userId === 'u-devin'; })[0];
           return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: m.kind, endorsed: !!m.endorsed, mine: true, declined: false }; }).concat(devinActs()),
         flowers: 2, endorsements: devinActs().length + (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-devin' && m.endorsed; }); }).length,
+        roadStats: { tours: 1, shows: 15, countries: 1, cities: 15 },
         tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }], logos: {} }, base));
       if (uid === 'u-brent') return Promise.resolve(Object.assign({ userId: uid, name: 'Brent Allen', handle: 'brent', bio: 'Guitars, backline, bad jokes.',
         roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', avatar: '', artists: ['Sleeping With Sirens', 'I See Stars'],
         acts: (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-brent'; }); }).map(function (x) { return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: x.members.filter(function (m) { return m.userId === 'u-brent'; })[0].kind, endorsed: !!x.members.filter(function (m) { return m.userId === 'u-brent'; })[0].endorsed }; })
           .concat([{ id: null, name: 'Old Band', handle: '', avatar: '', kind: 'crew', endorsed: true, past: true }]),
         flowers: 3, endorsements: 1 + (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-brent' && m.endorsed; }); }).length,
+        roadStats: { tours: 2, shows: 43, countries: 2, cities: 38 },
         tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true },
                 { id: 'x9', artist: 'Other Band', name: 'Spring Fling', first: '2026-03-02', last: '2026-04-11', shows: 28, mine: false }], logos: {} }, base));
       return Promise.resolve(null);

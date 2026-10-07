@@ -1913,10 +1913,29 @@
         h('div', { class: 'vp-side' },
           (card.handle && profileName()) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, profileName()),
             checked ? verifiedBadge() : null) : null,
-          h('div', { class: 'pf-stats' },
-            stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
-            stat(counts.followers, counts.followers === 1 ? 'follower' : 'followers', uid ? function () { openFollowList(uid, 'followers'); } : null),
-            stat(counts.following, 'following', uid ? function () { openFollowList(uid, 'following'); } : null)),
+          // The road story leads on your own page too, once the server
+          // knows it; followers move to the line underneath.
+          (function () {
+            var own = uid ? cardOf(uid).card : null;
+            var rs = own && G.isObj(own.roadStats) ? own.roadStats : null;
+            return [h('div', { class: 'pf-stats' },
+              rs ? [
+                stat(G.num(rs.tours), G.num(rs.tours) === 1 ? 'tour' : 'tours'),
+                stat(G.num(rs.shows), G.num(rs.shows) === 1 ? 'show' : 'shows'),
+                stat(G.num(rs.countries), G.num(rs.countries) === 1 ? 'country' : 'countries'),
+                stat(G.num(rs.cities), G.num(rs.cities) === 1 ? 'city' : 'cities')
+              ] : [
+                stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
+                stat(counts.followers, counts.followers === 1 ? 'follower' : 'followers', uid ? function () { openFollowList(uid, 'followers'); } : null),
+                stat(counts.following, 'following', uid ? function () { openFollowList(uid, 'following'); } : null)
+              ]),
+              rs ? h('p', { class: 'hist-fans' },
+                h('button', { class: 'hf-btn', type: 'button', onclick: function () { openFollowList(uid, 'followers'); } },
+                  plural(G.num(counts.followers), 'follower')),
+                ' · ',
+                h('button', { class: 'hf-btn', type: 'button', onclick: function () { openFollowList(uid, 'following'); } },
+                  G.num(counts.following) + ' following')) : null];
+          })(),
           (function () {
             var B = window.GR_BACKEND, mine = flowersOn() && B.myFlowers ? B.myFlowers() : null;
             return mine && !mine.error && mine.counts ? flowerLine(mine.counts.flowers, mine.counts.endorsements) : null;
@@ -2343,11 +2362,29 @@
           h('div', { class: 'vp-side' },
             (card.handle && card.name) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, card.name),
               card.verified ? verifiedBadge() : null) : null,
+            // Their road story leads — tours, shows, countries, cities from
+            // the Greenroom tours they're on — with followers underneath.
             h('div', { class: 'pf-stats' },
-              pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
-              pfStat(G.num(card.followers), G.num(card.followers) === 1 ? 'follower' : 'followers',
-                function () { openFollowList(uid, 'followers', card.name); }),
-              pfStat(G.num(card.following), 'following', function () { openFollowList(uid, 'following', card.name); })),
+              G.isObj(card.roadStats) ? [
+                pfStat(G.num(card.roadStats.tours), G.num(card.roadStats.tours) === 1 ? 'tour' : 'tours',
+                  function () { pickTab('tours'); }),
+                pfStat(G.num(card.roadStats.shows), G.num(card.roadStats.shows) === 1 ? 'show' : 'shows'),
+                pfStat(G.num(card.roadStats.countries), G.num(card.roadStats.countries) === 1 ? 'country' : 'countries'),
+                pfStat(G.num(card.roadStats.cities), G.num(card.roadStats.cities) === 1 ? 'city' : 'cities')
+              ] : [
+                pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
+                pfStat(G.num(card.followers), G.num(card.followers) === 1 ? 'follower' : 'followers',
+                  function () { openFollowList(uid, 'followers', card.name); }),
+                pfStat(G.num(card.following), 'following', function () { openFollowList(uid, 'following', card.name); })
+              ]),
+            G.isObj(card.roadStats) ? h('p', { class: 'hist-fans' },
+              h('button', { class: 'hf-btn', type: 'button',
+                onclick: function () { openFollowList(uid, 'followers', card.name); } },
+                plural(G.num(card.followers), 'follower')),
+              ' · ',
+              h('button', { class: 'hf-btn', type: 'button',
+                onclick: function () { openFollowList(uid, 'following', card.name); } },
+                G.num(card.following) + ' following')) : null,
             flowerLine(card.flowers, card.endorsements))),
         roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 ')) : null,
         card.bio ? h('p', { class: 'pf-bio' }, card.bio) : null,
@@ -3069,6 +3106,9 @@
     var card = c.card;
     // Opened from your own list, and yours: the page you run. Any other way in: the viewer's.
     var manage = !!(S.route.manage && card && card.mine);
+    // The synced road story, when the page has one.
+    var hc0 = histOf(id);
+    var hsum = hc0.row && G.isObj(hc0.row.summary) ? hc0.row.summary : null;
     var head = function (title) {
       if (!(S.route.manage && (!card || card.mine))) return viewerHead(title, false, backTo);
       return h('div', { class: 'headband' },
@@ -3196,11 +3236,21 @@
             (manage && !card.avatar) ? h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14)) : null),
           h('div', { class: 'vp-side' },
             h('strong', { class: 'vp-name' }, card.name),
+            // The road story is the headline: tours, shows, countries (of
+            // the world's 195), cities. Until it's synced, the page counts
+            // what Greenroom knows. Fans sit underneath.
             h('div', { class: 'pf-stats' },
-              pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
-              pfStat(G.num(card.followers), G.num(card.followers) === 1 ? 'follower' : 'followers'),
-              pfStat(bandList.length, 'band', function () { pickTab('band'); }),
-              pfStat(crewList.length, 'crew', function () { pickTab('crew'); })))),
+              hsum && G.num(hsum.shows) > 0 ? [
+                pfStat(G.num(hsum.tours), G.num(hsum.tours) === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
+                pfStat(G.num(hsum.shows), G.num(hsum.shows) === 1 ? 'show' : 'shows'),
+                pfStat(G.num(hsum.countries) + '/195', 'countries'),
+                pfStat(G.num(hsum.cities), G.num(hsum.cities) === 1 ? 'city' : 'cities')
+              ] : [
+                pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
+                pfStat(bandList.length, 'band', function () { pickTab('band'); }),
+                pfStat(crewList.length, 'crew', function () { pickTab('crew'); })
+              ]),
+            h('p', { class: 'hist-fans' }, plural(G.num(card.followers), 'fan')))),
         h('p', { class: 'pf-roles' }, 'Artist'),
         card.bio ? h('p', { class: 'pf-bio' }, card.bio)
           : (manage ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
@@ -3264,27 +3314,21 @@
     }
     return 'Switched on — the first read lands within minutes.';
   }
-  // The stats strip on the artist page: for everyone once the numbers are
-  // in; while it's still reading, the owner sees how far along it is.
+  // Under the bio: the road badge and the credit line. The four numbers
+  // themselves live at the top of the page now — they ARE the page.
   function historyBlock(id, manage) {
     var c = histOf(id);
     var row = c.row;
     var sum = row && G.isObj(row.summary) ? row.summary : null;
     if (sum && G.num(sum.shows) > 0) {
       var tier = G.historyTier(sum.shows);
-      return h('div', { class: 'hist-card' },
-        h('div', { class: 'pf-stats hist-stats' },
-          pfStat(G.num(sum.shows), G.num(sum.shows) === 1 ? 'show' : 'shows'),
-          pfStat(G.num(sum.tours), G.num(sum.tours) === 1 ? 'tour' : 'tours'),
-          pfStat(G.num(sum.countries), G.num(sum.countries) === 1 ? 'country' : 'countries'),
-          pfStat(G.num(sum.cities), G.num(sum.cities) === 1 ? 'city' : 'cities')),
-        h('p', { class: 'hist-line' },
-          tier ? h('span', { class: 'hist-tier' }, tier + '+ shows') : null,
-          (sum.firstYear ? 'On the road since ' + sum.firstYear + ' · ' : ''),
-          // Credit where the data lives; only their own link is trusted.
-          h('a', { class: 'hist-src', target: '_blank', rel: 'noopener',
-            href: /^https:\/\/www\.setlist\.fm\//.test(String(row.mb_url || '')) ? row.mb_url : 'https://www.setlist.fm' },
-            'setlist.fm')));
+      return h('p', { class: 'hist-line' },
+        tier ? h('span', { class: 'hist-tier tier-' + tier.key }, tier.label) : null,
+        (sum.firstYear ? 'On the road since ' + sum.firstYear + ' · ' : ''),
+        // Credit where the data lives; only their own link is trusted.
+        h('a', { class: 'hist-src', target: '_blank', rel: 'noopener',
+          href: /^https:\/\/www\.setlist\.fm\//.test(String(row.mb_url || '')) ? row.mb_url : 'https://www.setlist.fm' },
+          'setlist.fm'));
     }
     if (manage && row) {
       return h('p', { class: 'hist-note' }, histStatusLine(row), ' · ',

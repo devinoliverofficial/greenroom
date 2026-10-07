@@ -67,14 +67,23 @@
     return hit ? hit.label : 'Income';
   }
 
-  // Road-history milestones: the biggest round number of shows passed.
-  var HISTORY_TIERS = [1000, 750, 500, 250, 100, 50];
+  /* Road milestones, calibrated against the real road: a working band
+     plays 40-100 nights a year; The Beatles' whole life was ~1,400 shows;
+     only the lifers (Metallica, the Dead, Dylan) clear 2,000. The badge
+     rewards the grind, not the fame — Michael Jackson solo sits at Silver. */
+  var HISTORY_TIERS = [
+    { key: 'legacy', label: 'Legacy', n: 2000 },
+    { key: 'diamond', label: 'Diamond', n: 1200 },
+    { key: 'gold', label: 'Gold', n: 500 },
+    { key: 'silver', label: 'Silver', n: 250 },
+    { key: 'bronze', label: 'Bronze', n: 50 }
+  ];
   function historyTier(shows) {
     var n = num(shows);
     for (var i = 0; i < HISTORY_TIERS.length; i++) {
-      if (n >= HISTORY_TIERS[i]) return HISTORY_TIERS[i];
+      if (n >= HISTORY_TIERS[i].n) return HISTORY_TIERS[i];
     }
-    return 0;
+    return null;
   }
 
   var CREW_TITLES = ['Tour manager', 'FOH engineer', 'Monitor engineer', 'Lighting director',

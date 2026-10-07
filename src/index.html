@@ -1648,6 +1648,16 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
   color: var(--pos); font-weight: 800; font-size: 11px; letter-spacing: .05em; }
 .hist-src { color: var(--ink-3); text-decoration: underline; }
 .hist-note { margin: 8px 2px 0; font-size: 12.5px; color: var(--ink-3); }
+/* Fans / followers line under the headline stats; tappable where it opens a list. */
+.hist-fans { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-3); }
+.hf-btn { appearance: none; background: none; border: 0; padding: 0; margin: 0;
+  font: inherit; color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+/* The road badges: Bronze, Silver, Gold, Diamond, Legacy (house green). */
+.hist-tier.tier-bronze { border-color: #c98b4e; color: #c98b4e; }
+.hist-tier.tier-silver { border-color: #b9bfc9; color: #b9bfc9; }
+.hist-tier.tier-gold { border-color: #e6c35c; color: #e6c35c; }
+.hist-tier.tier-diamond { border-color: #8ad8e8; color: #8ad8e8; }
+.hist-tier.tier-legacy { border-color: var(--pos); color: var(--pos); }
 .rv-fields { flex: 1; min-width: 0; display: grid; gap: 8px; }
 .rv-line { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr); gap: 8px; }
 .rv-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
