@@ -6132,7 +6132,11 @@
     // Every other linked card (debit cards; a credit card whose balance isn't on the tour yet) has its line too.
     tourCards(t).filter(function (c) { return !c.debt; }).forEach(function (c) { rows.push(plainCardRow(id, t, c)); });
     if (!off) { syncCards(id); ensurePile(id); }
-    entries.forEach(function (e) { rows.push(lineRow(e.l)); });
+    entries.forEach(function (e) {
+      rows.push(lineRow(e.l));
+      // Monthly utilities opens out into the vendors behind it.
+      if (VENDOR_CATS[e.l.key]) vendorRows(id, t, e.l.key, edit).forEach(function (r) { rows.push(r); });
+    });
     // The bars' Expenses segments: crew, bus, each linked card by its name,
     // commission, the merch bill, and everything else together.
     var named = [['Crew', 'crew', 'crew'], ['Bus', 'bus', 'bus']]
@@ -6212,11 +6216,14 @@
           ch.accounted ? 'already accounted for' : ''].filter(Boolean).join(' · '),
         // The card it came from, by its short name.
         card: cardLabelFor(t, ch.account),
+        // name: exactly as stored (what a vendor group is read from); how: its Expenses column.
+        name: ch.merchant || '', how: ch.cash ? 'cash' : ch.paid ? 'debit' : 'credit',
         source: chargeSource(t, ch), chargeId: ch.id, counts: !ch.accounted });
     });
     G.rows(t && t.cashLog).forEach(function (x) {
       if (x.category !== key) return;
       out.push({ date: x.date || '', label: x.note || x.label || 'Merch cash', amount: G.num(x.amount),
+        name: x.note || x.label || '', how: 'cash',
         detail: 'Merch cash', source: 'MANUAL', cashId: x.id, counts: true });
     });
     (G.cardPaidDetail(t)[key] || []).forEach(function (r) {
@@ -6237,6 +6244,159 @@
     // Oldest first; the balances going in (no date) lead the list.
     return out.sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
   }
+  /* A category that's really many bills under one line breaks down into the
+     vendors behind them (G.vendorGroups): Monthly utilities into Amazon,
+     Verizon, Storage... It's the same entries looked at a second way, so no
+     total moves. What was regrouped by hand lives on the tour, under
+     vendorGroups.<category>. */
+  var VENDOR_CATS = { utilities: true };
+  function categoryGroups(t, key) {
+    var cat = (G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0] || {}).label || '';
+    var list = categoryEntries(t, key).map(function (r) {
+      var eid = r.chargeId || r.cashId || null;
+      // A payment logged with its details left blank is stored under the
+      // category's own name: there's no vendor in that.
+      var loose = !eid || !r.name || G.vendorNorm(r.name) === G.vendorNorm(cat);
+      return { id: eid, name: r.name || '', amount: r.amount, counts: r.counts, how: r.how, loose: loose, row: r };
+    });
+    return G.vendorGroups(list, G.isObj(t && t.vendorGroups) ? t.vendorGroups[key] : null);
+  }
+  var entryCount = function (n) { return n + (n === 1 ? ' entry' : ' entries'); };
+  // The dropdown under the category's line on Expenses: one row per group,
+  // its numbers under the same Credit / Debit / Cash columns. These cells are
+  // drawn plain on purpose: the page's totals already count the category once.
+  function vendorRows(id, t, key, canOpen) {
+    var groups = categoryGroups(t, key);
+    // One pile with no vendor in it (or nothing at all): nothing to break down.
+    if (!groups.some(function (g) { return g.key; })) return [];
+    S.exOpen = S.exOpen || {};
+    var k = id + ':' + key;
+    if (S.exOpen[k] === undefined) S.exOpen[k] = lsGet('gr-exopen:' + k) === '1';
+    var open = !!S.exOpen[k];
+    var cell = function (cls, v, word) {
+      return h('span', { class: 'amt num ' + cls, 'aria-label': word + ' ' + money(v) }, Math.abs(v) > 0.004 ? money(v) : '\u2014');
+    };
+    var toggle = h('button', { class: 'row ex-sub-toggle' + (open ? ' open' : ''), type: 'button', 'aria-expanded': open ? 'true' : 'false',
+      onclick: function () { S.exOpen[k] = !open; lsSet('gr-exopen:' + k, open ? '' : '1'); render(true); } },
+      icon('chevron', 14), h('span', null, open ? 'Hide the breakdown' : 'Break it down \u00b7 ' + plural(groups.length, 'group')));
+    if (!open) return [toggle];
+    return [toggle].concat(groups.map(function (g) {
+      var inner = [
+        h('div', { class: 'row-label' }, g.label, h('span', { class: 'hint' }, entryCount(g.count))),
+        h('span', { class: 'amt num ex-proj', 'aria-hidden': 'true' }, ''),
+        cell('ex-paid', g.credit, 'Credit'), cell('ex-done', g.debit, 'Debit'), cell('ex-cash', g.cash, 'Cash')];
+      if (!canOpen) return h('div', { class: 'row ex-row ex-sub' }, inner, h('span', { class: 'ex-chev', 'aria-hidden': 'true' }));
+      return h('button', { class: 'row rowbtn ex-row ex-sub', type: 'button', 'aria-label': g.label + ', ' + money(g.total) + ', ' + entryCount(g.count),
+        onclick: function () { openLoggedSheet(id, key, null, { group: g.key }); } }, inner, icon('chevron', 18));
+    }));
+  }
+  /* Move an entry to another group: an existing one, or a new one typed in.
+     For a card charge the choice can cover every charge stored under the
+     same name, so next month's bill lands there by itself. */
+  function openVendorMove(id, key, r, after) {
+    var t = getTour(id);
+    var groups = categoryGroups(t, key);
+    var eid = r.chargeId || r.cashId;
+    var mine = groups.filter(function (g) { return g.entries.some(function (e) { return e.id === eid; }); })[0];
+    var me = mine ? mine.entries.filter(function (e) { return e.id === eid; })[0] : null;
+    // Stored under the category's own name (details left blank): there is no
+    // vendor to make a name-wide rule from, so only this one entry moves.
+    var nameKey = me && me.loose ? '' : G.vendorNorm(r.name);
+    var over = (G.isObj(t.vendorGroups) && G.isObj(t.vendorGroups[key])) ? t.vendorGroups[key] : {};
+    var moved = !!((G.isObj(over.one) && over.one[eid]) || (nameKey && G.isObj(over.by) && over.by[nameKey]));
+    var f = { pick: mine ? mine.label : '', fresh: '', all: !!nameKey };
+    var again = function () { setTimeout(after, 260); };
+    openSheet(function () {
+      var freshIn = h('input', { class: 'input', type: 'text', maxlength: 30, autocomplete: 'off', placeholder: 'New group, e.g. Insurance',
+        'aria-label': 'New group name', value: f.fresh,
+        oninput: function (e) { f.fresh = e.target.value; if (f.fresh.trim()) { f.pick = ''; paint(); } } });
+      var listHost = h('div', { class: 'vg-list', role: 'radiogroup', 'aria-label': 'Group' });
+      var paint = function () {
+        fillEl(listHost, groups.map(function (g) {
+          var on = !f.fresh.trim() && f.pick === g.label;
+          return h('button', { class: 'vg-pick' + (on ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false',
+            onclick: function () { f.pick = g.label; f.fresh = ''; freshIn.value = ''; paint(); } },
+            h('span', { class: 'vg-dot', 'aria-hidden': 'true' }), h('span', { class: 'vg-name' }, g.label),
+            h('span', { class: 'amt num' }, money(g.total)));
+        }));
+      };
+      paint();
+      var allBox = h('input', { type: 'checkbox', class: 'rv-check', checked: f.all, onchange: function (e) { f.all = e.target.checked; } });
+      var write = async function (label) {
+        var patch = { one: {}, by: {} };
+        // One rule per entry: the name-wide one, or this entry alone.
+        if (label == null) { patch.one[eid] = null; if (nameKey) patch.by[nameKey] = null; }
+        else if (f.all && nameKey) { patch.by[nameKey] = label; patch.one[eid] = null; }
+        else patch.one[eid] = label;
+        var vg = {}; vg[key] = patch;
+        if (!(await api.update(id, { vendorGroups: vg }))) return;
+        toast(label == null ? 'Back where it sorts by itself' : 'Moved to ' + label);
+        render(true);
+        closeSheet(); again();
+      };
+      return [
+        h('h2', { class: 'sh-title' }, 'Move to a group'),
+        h('p', { class: 'sh-sub' }, r.label + ' \u00b7 ' + money(r.amount)),
+        h('form', { class: 'sh-form', novalidate: true, onsubmit: function (e) {
+          e.preventDefault(); blurActive();
+          // Only a name typed here is cut to size; a group picked from the list goes whole.
+          var label = f.fresh.trim() ? f.fresh.trim().slice(0, 30) : f.pick;
+          if (!label) { toast('Pick a group, or name a new one'); return; }
+          write(label);
+        } },
+          listHost,
+          field('Or a new group', freshIn),
+          nameKey ? h('label', { class: 'vg-all' }, allBox,
+            h('span', null, 'Every charge from \u201c' + r.name + '\u201d, now and later')) : null,
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Move'),
+            moved ? h('button', { class: 'btn quiet block', type: 'button', onclick: function () { write(null); } }, 'Let it sort by itself again') : null,
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); again(); } }, 'Cancel')))
+      ];
+    }, { label: 'Move to a group', cls: 'cat-sheet' });
+  }
+  // A group's name on this tour. Renaming two groups to the same thing makes them one.
+  function openVendorRename(id, key, g, after) {
+    var f = { name: g.label };
+    // A name that is already longer than a typed one may be is never clipped.
+    var cap = Math.max(30, g.label.length);
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Rename this group'),
+        h('p', { class: 'sh-sub' }, 'Give two groups the same name and they become one.'),
+        h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
+          e.preventDefault(); blurActive();
+          var name = f.name.trim().slice(0, cap);
+          if (!name) { toast('Type a name'); return; }
+          // Other has no name to change back, so nothing is renamed into it.
+          if (G.vendorNorm(name) === 'other') { toast('Other is where everything else goes. Swipe a charge and tap Group to move it there.'); return; }
+          // The rename covers what sorts into this group by itself, and
+          // whatever was put in it by hand.
+          var t0 = getTour(id);
+          var ov = (G.isObj(t0 && t0.vendorGroups) && G.isObj(t0.vendorGroups[key])) ? t0.vendorGroups[key] : {};
+          var names = {}, one = {}, by = {};
+          g.keys.forEach(function (k) { names[k] = name; });
+          var mineToo = function (from, to) {
+            Object.keys(G.isObj(from) ? from : {}).forEach(function (k) {
+              if (typeof from[k] === 'string' && G.vendorNorm(from[k]) === g.key) to[k] = name;
+            });
+          };
+          mineToo(ov.one, one); mineToo(ov.by, by);
+          var vg = {}; vg[key] = { names: names, one: one, by: by };
+          if (!(await api.update(id, { vendorGroups: vg }))) return;
+          toast('Renamed');
+          render(true);
+          closeSheet(); setTimeout(function () { after(G.vendorNorm(name) === 'other' ? '' : G.vendorNorm(name)); }, 260);
+        } },
+          field('Group name', h('input', { class: 'input', type: 'text', maxlength: cap, autocomplete: 'off', value: f.name,
+            'aria-label': 'Group name', oninput: function (e) { f.name = e.target.value; } })),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); setTimeout(function () { after(g.key); }, 260); } }, 'Cancel')))
+      ];
+    }, { label: 'Rename this group', cls: 'cat-sheet' });
+  }
+
   /* A row that slides left to show its actions (Edit, Undo). A tap opens
      it too, and tapping again closes it. */
   function swipeRow(inner, acts) {
@@ -6371,35 +6531,47 @@
     }, { label: 'Edit this entry', cls: 'cat-sheet' });
   }
 
-  function openLoggedSheet(id, key, back) {
+  // o.group: only that vendor group (its key; '' is Other) of a category that breaks down.
+  function openLoggedSheet(id, key, back, o) {
+    var reopen = function (group) {
+      openLoggedSheet(id, key, back, group === undefined ? o : (group == null ? null : { group: group }));
+    };
     function build() {
       var t = getTour(id);
       var cat = G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0] || { label: key };
-      var list = categoryEntries(t, key);
+      var groups = VENDOR_CATS[key] ? categoryGroups(t, key) : null;
+      if (groups && !groups.some(function (g) { return g.key; })) groups = null;
+      // The one group asked for (if a move just emptied it, the whole category shows instead).
+      var only = groups && o && o.group != null ? groups.filter(function (g) { return g.key === o.group; })[0] || null : null;
+      var list = only ? only.entries.map(function (e) { return e.row; }) : categoryEntries(t, key);
       var total = list.reduce(function (a, r) { return r.counts ? a + r.amount : a; }, 0);
+      // (Even when everything sits in Other: that's how a charge gets out of it.)
+      var canGroup = function (r) { return !!VENDOR_CATS[key] && canWrite() && canEditTour(id) && !!(r.chargeId || r.cashId); };
+      var groupBtn = function (r) {
+        return h('button', { class: 'sw-edit sw-group', type: 'button', 'aria-label': 'Move ' + r.label + ' to another group',
+          onclick: function () { openVendorMove(id, key, r, function () { reopen(); }); } }, icon('tag', 16), 'Group');
+      };
       var lead = S.mode === 'db' && bookLead(id) && serverLead(id);
       var slides = function (r) { return lead && r.source === 'PLAID' && /^p/.test(String(r.chargeId || '')); };
       // Logged by hand (a payment, a merch cash entry, a typed-in total): Edit or Delete.
       var mine = function (r) { return canWrite() && canEditTour(id) && (r.typed || r.cashId || (r.chargeId && r.source === 'MANUAL')); };
       var anySlide = list.some(function (r) { return slides(r) || mine(r); });
-      return [
-        h('h2', { class: 'sh-title' }, 'Logged Card Transactions'),
-        h('p', { class: 'sh-sub' }, cat.label + ' · ' + plural(list.length, 'entry').replace('entrys', 'entries') + ' · ' + money(total)),
-        anySlide ? h('p', { class: 'note sw-hint' }, 'Logged one wrong? Swipe it left to fix it.') : null,
-        list.length ? h('div', { class: 'ledger logged' }, list.map(function (r) {
+      var anyGroup = list.some(canGroup);
+      var entryNode = function (r) {
           var line = logRow(r);
+          var first = canGroup(r) ? [groupBtn(r)] : [];
           if (mine(r)) {
-            return swipeRow(line, [
+            return swipeRow(line, first.concat([
               h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit ' + r.label,
-                onclick: function () { openManualEdit(id, key, r, back); } }, icon('edit', 16), 'Edit'),
+                onclick: function () { openManualEdit(id, key, r, back, o ? function () { reopen(); } : null); } }, icon('edit', 16), 'Edit'),
               h('button', { class: 'sw-undo', type: 'button', 'aria-label': 'Delete ' + r.label,
-                onclick: function () { removeEntry(r); } }, icon('trash', 16), 'Delete')]);
+                onclick: function () { removeEntry(r); } }, icon('trash', 16), 'Delete')]));
           }
-          if (!slides(r)) return line;
+          if (!slides(r)) return first.length ? swipeRow(line, first) : line;
           var ch = (t.charges || {})[r.chargeId];
           ch = Object.assign({ id: r.chargeId }, ch || {});
           var busy = false;
-          return swipeRow(line, [
+          return swipeRow(line, first.concat([
             h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit ' + r.label,
               onclick: function () { if (busy) return; busy = true; editCharge(id, ch).then(function () { busy = false; }); } },
               icon('edit', 16), 'Edit'),
@@ -6411,10 +6583,31 @@
                 if (!ok) return;
                 toast(r.label + ' is back in new charges');
                 render(true);
-                setTimeout(function () { openLoggedSheet(id, key, back); }, 700);
-              } }, icon('back', 16), 'Undo')]);
-        })) : emptyState('Nothing logged yet', 'Charges from the card feed, statements you import and payments you log by hand all show up here.'),
+                setTimeout(function () { reopen(); }, 700);
+              } }, icon('back', 16), 'Undo')]));
+      };
+      // A category that breaks down lists each group under its own heading
+      // (tap one for just that group); one group alone is a plain list.
+      var body = !list.length ? emptyState('Nothing logged yet', 'Charges from the card feed, statements you import and payments you log by hand all show up here.')
+        : (groups && !only) ? h('div', { class: 'ledger logged' }, groups.map(function (g) {
+            return [h('button', { class: 'row head lg-head', type: 'button', 'aria-label': g.label + ', ' + money(g.total) + '. Show only this group.',
+                onclick: function () { reopen(g.key); } },
+                h('span', { class: 'lg-name' }, g.label, icon('chevron', 12)), h('span', { class: 'amt num' }, money(g.total)))]
+              .concat(g.entries.map(function (e) { return entryNode(e.row); }));
+          }))
+        : h('div', { class: 'ledger logged' }, list.map(entryNode));
+      return [
+        h('h2', { class: 'sh-title' }, only ? only.label : 'Logged Card Transactions'),
+        h('p', { class: 'sh-sub' }, cat.label + ' \u00b7 ' + entryCount(list.length) + ' \u00b7 ' + money(total)),
+        anySlide || anyGroup ? h('p', { class: 'note sw-hint' }, anyGroup
+          ? 'Swipe one left to move it to another group' + (anySlide ? ', or to fix it.' : '.')
+          : 'Logged one wrong? Swipe it left to fix it.') : null,
+        body,
         h('div', { class: 'stack' },
+          only && only.key && canWrite() && canEditTour(id) ? h('button', { class: 'btn quiet block', type: 'button',
+            onclick: function () { openVendorRename(id, key, only, function (gk) { reopen(gk); }); } }, icon('edit', 18), 'Rename this group') : null,
+          only ? h('button', { class: 'btn quiet block', type: 'button', onclick: function () { reopen(null); } },
+            'All of ' + cat.label) : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { if (back) back(); else closeSheet(); } },
             back ? 'Back' : 'Close'))
       ];
@@ -6438,7 +6631,7 @@
             else if (r.cashId) { patch = { cashLog: {} }; patch.cashLog[r.cashId] = null; }
             else { patch = { charges: {} }; patch.charges[r.chargeId] = null; }
             var ok = await api.update(id, patch);
-            if (ok) { toast('Deleted'); setTimeout(function () { openLoggedSheet(id, key, back); }, 250); }
+            if (ok) { toast('Deleted'); setTimeout(function () { reopen(); }, 250); }
             return ok;
           }
         });
@@ -8513,7 +8706,7 @@
         emoji: '\ud83e\uddfe', title: 'Guarantee came in short', main: money(gap.deposit) + ' deposited of ' + money(gap.total),
         amount: gap.unexplained, sub: place(x) + ' \u00b7 say why', open: incomeLog(x.id) });
       var st = G.showMoneyState(x);
-      if (st !== 'owed' && st !== 'partial') return;
+      if (st !== 'owed') return;
       var g = G.num(x.income && x.income.guarantee), md = G.merchDue(x);
       if (g > 0 && x.guaranteeReceived === false) tasks.push({ key: 'inc:' + x.id + ':g', standing: true, at: 0,
         emoji: '⏳', title: 'Income not received yet', main: 'Guarantee', amount: g, sub: place(x), open: incomeLog(x.id) });
@@ -9176,19 +9369,24 @@
 
   function showRow(id, s, today) {
     var isToday = s.date === today;
-    // The city says where the night's money stands: red, none of it has
-    // landed; orange, part of it has; green, everything logged is in.
-    var money_ = G.showMoneyState(s);
+    // The date and city say where the night's money stands, two ways only:
+    // green once BOTH the guarantee and the merch are marked received, red
+    // until then. A night that's been played and not logged at all is red
+    // too; one still to come has no colour.
+    // (A night with nothing logged that has both boxes ticked by hand — a
+    // cancelled date, say — is green: the ticks decide.)
+    var got = G.showReceived(s);
+    var money_ = G.showMoneyState(s) ||
+      (got.guarantee && got.merch ? 'settled' : s.date && s.date < today ? 'owed' : null);
     var owedWhat = [];
-    if (money_ === 'owed' || money_ === 'partial') {
-      if (G.num(s.income && s.income.guarantee) > 0 && s.guaranteeReceived === false) owedWhat.push('guarantee');
-      else if (G.guaranteeOwed(s) > 0) owedWhat.push('rest of the guarantee');
-      if (G.merchDue(s) > 0 && s.merchReceived === false) owedWhat.push('merch deposit');
+    if (money_ === 'owed') {
+      if (!got.guarantee) owedWhat.push(G.guaranteeOwed(s) > 0 ? 'rest of the guarantee' : 'guarantee');
+      if (!got.merch) owedWhat.push(G.num(s.income && s.income.merch) > 0 ? 'merch deposit' : 'merch');
     }
     // Log income is always there, in the middle; a night that's been played
     // and isn't logged yet gets the bright one. The night's total sits on
     // the right.
-    var due = !s.loggedAt && s.date && s.date <= today;
+    var due = !s.loggedAt && money_ !== 'settled' && s.date && s.date <= today;
     var log = canEditTour(id) ? h('button', { class: 'btn sm inc-btn ' + (due ? 'primary' : 'quiet'), type: 'button',
       'aria-label': 'Log income for ' + (s.city || 'this show'),
       onclick: function () { openIncome(id, s.id); } }, 'Log income') : h('span');
@@ -11276,12 +11474,25 @@
     // Settlement showed it. That is the deposit to watch for.
     var merchCardDeposit = s.merchCardDeposit != null ? G.num(s.merchCardDeposit) : null;
     var legacy = !!s.loggedAt;
+    /* A Received box ticked beside an EMPTY line means "nothing to wait for
+       here" (no merch table, no guarantee): the night can still read as
+       paid. It is kept in keys of its own, guaranteeNone / merchNone, so
+       guaranteeReceived / merchReceived go on meaning "this money has
+       landed" for the bank matchers and the atVenu readers. noneBy: the
+       tick on each line is that kind. noneStored: it came with the show, so
+       it gives way the moment an amount turns up on its line. */
+    var noneBy = { guarantee: !(gross > 0) && s.guaranteeNone === true, merch: !(draft.merch > 0) && s.merchNone === true };
+    var noneStored = { guarantee: noneBy.guarantee, merch: noneBy.merch };
     var recv = {
-      guarantee: s.guaranteeReceived === true || (s.guaranteeReceived == null && legacy && draft.guarantee > 0),
-      merch: s.merchReceived === true || (s.merchReceived == null && legacy && draft.merch > 0)
+      guarantee: s.guaranteeReceived === true || (s.guaranteeReceived == null && legacy && draft.guarantee > 0) || noneBy.guarantee,
+      merch: s.merchReceived === true || (s.merchReceived == null && legacy && draft.merch > 0) || noneBy.merch
     };
     // A deposit only stands beside a received guarantee.
     if (!recv.guarantee) { dep = null; depSeen = null; }
+    // As saved: when the deposit is raised by hand, the extra comes off what
+    // the promoter still owed (the same thing a second payment catalogued
+    // from the bank does), unless the owed amount was set by hand just now.
+    var dep0 = dep, owed0 = G.num(why.owed), owedTouched = false;
     var title = s.city || 'Show';
     var sub = [dayLong(s.date), s.venue].filter(Boolean).join(' · ');
 
@@ -11304,7 +11515,7 @@
             }),
             h('div', { class: 'row total' },
               h('span', null, 'This show'),
-              h('strong', { class: 'amt num' }, money(G.showIncomeTotal({ income: draft, buyoutTrack: track }))))),
+              h('strong', { class: 'amt num' }, money(G.showIncomeTotal(s))))),
           settNotes.length ? [
             h('h3', { class: 'sh-h3' }, 'From the settlement'),
             h('div', { class: 'ledger' }, settNotes.map(function (n) {
@@ -11345,6 +11556,10 @@
           merchCash: draft.merch > 0 && merchCash > 0 ? merchCash : null,
           merchCardDeposit: draft.merch > 0 && merchCardDeposit != null ? merchCardDeposit : null,
           guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
+          // A tick made by hand beside an empty line ("nothing to wait for
+          // here"): the night only reads as paid when both are ticked.
+          guaranteeNone: !(gross > 0) && recv.guarantee && noneBy.guarantee ? true : null,
+          merchNone: !(draft.merch > 0) && recv.merch && noneBy.merch ? true : null,
           taxWithheld: tax > 0 && gross > 0 ? Math.min(tax, gross) : null,
           guaranteePaidBy: gross > 0 ? paidBy : null,
           guaranteeWhy: whyOut(true),
@@ -11359,6 +11574,8 @@
         // the bank's date stays only beside the amount the bank itself showed.
         var hasDep = depKept() != null;
         patch[showId].guaranteeDeposit = hasDep ? dep : null;
+        // The "why" question has been on the sheet for this deposit.
+        patch[showId].guaranteeWhyAsked = hasDep && listOn() ? true : null;
         if (!hasDep || depSeen == null || dep !== depSeen) patch[showId].guaranteeReceivedAt = null;
         // What the bank itself has shown for this guarantee (kept by the
         // database as deposits are catalogued) goes when the deposit goes,
@@ -11401,6 +11618,34 @@
         perHeadEl.classList.toggle('known', !!hit);
       }
       updatePerHead();
+      // Received ticked by the sheet itself (Agency Deposit chosen, or a
+      // deposit amount typed) rather than by hand: it goes back when that is
+      // undone, so a mis-tap never leaves a guarantee counted as in hand.
+      var recvAuto = false;
+      function autoReceived() {
+        var need = paidBy === 'agency' || dep != null;
+        if (need && !recv.guarantee) { recv.guarantee = true; recvAuto = true; }
+        else if (!need && recvAuto) { recv.guarantee = false; recvAuto = false; }
+        else return;
+        var rb = document.getElementById('rcv-guarantee');
+        if (rb) rb.checked = recv.guarantee;
+      }
+      // The deposit an untick put aside, so ticking Received again brings it back.
+      var depAside = null;
+      // An amount has turned up on a line (typed, or read from a settlement).
+      // A "nothing to wait for" tick that came with the show was about an
+      // empty line, so it goes: the money now on the line isn't received
+      // until someone says so. One made in this sitting stays, as a plain
+      // Received.
+      function amountLanded(key) {
+        if (!((key === 'guarantee' ? gross : draft.merch) > 0)) return;
+        if (noneStored[key]) {
+          recv[key] = false;
+          var rb = document.getElementById('rcv-' + key);
+          if (rb) rb.checked = false;
+        }
+        noneStored[key] = false; noneBy[key] = false;
+      }
       // "Received" beside a payment: ticked means the money is in hand.
       function receivedBox(key, what) {
         var cb = h('input', { type: 'checkbox', class: 'rcv-check', id: 'rcv-' + key,
@@ -11408,12 +11653,22 @@
         cb.checked = !!recv[key];
         cb.addEventListener('change', function () {
           recv[key] = cb.checked;
+          // Ticked by hand beside an empty line: "nothing to wait for here".
+          noneBy[key] = cb.checked && !((key === 'guarantee' ? gross : draft.merch) > 0);
+          noneStored[key] = false;
           if (key === 'guarantee') {
-            // Not received means nothing reached the bank.
+            // Ticked or unticked by hand: it's the person's call from here.
+            recvAuto = false;
+            var de = depInput.querySelector('input');
             if (!cb.checked && dep != null) {
-              dep = null;
-              var de = depInput.querySelector('input');
+              // Not received means nothing reached the bank...
+              depAside = dep; dep = null;
               if (de) de.value = '';
+            } else if (cb.checked && dep == null && depAside != null) {
+              // ...and ticking it again is an undo: the deposit comes back,
+              // and with it the reasons and the bank's date.
+              dep = depAside; depAside = null;
+              if (de) de.value = fmtInput(dep);
             }
             syncWhy();
           }
@@ -11464,7 +11719,8 @@
       readerResult = (function () { return function (r) {
           Object.keys(r.income).forEach(function (k) {
             draft[k] = r.income[k];
-            if (k === 'guarantee') { gross = G.num(r.income[k]); followGap(); syncWhy(); }
+            if (k === 'guarantee') { gross = G.num(r.income[k]); amountLanded('guarantee'); followGap(); syncWhy(); }
+            if (k === 'merch') amountLanded('merch');
             var el = document.getElementById('inc-' + k);
             if (el) el.value = r.income[k] ? (Math.round(r.income[k] * 100) / 100)
               .toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
@@ -11482,6 +11738,7 @@
       var atvenuResult = function (r) {
         if (r.income.merch != null) {
           draft.merch = r.income.merch;
+          amountLanded('merch');
           var el = document.getElementById('inc-merch');
           if (el) el.value = (Math.round(r.income.merch * 100) / 100)
             .toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -11586,13 +11843,15 @@
       var depInput = moneyInput({
         id: 'inc-deposit', value: dep, label: 'Deposit Amount', nextId: 'inc-backend',
         onValue: function (v) {
+          // A deposit typed (or emptied) by hand wins over one put aside.
+          depAside = null;
           dep = v > 0 ? r2(v) : null;
-          // Money in the bank is money received.
-          if (dep != null && !recv.guarantee) {
-            recv.guarantee = true;
-            var rb = document.getElementById('rcv-guarantee');
-            if (rb) rb.checked = true;
+          if (dep0 != null && owed0 > 0 && !owedTouched) {
+            var o2 = r2(owed0 - Math.max(0, G.num(dep) - dep0));
+            if (o2 > 0) why.owed = o2; else delete why.owed;
           }
+          // Money in the bank is money received.
+          autoReceived();
           followGap(); syncWhy(); refresh();
         }
       });
@@ -11605,11 +11864,17 @@
       var autoKey = null;
       // The booking-agent guess is offered once; after any reason has been
       // touched by hand it never comes back.
-      var whyTouched = false;
+      // (Once per show, not per opening: a save with the list on the sheet
+      // marks the question as asked.)
+      var whyTouched = !!s.guaranteeWhyAsked;
       function followGap() {
         var keys = Object.keys(why);
         if (!autoKey || keys.length !== 1 || keys[0] !== autoKey) return;
         var sh = shortNow();
+        // An untouched lone reason can only be the agent guess (a tick by
+        // hand counts as touching): it stands while the gap is still the
+        // agent's cut, and is withdrawn the moment it isn't.
+        if (!whyTouched && !(sh > 0 && Math.abs(sh - gross * agentPct) <= 1)) { delete why[autoKey]; autoKey = null; return; }
         if (sh > 0) why[autoKey] = sh;
       }
       function sayLeft() {
@@ -11653,6 +11918,7 @@
             var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: on, 'aria-label': r.label,
               onchange: function (e) {
                 whyTouched = true;
+                if (r.key === 'owed') owedTouched = true;
                 if (e.target.checked) {
                   var left = r2(shortNow() - whySum());
                   why[r.key] = left > 0 ? left : 0;
@@ -11668,7 +11934,7 @@
                 h('span', { class: 'gw-label' }, r.label, on && WHY_HINT[r.key] ? h('span', { class: 'hint' }, WHY_HINT[r.key]) : null)),
               on ? moneyInput({ id: 'inc-why-' + r.key, value: why[r.key], label: r.label + ' amount', slim: true,
                 // Typing an amount never rebuilds the list (the box would lose its place).
-                onValue: function (v) { why[r.key] = Math.max(0, r2(v)); autoKey = null; whyTouched = true; setTax(); syncGuarantee(); sayLeft(); refresh(); } }) : null);
+                onValue: function (v) { why[r.key] = Math.max(0, r2(v)); autoKey = null; whyTouched = true; if (r.key === 'owed') owedTouched = true; setTax(); syncGuarantee(); sayLeft(); refresh(); } }) : null);
           }),
           why.other != null ? h('input', { class: 'input sm gw-other', type: 'text', maxlength: 80, value: whyNote, autocomplete: 'off',
             placeholder: 'What was it?', 'aria-label': 'What the other reason was',
@@ -11685,7 +11951,8 @@
             : (i < fields.length - 1 ? 'inc-' + fields[i + 1].key : null),
           last: i === fields.length - 1,
           onValue: function (v) {
-            if (f.key === 'guarantee') { gross = v; followGap(); syncWhy(); } else draft[f.key] = v;
+            if (f.key === 'guarantee') { gross = v; amountLanded('guarantee'); followGap(); syncWhy(); } else draft[f.key] = v;
+            if (f.key === 'merch') amountLanded('merch');
             syncMisc(); refresh();
             if (f.key === 'merch') updateDeposit();
             if (f.key === 'buyouts') updateBuyouts();
@@ -11793,11 +12060,7 @@
                   paidBy = e.target.checked ? x[0] : null;
                   boxes.forEach(function (o) { o.checked = o === cb && !!paidBy; });
                   // Held by the agency is received: the agent has it.
-                  if (paidBy === 'agency') {
-                    recv.guarantee = true;
-                    var rb = document.getElementById('rcv-guarantee');
-                    if (rb) rb.checked = true;
-                  }
+                  autoReceived();
                   syncWhy(); sayAgency(); refresh();
                 } });
               boxes.push(cb);
@@ -14245,7 +14508,7 @@
         upSel);
     }
     function chargeRow(r) {
-      var wrap = h('div', { class: 'rv-row' + (r.pick ? ' on' : '') });
+      var wrap = h('div', { class: 'rv-row rv-charge' + (r.pick ? ' on' : '') });
       var cb = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check ' + r.merchant,
         onchange: function (e) { r.pick = e.target.checked; wrap.classList.toggle('on', r.pick); refreshBar(); } });
       cb.checked = !!r.pick;
@@ -14573,18 +14836,63 @@
       }).sort(G.byDate).reverse();
       return list.length ? list : null;
     }
+    // A deposit on the night that the bank hasn't shown yet: typed by hand,
+    // or corrected upward. (The same reading the database makes when a
+    // deposit is catalogued: its running total, else the whole deposit when
+    // the bank feed matched it, else nothing.)
+    function unseen(s) {
+      var dep = G.num(s.guaranteeDeposit);
+      if (s.guaranteeReceived !== true || s.guaranteePaidBy === 'agency' || !(dep > 0)) return 0;
+      var seen = s.guaranteeSeen != null ? Math.min(G.num(s.guaranteeSeen), dep) : (s.guaranteeReceivedAt ? dep : 0);
+      return Math.max(0, Math.round((dep - seen) * 100) / 100);
+    }
+    // Ticked Received by hand, no amount typed, never seen in the bank: the
+    // deposit to expect there is the whole guarantee.
+    function handTicked(s) {
+      return s.guaranteeReceived === true && s.guaranteePaidBy !== 'agency' && !(G.num(s.guaranteeDeposit) > 0) && !s.guaranteeReceivedAt;
+    }
     // Which nights are still waiting on this money.
     function owedBit(r, s) {
       if (r.kind === 'merch') return !!s.loggedAt && s.merchReceived === false && G.merchDue(s) > 0;
       return !!s.loggedAt && G.num(s.income && s.income.guarantee) > 0 &&
-        (s.guaranteeReceived === false || G.guaranteeOwed(s) > 0);
+        (s.guaranteeReceived === false || G.guaranteeOwed(s) > 0 || unseen(s) > 1);
     }
+    // What that night is waiting to see from the bank.
+    function expects(s) {
+      if (s.guaranteeReceived === false || handTicked(s)) return G.num(s.income && s.income.guarantee);
+      return unseen(s) > 1 ? unseen(s) : G.guaranteeOwed(s);
+    }
+    // The night a deposit most likely belongs to: one waiting on exactly this
+    // amount beats the nearest one waiting on anything. A deposit that was
+    // already typed onto a night must land there (it confirms it); logged to
+    // the whole tour it would be counted a second time.
+    // A whole guarantee may arrive less the booking agent's cut: the same two
+    // amounts the bank matcher accepts for a night.
+    function agentCut(r) {
+      var t2 = getTour(landsOn(r));
+      var rule = G.normCommission(t2 && t2.commission).agent;
+      return rule && rule.mode === 'pct' ? Math.max(0, Math.min(100, G.num(rule.value))) / 100 : 0;
+    }
+    function fits(r, s) {
+      var amt = G.num(r.amount), want = expects(s);
+      if (Math.abs(want - amt) <= 1) return true;
+      if (s.guaranteeReceived !== false && !handTicked(s)) return false;
+      return Math.abs(Math.round(want * (1 - agentCut(r)) * 100) / 100 - amt) <= 1;
+    }
+    // Exact amount first; then a night that is genuinely unpaid; a night
+    // that's already counted (typed, not seen in the bank yet) only when
+    // nothing is unpaid — so it still beats "Whole tour", never an owed night.
     function defaultShow(r, choices) {
-      var best = '', bd = Infinity;
+      var best = '', bd = Infinity, bk = -1;
       choices.forEach(function (s) {
-        if (!owedBit(r, s)) return;
+        var waiting = owedBit(r, s);
+        var m = r.kind === 'guarantee' && !!s.loggedAt && G.num(s.income && s.income.guarantee) > 0 &&
+          (waiting || handTicked(s)) && fits(r, s);
+        if (!waiting && !m) return;
+        var unpaid = r.kind !== 'guarantee' || s.guaranteeReceived === false || G.guaranteeOwed(s) > 0;
+        var rank = m ? 2 : unpaid ? 1 : 0;
         var gap = Math.abs(G.daysBetween(s.date, r.date));
-        if (gap < bd) { bd = gap; best = s.id; }
+        if (rank > bk || (rank === bk && gap < bd)) { bd = gap; best = s.id; bk = rank; }
       });
       return best;
     }
@@ -14681,7 +14989,8 @@
             choices.map(function (s) {
               return h('option', { value: s.id },
                 [dayMD(s.date), s.city || s.venue || 'Show'].filter(Boolean).join(' · ') +
-                (owedBit(r, s) ? ' · owed' : ''));
+                (!owedBit(r, s) ? '' : r.kind === 'guarantee' && s.guaranteeReceived !== false && !(G.guaranteeOwed(s) > 0)
+                  ? ' · not seen in the bank yet' : ' · owed'));
             }));
           showSel.value = r.show || '';
         } else {

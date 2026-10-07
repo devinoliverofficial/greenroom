@@ -22,7 +22,14 @@ shim = r"""<script>
         c2: { id: 'c2', date: ymd(today), merchant: 'Marriott', amount: 4560, category: 'hotels', manual: true, paid: true },
         c3: { id: 'c3', date: ymd(today), merchant: 'Delta', amount: 6890, category: 'flights', manual: true, paid: false },
         // Before the first show: the chart folds it into its first day.
-        c4: { id: 'c4', date: ymd(new Date(today.getTime() - 12 * 864e5)), merchant: 'Van rental', amount: 450, category: 'bus', manual: true, paid: true } }, imports: {},
+        c4: { id: 'c4', date: ymd(new Date(today.getTime() - 12 * 864e5)), merchant: 'Van rental', amount: 450, category: 'bus', manual: true, paid: true },
+        // Monthly utilities, the way a bank spells them: these break down into vendor groups.
+        u1: { id: 'u1', date: ymd(new Date(today.getTime() - 9 * 864e5)), merchant: 'AMZN Mktp US*2K4LT0Y93', amount: 42.17, category: 'utilities', manual: true, paid: false },
+        u2: { id: 'u2', date: ymd(new Date(today.getTime() - 6 * 864e5)), merchant: 'Amazon.com*RT4G12', amount: 18.4, category: 'utilities', manual: true, paid: false },
+        u3: { id: 'u3', date: ymd(new Date(today.getTime() - 8 * 864e5)), merchant: 'VZWRLSS*APOCC VISB', amount: 210.5, category: 'utilities', manual: true, paid: true },
+        u4: { id: 'u4', date: ymd(new Date(today.getTime() - 7 * 864e5)), merchant: 'LA FITNESS 8005551234', amount: 39.99, category: 'utilities', manual: true, paid: false },
+        u5: { id: 'u5', date: ymd(new Date(today.getTime() - 5 * 864e5)), merchant: 'PUBLIC STORAGE 28511', amount: 189, category: 'utilities', manual: true, paid: true },
+        u6: { id: 'u6', date: ymd(new Date(today.getTime() - 5 * 864e5)), merchant: 'Extra Space 1234', amount: 164, category: 'utilities', manual: true, paid: false } }, imports: {},
       bands: ['Opener Band', 'I See Stars'],
       shows: { s1: { id: 's1', date: ymd(today), city: 'Austin, TX', venue: 'Mohawk',
         daySheet: { doors: '7:00 PM', venueAddress: '912 Red River St, Austin, TX 78701' } },
@@ -109,6 +116,29 @@ shim = r"""<script>
     { key: 'TJTL RNKT', name: 'Digital Renegade', year: false, n: 5, first: '2012-03-01', last: '2012-05-20' },
     { key: 'year:2024', name: '', year: true, n: 3, first: '2024-02-01', last: '2024-11-20' }];
   var CREDIT_CITIES = ['Dallas', 'Austin', 'Houston', 'Phoenix', 'Denver'];
+  // The pretend encyclopedia (MusicBrainz), and the pages nobody runs.
+  var MB = [
+    { mbid: '11111111-1111-4111-8111-111111111111', name: 'Sleeping With Sirens', about: '', country: 'US' },
+    { mbid: '22222222-2222-4222-8222-222222222222', name: 'Bring Me the Horizon', about: 'British rock band', country: 'GB' },
+    { mbid: '33333333-3333-4333-8333-333333333333', name: 'Dance Gavin Dance', about: '', country: 'US' },
+    { mbid: '44444444-4444-4444-8444-444444444444', name: 'Nirvana', about: '90s US grunge band', country: 'US' },
+    { mbid: '55555555-5555-4555-8555-555555555555', name: 'Nirvana', about: '60s UK psychedelic band', country: 'GB' },
+    { mbid: '66666666-6666-4666-8666-666666666666', name: 'I See Stars', about: '', country: 'US' }
+  ];
+  function ghostList() {
+    var H = window.__harness;
+    if (!H.ghosts) {
+      H.ghosts = [{ id: 'pub1', handle: 'mb.11111111111141118111', name: 'Sleeping With Sirens', mbid: MB[0].mbid, about: '', country: 'US', owner: null, checked: true }];
+      H.claims = (H.claims || []).concat([{ id: 'cl1', artistId: 'pub1', userId: 'u-brent', note: 'I tour-manage them. Ask their management.',
+        link: 'https://example.com/sws-crew', status: 'pending', at: new Date(Date.now() - 36e5).toISOString() }]);
+      H.histories = H.histories || {};
+      H.histories.pub1 = { artist_id: 'pub1', status: 'ok', detail: '', total: 58, pages: 3, next_page: 0, synced_at: new Date(Date.now() - 864e5).toISOString(),
+        mb_url: 'https://www.setlist.fm/setlists/example.html', auto: true,
+        summary: { shows: 58, tours: 3, countries: 4, cities: 41, firstYear: 2010, lastYear: 2026,
+          toursList: [{ name: 'Feel Tour', n: 30, first: '2025-03-01', last: '2025-04-12' }] } };
+    }
+    return H.ghosts;
+  }
   function creditShowsOf(key) {
     var g = CREDIT_TOURS.filter(function (x) { return x.key === key; })[0];
     if (!g) return [];
@@ -189,7 +219,9 @@ shim = r"""<script>
       { id: 'y1', tour_id: 't1', date: d0, merchant: 'Buc-Ee\u2019s', amount: 64.12, category: null, account: 'Business Gold Card \u2013 1008', why: 'New merchant' },
       { id: 'y2', tour_id: null, date: d0, merchant: 'Guitar Center', amount: 89.99, category: null, account: 'Merch \u2013 1885', why: 'From Merch \u2013 1885' },
       { id: 'y3', tour_id: 't1', date: d0, merchant: 'Hotel Van Zandt', amount: 212.4, category: 'hotels', account: 'Business Gold Card \u2013 1008', why: 'Maybe already in' },
-      { id: 'y4', tour_id: 't1', date: d0, merchant: 'Marriott', amount: -120, category: 'hotels', account: 'Business Gold Card \u2013 1008', why: 'Refund' }
+      { id: 'y4', tour_id: 't1', date: d0, merchant: 'Marriott', amount: -120, category: 'hotels', account: 'Business Gold Card \u2013 1008', why: 'Refund' },
+      // A bank-style name as long as they really come: the row must still show all of itself.
+      { id: 'y5', tour_id: 't1', date: d0, merchant: 'AMAZON MKTPL*2X4Y67ZQ3 AMZN.COM/BILL WA 98109', amount: 1249.37, category: null, account: 'Business Gold Card \u2013 1008', why: 'New merchant' }
     ]
   };
   window.__harness.calls = []; window.__harness.marked = []; window.__harness.feedFns = [];
@@ -338,12 +370,12 @@ shim = r"""<script>
         var sh = {};
         if (o.kind === 'merch') sh[o.showId] = { merchReceived: true, merchReceivedAt: dep.date, merchDeposit: dep.amount };
         else {
-          // Same rule as migration 0072: only bank money beyond what's on the show is new.
+          // Same rule as migrations 0072 + 0074: only bank money beyond what's on the show is new.
           var tdoc = tours[o.tourId] || {};
           var cur = (tdoc.shows || {})[o.showId] || {};
           var had = Number(cur.guaranteeDeposit) > 0 ? Number(cur.guaranteeDeposit) : 0;
           if (cur.guaranteeReceived === true && had > 0) {
-            var seen = (cur.guaranteeSeen != null ? Number(cur.guaranteeSeen) : cur.guaranteeReceivedAt ? had : 0) + dep.amount;
+            var seen = Math.min(cur.guaranteeSeen != null ? Number(cur.guaranteeSeen) : cur.guaranteeReceivedAt ? had : 0, had) + dep.amount;
             if (seen > had + 1) {
               var gw = Object.assign({}, cur.guaranteeWhy || {});
               var owed = Math.max(0, (Number(gw.owed) || 0) - (seen - had));
@@ -485,6 +517,102 @@ shim = r"""<script>
       return Promise.resolve({ id: 'x9', artist: 'Other Band', name: 'Spring Fling', flyer: H.flyerX9 || '',
         dates: [{ date: '2026-03-02', city: 'Detroit, MI', venue: 'Saint Andrew’s Hall' }, { date: '2026-03-04', city: 'Chicago, IL', venue: 'Bottom Lounge' }, { date: '2026-04-11', city: 'Anaheim, CA', venue: '' }] });
     },
+    /* Every artist, in memory. MB is the pretend encyclopedia; a hit with no
+       page gets an unclaimed one when opened, whose history then reads in a
+       page per nudge. Sleeping With Sirens starts out as an unclaimed page
+       with a claim from Brent waiting, and the test user is a Greenroom
+       admin (set __harness.admin = false to see the app without that). */
+    mbSearch: function (text) {
+      var H = window.__harness, t = String(text || '').trim().toLowerCase();
+      H.mbAsks = (H.mbAsks || []).concat([t]);
+      if (H.mbDown) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      return new Promise(function (res) { setTimeout(function () {
+        res(t.length < 2 ? [] : MB.filter(function (a) { return a.name.toLowerCase().indexOf(t) >= 0; }).slice(0, 8).map(function (a) { return Object.assign({ type: 'Group', score: 100 }, a); }));
+      }, 120); });
+    },
+    openMbArtist: function (mbid, nameHint) {
+      var H = window.__harness;
+      var has = (H.acts || []).filter(function (a) { return a.mbid === mbid; })[0] || ghostList().filter(function (g) { return g.mbid === mbid; })[0];
+      if (has) return Promise.resolve({ id: has.id, made: false });
+      if (H.mbTooMany) return Promise.reject(Object.assign(new Error('too-many'), { code: 'too-many' }));
+      var m = MB.filter(function (a) { return a.mbid === mbid; })[0] || { name: nameHint || 'Artist', about: '', country: '' };
+      var g = { id: 'gh' + (ghostList().length + 1), handle: 'mb.' + String(mbid).replace(/-/g, '').slice(0, 20), name: m.name, mbid: mbid,
+        about: m.about || '', country: m.country || '', owner: null, checked: false };
+      H.ghosts.push(g);
+      H.histories = H.histories || {};
+      H.histories[g.id] = { artist_id: g.id, status: 'checking', detail: '', total: 0, pages: 0, next_page: 1, synced_at: null, mb_url: '', summary: {}, auto: true };
+      return Promise.resolve({ id: g.id, made: true });
+    },
+    historyNudge: function (artistId, fresh) {
+      var H = window.__harness;
+      H.nudges = (H.nudges || 0) + 1;
+      return window.GR_BACKEND.artistHistory(artistId).then(function (row) {
+        if (!row) return null;
+        if (!row.auto) return row;
+        var g = ghostList().filter(function (x) { return x.id === artistId; })[0];
+        // One step a nudge: confirmed by the encyclopedia, then three pages, then done.
+        if (fresh && row.status === 'ok') { row.status = 'syncing'; row.next_page = 1; }
+        else if (row.status === 'checking') { row.status = 'syncing'; row.pages = 3; row.total = 58; if (g) g.checked = true; }
+        else if (row.status === 'syncing') {
+          row.next_page += 1;
+          row.summary = { shows: Math.min(58, (row.next_page - 1) * 20), tours: row.next_page - 1, countries: Math.min(4, row.next_page), cities: Math.min(41, (row.next_page - 1) * 15),
+            firstYear: 2010, lastYear: 2026, toursList: [{ name: 'Feel Tour', n: 20, first: '2025-03-01', last: '2025-04-12' }].slice(0, row.next_page - 1) };
+          if (row.next_page > 3) { row.status = 'ok'; row.next_page = 0; row.synced_at = new Date().toISOString();
+            row.mb_url = 'https://www.setlist.fm/setlists/example.html'; }
+        }
+        return JSON.parse(JSON.stringify(row));
+      });
+    },
+    claimArtist: function (artistId, note, link) {
+      var H = window.__harness; H.claims = H.claims || [];
+      var g = ghostList().filter(function (x) { return x.id === artistId; })[0];
+      if (!g || g.owner) return Promise.resolve({ ok: false, why: 'taken' });
+      if (String(note || '').trim().length < 3) return Promise.reject(Object.assign(new Error('short'), { code: 'short' }));
+      H.claims = H.claims.filter(function (c) { return !(c.artistId === artistId && c.userId === 'u-devin'); });
+      H.claims.push({ id: 'cl' + Date.now(), artistId: artistId, userId: 'u-devin', note: String(note).trim(), link: String(link || '').trim(), status: 'pending', at: new Date().toISOString() });
+      return Promise.resolve({ ok: true });
+    },
+    withdrawClaim: function (artistId) {
+      var H = window.__harness, n = (H.claims || []).length;
+      H.claims = (H.claims || []).filter(function (c) { return !(c.artistId === artistId && c.userId === 'u-devin' && c.status === 'pending'); });
+      return Promise.resolve({ ok: H.claims.length < n });
+    },
+    myClaims: function () {
+      var H = window.__harness;
+      return Promise.resolve((H.claims || []).filter(function (c) { return c.userId === 'u-devin'; }).map(function (c) {
+        var g = ghostList().filter(function (x) { return x.id === c.artistId; })[0] || {};
+        return { artistId: c.artistId, artist: g.name || '', status: c.status, at: c.at, mine: false }; }));
+    },
+    claimQueue: function () {
+      var H = window.__harness, P = window.GR_BACKEND.people;
+      ghostList();
+      if (H.admin === false) return Promise.resolve(null);
+      return Promise.resolve((H.claims || []).filter(function (c) { return c.status === 'pending'; }).map(function (c) {
+        var g = H.ghosts.filter(function (x) { return x.id === c.artistId; })[0] || {}, p = P[c.userId] || {};
+        return { id: c.id, artistId: c.artistId, artist: g.name || '', about: g.about || '', country: g.country || '', userId: c.userId,
+          name: p.name || 'Devin Oliver', handle: c.userId === 'u-devin' ? (H.handle || '') : (p.handle || ''), avatar: '', roles: p.roles || [], tourRole: p.tourRole || '',
+          email: c.userId === 'u-brent' ? 'brent@example.com' : 'devin@example.com', note: c.note, link: c.link, at: c.at,
+          others: H.claims.filter(function (o) { return o.artistId === c.artistId && o.status === 'pending' && o.id !== c.id; }).length };
+      }));
+    },
+    decideClaim: function (claimId, approve) {
+      var H = window.__harness, c = (H.claims || []).filter(function (x) { return x.id === claimId; })[0];
+      H.decided = (H.decided || []).concat([{ id: claimId, approve: !!approve }]);
+      if (!c || c.status !== 'pending') return Promise.resolve({ ok: false, why: 'gone' });
+      if (!approve) { c.status = 'declined'; return Promise.resolve({ ok: true }); }
+      var g = H.ghosts.filter(function (x) { return x.id === c.artistId; })[0];
+      if (!g || g.owner) { c.status = 'declined'; return Promise.resolve({ ok: false, why: 'taken' }); }
+      c.status = 'approved';
+      H.claims.forEach(function (o) { if (o.artistId === c.artistId && o.id !== c.id && o.status === 'pending') o.status = 'declined'; });
+      var slug = g.name.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 24);
+      if (c.userId === 'u-devin') {
+        // Theirs now: it moves in with the pages the test user runs, history and all.
+        H.ghosts = H.ghosts.filter(function (x) { return x.id !== g.id; });
+        H.acts = H.acts || [];
+        H.acts.push({ id: g.id, handle: slug, name: g.name, avatar: '', bio: '', members: [], mbid: g.mbid, verified: true, about: g.about, country: g.country });
+      } else { g.owner = c.userId; g.handle = slug; }
+      return Promise.resolve({ ok: true });
+    },
     /* Artist profiles, in memory. Searchable accounts: Brent, plus two people
        you don't tour with (found by @username only). */
     myArtists: function () {
@@ -605,9 +733,19 @@ shim = r"""<script>
     },
     artistCard: function (id) {
       var H = window.__harness, P = window.GR_BACKEND.people, a = (H.acts || []).filter(function (x) { return x.id === id; })[0];
+      var g = ghostList().filter(function (x) { return x.id === id; })[0];
+      if (!a && g) {
+        // A page nobody runs (or one someone else was given): the viewer's side only.
+        var gf = (H.artistFollows || []).indexOf(g.id) >= 0;
+        var mc = (H.claims || []).filter(function (c) { return c.artistId === g.id && c.userId === 'u-devin'; })[0];
+        return Promise.resolve({ id: g.id, handle: g.handle, name: g.name, bio: '', avatar: '', mine: false,
+          unclaimed: !g.owner, verified: !!g.owner, about: g.about || '', country: g.country || '', myClaim: mc ? mc.status : null,
+          iFollow: gf, followers: gf ? 1 : 0, members: [], tours: [] });
+      }
       if (!a) return Promise.resolve(null);
       var fol = (H.artistFollows || []).indexOf(a.id) >= 0;
       return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '', mine: true,
+        unclaimed: false, verified: !!a.verified || /i see stars/i.test(a.name || ''), about: a.about || '', country: a.country || '', myClaim: null,
         iFollow: fol, followers: (a.followers || 0) + (fol ? 1 : 0),
         members: a.members.map(function (m) { return Object.assign({ userId: m.userId, kind: m.kind, role: m.role || '', avatar: '', endorsed: !!m.endorsed,
           hasCredits: !!((H.creditRows || {})[a.id + ':' + m.userId] && H.creditRows[a.id + ':' + m.userId].approved) }, P[m.userId], m.userId === 'u-devin' ? { handle: H.handle || '' } : {}); }),
@@ -616,8 +754,9 @@ shim = r"""<script>
     artistTourCard: function () { return Promise.resolve(null); },
     findArtists: function (text) {
       var H = window.__harness, t = String(text || '').trim().replace(/^@/, '').toLowerCase();
-      var all = (H.acts || []).map(function (a) { return { id: a.id, name: a.name, handle: a.handle, avatar: a.avatar, mine: true }; })
-        .concat([{ id: 'pub1', name: 'Sleeping With Sirens', handle: 'sws', avatar: '', mine: false }]);
+      var all = (H.acts || []).map(function (a) { return { id: a.id, name: a.name, handle: a.handle, avatar: a.avatar, mine: true, unclaimed: false, mbid: a.mbid || '', about: '' }; })
+        .concat(ghostList().filter(function (g) { return g.checked; }).map(function (g) {
+          return { id: g.id, name: g.name, handle: g.handle, avatar: '', mine: false, unclaimed: !g.owner, mbid: g.mbid, about: g.about || '' }; }));
       return Promise.resolve(t.length < 2 ? [] : all.filter(function (a) { return a.handle.indexOf(t) === 0 || a.name.toLowerCase().indexOf(t) >= 0; }));
     },
     findTours: function (text) {

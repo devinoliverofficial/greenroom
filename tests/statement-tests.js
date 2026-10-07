@@ -159,6 +159,38 @@
     eq(S.cleanMerchant('TST* THE BLIND PIG'), 'The Blind Pig', 'toast');
     eq(S.cleanMerchant('PILOT TRAVEL CTR #482'), 'Pilot Travel Ctr', 'store number');
     eq(S.cleanMerchant('SHELL OIL 574123'), 'Shell Oil', 'trailing digits');
+    eq(S.cleanMerchant('PAYPAL *SPOTIFY'), 'Spotify', 'a tag, then a name that starts like one');
+    eq(S.cleanMerchant('SQ*BLUE BOTTLE'), 'Blue Bottle', 'no space around the star');
+    eq(S.cleanMerchant('POS DEBIT - WALGREENS'), 'Walgreens', 'tag, dash, name');
+  });
+
+  test('a name that only starts like a processor tag keeps its first letters', function () {
+    eq(S.cleanMerchant('Spotify'), 'Spotify', 'sp');
+    eq(S.cleanMerchant('SPOTIFY USA'), 'Spotify Usa', 'sp, shouting');
+    eq(S.cleanMerchant('Squarespace'), 'Squarespace', 'sq');
+    eq(S.cleanMerchant('Instacart'), 'Instacart', 'in');
+    eq(S.cleanMerchant('In-N-Out Burger'), 'In-N-Out Burger', 'in, with a dash right after');
+    eq(S.cleanMerchant('In N Out Burger'), 'In N Out Burger', 'in, as a word of the name');
+    eq(S.cleanMerchant('IN *INVOICE 1234'), 'Invoice', 'in, as a tag with its star');
+    eq(S.cleanMerchant('Postmates'), 'Postmates', 'pos');
+    eq(S.cleanMerchant('Echo Park Storage'), 'Echo Park Storage', 'ec');
+    eq(S.cleanMerchant('Spirit Airlines'), 'Spirit Airlines', 'sp');
+    eq(S.cleanMerchant('Purchase Green'), 'Green', 'a whole-word tag with a space still comes off');
+  });
+
+  test('a charge stored with its name clipped is still recognised on re-import', function () {
+    var existing = [{ date: '2026-09-09', merchant: 'otify', amount: 11.99 }];
+    eq(S.markDuplicates([{ date: '2026-09-09', merchant: 'Spotify', amount: 11.99 }], existing)[0].duplicate, true, 'old clipped name matches');
+    eq(S.markDuplicates([{ date: '2026-09-09', merchant: 'Spotify', amount: 11.99 }], [])[0].duplicate, false, 'nothing stored, nothing matched');
+    // The old reading of the raw line is tried too: "POS DEBIT ..." used to keep the word Debit.
+    var old = [{ date: '2026-09-10', merchant: 'Debit Walgreens', amount: 8.5 }];
+    var row = { date: '2026-09-10', description: 'POS DEBIT WALGREENS #1234', merchant: S.cleanMerchant('POS DEBIT WALGREENS #1234'), amount: 8.5 };
+    eq(row.merchant, 'Walgreens', 'read the new way'); eq(S.markDuplicates([row], old)[0].duplicate, true, 'and still matched to the old one');
+    eq(S.markDuplicates([{ date: '2026-09-10', description: 'CVS PHARMACY', merchant: 'Cvs Pharmacy', amount: 8.5 }], old)[0].duplicate, false,
+      'a different shop on the same day for the same amount is not a duplicate');
+    // A category learned under a clipped name still fills in.
+    var labels = S.learnLabel({}, 'trum', 'utilities');
+    eq(S.applyLabels([{ description: 'SPECTRUM', merchant: 'Spectrum' }], labels)[0].category, 'utilities', 'learned under the old name');
   });
 
   test('merchants normalize to the same key despite punctuation and case', function () {

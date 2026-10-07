@@ -905,12 +905,15 @@ span.avatar { cursor: inherit; }
 .tag { display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .tag.attn { background: var(--surface-2); color: var(--ink-2); }
 .tag.quiet { background: none; color: var(--ink-3); font-weight: 500; padding-right: 0; }
-.show-row.is-today .d { color: var(--pos); }
-/* Where a night's money stands, read off the city: red, none of it in yet;
-   orange, part of it; green (with the glow), all of it. */
+/* (Not on the Income list: there, green on a date means the night is paid.) */
+.show-row.is-today:not(.inc-row) .d { color: var(--pos); }
+/* Where a night's money stands, two ways only: red until both the guarantee
+   and the merch are received, green (with the glow) once both are. On the
+   Income list the date carries the colour as well as the city. */
 .show-row.owed .city { color: var(--neg); }
-.show-row.partial .city { color: var(--part); }
 .show-row.settled .city { color: var(--pos); text-shadow: 0 0 12px color-mix(in srgb, var(--pos) 50%, transparent); }
+.show-row.inc-row.owed .date .m, .show-row.inc-row.owed .date .d, .show-row.inc-row.owed .date .w { color: var(--neg); }
+.show-row.inc-row.settled .date .m, .show-row.inc-row.settled .date .d, .show-row.inc-row.settled .date .w { color: var(--pos); }
 /* Travel and off days sit in the schedule but never beg for a tap. */
 .show-row.is-off { cursor: default; opacity: .55; }
 .show-row.is-off .city { font-weight: 500; color: var(--ink-2); }
@@ -1526,7 +1529,7 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .preview strong.pos { color: var(--pos); }
 .preview strong.neg { color: var(--neg); }
 /* Review lists — flyer dates and card charges */
-.review { display: grid; gap: 10px; margin: 6px 0 4px; }
+.review { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 6px 0 4px; }
 .rv-row {
   display: flex; align-items: flex-start; gap: 11px; padding: 12px;
   border: 1px solid var(--line); border-radius: 14px; background: var(--surface);
@@ -1558,7 +1561,7 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 .rv-add1 { flex: none; min-width: 64px; }
 .rv-aside { justify-self: start; font-size: 12.5px; color: var(--ink-3); }
 /* Where a charge goes: this tour, Off Tour, or the upcoming tour. */
-.rv-dwrap { display: grid; gap: 6px; }
+.rv-dwrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .rv-dest { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .rv-dlabel { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin-right: 2px; }
 .rv-sheet .rv-upsel { height: 34px; font-size: 13px; padding: 0 9px; border-radius: 9px; }
@@ -1704,10 +1707,16 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .hist-tier.tier-gold { border-color: #e6c35c; color: #e6c35c; }
 .hist-tier.tier-diamond { border-color: #8ad8e8; color: #8ad8e8; }
 .hist-tier.tier-legacy { border-color: var(--pos); color: var(--pos); }
-.rv-fields { flex: 1; min-width: 0; display: grid; gap: 8px; }
+.rv-fields { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .rv-line { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr); gap: 8px; }
 .rv-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .rv-name { min-width: 0; font-size: 16px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A card charge shows all of itself: the whole merchant name, on as many
+   lines as it takes, with the amount always in view beside it. Nothing on
+   a charge is ever off the side of the screen. */
+.rv-charge .rv-name { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.25; }
+.rv-charge .rv-head .amt { flex: none; }
+.rv-charge .rv-sub { flex-wrap: wrap; }
 .rv-sub { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-3); }
 .rv-flag {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
@@ -2714,6 +2723,40 @@ button.fl-row { cursor: pointer; }
 .sw-edit { background: var(--surface-2); color: var(--ink); }
 .sw-undo { background: var(--neg); color: #fff; }
 .sw-hint { margin: -4px 2px 10px; }
+.sw-acts .sw-group { border-right: 1px solid var(--line-2); }
+/* A category that breaks down into its vendors (Monthly utilities): the
+   dropdown under its line on Expenses. The toggle is a slim row; each group
+   is a quieter, stepped-in copy of the category row, so its numbers sit
+   under the same Credit / Debit / Cash columns. */
+.row.ex-sub-toggle { width: 100%; min-height: 0; padding: 7px 8px 8px 20px; gap: 6px; appearance: none; border: 0;
+  border-bottom: 1px solid var(--line-2); background: var(--surface-2); color: var(--ink-2); font: inherit;
+  font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; }
+.ex-sub-toggle > .ic { flex: none; color: var(--ink-3); transition: transform .18s ease; }
+.ex-sub-toggle.open > .ic { transform: rotate(90deg); }
+.row.ex-row.ex-sub, .exp-page .row.ex-row.ex-sub { min-height: 44px; padding-top: 7px; padding-bottom: 7px; padding-left: 20px; background: var(--surface-2); }
+.ex-row.ex-sub .row-label, .exp-page .ex-row.ex-sub .row-label { font-size: 12px; font-weight: 600; color: var(--ink); }
+.ex-row.ex-sub .row-label .hint, .exp-page .ex-row.ex-sub .row-label .hint { margin-top: 1px; font-size: 11px; color: var(--ink-3); }
+.ex-row.ex-sub .amt, .exp-page .ex-row.ex-sub .amt { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+/* The same breakdown inside the logged list: a heading per group (tap it
+   for that group alone), its total on the right. */
+.row.head.lg-head { width: 100%; appearance: none; border: 0; border-bottom: 1px solid var(--line-2); font: inherit; font-size: 12px;
+  font-weight: 700; text-align: left; cursor: pointer; justify-content: space-between; padding: 11px 15px 9px; color: var(--ink-2); }
+.lg-head .lg-name { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: var(--ink); }
+.lg-head .lg-name .ic { color: var(--ink-3); }
+.lg-head .amt { font-size: 13px; }
+/* Moving an entry to another group: the groups as one-tap choices. */
+.vg-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin-bottom: 14px; }
+.vg-pick { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 8px 12px; appearance: none;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font: inherit; font-size: 15px;
+  font-weight: 600; text-align: left; cursor: pointer; }
+.vg-pick .vg-dot { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--ink-3); }
+.vg-pick .vg-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.vg-pick .amt { font-size: 13px; color: var(--ink-2); }
+.vg-pick.on { border-color: var(--pos); background: var(--pos-soft); }
+.vg-pick.on .vg-dot { border-color: var(--pos); background: radial-gradient(circle, var(--pos) 0 45%, transparent 50%); }
+.vg-all { display: flex; align-items: flex-start; gap: 10px; margin: 2px 0 14px; font-size: 14px; line-height: 1.35; color: var(--ink-2); cursor: pointer; }
+.vg-all .rv-check { flex: none; margin: 1px 0 0; }
+.vg-all span { min-width: 0; overflow-wrap: anywhere; }
 /* The day sheet's poll button on a day off: the Calendar's, bigger, centred. */
 .ds-poll { display: flex; justify-content: center; margin: 4px 0 18px; }
 .ds-poll .cal-btn { min-height: 44px; padding: 0 26px; font-size: 15px; }

@@ -684,6 +684,85 @@
       if (q.error) throw mapError(q.error);
       return isObj(q.data) ? q.data : { ok: false };
     },
+    /* ---- Every artist. Search reaches every act there is by asking
+       MusicBrainz, the open music encyclopedia, as you type (the phone asks
+       it directly: it is public, needs no key, and only ever sees the words
+       typed into Search). An act with no page here gets one the moment it
+       is opened: unclaimed, run by nobody, until someone in the band claims
+       it and a Greenroom admin says yes. ---- */
+    mbSearch: async function (text, signal) {
+      var words = String(text || '').replace(/["\\+\-!(){}\[\]^~*?:\/&|]/g, ' ').trim().split(/\s+/).filter(Boolean).slice(0, 6);
+      if (!words.length || words.join('').length < 2) return [];
+      // The whole phrase, or every word with the last one still being typed.
+      var query = 'artist:"' + words.join(' ') + '" OR artist:(' + words.map(function (w, i) {
+        return i === words.length - 1 ? w + '*' : w;
+      }).join(' AND ') + ')';
+      var res = await fetch('https://musicbrainz.org/ws/2/artist?fmt=json&limit=12&query=' + encodeURIComponent(query),
+        { headers: { Accept: 'application/json' }, signal: signal || undefined });
+      if (!res.ok) throw err(res.status === 503 || res.status === 429 ? 'busy' : 'unavailable');
+      var body = await res.json();
+      var list = Array.isArray(body && body.artists) ? body.artists : [];
+      // The encyclopedia also files characters, orchestras' sub-units and
+      // plain junk: only acts that tour, with a name a page could carry.
+      return list.filter(function (a) {
+        var type = String(a.type || '');
+        return a && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(a.id || '')) &&
+          (type === 'Group' || type === 'Person' || type === 'Orchestra' || type === 'Choir') &&
+          String(a.name || '').trim() && String(a.name).length <= 60 && Number(a.score) >= 55;
+      }).slice(0, 8).map(function (a) {
+        return { mbid: String(a.id), name: String(a.name).trim(), about: String(a.disambiguation || '').slice(0, 80),
+          country: String(a.country || ''), type: String(a.type || ''), score: Number(a.score) || 0 };
+      });
+    },
+    // The page for an encyclopedia entry: the one it already has here, or a
+    // new unclaimed one. { id, made }
+    openMbArtist: async function (mbid, nameHint) {
+      var q = await sb.rpc('artist_open_mb', { mb_id: String(mbid || ''), name_hint: String(nameHint || '').slice(0, 60) });
+      if (q.error) {
+        if (/too many today/i.test(String(q.error.message || ''))) { var many = new Error('too-many'); many.code = 'too-many'; throw many; }
+        throw mapError(q.error);
+      }
+      return isObj(q.data) ? q.data : null;
+    },
+    // Someone is looking at a page: its history steps along now rather than
+    // on the minute. Hands back the history row (null when there is none).
+    historyNudge: async function (artistId, fresh) {
+      var q = await sb.rpc('artist_history_nudge', { a_id: artistId, fresh: !!fresh });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    // Asking for a page nobody runs: who you are to the act, and where that can be checked.
+    claimArtist: async function (artistId, note, link) {
+      var q = await sb.rpc('claim_artist', { a_id: artistId, note: String(note || '').slice(0, 500), link: String(link || '').slice(0, 200) });
+      if (q.error) {
+        var m = String(q.error.message || '');
+        if (/say who you are/i.test(m)) { var e1 = new Error('short'); e1.code = 'short'; throw e1; }
+        if (/too many waiting/i.test(m)) { var e2 = new Error('too-many'); e2.code = 'too-many'; throw e2; }
+        throw mapError(q.error);
+      }
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    withdrawClaim: async function (artistId) {
+      var q = await sb.rpc('withdraw_claim', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    myClaims: async function () {
+      var q = await sb.rpc('my_claims');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    // For a Greenroom admin: every claim waiting. Null for everyone else.
+    claimQueue: async function () {
+      var q = await sb.rpc('claim_queue');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : null;
+    },
+    decideClaim: async function (claimId, approve) {
+      var q = await sb.rpc('decide_claim', { c_id: claimId, approve: !!approve });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
     /* ---- New income: bank deposits on watched accounts (date and amount
        only) that no matcher claimed. RLS hands them to their owner alone. ---- */
     incomeNew: async function () {

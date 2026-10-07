@@ -195,16 +195,26 @@
     return false;
   }
 
-  var PREFIX = /^(sq|tst|sp|py|pp|pos|dd|ec|in|chk|paypal|pmnt|purchase|debit card purchase|pos debit|card purchase|recurring payment|ach debit)\s*\*?\s*[-–]?\s*/i;
+  // A processor's tag in front of the real name ("SQ *", "TST* ", "PAYPAL *").
+  // It only counts as one when something sets it apart from the name — a
+  // star, a space, or a dash — so "Spotify", "Instacart" and "In-N-Out"
+  // keep their first letters.
+  // (The shortest, most word-like tags — "in", "ec", "py", "pp" — need the
+  // star itself: "In N Out Burger" is a name, "IN *INVOICE" is a tag.)
+  var PREFIX = /^(?:(?:debit card purchase|recurring payment|card purchase|pos debit|ach debit|purchase|paypal|pmnt|sq|tst|sp|dd|pos|chk)(?:\s*\*\s*|\s+[-–]?\s*|\s*[-–]\s+)|(?:py|pp|ec|in)\s*\*\s*)/i;
+  // The same tag as it used to be read (nothing needed to set it apart), kept
+  // only to recognise charges stored back when that clipped real names.
+  var OLD_PREFIX = /^(sq|tst|sp|py|pp|pos|dd|ec|in|chk|paypal|pmnt|purchase|debit card purchase|pos debit|card purchase|recurring payment|ach debit)\s*\*?\s*[-–]?\s*/i;
   var STATES = 'AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC|AB|BC|MB|NB|NL|NS|ON|PE|QC|SK';
 
   // A deterministic first pass. Claude does the polish, but this stands alone
   // when Claude is unavailable and keeps the fallback readable.
-  function cleanMerchant(desc) {
+  function cleanMerchant(desc) { return cleanWith(desc, PREFIX); }
+  function cleanWith(desc, prefix) {
     var t = String(desc || '').trim();
     if (!t) return '';
     for (var i = 0; i < 3; i++) {
-      var next = t.replace(PREFIX, '');
+      var next = t.replace(prefix, '');
       if (next === t) break;
       t = next;
     }
@@ -323,6 +333,20 @@
     });
     return (incoming || []).map(function (c) {
       var k = chargeKey(c);
+      // A charge stored the old way (an older build, or the card feed) may
+      // have lost the front of its name ("otify" for Spotify): the same
+      // statement read again still has to recognise it. The raw line read
+      // the old way is the surest match; the name with the old tags taken
+      // off is the next.
+      if (!(counts[k] > 0)) {
+        var m = String(c.merchant || '');
+        for (var i = 0; i < 3; i++) { var next = m.replace(OLD_PREFIX, ''); if (next === m) break; m = next; }
+        var tries = c.description ? [cleanWith(c.description, OLD_PREFIX), m] : [m];
+        for (var j = 0; j < tries.length; j++) {
+          var k2 = chargeKey(Object.assign({}, c, { merchant: tries[j] }));
+          if (counts[k2] > 0) { k = k2; break; }
+        }
+      }
       var dup = counts[k] > 0;
       if (dup) counts[k] -= 1;
       return Object.assign({}, c, { duplicate: dup });
@@ -365,7 +389,9 @@
    */
   function applyLabels(charges, labels) {
     return (charges || []).map(function (c) {
-      var learned = learnedCategory(labels, c.merchant);
+      // (A category learned under a name stored the old way still fills in.)
+      var learned = learnedCategory(labels, c.merchant) ||
+        (c.description ? learnedCategory(labels, cleanWith(c.description, OLD_PREFIX)) : null);
       if (learned) return Object.assign({}, c, { category: learned, source: 'learned' });
       if (c.suggested) return Object.assign({}, c, { category: c.suggested, source: 'suggested' });
       return Object.assign({}, c, { category: null, source: null });

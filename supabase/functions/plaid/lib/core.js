@@ -496,10 +496,14 @@
   // Commission that came off the top before the deposit: already paid.
   // (An agency deposit holds the whole guarantee, counted on its own.)
   // who: 'agent' or 'mgmt' for one of them alone.
+  // It can only sit in the part of the gap nothing else accounts for: what
+  // is still owed, what was lost, and what came in another way are counted
+  // first, so the same missing dollars are never taken off twice.
   function guaranteeKept(show, who) {
     var room = guaranteeRoom(show);
     if (!(room > 0)) return 0;
     var why = guaranteeWhy(show);
+    room = Math.max(0, round((room - guaranteeOwed(show) - guaranteeLost(show) - (why.advance || 0) - (why.cash || 0)) * 100) / 100);
     var a = Math.min(room, why.agent || 0), m = Math.min(room - a, why.mgmt || 0);
     return who === 'agent' ? a : who === 'mgmt' ? m : a + m;
   }
@@ -515,18 +519,29 @@
     var inc = show && isObj(show.income) ? show.income : {};
     return Math.max(0, round((num(inc.merch) - num(show && show.merchCash)) * 100) / 100);
   }
-  // A logged night's money: 'owed' when none of it has landed, 'partial'
-  // when one of the guarantee and the merch deposit has, 'settled' once
-  // everything logged is in, and null for a night not logged yet.
+  // Whether each half of a night's money is in. A guarantee with money
+  // logged is in once it's received in full (nothing still owed); merch is
+  // in once its deposit has landed (all-cash merch has none to wait for).
+  // A half with nothing logged under it only counts as in when its Received
+  // box was ticked by hand, so a night can't read as paid just because one
+  // of the two was never entered. That tick ("nothing to wait for here") has
+  // keys of its own, guaranteeNone / merchNone: guaranteeReceived and
+  // merchReceived keep meaning "this money has landed", which is what the
+  // bank matchers and the atVenu readers go by.
+  function showReceived(show) {
+    var inc = show && isObj(show.income) ? show.income : {};
+    return {
+      guarantee: num(inc.guarantee) > 0 ? guaranteeIn(show) && !(guaranteeOwed(show) > 0) : !!show && show.guaranteeNone === true,
+      merch: num(inc.merch) > 0 ? !(merchDue(show) > 0) || show.merchReceived !== false : !!show && show.merchNone === true
+    };
+  }
+  // A logged night's money, two ways only: 'settled' when BOTH the guarantee
+  // and the merch are received, 'owed' until then. Null for a night not
+  // logged yet.
   function showMoneyState(show) {
     if (!show || !show.loggedAt) return null;
-    var inc = isObj(show.income) ? show.income : {};
-    var parts = [];
-    if (num(inc.guarantee) > 0) parts.push(guaranteeIn(show) && !(guaranteeOwed(show) > 0));
-    if (merchDue(show) > 0) parts.push(show.merchReceived !== false);
-    var got = parts.filter(Boolean).length;
-    if (got === parts.length) return 'settled';
-    return got === 0 ? 'owed' : 'partial';
+    var r = showReceived(show);
+    return r.guarantee && r.merch ? 'settled' : 'owed';
   }
 
   /* The merch cash log: what the table took in cash, and where every dollar
@@ -583,6 +598,113 @@
     var pa = String(a.posted || a.date || ''), pb = String(b.posted || b.date || '');
     if (pa !== pb) return pb < pa ? -1 : 1;
     return String(a.merchant || '').localeCompare(String(b.merchant || ''));
+  }
+
+  /* ---------------- Vendors inside a category ---------------- */
+
+  /* Monthly utilities is many bills under one line. This sorts a category's
+     entries into the companies (or kinds of bill) behind them, from the name
+     each charge was stored under. It is a second way of looking at the same
+     entries and nothing more: it never changes a total, a stored name, or
+     anything calc() counts.
+     A bank writes one company a dozen ways ("AMZN Mktp US*2K4LT0Y93",
+     "Amazon.com*RT4G12"), so the well-known ones are matched by pattern;
+     the first match wins, brands before kinds (so "iCloud storage" is Apple,
+     not Storage). Everything else groups under its own name with the order
+     codes and store numbers taken off. A few patterns also catch names that
+     were stored with the front clipped off ("otify" for Spotify, "trum" for
+     Spectrum): the card feed still names charges that way. */
+  var VENDOR_ALIASES = [
+    { label: 'Amazon', re: /\b(amazon|amzn|amz|prime video)\b/ },
+    { label: 'Verizon', re: /\b(verizon|vzw|vzwrlss|vz wireless)\b/ },
+    { label: 'AT&T', re: /\b(at t|att)\b/ },
+    { label: 'T-Mobile', re: /\b(t mobile|tmobile)\b/ },
+    { label: 'LA Fitness', re: /\bla ?fitness\b/ },
+    { label: 'Planet Fitness', re: /\bplanet fit(ness)?\b/ },
+    { label: 'Apple', re: /\b(apple|itunes|icloud)\b/ },
+    { label: 'Google', re: /\b(google|youtube|gsuite)\b/ },
+    { label: 'Spotify', re: /\b(sp)?otify\b/ },
+    { label: 'Netflix', re: /\bnetflix\b/ },
+    { label: 'Adobe', re: /\badobe\b/ },
+    { label: 'Dropbox', re: /\bdropbox\b/ },
+    { label: 'Squarespace', re: /\b(sq)?uarespace\b/ },
+    { label: 'QuickBooks', re: /\b(quickbooks|intuit|tuit)\b/ },
+    { label: 'Xfinity', re: /\b(xfinity|comcast)\b/ },
+    { label: 'Spectrum', re: /\b(spectrum|ectrum|trum|charter comm\w*)\b/ },
+    { label: 'Storage', re: /\b(storage|extra space|cubesmart|storquest|u haul|uhaul)\b/ }
+  ];
+  // Words at the end of a bank's line that aren't part of the name.
+  var VENDOR_TAIL = /^(com|net|org|co|inc|llc|ltd|corp|usa|us|bill|billing|payment|payments|pmt|pymt|autopay|recurring|online|web|www)$/;
+  function vendorNorm(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+  // The group a stored name falls into: { key, label }. '' is "no vendor".
+  function vendorOf(name) {
+    var n = vendorNorm(name);
+    if (!n) return { key: '', label: 'Other' };
+    for (var i = 0; i < VENDOR_ALIASES.length; i++) {
+      if (VENDOR_ALIASES[i].re.test(n)) return { key: vendorNorm(VENDOR_ALIASES[i].label), label: VENDOR_ALIASES[i].label };
+    }
+    // Order codes and store numbers (a word with a digit in it, after the
+    // first) come off; a number that leads the name is part of it
+    // ("24 Hour Fitness", "7-Eleven").
+    var words = n.split(' ').filter(function (w, i) { return i === 0 || !/\d/.test(w); });
+    while (words.length > 1 && VENDOR_TAIL.test(words[words.length - 1])) words.pop();
+    var key = words.join(' ') || n;
+    var raw = String(name).trim();
+    // The name as it was stored when that's all there is to it (shouty bank
+    // capitals become title case; short initials like "PG&E" stay as they are).
+    var whole = vendorNorm(raw) === key;
+    var label = whole && raw !== raw.toUpperCase() && raw !== raw.toLowerCase() ? raw
+      : whole && raw === raw.toUpperCase() && /&/.test(raw) && raw.length <= 6 ? raw
+      : key.replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
+    return { key: key, label: label };
+  }
+  /* entries: [{ id, name, amount, counts, how, loose }]
+       how: 'credit' | 'debit' | 'cash' (the Expenses column it sits in);
+       loose: an entry with no vendor behind it (a typed-in total, a card
+       balance going in) — it goes to Other unless moved by hand.
+     over: what was changed by hand on this tour; any part may be missing,
+     and a cleared one is null:
+       { one: { <entry id>: 'Group' },         this one entry goes there
+         by: { <vendorNorm(name)>: 'Group' },  every entry stored under this name
+         names: { <source key>: 'Shown as' } } a group renamed
+     A group is the name it's shown under: two vendors renamed to the same
+     thing ("Insurance") become one group. A group picked by hand is that
+     group exactly as named; names only renames what sorts by itself. An
+     entry with no vendor of its own follows only a rule made for it alone,
+     never a name-wide one. Returns the groups, biggest first,
+     Other last:
+       [{ key, label, keys, total, credit, debit, cash, count, entries }]
+     key is '' for Other; keys are the source keys a rename has to cover. */
+  function vendorGroups(entries, over) {
+    var o = isObj(over) ? over : {};
+    var one = isObj(o.one) ? o.one : {}, by = isObj(o.by) ? o.by : {}, names = isObj(o.names) ? o.names : {};
+    var said = function (v) { return typeof v === 'string' && v.trim() ? v.trim() : ''; };
+    var map = {}, order = [];
+    (entries || []).forEach(function (e) {
+      var forced = (e.id != null && said(one[e.id])) || (!e.loose && said(by[vendorNorm(e.name)]));
+      var src = forced ? { key: '', label: forced }
+        : e.loose ? { key: '', label: 'Other' } : vendorOf(e.name);
+      var label = forced || (src.key ? (said(names[src.key]) || src.label) : 'Other');
+      var id = vendorNorm(label);
+      if (!id || id === 'other') { id = ''; label = 'Other'; }
+      var g = map['k:' + id];
+      if (!g) {
+        g = map['k:' + id] = { key: id, label: label, keys: [], total: 0, credit: 0, debit: 0, cash: 0, count: 0, entries: [] };
+        order.push(g);
+      }
+      if (id && src.key && g.keys.indexOf(src.key) < 0) g.keys.push(src.key);
+      g.entries.push(e); g.count += 1;
+      if (e.counts === false) return;
+      var a = num(e.amount);
+      g.total += a;
+      g[e.how === 'cash' ? 'cash' : e.how === 'debit' ? 'debit' : 'credit'] += a;
+    });
+    order.forEach(function (g) {
+      ['total', 'credit', 'debit', 'cash'].forEach(function (k) { g[k] = round(g[k] * 100) / 100; });
+    });
+    return order.sort(function (a, b) {
+      return (a.key === '' ? 1 : 0) - (b.key === '' ? 1 : 0) || b.total - a.total || a.label.localeCompare(b.label);
+    });
   }
 
   /* Crew are mostly paid a rate: by the week, the day or the month. Their
@@ -884,9 +1006,11 @@
       normCommission(tour && tour.commission).agent, showIncome, guarantees, incomeBy);
     var agencyShows = agencyAdvance(shows);
     var advance = agencyShows.reduce(function (t, x) { return t + x.amount; }, 0);
-    var commissionCommitted = (commissionProjected - agentOwed) + Math.max(agentOwed, advance);
-    // Commission taken out of a guarantee before it was deposited is paid too.
+    // Commission taken out of a guarantee before it was deposited is paid too,
+    // and the agent's share of it sits with the agent, beside the advance.
     var kept = shows.reduce(function (t, s) { return t + guaranteeKept(s); }, 0);
+    var keptAgent = shows.reduce(function (t, s) { return t + guaranteeKept(s, 'agent'); }, 0);
+    var commissionCommitted = (commissionProjected - agentOwed) + Math.max(agentOwed, advance + keptAgent);
     var commissionPaid = (chargedTo.commission || 0) + advance + kept;
     var commissionEffective = Math.max(commissionCommitted, commissionPaid);
     lines.push({
@@ -1552,12 +1676,13 @@
 
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
+    vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
     showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 
     cardDebts: cardDebts, otherDebts: otherDebts, cardSummary: cardSummary,
-    guaranteeIn: guaranteeIn, merchDue: merchDue, showMoneyState: showMoneyState,
+    guaranteeIn: guaranteeIn, merchDue: merchDue, showMoneyState: showMoneyState, showReceived: showReceived,
     GUARANTEE_REASONS: GUARANTEE_REASONS, guaranteeWhy: guaranteeWhy, guaranteeTotal: guaranteeTotal,
     guaranteeGap: guaranteeGap, guaranteeOwed: guaranteeOwed, guaranteeKept: guaranteeKept, guaranteeLost: guaranteeLost,
     CASH_MOVES: CASH_MOVES, cashSummary: cashSummary, cashByShow: cashByShow,

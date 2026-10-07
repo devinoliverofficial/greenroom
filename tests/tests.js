@@ -1072,21 +1072,49 @@
     eq(G.showMoneyState(tourOne().shows.r0), 'settled', 'legacy show reads settled');
   });
 
-  test('a show is owed, then partly in, then settled', function () {
+  test('a show is owed until BOTH the guarantee and the merch are received', function () {
     var s = { loggedAt: 1, income: { guarantee: 5000, merch: 1200 }, merchCash: 300,
       guaranteeReceived: false, merchReceived: false };
     eq(G.merchDue(s), 900, 'deposit expected: net minus cash');
     eq(G.showMoneyState(s), 'owed', 'nothing in');
     s.guaranteeReceived = true;
-    eq(G.showMoneyState(s), 'partial', 'guarantee in, merch not');
+    eq(G.showMoneyState(s), 'owed', 'guarantee in, merch not: still owed');
     s.guaranteeReceived = false; s.merchReceived = true;
-    eq(G.showMoneyState(s), 'partial', 'merch in, guarantee not');
+    eq(G.showMoneyState(s), 'owed', 'merch in, guarantee not: still owed');
     s.guaranteeReceived = true;
     s.merchReceived = true;
     eq(G.showMoneyState(s), 'settled', 'both in');
     eq(G.showMoneyState({ income: { guarantee: 1 } }), null, 'a night not logged has no colour');
-    eq(G.showMoneyState({ loggedAt: 1, income: { merch: 400 }, merchCash: 400, merchReceived: false }),
-      'settled', 'all-cash merch has no deposit to wait for');
+    // All-cash merch has no deposit to wait for, so the merch half is in...
+    var cashOnly = { loggedAt: 1, income: { merch: 400 }, merchCash: 400, merchReceived: false };
+    eq(G.showReceived(cashOnly).merch, true, 'all-cash merch is in');
+    eq(G.showMoneyState(cashOnly), 'owed', '...but with no guarantee logged or ticked the night is not paid');
+    cashOnly.guaranteeNone = true;
+    eq(G.showMoneyState(cashOnly), 'settled', 'ticking Received on the empty guarantee settles it');
+  });
+  test('a half with nothing logged only counts once its Received box is ticked', function () {
+    // Merch landed (the atVenu deposit matched) but the guarantee was never entered.
+    var merchOnly = { loggedAt: 1, income: { merch: 1200 }, merchReceived: true };
+    eq(G.showMoneyState(merchOnly), 'owed', 'merch in, no guarantee logged: not green');
+    // A festival night with no merch table: guarantee received, merch empty.
+    var noMerch = { loggedAt: 1, income: { guarantee: 5000 }, guaranteeReceived: true };
+    eq(G.showMoneyState(noMerch), 'owed', 'guarantee in, merch never ticked');
+    noMerch.merchNone = true;
+    eq(G.showMoneyState(noMerch), 'settled', 'both boxes ticked');
+    // That tick says "nothing to wait for", not "landed": when atVenu files
+    // the night's merch later it writes merchReceived false, and the night
+    // is owed again until the payout arrives.
+    var later = Object.assign({}, noMerch, { income: { guarantee: 5000, merch: 1200 }, merchCash: 300, merchReceived: false });
+    eq(G.showMoneyState(later), 'owed', 'merch filed later is waited for, tick or no tick');
+    later.merchReceived = true;
+    eq(G.showMoneyState(later), 'settled', 'and settles when its payout lands');
+    // A "landed" flag with nothing logged under it is not a hand tick.
+    eq(G.showMoneyState({ loggedAt: 1, income: { guarantee: 5000 }, guaranteeReceived: true, merchReceived: true }), 'owed',
+      'merchReceived beside an empty merch line does not settle the night');
+    eq(G.showReceived({ guaranteeNone: true, merchNone: true }).guarantee, true, 'both ticked on a night with nothing logged');
+    // Nights logged before the boxes existed read as received where money is logged.
+    eq(G.showMoneyState({ loggedAt: 1, income: { guarantee: 5000, merch: 900 } }), 'settled', 'old night, both logged');
+    eq(G.showMoneyState({ loggedAt: 1, income: { vip: 300 } }), 'owed', 'only other income logged: neither box is ticked');
   });
 
   test('merch cash spent on the tour counts; deposits and hand-offs do not', function () {
@@ -1501,7 +1529,9 @@
       // The rest lands (a second payment catalogued from the bank): the old reason goes quiet.
       var paid = show({ guaranteeDeposit: 5000, guaranteeWhy: { owed: 1500, agent: 500 } });
       eq(G.guaranteeOwed(paid), 0, 'paid up'); eq(G.guaranteeKept(paid), 0, 'and no gap for a commission to sit in');
-      eq(G.calc(tourOf(paid)).income, 5000, 'counts in full'); eq(G.showMoneyState(paid), 'settled', 'settled');
+      eq(G.calc(tourOf(paid)).income, 5000, 'counts in full');
+      eq(G.showReceived(paid).guarantee, true, 'the guarantee half is in');
+      eq(G.showMoneyState(Object.assign({ merchNone: true }, paid)), 'settled', 'settled once the merch is in too');
     });
     test('what a venue or a bank kept never arrives', function () {
       var s = show({ guaranteeDeposit: 4675, guaranteeWhy: { venue: 300, fee: 25 } });
@@ -1509,7 +1539,7 @@
       eq(G.calc(tourOf(s)).income, 4675, 'income matches the bank');
       eq(G.showIncomeTotal(s), 4675, 'and so does the show\u2019s own total');
       eq(G.showIncomeTotal(show({ guaranteeDeposit: 3500, guaranteeWhy: { owed: 1500 } })), 5000, 'money still coming stays in the show\u2019s total');
-      eq(G.showMoneyState(s), 'settled', 'nothing is still coming, so the night is settled');
+      eq(G.showReceived(s).guarantee, true, 'nothing is still coming, so the guarantee is in');
       eq(G.calc(tourOf(show({ guaranteeDeposit: 4500, guaranteeWhy: { other: 500 } }))).income, 4500, 'other reads the same way');
       eq(G.calc(tourOf(show({ guaranteeDeposit: 4500, guaranteeWhy: { advance: 300, cash: 200 } }))).income, 5000,
         'an earlier deposit and cash at the show did reach the band');
@@ -1532,11 +1562,112 @@
       eq(G.calc(tourOf(show({ guaranteeDeposit: 4500, guaranteeWhy: { cash: 500 } }), com)).commissionKept, 0, 'cash at the show is not commission');
       eq(G.guaranteeKept(show({ guaranteeDeposit: 4500, guaranteeWhy: { agent: 900 } })), 500, 'never more than the gap');
     });
+    test('the same missing dollars are never taken off twice', function () {
+      // The deposit was raised by hand to 4,500 with both reasons left ticked: one 500 gap, two claims on it.
+      var s = show({ guaranteeDeposit: 4500, guaranteeWhy: { agent: 500, owed: 500 } });
+      eq(G.guaranteeOwed(s) + G.guaranteeKept(s), 500, 'owed and commission share the gap, they do not each take it');
+      var c = G.calc(tourOf(s));
+      eq(c.income - c.commissionKept >= 4500, true, 'what is counted never falls under what is in the bank');
+      var cash = show({ guaranteeDeposit: 4000, guaranteeWhy: { agent: 1000, cash: 500 } });
+      eq(G.guaranteeKept(cash), 500, 'cash that reached the band is not commission');
+      var lost = show({ guaranteeDeposit: 4000, guaranteeWhy: { fee: 600, mgmt: 700 } });
+      eq(G.guaranteeLost(lost) + G.guaranteeKept(lost), 1000, 'lost and kept together are the gap');
+    });
+    test('what the agent took off the top sits with the agent, beside an advance', function () {
+      var com = { agent: { mode: 'pct', value: 10, base: { guarantee: true } }, management: { mode: 'pct', value: 15 } };
+      var mk = function (why) {
+        return { expenses: {}, commission: com, shows: {
+          a: { id: 'a', date: '2026-10-05', city: 'Detroit', loggedAt: 1, income: { guarantee: 8000 }, guaranteePaidBy: 'agency', guaranteeReceived: true },
+          b: Object.assign({ id: 'b', date: '2026-10-06', city: 'Chicago', loggedAt: 2, income: { guarantee: 4000 }, guaranteeReceived: true, guaranteeDeposit: 3600 }, why ? { guaranteeWhy: why } : {}) } };
+      };
+      var line = function (t) { return G.calc(t).lines.filter(function (l) { return l.key === 'commission'; })[0]; };
+      var before = line(mk(null)), after = line(mk({ agent: 400 }));
+      near(before.left, 1800, 'management is owed 15% of 12,000 on top of what the agent holds');
+      near(after.paid, 8400, 'the advance and the 400 off the top');
+      near(after.left, 1800, 'management is still owed in full: the agent\u2019s 400 did not pay them');
+      near(G.calc(mk(null)).net - G.calc(mk({ agent: 400 })).net, 400, 'and the tour is 400 lower for it');
+    });
     test('the latest-change chip is net of a commission taken off the top', function () {
       var com = { agent: { mode: 'pct', value: 10 } };
       var t = { shows: { s1: show({ guaranteeDeposit: 4500, guaranteeWhy: { agent: 500 } }) }, expenses: {}, commission: com };
       eq(G.round(G.calc(t).net), 4500, 'the tour is up 4,500');
       eq(G.round(G.latestChange(t).delta), 4500, 'and the chip says the same');
+    });
+  })();
+
+  /* ---- A category broken down into the vendors behind it (Monthly utilities). ---- */
+  (function () {
+    var e = function (id, name, amount, how, more) { return Object.assign({ id: id, name: name, amount: amount, how: how || 'credit', counts: true }, more || {}); };
+    test('bank spellings of one company land in one group', function () {
+      var same = function (names, label) { names.forEach(function (n) { eq(G.vendorOf(n).label, label, n); }); };
+      same(['AMZN Mktp US*2K4LT0Y93', 'AMZN Mktp US 2K4LT0Y93', 'Amazon.com RT4G12', 'Amazon Prime'], 'Amazon');
+      same(['VZWRLSS*APOCC VISB', 'Vzwrlss Apocc Visb', 'Verizon Wrls', 'VERIZON WRLS 12345'], 'Verizon');
+      same(['LA FITNESS 8005551234', 'La Fitness'], 'LA Fitness');
+      same(['PUBLIC STORAGE 28511', 'Extra Space', 'CubeSmart'], 'Storage');
+      same(['Spotify', 'Otify Usa'], 'Spotify');
+      eq(G.vendorOf('iCloud Storage').label, 'Apple', 'a brand wins over a kind');
+      eq(G.vendorOf('Applebees').label, 'Applebees', 'a longer word is not the brand inside it');
+      eq(G.vendorOf('Dropbox ABC123XYZ').label, 'Dropbox', 'order codes come off');
+      eq(G.vendorOf('Sweetwater Sound').label, 'Sweetwater Sound', 'an unknown vendor is its own group');
+      eq(G.vendorOf('PG&E').label, 'PG&E', 'short initials stay as written');
+      eq(G.vendorOf('').key, '', 'no name, no vendor'); eq(G.vendorOf('***').label, 'Other', 'nothing readable');
+      eq(G.vendorOf('24 Hour Fitness').label, '24 Hour Fitness', 'a number that leads the name is part of it');
+      eq(G.vendorOf('7-Eleven').key, '7 eleven', 'so is this one');
+      eq(G.vendorOf('Canva I03456-123').label, 'Canva', 'a code after the name still comes off');
+      eq(G.vendorOf('trum').label, 'Spectrum', 'a name the card feed clipped');
+    });
+    var list = function () {
+      return [e('a', 'AMZN Mktp US*2K4LT0Y93', 42.17), e('b', 'Amazon.com*RT4G12', 18.4), e('c', 'VZWRLSS*APOCC VISB', 210.5, 'debit'),
+        e('d', 'LA FITNESS 8005551234', 39.99), e('f', 'PUBLIC STORAGE 28511', 189, 'debit'), e('g', 'Extra Space 1234', 164, 'credit', { counts: false }),
+        e('h', 'Fill up', 25, 'cash'), e(null, '', 40, 'credit', { loose: true })];
+    };
+    test('the groups add up to the category, column by column', function () {
+      var gs = G.vendorGroups(list(), null);
+      var by = {}; gs.forEach(function (g) { by[g.label] = g; });
+      near(by.Amazon.total, 60.57, 'two Amazon orders'); eq(by.Amazon.count, 2, 'both listed');
+      near(by.Storage.total, 189, 'the one already accounted for is listed but adds nothing'); eq(by.Storage.count, 2, 'two storage bills');
+      near(by.Verizon.debit, 210.5, 'paid by debit sits under Debit'); near(by['Fill up'].cash, 25, 'cash under Cash');
+      near(by.Other.total, 40, 'what has no vendor goes to Other');
+      eq(gs[gs.length - 1].label, 'Other', 'Other is last'); eq(gs[0].label, 'Verizon', 'the biggest first');
+      var sum = function (k) { return gs.reduce(function (n, g) { return n + g[k]; }, 0); };
+      near(sum('total'), 42.17 + 18.4 + 210.5 + 39.99 + 189 + 25 + 40, 'nothing lost, nothing counted twice');
+      near(sum('credit') + sum('debit') + sum('cash'), sum('total'), 'the three columns are the total');
+    });
+    test('moving and renaming never changes the sum', function () {
+      var base = G.vendorGroups(list(), null).reduce(function (n, g) { return n + g.total; }, 0);
+      var over = { one: { h: 'Verizon', d: null }, by: { 'la fitness 8005551234': 'Gym' }, names: { storage: 'Storage units', verizon: null } };
+      var gs = G.vendorGroups(list(), over);
+      var by = {}; gs.forEach(function (g) { by[g.label] = g; });
+      near(by.Verizon.total, 235.5, 'one entry moved in by hand'); eq(by['Fill up'], undefined, 'and gone from where it was');
+      near(by.Gym.total, 39.99, 'everything under that name re-homed'); eq(by['LA Fitness'], undefined, 'the old group is empty');
+      eq(!!by['Storage units'], true, 'a group renamed'); eq(by['Storage units'].keys.join(), 'storage', 'and it remembers what to rename');
+      near(gs.reduce(function (n, g) { return n + g.total; }, 0), base, 'same total');
+      // Two groups given the same name become one.
+      var merged = G.vendorGroups(list(), { names: { amazon: 'Bills', verizon: 'bills' } });
+      var bills = merged.filter(function (g) { return g.key === 'bills'; });
+      eq(bills.length, 1, 'one group'); near(bills[0].total, 271.07, 'holding both'); eq(bills[0].keys.sort().join(), 'amazon,verizon', 'renamed together next time');
+      // Moved to "Other" by hand: the same Other as everything vendor-less.
+      var other = G.vendorGroups(list(), { one: { a: 'Other' } }).filter(function (g) { return g.key === ''; });
+      eq(other.length, 1, 'one Other'); near(other[0].total, 82.17, 'with the moved charge in it');
+    });
+    test('a group picked by hand is that group, whatever was renamed', function () {
+      // Verizon was renamed Bills; a charge moved to "Verizon" by hand makes a Verizon group again.
+      var gs = G.vendorGroups(list(), { names: { verizon: 'Bills' }, one: { d: 'Verizon' } });
+      var by = {}; gs.forEach(function (g) { by[g.label] = g; });
+      near(by.Bills.total, 210.5, 'the renamed group'); near(by.Verizon.total, 39.99, 'and the hand-picked one, apart');
+      eq(by.Verizon.keys.length, 0, 'a hand-picked group has nothing of its own to rename by');
+      // Merged by rename, then split back out by hand.
+      var split = G.vendorGroups(list(), { names: { amazon: 'Bills', verizon: 'Bills' }, by: { 'vzwrlss apocc visb': 'Verizon' } });
+      eq(split.filter(function (g) { return g.label === 'Verizon'; }).length, 1, 'Verizon comes back out of Bills');
+    });
+    test('an entry with no vendor never follows a name-wide rule', function () {
+      // Three payments logged with their details blank are stored under the category's own name.
+      var blank = [e('m1', 'Monthly utilities', 50, 'debit', { loose: true }), e('m2', 'Monthly utilities', 120, 'debit', { loose: true }),
+        e('m3', 'Monthly utilities', 30, 'debit', { loose: true }), e('v', 'VZWRLSS*APOCC VISB', 85)];
+      var gs = G.vendorGroups(blank, { one: { m2: 'Storage' }, by: { 'monthly utilities': 'Rent' } });
+      var by = {}; gs.forEach(function (g) { by[g.label] = g; });
+      near(by.Storage.total, 120, 'the one that was moved'); near(by.Other.total, 80, 'the others stay where they were');
+      eq(by.Rent, undefined, 'a rule keyed on the category name is ignored');
     });
   })();
 
