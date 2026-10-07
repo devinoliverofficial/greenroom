@@ -399,10 +399,12 @@
     var artists = Object.keys(paid).filter(function (k) { return isObj(paid[k]) && paid[k].artist; }).length;
     return Math.min(total, round(num(tr.perHead) * artists * 100) / 100);
   }
-  // One income stream of a show, as it counts.
+  // One income stream of a show, as it counts. (The part of a guarantee a
+  // venue or a bank kept never arrives, so it's not the show's money.)
   function incomeOf(show, key) {
     if (key === 'buyouts') return buyoutIncome(show);
     var inc = show && isObj(show.income) ? show.income : {};
+    if (key === 'guarantee') return Math.max(0, num(inc.guarantee) - guaranteeLost(show));
     return num(inc[key]);
   }
   function showIncomeTotal(show) {
@@ -417,6 +419,90 @@
   // A guarantee paid by agency deposit is in too: it was paid, to the agent,
   // who holds it against their commission.
   function guaranteeIn(show) { return !show || show.guaranteePaidBy === 'agency' || show.guaranteeReceived !== false; }
+
+  /* The guarantee that was agreed and what actually reached the bank are
+     often different. A show keeps both — the total (its logged guarantee
+     plus any tax withheld) and the deposit — and, when they differ, why:
+     show.guaranteeWhy, dollars by reason. The reasons say where the missing
+     money is: a commission taken off the top counts as commission already
+     paid; an earlier deposit or cash at the show reached the band another
+     way; what the promoter still owes isn't in hand yet; and what a venue
+     or a bank kept (or "other") never arrives, so it comes off the
+     guarantee counted. Reasons only speak for a gap that exists: with no
+     deposit known, or one that covers the logged guarantee, they move
+     nothing. */
+  var GUARANTEE_REASONS = [
+    { key: 'agent', label: 'Booking agent\u2019s commission' },
+    { key: 'mgmt', label: 'Management commission' },
+    { key: 'tax', label: 'Taxes withheld' },
+    { key: 'advance', label: 'Deposit paid earlier' },
+    { key: 'cash', label: 'Paid in cash at the show' },
+    { key: 'owed', label: 'Still owed by the promoter' },
+    { key: 'venue', label: 'Venue deduction' },
+    { key: 'fee', label: 'Bank or wire fee' },
+    { key: 'other', label: 'Other' }
+  ];
+  // The reasons on a show, as plain positive dollars. Taxes withheld were
+  // kept on their own before this (show.taxWithheld): they still count.
+  function guaranteeWhy(show) {
+    var src = show && isObj(show.guaranteeWhy) ? show.guaranteeWhy : {};
+    var out = {};
+    GUARANTEE_REASONS.forEach(function (r) {
+      var v = round(num(src[r.key]) * 100) / 100;
+      if (v > 0) out[r.key] = v;
+    });
+    var tax = round(num(show && show.taxWithheld) * 100) / 100;
+    if (tax > 0) out.tax = tax; else delete out.tax;
+    return out;
+  }
+  // The agreed total: what's logged, plus the tax that came out of it.
+  function guaranteeTotal(show) {
+    var inc = show && isObj(show.income) ? show.income : {};
+    return round((num(inc.guarantee) + Math.max(0, num(show && show.taxWithheld))) * 100) / 100;
+  }
+  // Total, deposit, the gap between them, and how much of the gap the
+  // reasons account for. deposit is null until one is known.
+  function guaranteeGap(show) {
+    var total = guaranteeTotal(show);
+    var has = !!show && show.guaranteeDeposit != null && num(show.guaranteeDeposit) > 0;
+    var deposit = has ? round(num(show.guaranteeDeposit) * 100) / 100 : null;
+    var why = guaranteeWhy(show);
+    var explained = Object.keys(why).reduce(function (t, k) { return t + why[k]; }, 0);
+    var short = deposit == null ? 0 : round((total - deposit) * 100) / 100;
+    return { total: total, deposit: deposit, short: short, explained: round(explained * 100) / 100,
+      unexplained: round((short - explained) * 100) / 100, why: why };
+  }
+  // The most the reasons can speak for: the part of the logged guarantee
+  // (the tax is already out of it) that the deposit didn't cover.
+  function guaranteeRoom(show) {
+    if (!show || show.guaranteePaidBy === 'agency' || show.guaranteeReceived === false) return 0;
+    if (show.guaranteeDeposit == null || !(num(show.guaranteeDeposit) > 0)) return 0;
+    var inc = isObj(show.income) ? show.income : {};
+    return Math.max(0, round((num(inc.guarantee) - num(show.guaranteeDeposit)) * 100) / 100);
+  }
+  // The part of a received guarantee the promoter hasn't paid yet.
+  function guaranteeOwed(show) {
+    var room = guaranteeRoom(show);
+    return room > 0 ? Math.min(room, guaranteeWhy(show).owed || 0) : 0;
+  }
+  // The part that never arrives: kept by the venue, eaten by a bank fee,
+  // or gone for a reason typed by hand.
+  function guaranteeLost(show) {
+    var room = guaranteeRoom(show);
+    if (!(room > 0)) return 0;
+    var why = guaranteeWhy(show);
+    return Math.max(0, Math.min(room - Math.min(room, why.owed || 0), (why.venue || 0) + (why.fee || 0) + (why.other || 0)));
+  }
+  // Commission that came off the top before the deposit: already paid.
+  // (An agency deposit holds the whole guarantee, counted on its own.)
+  // who: 'agent' or 'mgmt' for one of them alone.
+  function guaranteeKept(show, who) {
+    var room = guaranteeRoom(show);
+    if (!(room > 0)) return 0;
+    var why = guaranteeWhy(show);
+    var a = Math.min(room, why.agent || 0), m = Math.min(room - a, why.mgmt || 0);
+    return who === 'agent' ? a : who === 'mgmt' ? m : a + m;
+  }
   // What should land in the bank for a night's merch. atVenu Register pays the
   // card sales less processing fees, two business days after the show; when
   // the Settlement shows those card figures, that is the deposit to expect.
@@ -436,7 +522,7 @@
     if (!show || !show.loggedAt) return null;
     var inc = isObj(show.income) ? show.income : {};
     var parts = [];
-    if (num(inc.guarantee) > 0) parts.push(guaranteeIn(show));
+    if (num(inc.guarantee) > 0) parts.push(guaranteeIn(show) && !(guaranteeOwed(show) > 0));
     if (merchDue(show) > 0) parts.push(show.merchReceived !== false);
     var got = parts.filter(Boolean).length;
     if (got === parts.length) return 'settled';
@@ -724,7 +810,10 @@
       INCOME_FIELDS.forEach(function (f) {
         // A guarantee not received yet isn't money the tour has.
         if (f.key === 'guarantee' && !guaranteeIn(s)) return;
-        incomeBy[f.key] += f.key === 'buyouts' ? buyoutIncome(s) : num(inc[f.key]);
+        // ...and neither is the part of one the promoter still owes, or
+        // the part a venue or a bank kept.
+        incomeBy[f.key] += f.key === 'buyouts' ? buyoutIncome(s)
+          : f.key === 'guarantee' ? Math.max(0, num(inc.guarantee) - guaranteeOwed(s) - guaranteeLost(s)) : num(inc[f.key]);
       });
     });
     var showIncome = INCOME_FIELDS.reduce(function (t, f) { return t + incomeBy[f.key]; }, 0);
@@ -796,7 +885,9 @@
     var agencyShows = agencyAdvance(shows);
     var advance = agencyShows.reduce(function (t, x) { return t + x.amount; }, 0);
     var commissionCommitted = (commissionProjected - agentOwed) + Math.max(agentOwed, advance);
-    var commissionPaid = (chargedTo.commission || 0) + advance;
+    // Commission taken out of a guarantee before it was deposited is paid too.
+    var kept = shows.reduce(function (t, s) { return t + guaranteeKept(s); }, 0);
+    var commissionPaid = (chargedTo.commission || 0) + advance + kept;
     var commissionEffective = Math.max(commissionCommitted, commissionPaid);
     lines.push({
       key: 'commission', label: 'Commission',
@@ -822,7 +913,7 @@
       showIncome: showIncome, otherIncome: other, otherRows: otherRows,
       lines: lines, fixed: fixed,
       commission: commissionEffective, commissionProjected: commissionProjected,
-      agencyShows: agencyShows, agencyAdvance: advance, agentOwed: agentOwed,
+      agencyShows: agencyShows, agencyAdvance: advance, agentOwed: agentOwed, commissionKept: kept,
       debt: debt, dayByDay: dayByDay, out: out, net: income - out,
       coverage: out > 0 ? income / out : (income > 0 ? 1 : 0)
     };
@@ -1467,6 +1558,8 @@
 
     cardDebts: cardDebts, otherDebts: otherDebts, cardSummary: cardSummary,
     guaranteeIn: guaranteeIn, merchDue: merchDue, showMoneyState: showMoneyState,
+    GUARANTEE_REASONS: GUARANTEE_REASONS, guaranteeWhy: guaranteeWhy, guaranteeTotal: guaranteeTotal,
+    guaranteeGap: guaranteeGap, guaranteeOwed: guaranteeOwed, guaranteeKept: guaranteeKept, guaranteeLost: guaranteeLost,
     CASH_MOVES: CASH_MOVES, cashSummary: cashSummary, cashByShow: cashByShow,
     cardPaidDetail: cardPaidDetail, preTourCutoff: preTourCutoff,
     tourStart: tourStart, tourEnd: tourEnd, cardWindow: cardWindow, cardMoved: cardMoved, cardPaidOff: cardPaidOff,

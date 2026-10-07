@@ -1469,5 +1469,76 @@
     });
   })();
 
+  /* ---- Guarantee Total vs Deposit Amount, and why they differ. ---- */
+  (function () {
+    var show = function (o) {
+      return Object.assign({ id: 's1', date: '2026-05-10', city: 'Austin', loggedAt: 1,
+        income: { guarantee: 5000 }, guaranteeReceived: true }, o || {});
+    };
+    var tourOf = function (s, commission) { return { shows: keyed([s]), expenses: {}, commission: commission || {} }; };
+    test('the gap between a guarantee and its deposit', function () {
+      var g = G.guaranteeGap(show({ guaranteeDeposit: 4000, guaranteeWhy: { agent: 500, fee: 25 } }));
+      eq(g.total, 5000, 'the agreed total'); eq(g.deposit, 4000, 'what landed'); eq(g.short, 1000, 'not deposited');
+      eq(g.explained, 525, 'what the reasons cover'); eq(g.unexplained, 475, 'still to explain');
+      eq(G.guaranteeGap(show()).deposit, null, 'no deposit known yet'); eq(G.guaranteeGap(show()).short, 0, 'so no gap');
+    });
+    test('taxes withheld are a reason, and part of the total', function () {
+      var s = show({ income: { guarantee: 4250 }, taxWithheld: 750, guaranteeDeposit: 4250 });
+      eq(G.guaranteeTotal(s), 5000, 'total is what was logged plus the tax');
+      eq(G.guaranteeWhy(s).tax, 750, 'old tax notes read as the tax reason');
+      eq(G.guaranteeGap(s).unexplained, 0, 'and explain the whole gap');
+      eq(G.guaranteeWhy(show({ guaranteeWhy: { tax: 300 } })).tax, undefined, 'the tax reason follows taxWithheld alone');
+    });
+    test('what the promoter still owes is not money in hand', function () {
+      var s = show({ guaranteeDeposit: 3500, guaranteeWhy: { owed: 1500 } });
+      eq(G.guaranteeOwed(s), 1500, 'owed part');
+      eq(G.calc(tourOf(s)).income, 3500, 'income leaves it out');
+      eq(G.showMoneyState(s), 'owed', 'the night is not settled');
+      eq(G.calc(tourOf(show({ guaranteeDeposit: 5000 }))).income, 5000, 'paid in full counts in full');
+      eq(G.guaranteeOwed(show({ guaranteeReceived: false, guaranteeWhy: { owed: 1500 } })), 0, 'not received at all: the whole thing waits');
+      eq(G.guaranteeOwed(show({ guaranteeDeposit: 3500, guaranteeWhy: { owed: 9000 } })), 1500, 'never more than what the deposit left out');
+      eq(G.guaranteeOwed(show({ guaranteeWhy: { owed: 1500 } })), 0, 'no deposit known: nothing to be short of');
+      // The rest lands (a second payment catalogued from the bank): the old reason goes quiet.
+      var paid = show({ guaranteeDeposit: 5000, guaranteeWhy: { owed: 1500, agent: 500 } });
+      eq(G.guaranteeOwed(paid), 0, 'paid up'); eq(G.guaranteeKept(paid), 0, 'and no gap for a commission to sit in');
+      eq(G.calc(tourOf(paid)).income, 5000, 'counts in full'); eq(G.showMoneyState(paid), 'settled', 'settled');
+    });
+    test('what a venue or a bank kept never arrives', function () {
+      var s = show({ guaranteeDeposit: 4675, guaranteeWhy: { venue: 300, fee: 25 } });
+      eq(G.guaranteeLost(s), 325, 'the venue deduction and the wire fee');
+      eq(G.calc(tourOf(s)).income, 4675, 'income matches the bank');
+      eq(G.showIncomeTotal(s), 4675, 'and so does the show\u2019s own total');
+      eq(G.showIncomeTotal(show({ guaranteeDeposit: 3500, guaranteeWhy: { owed: 1500 } })), 5000, 'money still coming stays in the show\u2019s total');
+      eq(G.showMoneyState(s), 'settled', 'nothing is still coming, so the night is settled');
+      eq(G.calc(tourOf(show({ guaranteeDeposit: 4500, guaranteeWhy: { other: 500 } }))).income, 4500, 'other reads the same way');
+      eq(G.calc(tourOf(show({ guaranteeDeposit: 4500, guaranteeWhy: { advance: 300, cash: 200 } }))).income, 5000,
+        'an earlier deposit and cash at the show did reach the band');
+      var both = show({ guaranteeDeposit: 4000, guaranteeWhy: { owed: 800, fee: 900 } });
+      eq(G.guaranteeOwed(both) + G.guaranteeLost(both), 1000, 'together never more than the gap');
+      eq(G.guaranteeLost(show({ guaranteeReceived: false, guaranteeDeposit: 4675, guaranteeWhy: { fee: 25 } })), 0, 'not received: nothing counted yet anyway');
+      // Taxes are already out of the logged guarantee, so they take none of the room.
+      var taxed = show({ income: { guarantee: 4250 }, taxWithheld: 750, guaranteeDeposit: 4225, guaranteeWhy: { fee: 25 } });
+      eq(G.calc(tourOf(taxed)).income, 4225, '5,000 less 750 tax less a 25 fee');
+    });
+    test('commission taken off the top is commission paid', function () {
+      var com = { agent: { mode: 'pct', value: 10 } };
+      var c = G.calc(tourOf(show({ guaranteeDeposit: 4500, guaranteeWhy: { agent: 500 } }), com));
+      eq(c.commissionKept, 500, 'kept before the deposit');
+      eq(c.income, 5000, 'the guarantee still counts in full');
+      var line = c.lines.filter(function (l) { return l.key === 'commission'; })[0];
+      eq(line.paid, 500, 'shown as paid'); eq(line.left, 0, 'nothing left owing on 10% of 5,000');
+      var agency = G.calc(tourOf(show({ guaranteePaidBy: 'agency', guaranteeWhy: { agent: 500 } }), com));
+      eq(agency.commissionKept, 0, 'an agency deposit is already counted whole');
+      eq(G.calc(tourOf(show({ guaranteeDeposit: 4500, guaranteeWhy: { cash: 500 } }), com)).commissionKept, 0, 'cash at the show is not commission');
+      eq(G.guaranteeKept(show({ guaranteeDeposit: 4500, guaranteeWhy: { agent: 900 } })), 500, 'never more than the gap');
+    });
+    test('the latest-change chip is net of a commission taken off the top', function () {
+      var com = { agent: { mode: 'pct', value: 10 } };
+      var t = { shows: { s1: show({ guaranteeDeposit: 4500, guaranteeWhy: { agent: 500 } }) }, expenses: {}, commission: com };
+      eq(G.round(G.calc(t).net), 4500, 'the tour is up 4,500');
+      eq(G.round(G.latestChange(t).delta), 4500, 'and the chip says the same');
+    });
+  })();
+
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };
 })();

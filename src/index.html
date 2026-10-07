@@ -2569,6 +2569,22 @@ button.fl-row { cursor: pointer; }
 .gp-opts .yn-opt { font-size: 14px; min-height: 32px; }
 .gp-opts .rv-check { margin: 0; }
 .gp-note { margin: 8px 0 0; font-size: 12.5px; line-height: 1.4; }
+/* Guarantee Total vs Deposit Amount: when they differ, what wasn't deposited and why. */
+.gw { margin: 2px 0 6px 28px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.gw[hidden] { display: none; }
+.gw-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 15px; font-weight: 700; }
+.gw-head strong { font-size: 16px; }
+.gw-q { margin: 8px 0 2px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+.gw-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; }
+.gw-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer; }
+.gw-pick .rv-check { margin: 0; flex: none; }
+.gw-label { min-width: 0; display: grid; }
+.gw-label .hint { font-size: 11.5px; }
+.gw-row .money-in.slim { flex: none; height: 38px; }
+.gw-other { width: 100%; margin: 4px 0 2px; }
+.gw-left { margin: 8px 0 0; font-size: 12.5px; color: var(--pos); font-weight: 600; }
+.gw-left.warn { color: var(--warn, #e0a030); }
+.gw-note { margin: 6px 0 0; }
 .preview .pv-sub { padding-left: 16px; font-size: 12.5px; color: var(--ink-2); }
 .preview .pv-sub .num { color: var(--ink-2); font-weight: 600; }
 /* Crew: name, Edit, total. */

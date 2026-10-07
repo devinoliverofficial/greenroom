@@ -336,9 +336,23 @@ shim = r"""<script>
       if (o.kind === 'skip') return { ok: true };
       if (o.showId && (o.kind === 'merch' || o.kind === 'guarantee')) {
         var sh = {};
-        sh[o.showId] = o.kind === 'merch'
-          ? { merchReceived: true, merchReceivedAt: dep.date, merchDeposit: dep.amount }
-          : { guaranteeReceived: true, guaranteeReceivedAt: dep.date, guaranteeDeposit: dep.amount };
+        if (o.kind === 'merch') sh[o.showId] = { merchReceived: true, merchReceivedAt: dep.date, merchDeposit: dep.amount };
+        else {
+          // Same rule as migration 0072: only bank money beyond what's on the show is new.
+          var tdoc = tours[o.tourId] || {};
+          var cur = (tdoc.shows || {})[o.showId] || {};
+          var had = Number(cur.guaranteeDeposit) > 0 ? Number(cur.guaranteeDeposit) : 0;
+          if (cur.guaranteeReceived === true && had > 0) {
+            var seen = (cur.guaranteeSeen != null ? Number(cur.guaranteeSeen) : cur.guaranteeReceivedAt ? had : 0) + dep.amount;
+            if (seen > had + 1) {
+              var gw = Object.assign({}, cur.guaranteeWhy || {});
+              var owed = Math.max(0, (Number(gw.owed) || 0) - (seen - had));
+              gw.owed = owed > 0 ? owed : null;
+              sh[o.showId] = { guaranteeReceived: true, guaranteeReceivedAt: dep.date, guaranteeDeposit: seen, guaranteeSeen: seen, guaranteeWhy: gw };
+            } else if (seen >= had - 1) sh[o.showId] = { guaranteeReceivedAt: dep.date, guaranteeDeposit: seen, guaranteeSeen: seen };
+            else sh[o.showId] = { guaranteeSeen: seen };
+          } else sh[o.showId] = { guaranteeReceived: true, guaranteeReceivedAt: dep.date, guaranteeDeposit: dep.amount, guaranteeSeen: dep.amount };
+        }
         await db.doc('tours/' + o.tourId).update({ shows: sh });
         return { ok: true };
       }

@@ -6649,6 +6649,10 @@
         // The booking agent's cut on guarantees that came by agency deposit is already paid.
         // Guarantees that came by agency deposit: the booking agent holds all
         // of each one as an advance on their commission for the whole tour.
+        if (G.num(base.commissionKept) > 0) {
+          kids.push(h('div', null, h('span', null, '\u21b3 Taken out of guarantees before deposit (already paid)'),
+            h('strong', { class: 'num' }, money(base.commissionKept))));
+        }
         var agencyList = G.agencyAdvance(base.shows);
         var held = agencyList.reduce(function (n, x) { return n + x.amount; }, 0);
         if (held > 0) {
@@ -6659,9 +6663,13 @@
               h('span', null, String(x.city).split(',')[0] + (x.date ? ' \u00b7 ' + dayMD(x.date) : '')),
               h('span', { class: 'num' }, money(x.amount))));
           });
-          kids.push(held >= agentNow
-            ? h('div', null, h('span', null, 'Advance not earned yet'), h('strong', { class: 'num' }, money(held - agentNow)))
-            : h('div', null, h('span', null, 'Still owed to the booking agent'), h('strong', { class: 'num' }, money(agentNow - held))));
+          // What the agent took off the top of other guarantees is theirs already too.
+          var keptAgent = base.shows.reduce(function (n, x) { return n + G.guaranteeKept(x, 'agent'); }, 0);
+          var agentHas = held + keptAgent;
+          kids.push(agentHas >= agentNow
+            ? h('div', null, h('span', null, keptAgent > 0 ? 'Booking agent is ahead by' : 'Advance not earned yet'),
+                h('strong', { class: 'num' }, money(agentHas - agentNow)))
+            : h('div', null, h('span', null, 'Still owed to the booking agent'), h('strong', { class: 'num' }, money(agentNow - agentHas))));
         }
         readout.replaceChildren.apply(readout, kids);
       }
@@ -8499,11 +8507,20 @@
     });
     // Money a show still owes the band.
     shows.forEach(function (x) {
+      // A guarantee that came in short with nobody having said why yet.
+      var gap = x.loggedAt && x.guaranteePaidBy !== 'agency' && x.guaranteeReceived !== false ? G.guaranteeGap(x) : null;
+      if (gap && gap.deposit != null && gap.unexplained >= 1) tasks.push({ key: 'inc:' + x.id + ':gs:' + gap.deposit, standing: true, at: 0,
+        emoji: '\ud83e\uddfe', title: 'Guarantee came in short', main: money(gap.deposit) + ' deposited of ' + money(gap.total),
+        amount: gap.unexplained, sub: place(x) + ' \u00b7 say why', open: incomeLog(x.id) });
       var st = G.showMoneyState(x);
       if (st !== 'owed' && st !== 'partial') return;
       var g = G.num(x.income && x.income.guarantee), md = G.merchDue(x);
       if (g > 0 && x.guaranteeReceived === false) tasks.push({ key: 'inc:' + x.id + ':g', standing: true, at: 0,
         emoji: '⏳', title: 'Income not received yet', main: 'Guarantee', amount: g, sub: place(x), open: incomeLog(x.id) });
+      // Deposited short, with the rest still owed by the promoter.
+      else if (G.guaranteeOwed(x) > 0) tasks.push({ key: 'inc:' + x.id + ':go', standing: true, at: 0,
+        emoji: '\u23f3', title: 'Income not received yet', main: 'Rest of the guarantee', amount: G.guaranteeOwed(x),
+        sub: place(x), open: incomeLog(x.id) });
       if (md > 0 && x.merchReceived === false) tasks.push({ key: 'inc:' + x.id + ':m', standing: true, at: 0,
         emoji: '⏳', title: 'Income not received yet', main: 'Merch deposit', amount: md, sub: place(x), open: incomeLog(x.id) });
     });
@@ -9165,6 +9182,7 @@
     var owedWhat = [];
     if (money_ === 'owed' || money_ === 'partial') {
       if (G.num(s.income && s.income.guarantee) > 0 && s.guaranteeReceived === false) owedWhat.push('guarantee');
+      else if (G.guaranteeOwed(s) > 0) owedWhat.push('rest of the guarantee');
       if (G.merchDue(s) > 0 && s.merchReceived === false) owedWhat.push('merch deposit');
     }
     // Log income is always there, in the middle; a night that's been played
@@ -11213,6 +11231,12 @@
     else if (B && B.crew && S.mode === 'db') B.crew(id).then(fromMembers).catch(function () { /* the Expenses crew is enough */ });
   }
 
+  // ", $500 booking agent's commission, $250 taxes withheld" for a read-only line.
+  function guaranteeWhyText(why) {
+    var bits = G.GUARANTEE_REASONS.filter(function (r) { return G.num(why && why[r.key]) > 0; })
+      .map(function (r) { return money(why[r.key]) + ' ' + r.label.charAt(0).toLowerCase() + r.label.slice(1); });
+    return bits.length ? ' \u00b7 ' + bits.join(', ') : '';
+  }
   function openIncome(id, showId) {
     var t = getTour(id);
     var s = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : null;
@@ -11226,6 +11250,17 @@
     // tax, with the tax kept beside it.
     var tax = Math.max(0, G.num(s.taxWithheld));
     var gross = draft.guarantee + tax;
+    /* The guarantee that was agreed and what actually reached the bank are
+       often different. The sheet keeps both — Guarantee Total and Deposit
+       Amount — and when they differ asks why: dollars by reason (taxes
+       withheld are one of them). */
+    var why = G.guaranteeWhy(s);
+    var whyNote = String(s.guaranteeWhyNote || '');
+    var dep = s.guaranteeDeposit != null && G.num(s.guaranteeDeposit) > 0 ? Math.round(G.num(s.guaranteeDeposit) * 100) / 100 : null;
+    // The amount the bank itself showed (matched by the feed, or catalogued from Cards).
+    var depSeen = dep != null && s.guaranteeReceivedAt ? dep : null;
+    var agentRule = G.normCommission(t && t.commission).agent;
+    var agentPct = agentRule && agentRule.mode === 'pct' ? Math.max(0, Math.min(100, G.num(agentRule.value))) / 100 : 0;
     // How the guarantee is paid: a check, straight into the bank, or to the agency first.
     var PAID_BY = [['check', 'Check'], ['direct', 'Direct Deposit'], ['agency', 'Agency Deposit']];
     var paidBy = PAID_BY.some(function (x) { return x[0] === s.guaranteePaidBy; }) ? s.guaranteePaidBy : null;
@@ -11245,6 +11280,8 @@
       guarantee: s.guaranteeReceived === true || (s.guaranteeReceived == null && legacy && draft.guarantee > 0),
       merch: s.merchReceived === true || (s.merchReceived == null && legacy && draft.merch > 0)
     };
+    // A deposit only stands beside a received guarantee.
+    if (!recv.guarantee) { dep = null; depSeen = null; }
     var title = s.city || 'Show';
     var sub = [dayLong(s.date), s.venue].filter(Boolean).join(' · ');
 
@@ -11259,6 +11296,8 @@
                 h('div', { class: 'row-label' }, f.label,
                   f.key === 'misc' && miscLabel ? h('span', { class: 'hint' }, miscLabel) : null,
                   f.key === 'guarantee' && tax > 0 ? h('span', { class: 'hint' }, 'After ' + money(tax) + ' taxes withheld') : null,
+                  f.key === 'guarantee' && dep != null && Math.abs(gross - dep) >= 0.005 ? h('span', { class: 'hint' },
+                    money(dep) + ' deposited of ' + money(gross) + guaranteeWhyText(why)) : null,
                   f.key === 'guarantee' && paidBy ? h('span', { class: 'hint' }, 'Paid by ' +
                     PAID_BY.filter(function (x) { return x[0] === paidBy; })[0][1].toLowerCase()) : null),
                 h('span', { class: 'amt num' }, money(draft[f.key])));
@@ -11284,7 +11323,7 @@
       var afterEl = h('strong', { class: 'num' }, '');
       function refresh() {
         var cur = getTour(id) || t;
-        showEl.textContent = money(G.showIncomeTotal({ income: draft, buyoutTrack: track }));
+        showEl.textContent = money(G.showIncomeTotal(Object.assign({ income: draft }, currentFlags())));
         var c2 = G.calc(cur, { override: { showId: showId, income: draft, flags: currentFlags() } });
         afterEl.textContent = money(c2.net, true);
         afterEl.className = 'num ' + (G.round(c2.net) < 0 ? 'neg' : 'pos');
@@ -11308,17 +11347,24 @@
           guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
           taxWithheld: tax > 0 && gross > 0 ? Math.min(tax, gross) : null,
           guaranteePaidBy: gross > 0 ? paidBy : null,
+          guaranteeWhy: whyOut(true),
+          guaranteeWhyNote: G.num(effWhy().other) > 0 && whyNote.trim() ? whyNote.trim().slice(0, 80) : null,
           // All-cash merch has no deposit to wait for.
           merchReceived: draft.merch > 0 ? (due > 0 ? !!recv.merch : true) : null };
         if (!(draft.merch > 0 && due > 0 && recv.merch)) {
           patch[showId].merchReceivedAt = null;
           patch[showId].merchDeposit = null;
         }
-        // Unticking the guarantee clears its landed deposit the same way.
-        if (!(draft.guarantee > 0 && recv.guarantee)) {
-          patch[showId].guaranteeReceivedAt = null;
-          patch[showId].guaranteeDeposit = null;
-        }
+        // The deposit goes with a received guarantee (unticking clears it), and
+        // the bank's date stays only beside the amount the bank itself showed.
+        var hasDep = depKept() != null;
+        patch[showId].guaranteeDeposit = hasDep ? dep : null;
+        if (!hasDep || depSeen == null || dep !== depSeen) patch[showId].guaranteeReceivedAt = null;
+        // What the bank itself has shown for this guarantee (kept by the
+        // database as deposits are catalogued) goes when the deposit goes,
+        // and stays on record when the amount is corrected by hand.
+        if (!hasDep) patch[showId].guaranteeSeen = null;
+        else if (depSeen != null && dep !== depSeen && s.guaranteeSeen == null) patch[showId].guaranteeSeen = depSeen;
         if (!(await api.update(id, { shows: patch }))) return;
         closeSheet();
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft, flags: flagsNow } }).net;
@@ -11344,7 +11390,9 @@
       function currentFlags() {
         return { guaranteePaidBy: gross > 0 ? paidBy : null, guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
           merchReceived: draft.merch > 0 ? !!recv.merch : null, merchCash: merchCash,
-          merchCardDeposit: merchCardDeposit, buyoutTrack: track };
+          merchCardDeposit: merchCardDeposit, buyoutTrack: track,
+          // What's still owed, and commission taken off the top, change the tour's numbers too.
+          taxWithheld: tax, guaranteeWhy: whyOut(false), guaranteeDeposit: depKept() };
       }
       var perHeadEl = h('span', { class: 'amt num mx-val' }, '');
       function updatePerHead() {
@@ -11358,7 +11406,19 @@
         var cb = h('input', { type: 'checkbox', class: 'rcv-check', id: 'rcv-' + key,
           'aria-label': what + ' received' });
         cb.checked = !!recv[key];
-        cb.addEventListener('change', function () { recv[key] = cb.checked; refresh(); updateDeposit(); });
+        cb.addEventListener('change', function () {
+          recv[key] = cb.checked;
+          if (key === 'guarantee') {
+            // Not received means nothing reached the bank.
+            if (!cb.checked && dep != null) {
+              dep = null;
+              var de = depInput.querySelector('input');
+              if (de) de.value = '';
+            }
+            syncWhy();
+          }
+          refresh(); updateDeposit();
+        });
         return h('label', { class: 'rcv', for: 'rcv-' + key }, cb, h('span', null, 'Received'));
       }
       // What should land in the bank: the net, less the cash already in hand.
@@ -11404,7 +11464,7 @@
       readerResult = (function () { return function (r) {
           Object.keys(r.income).forEach(function (k) {
             draft[k] = r.income[k];
-            if (k === 'guarantee') { gross = G.num(r.income[k]); syncGuarantee(); }
+            if (k === 'guarantee') { gross = G.num(r.income[k]); followGap(); syncWhy(); }
             var el = document.getElementById('inc-' + k);
             if (el) el.value = r.income[k] ? (Math.round(r.income[k] * 100) / 100)
               .toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
@@ -11475,25 +11535,157 @@
         h('div', { class: 'row-label' }, 'Guarantee logged', netHint), netAmt);
       function syncGuarantee() {
         draft.guarantee = Math.max(0, Math.round((gross - tax) * 100) / 100);
-        netRow.hidden = !(tax > 0);
-        netAmt.textContent = money(draft.guarantee);
-        netHint.textContent = tax > gross ? 'The taxes are more than the guarantee' : money(gross) + ' less ' + money(tax) + ' withheld';
+        // Counted the way the book counts it, so the sheet and the tour agree.
+        var as = { income: { guarantee: draft.guarantee }, taxWithheld: tax, guaranteePaidBy: paidBy,
+          guaranteeReceived: !!recv.guarantee, guaranteeDeposit: depKept(), guaranteeWhy: whyOut(false) };
+        var owed = G.guaranteeOwed(as), lost = G.guaranteeLost(as);
+        netRow.hidden = !(tax > 0 || owed > 0 || lost > 0);
+        netAmt.textContent = money(draft.guarantee - owed - lost);
+        netHint.textContent = tax > gross ? 'The taxes are more than the guarantee'
+          : money(gross) + [tax > 0 ? ' less ' + money(tax) + ' withheld' : '', owed > 0 ? ' less ' + money(owed) + ' still owed' : '',
+            lost > 0 ? ' less ' + money(lost) + ' that won\u2019t arrive' : ''].join('');
         sayAgency();
       }
+      var r2 = function (v) { return Math.round(G.num(v) * 100) / 100; };
+      // The gap between the two numbers; reasons only count while there is one.
+      function shortNow() { return dep != null && gross > 0 ? r2(gross - dep) : 0; }
+      // The reasons are asked for (and kept) only while the deposit is short.
+      function listOn() { return paidBy !== 'agency' && gross > 0 && dep != null && shortNow() >= 0.005; }
+      // The deposit as it's saved: it goes with a received guarantee.
+      function depKept() { return draft.guarantee > 0 && recv.guarantee && paidBy !== 'agency' && dep != null ? dep : null; }
+      function effWhy() { return listOn() && depKept() != null ? why : {}; }
+      function whySum() { var w = effWhy(); return Object.keys(w).reduce(function (n, k) { return n + G.num(w[k]); }, 0); }
+      // As it's saved: every reason by name, the unticked ones cleared (forSave)
+      // or just the ticked ones (for the live preview).
+      function whyOut(forSave) {
+        var w = effWhy(), out = {}, any = false;
+        G.GUARANTEE_REASONS.forEach(function (r) {
+          var v = r2(w[r.key]);
+          if (v > 0) { out[r.key] = v; any = true; } else if (forSave) out[r.key] = null;
+        });
+        return any ? out : (forSave ? null : {});
+      }
+      // Taxes are one of the reasons, but they stand without a gap too: they
+      // come off the guarantee whatever the deposit turns out to be. So the
+      // tax is whatever is on the sheet, never a by-product of the deposit.
+      function setTax() { tax = gross > 0 ? Math.max(0, G.num(why.tax)) : 0; }
+      // The tax box of its own, shown whenever the reasons list isn't.
       var taxInput = moneyInput({
         id: 'inc-tax', value: tax, label: 'Taxes withheld', nextId: 'inc-backend',
-        onValue: function (v) { tax = Math.max(0, v); syncGuarantee(); refresh(); }
+        onValue: function (v) { if (v > 0) why.tax = r2(v); else delete why.tax; setTax(); syncGuarantee(); refresh(); }
       });
-      syncGuarantee();
+      var taxRow = h('div', { class: 'row mx-row' },
+        h('label', { class: 'row-label', for: 'inc-tax' }, 'Taxes withheld',
+          h('span', { class: 'hint' }, 'Comes off the guarantee logged')), taxInput);
+      function syncTaxRow() {
+        taxRow.hidden = listOn() || !(gross > 0);
+        var te = taxInput.querySelector('input');
+        if (te && document.activeElement !== te) te.value = G.num(why.tax) > 0 ? fmtInput(G.num(why.tax)) : '';
+      }
+      var depHint = h('span', { class: 'hint' }, '');
+      var depInput = moneyInput({
+        id: 'inc-deposit', value: dep, label: 'Deposit Amount', nextId: 'inc-backend',
+        onValue: function (v) {
+          dep = v > 0 ? r2(v) : null;
+          // Money in the bank is money received.
+          if (dep != null && !recv.guarantee) {
+            recv.guarantee = true;
+            var rb = document.getElementById('rcv-guarantee');
+            if (rb) rb.checked = true;
+          }
+          followGap(); syncWhy(); refresh();
+        }
+      });
+      var depRow = h('div', { class: 'row mx-row' },
+        h('label', { class: 'row-label', for: 'inc-deposit' }, 'Deposit Amount', depHint), depInput);
+      var whyHost = h('div', { class: 'gw' });
+      var leftLine = h('p', { class: 'gw-left' });
+      // A lone reason ticked just now, taking the whole gap, follows it as the
+      // numbers change. Amounts that were saved earlier never move by themselves.
+      var autoKey = null;
+      // The booking-agent guess is offered once; after any reason has been
+      // touched by hand it never comes back.
+      var whyTouched = false;
+      function followGap() {
+        var keys = Object.keys(why);
+        if (!autoKey || keys.length !== 1 || keys[0] !== autoKey) return;
+        var sh = shortNow();
+        if (sh > 0) why[autoKey] = sh;
+      }
+      function sayLeft() {
+        var left = r2(shortNow() - whySum());
+        leftLine.className = 'gw-left' + (Math.abs(left) >= 0.005 ? ' warn' : '');
+        leftLine.textContent = left >= 0.005 ? G.moneyCents(left) + ' not explained yet'
+          : left <= -0.005 ? 'That\u2019s ' + G.moneyCents(-left) + ' more than what\u2019s missing'
+          : 'All accounted for';
+      }
+      var WHY_HINT = { agent: 'Counts as commission already paid', mgmt: 'Counts as commission already paid',
+        tax: 'Comes off the guarantee logged', owed: 'Stays marked as owed until it lands',
+        advance: 'Already in hand, so it still counts', cash: 'Already in hand, so it still counts',
+        venue: 'Won\u2019t arrive, so it isn\u2019t counted', fee: 'Won\u2019t arrive, so it isn\u2019t counted',
+        other: 'Won\u2019t arrive, so it isn\u2019t counted' };
+      function syncWhy() {
+        var sh = shortNow();
+        depRow.hidden = paidBy === 'agency' || !(gross > 0);
+        depHint.textContent = depSeen != null && dep === depSeen
+          ? 'Landed ' + dayMD(s.guaranteeReceivedAt) + ' \u00b7 seen in the bank' : 'What actually reached the bank';
+        syncTaxRow();
+        if (depRow.hidden || dep == null || Math.abs(sh) < 0.005) {
+          whyHost.hidden = true;
+          setTax(); syncGuarantee();
+          return;
+        }
+        whyHost.hidden = false;
+        if (sh < 0) {
+          fillEl(whyHost, [
+            h('div', { class: 'gw-head' }, h('span', null, 'Deposited over the guarantee'), h('strong', { class: 'num' }, G.moneyCents(-sh))),
+            h('p', { class: 'hint gw-note' }, 'A bonus or overage belongs under Back end, so it counts as income.')]);
+          setTax(); syncGuarantee();
+          return;
+        }
+        // The gap is exactly the booking agent's cut: say so for them.
+        if (!whyTouched && !Object.keys(why).length && agentPct > 0 && Math.abs(sh - gross * agentPct) <= 1) { why.agent = sh; autoKey = 'agent'; }
+        fillEl(whyHost, [
+          h('div', { class: 'gw-head' }, h('span', null, 'Not deposited'), h('strong', { class: 'num' }, G.moneyCents(sh))),
+          h('p', { class: 'gw-q' }, 'Why?'),
+          G.GUARANTEE_REASONS.map(function (r) {
+            var on = why[r.key] != null;
+            var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: on, 'aria-label': r.label,
+              onchange: function (e) {
+                whyTouched = true;
+                if (e.target.checked) {
+                  var left = r2(shortNow() - whySum());
+                  why[r.key] = left > 0 ? left : 0;
+                  autoKey = Object.keys(why).length === 1 ? r.key : null;
+                } else {
+                  delete why[r.key];
+                  if (autoKey === r.key) autoKey = null;
+                }
+                syncWhy(); refresh();
+              } });
+            return h('div', { class: 'gw-row' + (on ? ' on' : '') },
+              h('label', { class: 'gw-pick' }, cb,
+                h('span', { class: 'gw-label' }, r.label, on && WHY_HINT[r.key] ? h('span', { class: 'hint' }, WHY_HINT[r.key]) : null)),
+              on ? moneyInput({ id: 'inc-why-' + r.key, value: why[r.key], label: r.label + ' amount', slim: true,
+                // Typing an amount never rebuilds the list (the box would lose its place).
+                onValue: function (v) { why[r.key] = Math.max(0, r2(v)); autoKey = null; whyTouched = true; setTax(); syncGuarantee(); sayLeft(); refresh(); } }) : null);
+          }),
+          why.other != null ? h('input', { class: 'input sm gw-other', type: 'text', maxlength: 80, value: whyNote, autocomplete: 'off',
+            placeholder: 'What was it?', 'aria-label': 'What the other reason was',
+            oninput: function (e) { whyNote = e.target.value; } }) : null,
+          leftLine]);
+        setTax(); syncGuarantee(); sayLeft();
+      }
+      syncWhy();
       var rows = [];
       fields.forEach(function (f, i) {
         var mkInput = moneyInput({
           id: 'inc-' + f.key, value: f.key === 'guarantee' ? gross : draft[f.key], label: f.label,
-          nextId: f.key === 'guarantee' ? 'inc-tax' : f.key === 'misc' ? 'inc-misc-label'
+          nextId: f.key === 'guarantee' ? 'inc-deposit' : f.key === 'misc' ? 'inc-misc-label'
             : (i < fields.length - 1 ? 'inc-' + fields[i + 1].key : null),
           last: i === fields.length - 1,
           onValue: function (v) {
-            if (f.key === 'guarantee') { gross = v; syncGuarantee(); } else draft[f.key] = v;
+            if (f.key === 'guarantee') { gross = v; followGap(); syncWhy(); } else draft[f.key] = v;
             syncMisc(); refresh();
             if (f.key === 'merch') updateDeposit();
             if (f.key === 'buyouts') updateBuyouts();
@@ -11572,21 +11764,14 @@
         } else if (f.key === 'guarantee') {
           rows.push(h('div', { class: 'row' },
             h('div', { class: 'row-label' },
-              h('label', { for: 'inc-guarantee' }, f.label),
+              h('label', { for: 'inc-guarantee' }, 'Guarantee Total'),
               receivedBox('guarantee', 'Guarantee')),
             mkInput));
-          // The deposit that ticked it, when the bank showed one (matched by
-          // the feed, or catalogued from the Cards tab).
-          if (s.guaranteeReceivedAt && G.num(s.guaranteeDeposit) > 0) {
-            rows.push(h('div', { class: 'row mx-row' },
-              h('div', { class: 'row-label' }, 'Deposit',
-                h('span', { class: 'hint' }, 'Landed ' + dayMD(s.guaranteeReceivedAt) + ' · seen in the bank')),
-              h('span', { class: 'amt num mx-val known' }, money(G.num(s.guaranteeDeposit)))));
-          }
-          rows.push(h('div', { class: 'row mx-row' },
-            h('label', { class: 'row-label', for: 'inc-tax' }, 'Taxes withheld',
-              h('span', { class: 'hint' }, 'Taken out of the guarantee, if any')),
-            taxInput));
+          // What was agreed above; what actually reached the bank here. When
+          // the two differ, the section under them asks why.
+          rows.push(depRow);
+          rows.push(whyHost);
+          rows.push(taxRow);
           rows.push(netRow);
           // Paid by: one of the three (tap the ticked one again to clear it).
           var boxes = [];
@@ -11613,7 +11798,7 @@
                     var rb = document.getElementById('rcv-guarantee');
                     if (rb) rb.checked = true;
                   }
-                  sayAgency(); refresh();
+                  syncWhy(); sayAgency(); refresh();
                 } });
               boxes.push(cb);
               return h('label', { class: 'yn-opt' }, cb, h('span', null, x[1]));
@@ -14391,7 +14576,8 @@
     // Which nights are still waiting on this money.
     function owedBit(r, s) {
       if (r.kind === 'merch') return !!s.loggedAt && s.merchReceived === false && G.merchDue(s) > 0;
-      return !!s.loggedAt && s.guaranteeReceived === false && G.num(s.income && s.income.guarantee) > 0;
+      return !!s.loggedAt && G.num(s.income && s.income.guarantee) > 0 &&
+        (s.guaranteeReceived === false || G.guaranteeOwed(s) > 0);
     }
     function defaultShow(r, choices) {
       var best = '', bd = Infinity;
