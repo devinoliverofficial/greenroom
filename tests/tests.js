@@ -1393,15 +1393,19 @@
     });
   })();
 
-  /* ---- Road-milestone badges (tour history, setlist.fm). ---- */
+  /* ---- Road badges: shows climb the rungs; Legacy takes the whole
+     spread at once (850 shows, 50 tours, 30 countries, 250 cities). ---- */
   test('road badges land on the right rung', function () {
-    eq(G.historyTier(0), null, 'nothing yet');
-    eq(G.historyTier(49), null, 'under the first rung');
-    eq(G.historyTier(50).label, 'Bronze', 'a real touring act');
-    eq(G.historyTier(290).label, 'Silver', 'Michael Jackson solo');
-    eq(G.historyTier(736).label, 'Gold', 'I See Stars today');
-    eq(G.historyTier(1400).label, 'Diamond', 'The Beatles, lifetime');
-    eq(G.historyTier(2300).label, 'Legacy', 'the Grateful Dead');
+    eq(G.historyTier({ shows: 0 }), null, 'nothing yet');
+    eq(G.historyTier({ shows: 49 }), null, 'under the first rung');
+    eq(G.historyTier({ shows: 50 }).label, 'Bronze', 'a real touring act');
+    eq(G.historyTier({ shows: 290 }).label, 'Silver', 'Michael Jackson solo');
+    eq(G.historyTier({ shows: 736, tours: 33, countries: 33, cities: 259 }).label, 'Gold', 'I See Stars today');
+    eq(G.historyTier({ shows: 800 }).label, 'Diamond', 'the fourth rung');
+    eq(G.historyTier({ shows: 1400, tours: 20, countries: 20, cities: 200 }).label, 'Diamond',
+      'even the Beatles hold at Diamond without the spread');
+    eq(G.historyTier({ shows: 850, tours: 50, countries: 30, cities: 250 }).label, 'Legacy', 'the full spread');
+    eq(G.historyTier({ shows: 3000, tours: 60, countries: 45, cities: 500 }).label, 'Legacy', 'the lifers');
   });
 
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };

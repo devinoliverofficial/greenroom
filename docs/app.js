@@ -3321,7 +3321,7 @@
     var row = c.row;
     var sum = row && G.isObj(row.summary) ? row.summary : null;
     if (sum && G.num(sum.shows) > 0) {
-      var tier = G.historyTier(sum.shows);
+      var tier = G.historyTier(sum);
       return h('p', { class: 'hist-line' },
         tier ? h('span', { class: 'hist-tier tier-' + tier.key }, tier.label) : null,
         (sum.firstYear ? 'On the road since ' + sum.firstYear + ' · ' : ''),

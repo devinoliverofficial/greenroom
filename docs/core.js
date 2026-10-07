@@ -67,21 +67,27 @@
     return hit ? hit.label : 'Income';
   }
 
-  /* Road milestones, calibrated against the real road: a working band
-     plays 40-100 nights a year; The Beatles' whole life was ~1,400 shows;
-     only the lifers (Metallica, the Dead, Dylan) clear 2,000. The badge
-     rewards the grind, not the fame — Michael Jackson solo sits at Silver. */
+  /* Road badges (Devin's ladder, 2026-10-07). Shows carry you up the
+     rungs — Bronze 50, Silver 250, Gold 500, Diamond 800 — but LEGACY is
+     the whole spread at once: 850 shows AND 50 tours AND 30 countries AND
+     250 cities. The badge rewards the grind, not the fame: Michael
+     Jackson's solo career sits at Silver, and even the Beatles (~1,400
+     shows, but few runs around the world) hold at Diamond. */
   var HISTORY_TIERS = [
-    { key: 'legacy', label: 'Legacy', n: 2000 },
-    { key: 'diamond', label: 'Diamond', n: 1200 },
+    { key: 'diamond', label: 'Diamond', n: 800 },
     { key: 'gold', label: 'Gold', n: 500 },
     { key: 'silver', label: 'Silver', n: 250 },
     { key: 'bronze', label: 'Bronze', n: 50 }
   ];
-  function historyTier(shows) {
-    var n = num(shows);
+  var LEGACY_BAR = { key: 'legacy', label: 'Legacy', shows: 850, tours: 50, countries: 30, cities: 250 };
+  function historyTier(sum) {
+    var s = isObj(sum) ? sum : {};
+    if (num(s.shows) >= LEGACY_BAR.shows && num(s.tours) >= LEGACY_BAR.tours &&
+        num(s.countries) >= LEGACY_BAR.countries && num(s.cities) >= LEGACY_BAR.cities) {
+      return LEGACY_BAR;
+    }
     for (var i = 0; i < HISTORY_TIERS.length; i++) {
-      if (n >= HISTORY_TIERS[i].n) return HISTORY_TIERS[i];
+      if (num(s.shows) >= HISTORY_TIERS[i].n) return HISTORY_TIERS[i];
     }
     return null;
   }
@@ -1332,7 +1338,7 @@
     COMMISSION_LINES: COMMISSION_LINES, commissionLines: commissionLines,
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
     OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
-    HISTORY_TIERS: HISTORY_TIERS, historyTier: historyTier,
+    HISTORY_TIERS: HISTORY_TIERS, LEGACY_BAR: LEGACY_BAR, historyTier: historyTier,
     CHARGE_CATEGORIES: CHARGE_CATEGORIES,
     extraCategories: extraCategories, typedCategoriesFor: typedCategoriesFor,
     chargeCategoriesFor: chargeCategoriesFor, slugCategory: slugCategory,
