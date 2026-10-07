@@ -1944,6 +1944,8 @@
         : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
       card.bio ? h('p', { class: 'pf-bio' }, card.bio)
         : (edit ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add a short bio') : null),
+      // The same badge ladder the artists climb, on your own numbers.
+      roadLine(uid && cardOf(uid).card ? cardOf(uid).card.roadStats : null),
       edit ? h('div', { class: 'pf-actions three' + (tasksBtn() ? ' four' : '') },
         // On a narrow phone with four buttons, Edit profile and View profile drop the word "profile".
         h('button', { class: 'pf-btn', type: 'button', onclick: function () { openProfileSheet(); } },
@@ -2302,17 +2304,12 @@
       var n = (byArtist.get(Array.from(byArtist.keys()).filter(function (k) { return String(k).trim().toLowerCase() === String(a.name).trim().toLowerCase(); })[0]) || []).length;
       // On the artist's own account, its row on someone it lists carries Endorse
       // (unless they took its endorsement off before).
+      // What this artist has confirmed for them (tour credits), if anything.
+      var conf = (Array.isArray(card.credits) ? card.credits : []).filter(function (x) { return a.id && x.artistId === a.id && G.num(x.shows) > 0; })[0] || null;
       var canEndorse = !!(a.id && a.id === actingAs() && !a.endorsed && !a.past && !a.declined && B && B.endorse);
       var endorseBtn = canEndorse ? h('button', { class: 'am-endorse', type: 'button', onclick: function () {
-        var who = uid === B.uid() ? 'you' : (card.name || 'they');
-        confirmSheet({ title: 'Endorse ' + (uid === B.uid() ? 'yourself' : (card.name || 'them')) + '?',
-          body: 'This says ' + who + ' really worked for ' + a.name + '. It shows on ' + (uid === B.uid() ? 'your' : 'their') +
-            ' page, and ' + a.name + ' can\u2019t take it back.',
-          action: 'Endorse',
-          onConfirm: async function () {
-            try { await B.endorse(a.id, uid); a.endorsed = true; cardOf(uid, true); actOf(a.id, true); toast((card.name || 'They') + ' is endorsed ' + TROPHY); return true; }
-            catch (x) { saveFailed('endorsement', x); return false; }
-          } });
+        openEndorse(a.id, a.name, { userId: uid, name: card.name, kind: a.kind, role: a.role, endorsed: false },
+          { after: function (gave) { if (gave) a.endorsed = true; } });
       } }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorse') : null;
       // An endorsement outlives the artist's page; one whose page is gone just shows.
       return h('li', canEndorse ? { class: 'pa-li' } : null, h(a.id ? 'button' : 'div', a.id ? { class: 'list-row art-row', type: 'button', onclick: function () { openAct(a.id); } }
@@ -2321,9 +2318,11 @@
           a.avatar ? h('img', { class: 'brand-logo', src: a.avatar, alt: '' }) : String(a.name).trim().charAt(0).toUpperCase()),
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title' }, a.name),
-          a.past ? h('span', { class: 'lr-sub' }, (a.kind === 'band' ? 'Former band member' : 'Former crew') + (n ? ' \u00b7 ' + plural(n, 'tour') : ''))
-            : h('span', { class: 'lr-sub vp-vouch' }, a.kind === 'band' ? 'Band member' : 'Crew', verifiedBadge('sm'),
-              n ? ' \u00b7 ' + plural(n, 'tour') : '')),
+          // The role the artist gave them leads; then what the artist confirmed.
+          a.past ? h('span', { class: 'lr-sub' }, [a.role, a.kind === 'band' ? 'Former band member' : 'Former crew',
+              conf ? tallyText(conf) + ' confirmed' : (n ? plural(n, 'tour') : '')].filter(Boolean).join(' \u00b7 '))
+            : h('span', { class: 'lr-sub vp-vouch' }, a.role || (a.kind === 'band' ? 'Band member' : 'Crew'), verifiedBadge('sm'),
+              conf ? ' \u00b7 ' + tallyText(conf) + ' confirmed' : (n ? ' \u00b7 ' + plural(n, 'tour') : ''))),
         // Endorsed by this artist: the trophy on the right, the word under it.
         a.endorsed ? h('span', { class: 'vp-endorsed', 'aria-label': 'Endorsed by ' + a.name },
           h('span', { class: 'vp-endorsed-t', 'aria-hidden': 'true' }, TROPHY), h('span', { class: 'vp-endorsed-l' }, 'Endorsed'))
@@ -2343,15 +2342,13 @@
         h('span', { class: 'avatar letter' }, String(a).trim().charAt(0).toUpperCase()),
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, a), h('span', { class: 'lr-sub' }, 'Toured with'))));
     }));
-    var tourRows = tours.map(function (t) {
-      var span = t.first ? dayMD(t.first) + (t.last && t.last !== t.first ? ' \u2013 ' + dayMD(t.last) : '') +
-        ', ' + String(t.last || t.first).slice(0, 4) : 'No dates yet';
-      return h('li', null, h('button', { class: 'list-row tour-row', type: 'button',
-        onclick: function () { if (!preview && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, uid, t); } },
-        h('span', { class: 'lr-text' },
-          h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
-          h('span', { class: 'lr-sub' }, [t.artist, span].filter(Boolean).join(' \u00b7 '))),
-        icon('chevron', 18)));
+    // Every tour they've done: the ones on Greenroom, and the ones an artist
+    // confirmed for them. The one they're out on right now leads, glowing.
+    var tourRows = G.tourTimeline(tours, Array.isArray(card.creditTours) ? card.creditTours : [], G.tourToday()).map(function (r) {
+      var t = r.tour;
+      return timelineRow(r, r.own ? function () {
+        if (!preview && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, uid, t);
+      } : (t.artistId ? function () { openAct(t.artistId); } : null), true);
     });
     var peer = { name: card.name, handle: card.handle, avatar: card.avatar, verified: card.verified };
     return h('div', { class: 'page home profile has-tabs' },
@@ -2388,6 +2385,7 @@
             flowerLine(card.flowers, card.endorsements))),
         roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 ')) : null,
         card.bio ? h('p', { class: 'pf-bio' }, card.bio) : null,
+        roadLine(card.roadStats),
         (card.followsMe && !preview) ? h('p', { class: 'pf-note' }, first + ' follows you') : null,
         h('div', { class: 'pf-actions three' },
           followBtn,
@@ -2402,6 +2400,8 @@
         : tab === 'stats' ? personFlowers(card)
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', first + ' hasn\u2019t been on a tour in Greenroom yet.')),
+      // Confirmed credits count nights from an artist's synced history: its source gets its line.
+      Array.isArray(card.credits) && card.credits.length ? setlistCredit() : null,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
   }
@@ -3151,27 +3151,27 @@
       }
     }) : personPhoto(card);
     var memberRow = function (m) {
-      var roles = personRoles(m);
+      // The title this artist gave them leads; without one, their own roles.
+      var roles = m.role ? [m.role] : personRoles(m);
       var inner = [personPhoto(m, 'xs'),
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title fl-name' }, m.name || 'Someone', m.verified ? verifiedBadge() : null),
           (m.handle || roles.length) ? h('span', { class: 'lr-sub' },
             [m.handle ? '@' + m.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')) : null)];
-      var meId = B && B.uid ? B.uid() : null;
       // The trophy: the artist's word that this person really worked for them. For good.
-      var trophy = m.endorsed ? h('span', { class: 'am-endorsed', 'aria-label': 'Endorsed by ' + card.name }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorsed')
-        : manage && m.userId && !m.declined && B && B.endorse ? h('button', { class: 'am-endorse', type: 'button',
-            onclick: function () {
-              confirmSheet({ title: 'Endorse ' + (m.name || 'them') + '?',
-                body: m.userId === meId
-                  ? 'This says you really worked for ' + card.name + '. It shows on your page, and ' + card.name + ' can\u2019t take it back.'
-                  : 'This says ' + (m.name || 'they') + ' really worked for ' + card.name + '. It shows on their page, and it can\u2019t be taken back.',
-                action: 'Endorse',
-                onConfirm: async function () {
-                  try { await B.endorse(id, m.userId); m.endorsed = true; actOf(id, true); if (m.userId) cardOf(m.userId, true); toast((m.name || 'They') + ' is endorsed ' + TROPHY); return true; }
-                  catch (x) { saveFailed('endorsement', x); return false; }
-                } });
-            } }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorse') : null;
+      // On the page you run it's a button either way: Endorse asks their role
+      // first, and Endorsed (or Role) opens the role to change it.
+      var trophy = m.endorsed
+        ? (manage && m.userId && B && B.setMemberRole
+            ? h('button', { class: 'am-endorsed am-tap', type: 'button', 'aria-label': (m.name || 'Their') + ' is endorsed. Change their role.',
+                onclick: function () { openEndorse(id, card.name, m); } }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorsed')
+            : h('span', { class: 'am-endorsed', 'aria-label': 'Endorsed by ' + card.name }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorsed'))
+        : manage && m.userId && B && B.endorse
+          ? (m.declined
+              ? h('button', { class: 'am-endorse', type: 'button', onclick: function () { openEndorse(id, card.name, m, { roleOnly: true }); } }, 'Role')
+              : h('button', { class: 'am-endorse', type: 'button', onclick: function () { openEndorse(id, card.name, m); } },
+                  h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorse'))
+          : null;
       return h('li', { class: 'am-li' },
         m.canOpen ? h('button', { class: 'fl-row', type: 'button', onclick: function () { openProfile(m.userId); } }, inner)
           : h('div', { class: 'fl-row' }, inner),
@@ -3196,13 +3196,14 @@
             icon('plus', 16), kind === 'band' ? 'Add band members' : 'Add crew members')) : null
       ];
     };
-    var tourRows = tours.map(function (t) {
-      var span = t.first ? dayMD(t.first) + (t.last && t.last !== t.first ? ' \u2013 ' + dayMD(t.last) : '') +
-        ', ' + String(t.last || t.first).slice(0, 4) + ' \u00b7 ' + plural(G.num(t.shows), 'show') : 'No dates yet';
-      return h('li', null, h('button', { class: 'list-row tour-row', type: 'button',
-        onclick: function () { if ((manage || !card.mine) && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, id); } },
-        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, t.name || 'Untitled tour'), h('span', { class: 'lr-sub' }, span)),
-        icon('chevron', 18)));
+    // Every tour there is: the ones on Greenroom (they open) and the ones the
+    // synced history knows by name; the tour being played today leads, glowing.
+    var pastTours = hsum && Array.isArray(hsum.toursList) ? hsum.toursList : [];
+    var tourRows = G.tourTimeline(tours, pastTours, G.tourToday()).map(function (r) {
+      var t = r.tour;
+      return timelineRow(r, r.own ? function () {
+        if ((manage || !card.mine) && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, id);
+      } : null, false);
     });
     // Anyone can follow an artist's page; shown at once, put back if it didn't take.
     var following = false;
@@ -3254,19 +3255,447 @@
         h('p', { class: 'pf-roles' }, 'Artist'),
         card.bio ? h('p', { class: 'pf-bio' }, card.bio)
           : (manage ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
-        historyBlock(id, manage),
+        historyBlock(id, manage, tours),
         manage ? h('div', { class: 'pf-actions' },
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openHistorySheet(id, card.name); } }, 'Tour history'))
           : followBtn ? h('div', { class: 'pf-actions' }, followBtn) : null),
+      // On the page you run: whoever is waiting on your yes for their tours.
+      manage ? creditQueueCards(id) : null,
       h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Band', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
       tab === 'band' ? people(bandList, 'band')
         : tab === 'crew' ? people(crewList, 'crew')
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', manage ? 'Tours you file under ' + card.name + ' show up here.' : card.name + ' has no tours on Greenroom yet.')),
+      historyCredit(id),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(manage && id === actingAs() ? 'me' : ''));
   }
+  /* ---- Endorsing, and the role that goes with it. The artist's page says
+     what this person IS to it — the title the public sees there (Brent is
+     "Guitar" on the band's page, whatever he does behind the scenes) — and
+     then gives the trophy, which is for good. Someone already endorsed (or
+     who took the trophy off) gets the same sheet for the role alone. ---- */
+  function openEndorse(artistId, artistName, m, opts) {
+    var B = window.GR_BACKEND, o = opts || {};
+    var me = B && B.uid ? B.uid() : null, self = !!m.userId && m.userId === me;
+    var roleOnly = !!(m.endorsed || o.roleOnly);
+    var was = String(m.role || '').trim(), role = was;
+    var presets = m.kind === 'band' ? G.BAND_ROLES : G.ARTIST_CREW_ROLES;
+    var who = self ? 'you' : (m.name || 'they');
+    openSheet(function () {
+      var input = h('input', { class: 'input', type: 'text', maxlength: 40, value: role, autocapitalize: 'words',
+        placeholder: m.kind === 'band' ? 'Or type it: Guitar and vocals…' : 'Or type it: Backline tech…',
+        'aria-label': 'Role with ' + artistName });
+      var chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Pick a role' }, presets.map(function (r) {
+        return h('button', { class: 'chip', type: 'button', 'aria-pressed': String(r === role),
+          onclick: function () { role = r; input.value = r; sync(); } }, r);
+      }));
+      function sync() {
+        Array.prototype.forEach.call(chips.children, function (b) { b.setAttribute('aria-pressed', String(b.textContent === role)); });
+      }
+      input.addEventListener('input', function () { role = input.value.trim(); sync(); });
+      var busy = false;
+      async function save(endorse, btn) {
+        if (busy) return;
+        busy = true; btn.disabled = true;
+        role = input.value.trim().slice(0, 40);
+        try {
+          if (role !== was && B.setMemberRole) { await B.setMemberRole(artistId, m.userId, role); was = role; }
+          m.role = role;
+          if (endorse) { await B.endorse(artistId, m.userId); m.endorsed = true; }
+        } catch (x) { busy = false; btn.disabled = false; saveFailed('endorsement', x); return; }
+        closeSheet();
+        actOf(artistId, true);
+        if (m.userId) cardOf(m.userId, true);
+        S.creditAsks = null;
+        toast(endorse ? (self ? 'You’re endorsed ' : (m.name || 'They') + ' is endorsed ') + TROPHY : 'Role saved');
+        if (o.after) o.after(endorse);
+        render(true);
+        // Endorsed yourself: straight on to confirming your own tours.
+        if (endorse && self && creditsOn()) setTimeout(function () { openCreditClaim(artistId); }, 420);
+      }
+      return [
+        h('h2', { class: 'sh-title' }, roleOnly ? (self ? 'Your role' : (m.name || 'Their') + '’s role')
+          : 'Endorse ' + (self ? 'yourself' : (m.name || 'them')) + '?'),
+        h('p', { class: 'sh-sub' }, 'What ' + (self ? 'is your' : 'was their') + ' role with ' + artistName + '? It shows under ' +
+          (self ? 'your' : 'their') + ' name on ' + artistName + '’s page.'),
+        chips, input,
+        roleOnly ? null : h('p', { class: 'note' }, 'Endorsing says ' + who + ' really worked for ' + artistName + '. It shows on ' +
+          (self ? 'your' : 'their') + ' page and can’t be taken back. Then ' + (self ? 'you confirm' : 'they’re asked to confirm') +
+          ' the tours and shows ' + who + ' did with ' + artistName + '.'),
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          // What this page confirmed for them can be taken back (the trophy can't).
+          roleOnly && m.hasCredits && B.decideCredits ? h('button', { class: 'linkbtn rv-aside tc-off', type: 'button',
+            onclick: async function (e) {
+              var btn = e.currentTarget;
+              if (!btn.armed) { btn.armed = true; btn.textContent = 'Take their confirmed tours off their page?'; return; }
+              if (busy) return;
+              busy = true; btn.disabled = true;
+              var out = null, bad = null;
+              try { out = await B.decideCredits(artistId, m.userId, 'revoke'); } catch (x) { bad = x; }
+              busy = false;
+              if (!out) { btn.disabled = false; saveFailed('credits', bad); return; }
+              m.hasCredits = false;
+              closeSheet(); actOf(artistId, true); cardOf(m.userId, true);
+              toast('Their confirmed tours are off their page'); render(true);
+            } }, 'Take back the tours ' + artistName + ' confirmed for ' + (self ? 'you' : 'them')) : null,
+          roleOnly
+            ? h('button', { class: 'btn primary block', type: 'button', onclick: function (e) { save(false, e.currentTarget); } }, 'Save role')
+            : [h('button', { class: 'btn primary block', type: 'button', onclick: function (e) { save(true, e.currentTarget); } }, TROPHY + ' Endorse'),
+               h('button', { class: 'btn quiet block', type: 'button', onclick: function (e) { save(false, e.currentTarget); } }, 'Just save the role')],
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+      ];
+    }, { label: roleOnly ? 'Role' : 'Endorse' });
+  }
+
+  /* ---- Tour credits. Someone an artist has endorsed confirms the shows and
+     tours they've done with it: ALL TOURS, or tour by tour, each one the
+     entire tour or just the nights they were on. Nothing reaches their page
+     until the artist says yes. Then those nights count in their road story
+     and their tours list. ---- */
+  function creditsOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && socialOn() && !!(B && B.creditAsks && B.creditTours);
+  }
+  // Artists asking you to confirm, and where each one stands.
+  function creditAsks(fresh) {
+    var c = S.creditAsks || (S.creditAsks = { list: [], at: 0, asking: false });
+    if (!creditsOn()) return c;
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      window.GR_BACKEND.creditAsks().then(function (l) {
+        c.list = Array.isArray(l) ? l : []; c.at = Date.now(); c.asking = false; render();
+      }).catch(function () { c.asking = false; c.at = Date.now(); });
+    }
+    return c;
+  }
+  // Claims waiting on the artist pages you run.
+  function creditQueue(fresh) {
+    var c = S.creditQueue || (S.creditQueue = { list: [], at: 0, asking: false });
+    if (!creditsOn() || !window.GR_BACKEND.creditQueue) return c;
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      window.GR_BACKEND.creditQueue().then(function (l) {
+        c.list = Array.isArray(l) ? l : []; c.at = Date.now(); c.asking = false; render();
+      }).catch(function () { c.asking = false; c.at = Date.now(); });
+    }
+    return c;
+  }
+  function tallyText(t) { return plural(G.num(t.tours), 'tour') + ' · ' + plural(G.num(t.shows), 'show'); }
+  // "Mar 8 – Jun 9, 2017", years said once when they match.
+  function tourSpan(first, last) {
+    if (!first) return '';
+    var y1 = String(first).slice(0, 4), y2 = String(last || first).slice(0, 4);
+    if (!last || last === first) return dayMD(first) + ', ' + y1;
+    return y1 === y2 ? dayMD(first) + ' – ' + dayMD(last) + ', ' + y2
+      : dayMD(first) + ', ' + y1 + ' – ' + dayMD(last) + ', ' + y2;
+  }
+  // On your own Artists tab: one line per artist that endorsed you.
+  function creditAskCards() {
+    if (!creditsOn()) return null;
+    var list = creditAsks().list || [];
+    if (!list.length) return null;
+    return h('div', { class: 'tc-asks' }, list.map(function (a) {
+      var todo = a.state === 'ask' || a.state === 'declined';
+      var main = a.state === 'ask' ? 'Confirm the shows and tours you’ve done with ' + a.artist
+        : a.state === 'declined' ? a.artist + ' sent your tours back — fix and resend'
+        : a.state === 'pending' ? 'Waiting on ' + a.artist + ' to approve your tours'
+        : tallyText(a) + ' confirmed with ' + a.artist;
+      return h('button', { class: 'tc-ask' + (todo ? ' on' : ''), type: 'button', onclick: function () { openCreditClaim(a.artistId); } },
+        h('span', { class: 'tc-ask-t' }, main), icon('chevron', 16));
+    }));
+  }
+  // On an artist page you run: who is waiting on your yes.
+  function creditQueueCards(artistId) {
+    if (!creditsOn()) return null;
+    var list = (creditQueue().list || []).filter(function (x) { return x.artistId === artistId; });
+    if (!list.length) return null;
+    return h('div', { class: 'tc-asks' }, list.map(function (x) {
+      return h('button', { class: 'tc-ask on', type: 'button', onclick: function () { openCreditReview(x); } },
+        h('span', { class: 'tc-ask-t' }, (x.name || 'Someone') + ' · ' + (x.all ? 'all tours · ' : '') + tallyText(x) + ' to approve'),
+        icon('chevron', 16));
+    }));
+  }
+  /* The confirm page, built like the card-charge review: ALL TOURS on top,
+     then every tour to tick; a ticked tour asks Entire tour or Specific
+     shows, and Specific shows opens that tour's nights to tick. */
+  function openCreditClaim(artistId) {
+    var B = window.GR_BACKEND;
+    var host = h('div', { class: 'tc-host' }), foot = h('div', { class: 'stack tc-foot' });
+    var title = h('h2', { class: 'sh-title' }, 'Confirm your tours');
+    var st = { d: null, failed: false, sel: { all: false, picks: {} }, shows: {}, busy: false, armed: false };
+    function load() {
+      B.creditTours(artistId).then(function (d) {
+        st.d = d; st.failed = !d;
+        // Pick up where they left off: what's waiting, else what was sent back, else what's confirmed.
+        if (d && d.mine) st.sel = G.creditSelection(d.mine.pending || d.mine.declined || d.mine.approved);
+        if (d) title.textContent = 'Confirm the shows and tours you’ve done with ' + d.artist;
+        // A tour picked night by night before: its nights are needed to show the ticks.
+        Object.keys(st.sel.picks).forEach(function (k) { if (st.sel.picks[k].mode === 'shows') loadShows(k); });
+        draw();
+      }).catch(function () { st.failed = true; draw(); });
+    }
+    function loadShows(key) {
+      if (st.shows[key] && !st.shows[key].failed) return;
+      st.shows[key] = { list: null };
+      B.creditShows(artistId, key).then(function (l) { st.shows[key] = { list: Array.isArray(l) ? l : [] }; draw(); })
+        .catch(function () { st.shows[key] = { list: null, failed: true }; draw(); });
+    }
+    function groups() { return st.d && Array.isArray(st.d.tours) ? st.d.tours : []; }
+    function showLine(x) {
+      return [dayMD(x.date), [x.city, x.country && x.country !== 'US' ? x.country : ''].filter(Boolean).join(', '), x.venue]
+        .filter(Boolean).join(' · ');
+    }
+    function groupRow(g) {
+      var p = st.sel.picks[g.key], on = st.sel.all || !!p;
+      var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: on, disabled: st.sel.all || st.busy || null,
+        'aria-label': G.creditGroupName(g),
+        onchange: function (e) {
+          if (e.target.checked) st.sel.picks[g.key] = { mode: 'all', shows: {} };
+          else delete st.sel.picks[g.key];
+          draw();
+        } });
+      var flip = function () {
+        if (st.sel.all || st.busy) return;
+        if (st.sel.picks[g.key]) delete st.sel.picks[g.key]; else st.sel.picks[g.key] = { mode: 'all', shows: {} };
+        draw();
+      };
+      var kids = [
+        h('div', { class: 'rv-head tc-tap', onclick: flip },
+          h('span', { class: 'rv-name' }, G.creditGroupName(g)),
+          h('span', { class: 'amt num' }, plural(G.num(g.n), 'show'))),
+        h('div', { class: 'rv-sub tc-tap', onclick: flip }, g.year ? 'Nights outside a named tour' : tourSpan(g.first, g.last))];
+      if (p && !st.sel.all) {
+        kids.push(h('div', { class: 'rv-dest', role: 'group', 'aria-label': 'How much of ' + G.creditGroupName(g) },
+          [['all', g.year ? 'All of them' : 'Entire tour'], ['shows', 'Specific shows']].map(function (m) {
+            return h('button', { class: 'rv-dpill' + (p.mode === m[0] ? ' on' : ''), type: 'button',
+              onclick: function () {
+                if (st.busy) return;
+                p.mode = m[0];
+                if (p.mode === 'shows') loadShows(g.key);
+                draw();
+              } }, m[1]);
+          })));
+        if (p.mode === 'shows') {
+          var got = st.shows[g.key];
+          if (got && got.failed) {
+            kids.push(h('p', { class: 'note' }, 'Couldn’t load those shows. ',
+              h('button', { class: 'linkbtn', type: 'button', onclick: function () { loadShows(g.key); draw(); } }, 'Try again')));
+          } else if (!got || !got.list) kids.push(h('p', { class: 'note' }, 'Loading the shows…'));
+          else {
+            var n = got.list.filter(function (x) { return p.shows[x.id]; }).length;
+            kids.push(h('div', { class: 'tc-shows' },
+              h('div', { class: 'tc-shows-h' },
+                h('span', null, n + ' of ' + got.list.length + ' picked'),
+                h('button', { class: 'linkbtn', type: 'button', onclick: function () {
+                  var every = n === got.list.length;
+                  got.list.forEach(function (x) { if (every) delete p.shows[x.id]; else p.shows[x.id] = true; });
+                  draw();
+                } }, n === got.list.length ? 'Clear' : 'Tick all')),
+              got.list.map(function (x) {
+                return h('label', { class: 'tc-show' },
+                  h('input', { type: 'checkbox', class: 'rv-check', checked: !!p.shows[x.id], disabled: st.busy || null,
+                    onchange: function (e) { if (e.target.checked) p.shows[x.id] = true; else delete p.shows[x.id]; draw(); } }),
+                  h('span', null, showLine(x)));
+              })));
+          }
+        }
+      }
+      return h('div', { class: 'rv-row' + (on ? ' on' : '') + (st.sel.all ? ' tc-all' : '') }, cb, h('div', { class: 'rv-fields' }, kids));
+    }
+    function draw() {
+      var d = st.d;
+      if (!d) {
+        fillEl(host, h('p', { class: 'note' }, st.failed ? 'Couldn’t open this just now. Close and try again.' : 'Loading…'));
+        fillEl(foot, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'));
+        return;
+      }
+      var gs = groups(), mine = d.mine || null;
+      if (!gs.length) {
+        fillEl(host, h('p', { class: 'note' }, d.artist + ' hasn’t put its tour history on Greenroom yet, so there’s nothing to confirm against. ' +
+          'Once it does, this page fills in.'));
+        fillEl(foot, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'));
+        return;
+      }
+      var named = gs.filter(function (g) { return !g.year; }), loose = gs.filter(function (g) { return g.year; });
+      var status = !mine ? null
+        : mine.pending ? 'Waiting on ' + d.artist + ' to approve what you sent. Sending again replaces it.'
+        : mine.declined ? d.artist + ' sent it back. It’s ticked the way you sent it — fix it and send it again.'
+        : mine.approved ? 'Confirmed. Change it and send again — ' + (d.owner ? 'it’s yours to confirm.' : d.artist + ' approves the change.') : null;
+      fillEl(host, [
+        status ? h('p', { class: 'note tc-status' }, status) : null,
+        h('label', { class: 'rv-row tc-allrow' + (st.sel.all ? ' on' : '') },
+          h('input', { type: 'checkbox', class: 'rv-check', checked: st.sel.all, disabled: st.busy || null,
+            onchange: function (e) { st.sel.all = e.target.checked; draw(); } }),
+          h('div', { class: 'rv-fields' },
+            h('div', { class: 'rv-head' }, h('span', { class: 'rv-name' }, 'ALL TOURS'),
+              h('span', { class: 'amt num' }, plural(gs.reduce(function (n, g) { return n + G.num(g.n); }, 0), 'show'))),
+            h('div', { class: 'rv-sub' }, 'Every tour and show ' + d.artist + ' has played, through today'))),
+        named.length ? h('h3', { class: 'sh-h3' }, 'Or tour by tour') : null,
+        named.map(groupRow),
+        loose.length ? h('h3', { class: 'sh-h3' }, 'Shows outside a tour') : null,
+        loose.map(groupRow),
+        // Their data, their credit.
+        setlistCredit(d.url)
+      ]);
+      var t = G.creditTally(gs, st.sel);
+      fillEl(foot, [
+        h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || !t.shows || null, onclick: send },
+          st.busy ? 'Sending…' : !t.shows ? 'Tick the tours you were on'
+            : (d.owner ? 'Confirm · ' : 'Send to ' + d.artist + ' · ') + tallyText(t)),
+        mine && (mine.approved || mine.pending) ? h('button', { class: 'linkbtn rv-aside tc-off', type: 'button', disabled: st.busy || null,
+          onclick: withdraw }, st.armed ? 'Take them off for good?' : 'Take my tours with ' + d.artist + ' off my page') : null,
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now')
+      ]);
+    }
+    async function send() {
+      var d = st.d, t = G.creditTally(groups(), st.sel);
+      if (st.busy || !d) return;
+      if (!t.shows) { toast('Tick the tours you were on first.'); return; }
+      var waiting = Object.keys(st.sel.picks).some(function (k) {
+        return !st.sel.all && st.sel.picks[k].mode === 'shows' && !(st.shows[k] && st.shows[k].list);
+      });
+      if (waiting) { toast('Still loading a tour’s shows — one moment.'); return; }
+      st.busy = true; draw();
+      var out = null, bad = null;
+      try { out = await B.submitCredits(artistId, G.creditClaim(st.sel)); } catch (e) { bad = e; }
+      st.busy = false;
+      if (!out || !out.ok) { draw(); saveFailed('credits', bad || out); return; }
+      closeSheet();
+      S.creditAsks = null; S.creditQueue = null;
+      if (B.uid) cardOf(B.uid(), true);
+      if (out.auto) hornSplash('Tours confirmed', tallyText(t) + ' on your page');
+      else toast('Sent — once ' + d.artist + ' approves, it’s on your page');
+      render(true);
+    }
+    async function withdraw() {
+      if (st.busy) return;
+      // Two taps: it comes off the page at once.
+      if (!st.armed) { st.armed = true; draw(); return; }
+      st.busy = true; draw();
+      var out = null, bad = null;
+      try { out = await B.withdrawCredits(artistId); } catch (e) { bad = e; }
+      st.busy = false; st.armed = false;
+      if (!out) { draw(); saveFailed('credits', bad); return; }
+      closeSheet();
+      S.creditAsks = null; S.creditQueue = null;
+      if (B.uid) cardOf(B.uid(), true);
+      toast('Taken off your page');
+      render(true);
+    }
+    draw(); load();
+    openSheet(function (panel) {
+      panel.classList.add('rv-sheet');
+      return [title,
+        h('p', { class: 'sh-sub' }, 'Tick what you were on. Nothing shows on your page until the artist says yes.'),
+        host, foot];
+    }, { label: 'Confirm your tours' });
+  }
+  /* The artist's side: what someone says they worked, laid out, and the yes
+     or no. Approving puts it on their page; it never changes anything else. */
+  function openCreditReview(item) {
+    var B = window.GR_BACKEND;
+    var host = h('div', { class: 'tc-host' }), foot = h('div', { class: 'stack tc-foot' });
+    var st = { d: null, failed: false, busy: false, armed: false };
+    var who = item.name || 'They', first = String(who).split(' ')[0];
+    function load() {
+      st.d = null; st.failed = false; draw();
+      B.creditDetail(item.artistId, item.userId).then(function (d) { st.d = d; st.failed = !d; draw(); })
+        .catch(function () { st.failed = true; draw(); });
+    }
+    function line(g) {
+      return h('div', { class: 'row' },
+        h('div', { class: 'row-label' }, G.creditGroupName(g),
+          h('span', { class: 'hint' }, [g.year ? '' : tourSpan(g.first, g.last),
+            G.num(g.n) >= G.num(g.total) ? (g.year ? 'all of them' : 'entire tour') : g.n + ' of ' + g.total + ' shows'].filter(Boolean).join(' · '))),
+        h('span', { class: 'amt num' }, plural(G.num(g.n), 'show')));
+    }
+    function total(list) {
+      return { tours: list.filter(function (g) { return !g.year; }).length,
+        shows: list.reduce(function (n, g) { return n + G.num(g.n); }, 0) };
+    }
+    function draw() {
+      var d = st.d;
+      var close = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now');
+      if (!d) {
+        fillEl(host, h('p', { class: 'note' }, st.failed ? 'Couldn’t open this just now. Close and try again.' : 'Loading…'));
+        fillEl(foot, close);
+        return;
+      }
+      var pend = Array.isArray(d.pending) ? d.pending : null, had = Array.isArray(d.approved) ? d.approved : [];
+      if (!pend) {
+        fillEl(host, h('p', { class: 'note' }, 'Nothing is waiting from ' + first + ' any more.'));
+        fillEl(foot, close);
+        return;
+      }
+      var t = total(pend);
+      fillEl(host, [
+        h('p', { class: 'note' }, who + ' says they worked these with ' + d.artist +
+          (d.pendingAll ? ' — ALL TOURS, every show through the day they sent it.' : ':')),
+        h('div', { class: 'ledger' }, pend.map(line),
+          h('div', { class: 'row total' }, h('span', null, tallyText(t)), h('strong', { class: 'amt num' }, plural(t.shows, 'show')))),
+        had.length ? h('p', { class: 'note' }, 'This replaces what you approved before (' + tallyText(total(had)) + ').') : null,
+        setlistCredit(d.url)
+      ]);
+      fillEl(foot, [
+        h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || null,
+          onclick: function () { decide('approve'); } }, st.busy ? 'Saving…' : 'Approve · it goes on ' + first + '’s page'),
+        h('button', { class: 'btn danger block', type: 'button', disabled: st.busy || null,
+          onclick: function () { if (!st.armed) { st.armed = true; draw(); return; } decide('decline'); } },
+          st.armed ? 'Send it back to ' + first + '?' : 'Not right — send it back'),
+        close
+      ]);
+    }
+    async function decide(verdict) {
+      if (st.busy || !st.d) return;
+      st.busy = true; draw();
+      var out = null, bad = null;
+      try { out = await B.decideCredits(item.artistId, item.userId, verdict, st.d.submittedAt); } catch (e) { bad = e; }
+      st.busy = false; st.armed = false;
+      if (!out) { draw(); saveFailed('credits', bad); return; }
+      S.creditQueue = null;
+      if (!out.ok) {
+        // They sent a newer one while this was open: look again before saying yes.
+        toast(out.why === 'changed' ? first + ' sent a newer one. Take another look.' : 'Already handled');
+        load(); render(true);
+        return;
+      }
+      closeSheet();
+      cardOf(item.userId, true);
+      toast(verdict === 'approve' ? 'Approved — it’s on ' + first + '’s page' : 'Sent back to ' + first);
+      render(true);
+    }
+    load();
+    openSheet(function (panel) {
+      panel.classList.add('rv-sheet');
+      return [h('h2', { class: 'sh-title' }, who + '’s tours'), host, foot];
+    }, { label: 'Tour credits to approve' });
+  }
+  /* One line of a Tours tab (an artist's or a person's). The tour being
+     played today sits on top and glows: "Currently on". */
+  function timelineRow(r, onTap, withArtist) {
+    var span = r.first ? tourSpan(r.first, r.last) + (r.n ? ' · ' + plural(r.n, 'show') : '')
+      : (r.n ? plural(r.n, 'show') : 'No dates yet');
+    var inner = [h('span', { class: 'lr-text' },
+      r.now ? h('span', { class: 'lr-title tl-title' }, h('span', { class: 'tl-name' }, r.name), h('span', { class: 'tl-now' }, 'Currently on'))
+        : h('span', { class: 'lr-title' }, r.name),
+      h('span', { class: 'lr-sub' }, [withArtist ? r.artist : '', span].filter(Boolean).join(' · '))),
+      onTap ? icon('chevron', 18) : null];
+    return h('li', { class: r.now ? 'tl-live' : null },
+      onTap ? h('button', { class: 'list-row tour-row', type: 'button', onclick: onTap }, inner)
+        : h('div', { class: 'list-row tour-row still' }, inner));
+  }
+  // A person's badge and "On the road since": the same ladder the artists climb.
+  function roadLine(rs) {
+    if (!G.isObj(rs)) return null;
+    var tier = G.historyTier(rs), since = G.num(rs.firstYear);
+    if (!tier && !(since > 1900)) return null;
+    return h('p', { class: 'hist-line' },
+      tier ? h('span', { class: 'hist-tier tier-' + tier.key }, tier.label) : null,
+      since > 1900 ? 'On the road since ' + since : null);
+  }
+
   /* ---- Tour history (the road story). setlist.fm — the fans' setlist
      archive — holds nearly every night a band ever played. The server reads
      it with the owner's key (write-only, like Square's) and boils it down
@@ -3314,27 +3743,47 @@
     }
     return 'Switched on — the first read lands within minutes.';
   }
-  // Under the bio: the road badge and the credit line. The four numbers
-  // themselves live at the top of the page now — they ARE the page.
-  function historyBlock(id, manage) {
+  // Under the bio: the road badge and "On the road since YYYY" — every
+  // artist page says it. The year is the first night on record, or, until
+  // a page has its history, its first tour on Greenroom.
+  function historyBlock(id, manage, tours) {
     var c = histOf(id);
     var row = c.row;
     var sum = row && G.isObj(row.summary) ? row.summary : null;
-    if (sum && G.num(sum.shows) > 0) {
-      var tier = G.historyTier(sum);
-      return h('p', { class: 'hist-line' },
+    var has = !!(sum && G.num(sum.shows) > 0);
+    var tier = has ? G.historyTier(sum) : null;
+    var since = has && G.num(sum.firstYear) > 0 ? G.num(sum.firstYear) : 0;
+    if (!since) {
+      var today = G.tourToday();
+      (tours || []).forEach(function (t) {
+        // Only a tour that has started counts: no "since next year".
+        if (!t.first || String(t.first) > today) return;
+        var y = parseInt(String(t.first).slice(0, 4), 10);
+        if (y > 1900 && (!since || y < since)) since = y;
+      });
+    }
+    return [
+      tier || since ? h('p', { class: 'hist-line' },
         tier ? h('span', { class: 'hist-tier tier-' + tier.key }, tier.label) : null,
-        (sum.firstYear ? 'On the road since ' + sum.firstYear + ' · ' : ''),
-        // Credit where the data lives; only their own link is trusted.
-        h('a', { class: 'hist-src', target: '_blank', rel: 'noopener',
-          href: /^https:\/\/www\.setlist\.fm\//.test(String(row.mb_url || '')) ? row.mb_url : 'https://www.setlist.fm' },
-          'setlist.fm'));
-    }
-    if (manage && row) {
-      return h('p', { class: 'hist-note' }, histStatusLine(row), ' · ',
-        h('a', { class: 'hist-src', href: 'https://www.setlist.fm', target: '_blank', rel: 'noopener' }, 'setlist.fm'));
-    }
-    return null;
+        since ? 'On the road since ' + since : null) : null,
+      // While the history is still reading in, the owner sees how far along it is.
+      manage && row && !has ? h('p', { class: 'hist-note' }, histStatusLine(row)) : null
+    ];
+  }
+  // Their data, their credit: one quiet line at the foot of a page that
+  // shows setlist.fm's numbers (their terms ask for the link; only their
+  // own address is trusted in it).
+  function historyCredit(id) {
+    var c = histOf(id), row = c.row;
+    var sum = row && G.isObj(row.summary) ? row.summary : null;
+    if (!(sum && G.num(sum.shows) > 0)) return null;
+    return setlistCredit(row.mb_url);
+  }
+  function setlistCredit(url) {
+    return h('p', { class: 'hist-credit' }, 'Tour data: ',
+      h('a', { class: 'hist-src', target: '_blank', rel: 'noopener',
+        href: /^https:\/\/www\.setlist\.fm\//.test(String(url || '')) ? url : 'https://www.setlist.fm' },
+        'setlist.fm'));
   }
   // The owner's switchboard: the key, and the switch per artist page. The
   // sheet reads the key row and the history row itself, and redraws when
@@ -4340,11 +4789,13 @@
     var named = names.map(function (a) { return { name: a, endorsed: trophyFor(a) }; });
     // An artist that endorsed you shows here even when none of your tours is theirs.
     var extra = ends.filter(function (x) { return used.indexOf(x) < 0; });
+    // Artists that endorsed you ask you to confirm your tours with them, on top.
+    var asks = creditAskCards();
     if (!names.length && !extra.length) {
-      return emptyState('No artists yet', loose.length
+      return [asks, emptyState('No artists yet', loose.length
         ? 'Your tours are under Tours. Open one, then \u22ef, then Name and artist, to file it under its artist.'
         : canWrite() ? 'Tap + to add your artist, then their first tour.'
-        : 'Nothing has been shared with you yet.');
+        : 'Nothing has been shared with you yet.')];
     }
     // The trophy: tap it to see who endorsed you, and remove it if it isn't right.
     var trophy = function (x) {
@@ -4364,6 +4815,7 @@
                   mc.card.acts = mc.card.acts.filter(function (y) { return y.eid !== x.eid; });
                   mc.card.endorsements = Math.max(0, G.num(mc.card.endorsements) - 1);
                 }
+                S.creditAsks = null;
                 cardOf(B.uid(), true); toast('Endorsement removed'); return true;
               }
               catch (e) { saveFailed('endorsement', e); return false; }
@@ -4381,14 +4833,14 @@
         : h('div', { class: 'list-row art-row still' }, inner);
       return endorsed ? h('li', { class: 'pa-li' }, main, trophy(endorsed)) : h('li', null, main);
     };
-    return h('ul', { class: 'tour-list rows' },
+    return [asks, h('ul', { class: 'tour-list rows' },
       named.map(function (n) {
         var page = pages[String(n.name).trim().toLowerCase()];
         return row(n.name, page, (page && page.avatar) || artistLogo(n.name), n.endorsed);
       }).concat(extra.map(function (x) {
         return row(x.name, x.id ? { id: x.id, handle: x.handle, avatar: x.avatar } : null, x.avatar || artistLogo(x.name), x,
           x.id ? null : 'No longer on Greenroom');
-      })));
+      })))];
   }
   /* TOURS: each run by name. Tap one and its dates drop down under it, laid
      out like the tour's calendar: a show with Day sheet and Special
@@ -4396,8 +4848,22 @@
      days already played fold away. Shows are added on the tour, not here. */
   function pfTours() {
     var entries = toursByNow();
+    // The tour you're out on right now leads the list.
+    entries = entries.filter(function (e) { return tourIsLive(e[1]); })
+      .concat(entries.filter(function (e) { return !tourIsLive(e[1]); }));
+    // Then the tours an artist confirmed for you that aren't already here.
+    var B = window.GR_BACKEND, meCard = socialOn() && B && B.uid ? cardOf(B.uid()).card : null;
+    var ownSpans = entries.map(function (e) {
+      var d = G.rows(e[1] && e[1].shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+      return { name: e[1].name, artist: artistOf(e[1]), first: d[0] || '', last: d[d.length - 1] || '', shows: d.length };
+    });
+    var credited = G.tourTimeline(ownSpans, meCard && Array.isArray(meCard.creditTours) ? meCard.creditTours : [], G.tourToday())
+      .filter(function (r) { return !r.own; });
+    var creditedList = credited.length ? h('ul', { class: 'tour-list rows tl-credited' }, credited.map(function (r) {
+      return timelineRow(r, r.tour.artistId ? function () { openAct(r.tour.artistId); } : null, true);
+    })) : null;
     if (!entries.length) {
-      return emptyState('No tours yet', canWrite()
+      return creditedList || emptyState('No tours yet', canWrite()
         ? 'Tap + to add an artist, then their first tour.'
         : 'Nothing has been shared with you yet.');
     }
@@ -4410,17 +4876,19 @@
         tourRole(id); // asked for now, so a sheet opened from a row already knows what you may do
         cal = calendarRows(id, t, { from: PF_HOME, fromLabel: 'Profile' });
       }
-      return h('section', { class: 'pt-run' + (open ? ' open' : '') },
+      return h('section', { class: 'pt-run' + (open ? ' open' : '') + (live ? ' tl-live' : '') },
         h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
           onclick: function () { S.pfOpen[id] = !open; render(true); } },
           h('span', { class: 'lr-text' },
-            h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
-            h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artist || 'No artist yet', live ? 'On the road' : ''].filter(Boolean).join(' · '))),
+            live ? h('span', { class: 'lr-title tl-title' }, h('span', { class: 'tl-name' }, t.name || 'Untitled tour'),
+                h('span', { class: 'tl-now' }, 'Currently on'))
+              : h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
+            h('span', { class: 'lr-sub' }, artist || 'No artist yet')),
           icon('chevron', 16)),
         !cal ? null : !(cal.pastBtn || cal.rows.length) ? h('p', { class: 'pt-next pt-nodates' }, 'No dates yet') : [
           cal.pastBtn ? h('div', { class: 'cal-past-wrap' + (cal.open ? ' open' : '') }, cal.pastBtn) : null,
           cal.rows.length ? h('ul', { class: 'shows cal-list' }, cal.rows) : null]);
-    });
+    }).concat(creditedList ? [creditedList] : []);
   }
   function profileTabs(entries, byArtist, loose, declared) {
     var id = profileTourId(), t = id ? getTour(id) : null;
@@ -4482,6 +4950,12 @@
       dbBanner(),
       profileHead(entries.length),
       profileTabs(entries, byArtist, loose, declared),
+      // Your numbers count nights from an artist's synced history once it
+      // confirms them: that data's source gets its line, on every tab.
+      (function () {
+        var B = window.GR_BACKEND, mc = socialOn() && B && B.uid ? cardOf(B.uid()).card : null;
+        return mc && Array.isArray(mc.credits) && mc.credits.length ? setlistCredit() : null;
+      })(),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar('me'),
       (function () {
@@ -8062,6 +8536,23 @@
       if (keys.length) tasks.push({ key: 'guests:' + x.id, keys: keys, at: newest, emoji: '🎟️',
         title: 'New on the guest list', main: names.join(', '), sub: place(x), open: onDay('guests', x.date) });
     });
+    // Not this tour's, but yours: tours to confirm with an artist that endorsed
+    // you, and (for an artist page you run) credits waiting on your yes.
+    if (creditsOn()) {
+      (creditAsks().list || []).forEach(function (a) {
+        if (a.state !== 'ask' && a.state !== 'declined') return;
+        var stamp = a.declinedAt || a.at || '';
+        tasks.push({ key: 'credit:' + a.artistId + ':' + stamp, standing: true, at: when(stamp), emoji: TROPHY, title: 'Tour credits',
+          main: 'Confirm the shows and tours you\u2019ve done with ' + a.artist,
+          sub: a.state === 'declined' ? 'Sent back \u2014 fix it and send it again' : a.artist + ' endorsed you',
+          open: function () { openCreditClaim(a.artistId); } });
+      });
+      (creditQueue().list || []).forEach(function (x) {
+        tasks.push({ key: 'creditq:' + x.artistId + ':' + x.userId + ':' + (x.submittedAt || ''), standing: true, at: when(x.submittedAt),
+          emoji: '\u2705', title: 'Tour credits to approve', main: (x.name || 'Someone') + ' \u00b7 ' + x.artist,
+          sub: (x.all ? 'All tours \u00b7 ' : '') + tallyText(x), open: function () { openCreditReview(x); } });
+      });
+    }
     tasks.forEach(function (c) { c.keys = c.keys || [c.key]; c.fresh = c.at > since; });
     // Handled is handled. Then the ones you haven't decided on, in order;
     // then the ones you put off, oldest "later" first.

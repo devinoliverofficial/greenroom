@@ -67,21 +67,130 @@
     return hit ? hit.label : 'Income';
   }
 
-  /* Road milestones, calibrated against the real road: a working band
-     plays 40-100 nights a year; The Beatles' whole life was ~1,400 shows;
-     only the lifers (Metallica, the Dead, Dylan) clear 2,000. The badge
-     rewards the grind, not the fame — Michael Jackson solo sits at Silver. */
+  // The titles an artist's page can give its people (or it types its own):
+  // what the public sees there, whatever they are behind the scenes.
+  var BAND_ROLES = ['Vocals', 'Guitar', 'Bass', 'Drums', 'Keys', 'DJ', 'Programming'];
+  var ARTIST_CREW_ROLES = ['Tour Manager', 'Production Manager', 'Stage Manager', 'FOH Engineer',
+    'Monitor Engineer', 'Lighting Director', 'Guitar Tech', 'Drum Tech', 'Merch Manager', 'Driver',
+    'Photographer', 'Videographer'];
+
+  /* Tour credits. On the confirm page a selection is
+     { all: bool, picks: { groupKey: { mode: 'all' | 'shows', shows: { nightId: true } } } }
+     over the artist's groups: its tours, and each year's nights that sit
+     outside any named tour ({ key: 'year:2024', year: true }). */
+  function creditGroupName(g) {
+    if (!g) return '';
+    if (g.year) {
+      var y = String(g.key || '').slice(5);
+      return y && y !== '0' ? y + ' · other shows' : 'Undated shows';
+    }
+    return g.name || 'Untitled tour';
+  }
+  function pickedIds(p) {
+    var shows = p && isObj(p.shows) ? p.shows : {};
+    return Object.keys(shows).filter(function (id) { return shows[id]; });
+  }
+  // How many tours and shows a selection adds up to (a year of loose
+  // nights adds shows, never a tour).
+  function creditTally(groups, sel) {
+    var out = { tours: 0, shows: 0 };
+    (groups || []).forEach(function (g) {
+      var n = 0;
+      if (sel && sel.all) n = num(g.n);
+      else {
+        var p = sel && isObj(sel.picks) ? sel.picks[g.key] : null;
+        if (!isObj(p)) return;
+        n = p.mode === 'shows' ? pickedIds(p).length : num(g.n);
+      }
+      if (!(n > 0)) return;
+      out.shows += n;
+      if (!g.year) out.tours += 1;
+    });
+    return out;
+  }
+  // The selection as the server takes it.
+  function creditClaim(sel) {
+    if (sel && sel.all) return { all: true };
+    var picks = [];
+    Object.keys(sel && isObj(sel.picks) ? sel.picks : {}).forEach(function (k) {
+      var p = sel.picks[k];
+      if (!isObj(p)) return;
+      if (p.mode === 'shows') {
+        var ids = pickedIds(p);
+        if (ids.length) picks.push({ key: k, mode: 'shows', shows: ids });
+      } else picks.push({ key: k, mode: 'all' });
+    });
+    return { picks: picks };
+  }
+  // What the server keeps, back into a selection (to pick up where they left off).
+  function creditSelection(claim) {
+    var sel = { all: false, picks: {} };
+    if (!isObj(claim)) return sel;
+    if (claim.all === true) { sel.all = true; return sel; }
+    (Array.isArray(claim.picks) ? claim.picks : []).forEach(function (p) {
+      if (!isObj(p) || !p.key) return;
+      var shows = {};
+      if (p.mode === 'shows') (Array.isArray(p.shows) ? p.shows : []).forEach(function (id) { shows[String(id)] = true; });
+      sel.picks[p.key] = { mode: p.mode === 'shows' ? 'shows' : 'all', shows: shows };
+    });
+    return sel;
+  }
+
+  /* A page's Tours tab: every tour there is, newest first, with the one
+     being played today on top. `own` are tours on Greenroom ({ name, artist,
+     first, last, shows }); `past` are tours known from an artist's history
+     or from confirmed credits ({ name, artist, n, first, last }). A past tour
+     that overlaps one of the page's own in time is the same tour, so it's
+     listed once — on an artist's page (the past tours carry no artist: they
+     are all its own), or on a person's when both are filed under the same
+     artist. An own tour with no artist filed never hides a credited one. */
+  function tourTimeline(own, past, today) {
+    var mine = (own || []).filter(isObj), out = [];
+    var low = function (v) { return String(v || '').trim().toLowerCase(); };
+    mine.forEach(function (t) {
+      var a = String(t.first || ''), b = String(t.last || t.first || '');
+      out.push({ own: true, tour: t, name: t.name || 'Untitled tour', artist: t.artist || '', first: a, last: b,
+        n: num(t.shows), now: !!(a && today && today >= a && today <= b) });
+    });
+    (past || []).filter(isObj).forEach(function (p) {
+      var a = String(p.first || ''), b = String(p.last || p.first || '');
+      var dup = !!a && mine.some(function (t) {
+        var ta = String(t.first || ''), tb = String(t.last || t.first || '');
+        if (!ta) return false;
+        if (p.artist && low(p.artist) !== low(t.artist)) return false;
+        return a <= tb && b >= ta;
+      });
+      if (dup) return;
+      out.push({ own: false, tour: p, name: p.name || 'Untitled tour', artist: p.artist || '', first: a, last: b,
+        n: num(p.n), now: false });
+    });
+    return out.sort(function (x, y) {
+      if (x.now !== y.now) return x.now ? -1 : 1;
+      return String(y.last).localeCompare(String(x.last)) || String(x.name).localeCompare(String(y.name));
+    });
+  }
+
+  /* Road badges (Devin's ladder, 2026-10-07). Shows carry you up the
+     rungs — Bronze 50, Silver 250, Gold 500, Diamond 800 — but LEGACY is
+     the whole spread at once: 850 shows AND 50 tours AND 30 countries AND
+     250 cities. The badge rewards the grind, not the fame: Michael
+     Jackson's solo career sits at Silver, and even the Beatles (~1,400
+     shows, but few runs around the world) hold at Diamond. */
   var HISTORY_TIERS = [
-    { key: 'legacy', label: 'Legacy', n: 2000 },
-    { key: 'diamond', label: 'Diamond', n: 1200 },
+    { key: 'diamond', label: 'Diamond', n: 800 },
     { key: 'gold', label: 'Gold', n: 500 },
     { key: 'silver', label: 'Silver', n: 250 },
     { key: 'bronze', label: 'Bronze', n: 50 }
   ];
-  function historyTier(shows) {
-    var n = num(shows);
+  var LEGACY_BAR = { key: 'legacy', label: 'Legacy', shows: 850, tours: 50, countries: 30, cities: 250 };
+  function historyTier(sum) {
+    var s = isObj(sum) ? sum : {};
+    if (num(s.shows) >= LEGACY_BAR.shows && num(s.tours) >= LEGACY_BAR.tours &&
+        num(s.countries) >= LEGACY_BAR.countries && num(s.cities) >= LEGACY_BAR.cities) {
+      return LEGACY_BAR;
+    }
     for (var i = 0; i < HISTORY_TIERS.length; i++) {
-      if (n >= HISTORY_TIERS[i].n) return HISTORY_TIERS[i];
+      if (num(s.shows) >= HISTORY_TIERS[i].n) return HISTORY_TIERS[i];
     }
     return null;
   }
@@ -1332,7 +1441,10 @@
     COMMISSION_LINES: COMMISSION_LINES, commissionLines: commissionLines,
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
     OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
-    HISTORY_TIERS: HISTORY_TIERS, historyTier: historyTier,
+    HISTORY_TIERS: HISTORY_TIERS, LEGACY_BAR: LEGACY_BAR, historyTier: historyTier,
+    BAND_ROLES: BAND_ROLES, ARTIST_CREW_ROLES: ARTIST_CREW_ROLES,
+    creditGroupName: creditGroupName, creditTally: creditTally, creditClaim: creditClaim,
+    creditSelection: creditSelection, tourTimeline: tourTimeline,
     CHARGE_CATEGORIES: CHARGE_CATEGORIES,
     extraCategories: extraCategories, typedCategoriesFor: typedCategoriesFor,
     chargeCategoriesFor: chargeCategoriesFor, slugCategory: slugCategory,

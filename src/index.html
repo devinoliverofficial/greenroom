@@ -1648,6 +1648,52 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
   color: var(--pos); font-weight: 800; font-size: 11px; letter-spacing: .05em; }
 .hist-src { color: var(--ink-3); text-decoration: underline; }
 .hist-note { margin: 8px 2px 0; font-size: 12.5px; color: var(--ink-3); }
+/* Tour credits. The asks on your Artists tab (and, on an artist page you
+   run, who is waiting on your yes): one line each, glowing while it needs you. */
+.tc-asks { display: grid; gap: 8px; margin: 12px 0 6px; }
+.tc-ask { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 9px 12px; appearance: none;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink-2);
+  font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; cursor: pointer; }
+.tc-ask-t { flex: 1; min-width: 0; }
+.tc-ask > .ic { flex: none; color: var(--ink-3); }
+.tc-ask.on { color: var(--pos); border-color: color-mix(in oklab, var(--pos), transparent 30%);
+  background: color-mix(in oklab, var(--pos) 9%, var(--surface)); animation: tasksglow 2.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .tc-ask.on { animation: none; } }
+/* The confirm page and the artist's review of it. */
+.tc-host { display: grid; gap: 9px; }
+.tc-host .sh-h3 { margin: 12px 0 0; font-size: 13px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
+.tc-status { margin: 0; }
+.tc-allrow { cursor: pointer; }
+.tc-allrow .rv-name { letter-spacing: .04em; }
+.rv-row.tc-all { opacity: .55; }
+.tc-tap { cursor: pointer; }
+.tc-shows { display: grid; gap: 2px; margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--line); }
+.tc-shows-h { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--ink-3); }
+.tc-shows-h .linkbtn { min-height: 28px; font-size: 12px; }
+.tc-show { display: flex; align-items: center; gap: 9px; min-height: 36px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.tc-show .rv-check { margin: 0; width: 20px; height: 20px; }
+/* The send bar rides the bottom of the sheet, over its bottom padding. */
+.tc-foot { position: sticky; bottom: calc(-20px - env(safe-area-inset-bottom, 0px)); z-index: 2; margin: 14px -18px 0;
+  padding: 12px 18px calc(20px + env(safe-area-inset-bottom, 0px)); background: var(--bg); border-top: 1px solid var(--line); }
+.tc-off { justify-self: center; }
+/* A Tours tab: the tour being played today leads and glows. */
+.lr-title.tl-title { display: flex; align-items: center; gap: 8px; overflow: visible; }
+.tl-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-now { flex: none; display: inline-block; padding: 1px 8px; border-radius: 999px;
+  background: var(--pos-soft); color: var(--pos); font-size: 10.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.tl-live { border-radius: 12px; animation: tasksglow 2.2s ease-in-out infinite;
+  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--pos), transparent 30%);
+  background: color-mix(in oklab, var(--pos) 7%, transparent); }
+li.tl-live > .list-row { padding-left: 10px; padding-right: 8px; }
+.pt-run.tl-live { border-bottom-color: transparent; margin-bottom: 6px; }
+.pt-run.tl-live > .pt-run-h { padding-left: 10px; padding-right: 8px; }
+.tl-live .lr-title { color: var(--pos); }
+@media (prefers-reduced-motion: reduce) { .tl-live { animation: none; } }
+/* The Endorsed tag on a page you run is a button (it opens their role). */
+button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font: inherit; font-size: 12px; font-weight: 650;
+  min-height: 28px; padding: 0 2px; cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--pos), transparent 55%); text-underline-offset: 3px; }
+/* The data credit: one quiet line at the foot of a page that shows it. */
+.hist-credit { margin: 26px 0 0; text-align: center; font-size: 11px; color: var(--ink-3); opacity: .75; }
 /* Fans / followers line under the headline stats; tappable where it opens a list. */
 .hist-fans { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-3); }
 .hf-btn { appearance: none; background: none; border: 0; padding: 0; margin: 0;

@@ -1408,5 +1408,66 @@
     eq(G.historyTier({ shows: 3000, tours: 60, countries: 45, cities: 500 }).label, 'Legacy', 'the lifers');
   });
 
+  /* ---- Tour credits: the confirm page's selection, and a page's Tours tab. ---- */
+  (function () {
+    var groups = [
+      { key: 'TRHS', name: 'Treehouse Tour', year: false, n: 39 },
+      { key: 'TJTL', name: 'Digital Renegade', year: false, n: 55 },
+      { key: 'year:2024', name: '', year: true, n: 74 }];
+    test('a credit selection adds up to tours and shows', function () {
+      var t = G.creditTally(groups, { all: true, picks: {} });
+      eq(t.tours, 2, 'all: the named tours'); eq(t.shows, 168, 'all: every night');
+      t = G.creditTally(groups, { all: false, picks: {
+        TRHS: { mode: 'all', shows: {} },
+        TJTL: { mode: 'shows', shows: { a: true, b: true, c: false } },
+        'year:2024': { mode: 'all', shows: {} } } });
+      eq(t.tours, 2, 'a year of loose nights is not a tour'); eq(t.shows, 39 + 2 + 74, 'ticked nights only');
+      eq(G.creditTally(groups, { all: false, picks: { TJTL: { mode: 'shows', shows: {} } } }).tours, 0, 'no nights ticked, no tour');
+      eq(G.creditTally(groups, null).shows, 0, 'nothing picked');
+    });
+    test('a credit selection goes to the server and comes back the same', function () {
+      var sel = { all: false, picks: { TRHS: { mode: 'all', shows: {} }, TJTL: { mode: 'shows', shows: { a: true, b: true, c: false } },
+        EMPTY: { mode: 'shows', shows: {} } } };
+      var claim = G.creditClaim(sel);
+      eq(claim.picks.length, 2, 'a tour with no nights ticked is not sent');
+      eq(claim.picks[1].shows.join(','), 'a,b', 'only ticked nights go');
+      var back = G.creditSelection({ picks: claim.picks, until: '2026-10-07' });
+      eq(back.picks.TRHS.mode, 'all', 'entire tour comes back');
+      eq(Object.keys(back.picks.TJTL.shows).join(','), 'a,b', 'nights come back ticked');
+      eq(G.creditClaim({ all: true, picks: sel.picks }).all, true, 'all tours says only that');
+      eq(G.creditSelection({ all: true, until: '2026-10-07' }).all, true, 'all tours comes back');
+      eq(G.creditSelection(null).all, false, 'nothing stored, nothing picked');
+    });
+    test('a year of loose nights has a name', function () {
+      eq(G.creditGroupName({ key: 'year:2024', year: true }), '2024 · other shows', 'year bucket');
+      eq(G.creditGroupName({ key: 'year:0', year: true }), 'Undated shows', 'no date at all');
+      eq(G.creditGroupName({ key: 'TRHS', name: 'Treehouse Tour' }), 'Treehouse Tour', 'a tour is its name');
+    });
+    test('the Tours tab: current tour on top, the same tour never twice', function () {
+      var own = [
+        { id: 't1', name: 'Fall Run', artist: 'I See Stars', first: '2026-09-18', last: '2026-10-20', shows: 20 },
+        { id: 't0', name: 'Spring Run', artist: 'I See Stars', first: '2026-02-26', last: '2026-05-09', shows: 32 }];
+      var past = [
+        { name: 'Spin the Wheel', artist: 'I See Stars', n: 32, first: '2026-02-26', last: '2026-05-09' },
+        { name: 'Treehouse Tour', artist: 'I See Stars', n: 39, first: '2017-03-08', last: '2017-06-09' },
+        { name: 'Other Band Run', artist: 'Other Band', n: 9, first: '2026-03-01', last: '2026-03-20' }];
+      var tl = G.tourTimeline(own, past, '2026-10-07');
+      eq(tl[0].name, 'Fall Run', 'the tour being played today leads'); eq(tl[0].now, true, 'and is marked');
+      eq(tl.filter(function (r) { return r.name === 'Spin the Wheel'; }).length, 0, 'the same tour by another name is not listed twice');
+      eq(tl.filter(function (r) { return r.name === 'Other Band Run'; }).length, 1, 'another artist the same month is its own tour');
+      eq(tl[tl.length - 1].name, 'Treehouse Tour', 'oldest last');
+      eq(G.tourTimeline(own, past, '2026-12-25')[0].now, false, 'no tour today, nothing glows');
+      eq(G.tourTimeline([], past, '2026-10-07').length, 3, 'a page with only history lists it all');
+      // An own tour with no artist filed never hides someone's credited tour...
+      var loose = [{ name: 'Loose', artist: '', first: '2017-03-01', last: '2017-07-01', shows: 9 }];
+      eq(G.tourTimeline(loose, past, '2026-10-07').filter(function (r) { return r.name === 'Treehouse Tour'; }).length, 1,
+        'no artist on the own tour: the credited tour stays');
+      // ...while on an artist's page the history carries no artist and is all its own.
+      var hist = [{ name: 'Spin the Wheel', n: 32, first: '2026-02-26', last: '2026-05-09' }];
+      eq(G.tourTimeline(own, hist, '2026-10-07').filter(function (r) { return r.name === 'Spin the Wheel'; }).length, 0,
+        'an artist page: its own tour by another name, once');
+    });
+  })();
+
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };
 })();

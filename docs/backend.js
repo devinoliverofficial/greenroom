@@ -545,6 +545,57 @@
       if (q.error) throw mapError(q.error);
       flowersStale(); emit('tours');
     },
+    // The title an artist's page gives one of its people (what the public
+    // sees there, whatever they are behind the scenes). The page's owner only.
+    setMemberRole: async function (artistId, userId, role) {
+      var q = await sb.from('artist_members').update({ role: String(role || '').trim().slice(0, 40) })
+        .eq('artist_id', artistId).eq('user_id', userId).select('user_id');
+      if (q.error) throw mapError(q.error);
+      if (!q.data || !q.data.length) throw err('permission'); // RLS said no
+    },
+    /* ---- Tour credits: someone an artist endorsed confirms the tours and
+       shows they worked; the artist says yes; then those nights count on
+       their page. All of it goes through the database's own functions. ---- */
+    creditAsks: async function () {
+      var q = await sb.rpc('my_credit_asks');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    creditQueue: async function () {
+      var q = await sb.rpc('credit_queue');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    creditTours: async function (artistId) {
+      var q = await sb.rpc('credit_tours', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    creditShows: async function (artistId, key) {
+      var q = await sb.rpc('credit_shows', { a_id: artistId, t_key: String(key) });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    submitCredits: async function (artistId, claim) {
+      var q = await sb.rpc('submit_tour_credits', { a_id: artistId, claim: claim });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    decideCredits: async function (artistId, userId, verdict, seen) {
+      var q = await sb.rpc('decide_tour_credits', { a_id: artistId, u_id: userId, verdict: verdict, seen: seen || null });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    withdrawCredits: async function (artistId) {
+      var q = await sb.rpc('withdraw_tour_credits', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    creditDetail: async function (artistId, userId) {
+      var q = await sb.rpc('credit_detail', { a_id: artistId, u_id: userId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
     /* ---- Square (MODEL7MERCH, sandbox phase). The token is write-only:
        the table's column grants let it be saved, never read back. ---- */
     squareState: async function () {
