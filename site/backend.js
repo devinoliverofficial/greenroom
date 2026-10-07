@@ -562,10 +562,22 @@
       return q.data || [];
     },
     squareConnect: async function (token) {
-      var q = await sb.from('square_connect').upsert(
-        { owner_id: session.user.id, env: 'sandbox', token: String(token || '').trim(), status: 'new' },
-        { onConflict: 'owner_id' });
-      if (q.error) throw mapError(q.error);
+      // Same two-step save as setlistConnect: the token column is
+      // write-only, so a one-step save-or-replace is refused.
+      var tok = String(token || '').trim();
+      var up = await sb.from('square_connect').update({ env: 'sandbox', token: tok, status: 'new' })
+        .eq('owner_id', session.user.id).select('owner_id');
+      if (up.error) throw mapError(up.error);
+      if (up.data && up.data.length) return;
+      var ins = await sb.from('square_connect').insert(
+        { owner_id: session.user.id, env: 'sandbox', token: tok, status: 'new' });
+      if (ins.error && ins.error.code === '23505') {
+        var again = await sb.from('square_connect').update({ env: 'sandbox', token: tok, status: 'new' })
+          .eq('owner_id', session.user.id).select('owner_id');
+        if (again.error) throw mapError(again.error);
+        return;
+      }
+      if (ins.error) throw mapError(ins.error);
     },
     squareDisconnect: async function () {
       var q = await sb.from('square_connect').delete().eq('owner_id', session.user.id);
@@ -581,10 +593,24 @@
       return q.data || null;
     },
     setlistConnect: async function (token) {
-      var q = await sb.from('setlist_connect').upsert(
-        { owner_id: session.user.id, token: String(token || '').trim(), status: 'new' },
-        { onConflict: 'owner_id' });
-      if (q.error) throw mapError(q.error);
+      // The key column is write-only, and Postgres refuses a one-step
+      // save-or-replace on a column it can't read back. So: replace the
+      // row if it's there, insert it fresh if not (and if two phones race,
+      // the loser's insert becomes a replace).
+      var tok = String(token || '').trim();
+      var up = await sb.from('setlist_connect').update({ token: tok, status: 'new' })
+        .eq('owner_id', session.user.id).select('owner_id');
+      if (up.error) throw mapError(up.error);
+      if (up.data && up.data.length) return;
+      var ins = await sb.from('setlist_connect').insert(
+        { owner_id: session.user.id, token: tok, status: 'new' });
+      if (ins.error && ins.error.code === '23505') {
+        var again = await sb.from('setlist_connect').update({ token: tok, status: 'new' })
+          .eq('owner_id', session.user.id).select('owner_id');
+        if (again.error) throw mapError(again.error);
+        return;
+      }
+      if (ins.error) throw mapError(ins.error);
     },
     setlistDisconnect: async function () {
       var q = await sb.from('setlist_connect').delete().eq('owner_id', session.user.id);
