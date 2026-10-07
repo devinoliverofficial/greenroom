@@ -123,7 +123,9 @@ shim = r"""<script>
     { mbid: '33333333-3333-4333-8333-333333333333', name: 'Dance Gavin Dance', about: '', country: 'US' },
     { mbid: '44444444-4444-4444-8444-444444444444', name: 'Nirvana', about: '90s US grunge band', country: 'US' },
     { mbid: '55555555-5555-4555-8555-555555555555', name: 'Nirvana', about: '60s UK psychedelic band', country: 'GB' },
-    { mbid: '66666666-6666-4666-8666-666666666666', name: 'I See Stars', about: '', country: 'US' }
+    { mbid: '66666666-6666-4666-8666-666666666666', name: 'I See Stars', about: '', country: 'US' },
+    { mbid: '77777777-7777-4777-8777-777777777777', name: 'U2', about: 'Irish rock band', country: 'IE' },
+    { mbid: '88888888-8888-4888-8888-888888888888', name: 'Godspeed You! Black Emperor', about: 'Canadian post-rock collective', country: 'CA' }
   ];
   function ghostList() {
     var H = window.__harness;
@@ -327,7 +329,13 @@ shim = r"""<script>
               { name: 'Treehouse Tour', n: 39, first: '2016-06-01', last: '2016-08-12' } ],
             countriesList: [ { name: 'United States', n: 595 }, { name: 'United Kingdom', n: 27 } ] } };
       }
-      return Promise.resolve(H.histories[artistId] || null);
+      var hr = H.histories[artistId];
+      if (!hr) return Promise.resolve(null);
+      // Only the columns the real read asks for, so a field the app leans on
+      // that isn't among them shows up here as missing.
+      var cols = {};
+      ['artist_id', 'status', 'detail', 'total', 'pages', 'next_page', 'summary', 'synced_at', 'mb_url', 'auto'].forEach(function (k) { cols[k] = hr[k] == null && k === 'auto' ? false : hr[k]; });
+      return Promise.resolve(cols);
     },
     historyStart: function (artistId) {
       var H = window.__harness;
@@ -536,7 +544,9 @@ shim = r"""<script>
       if (has) return Promise.resolve({ id: has.id, made: false });
       if (H.mbTooMany) return Promise.reject(Object.assign(new Error('too-many'), { code: 'too-many' }));
       var m = MB.filter(function (a) { return a.mbid === mbid; })[0] || { name: nameHint || 'Artist', about: '', country: '' };
-      var g = { id: 'gh' + (ghostList().length + 1), handle: 'mb.' + String(mbid).replace(/-/g, '').slice(0, 20), name: m.name, mbid: mbid,
+      // (The real username is random; any twenty hex characters do here.)
+      H.ghostSeq = (H.ghostSeq || 1) + 1;
+      var g = { id: 'gh' + H.ghostSeq, handle: 'mb.' + ('f00d' + String(mbid).replace(/-/g, '')).slice(0, 20), name: m.name, mbid: mbid,
         about: m.about || '', country: m.country || '', owner: null, checked: false };
       H.ghosts.push(g);
       H.histories = H.histories || {};
@@ -546,9 +556,13 @@ shim = r"""<script>
     historyNudge: function (artistId, fresh) {
       var H = window.__harness;
       H.nudges = (H.nudges || 0) + 1;
-      return window.GR_BACKEND.artistHistory(artistId).then(function (row) {
-        if (!row) return null;
-        if (!row.auto) return row;
+      return window.GR_BACKEND.artistHistory(artistId).then(function (plain) {
+        // (The stored row itself: a nudge moves it along.)
+        var row = (H.histories || {})[artistId];
+        if (!row || !plain) return null;
+        if (!row.auto) return plain;
+        // __harness.budgetGone: the day's allowance is used up, so nothing moves.
+        if (H.budgetGone && row.status === 'syncing') return Object.assign(JSON.parse(JSON.stringify(row)), { waiting: true });
         var g = ghostList().filter(function (x) { return x.id === artistId; })[0];
         // One step a nudge: confirmed by the encyclopedia, then three pages, then done.
         if (fresh && row.status === 'ok') { row.status = 'syncing'; row.next_page = 1; }
@@ -605,6 +619,8 @@ shim = r"""<script>
       c.status = 'approved';
       H.claims.forEach(function (o) { if (o.artistId === c.artistId && o.id !== c.id && o.status === 'pending') o.status = 'declined'; });
       var slug = g.name.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 24);
+      // As on the server: no usable name (too short, or taken) keeps the machine username.
+      if (slug.length < 3 || (H.acts || []).some(function (a) { return a.handle === slug; })) slug = g.handle;
       if (c.userId === 'u-devin') {
         // Theirs now: it moves in with the pages the test user runs, history and all.
         H.ghosts = H.ghosts.filter(function (x) { return x.id !== g.id; });

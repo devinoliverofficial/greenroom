@@ -2857,6 +2857,10 @@
      even for the account that runs it. Only the list under your own
      username opens it to be run: the photo, Edit artist, adding and
      removing band and crew. */
+  // A username Greenroom made up for a page nobody had claimed ("mb." and
+  // twenty characters): never shown as a name. A page that was claimed can
+  // still carry one, when the act's own name wasn't free to use.
+  function machineHandle(v) { return /^mb\.[0-9a-f]{20}$/.test(String(v || '')); }
   function openAct(id, manage) {
     if (!id || !socialOn()) return;
     if (sheet) closeSheet(true);
@@ -2892,12 +2896,20 @@
             onclick: function () { if (x.mine) switchAccount(x.id); else openAct(x.id); } },
           personPhoto(x, 'xs'),
           h('span', { class: 'lr-text' },
-            h('span', { class: 'lr-title' }, x.handle),
+            h('span', { class: 'lr-title' }, machineHandle(x.handle) ? x.name : x.handle),
             h('span', { class: 'lr-sub' }, x.name + (x.mine ? '' : x.kind === 'band' ? ' \u00b7 Band member' : ' \u00b7 Crew'))),
           x.mine && on === x.id ? h('span', { class: 'acct-on', 'aria-label': 'You are here' }, icon('check', 14)) : icon('chevron', 16));
       }));
       var can = list ? claimable() : [];
+      var waiting = claimQ().list;
       tail.replaceChildren.apply(tail, [
+        // Only a Greenroom admin has this row.
+        waiting ? h('button', { class: 'acct-row add', type: 'button', onclick: function () { openClaimQueue(); } },
+          h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon('check', 18)),
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'lr-title' }, 'Page claims'),
+            h('span', { class: 'lr-sub' }, waiting.length ? plural(waiting.length, 'claim') + ' waiting on you' : 'None waiting')),
+          icon('chevron', 16)) : null,
         h('button', { class: 'acct-row add', type: 'button', onclick: function () { openCreateArtist(); } },
           h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon('plus', 18)),
           h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, 'Create Greenroom Artist'))),
@@ -3006,7 +3018,8 @@
         h('h2', { class: 'sh-title ca-title' }, f.claim ? 'Claim ' + f.name : 'Create a Greenroom Artist'),
         h('p', { class: 'sh-sub' }, f.claim
           ? 'Pick a username for ' + f.name + '. ' + (f.tours ? 'Its ' + plural(f.tours, 'tour') + ' will show on the profile. ' : '') + 'You can change the username at any time.'
-          : 'Name the artist and pick a username. You can change both at any time.'),
+          : 'Name the artist and pick a username. You can change both at any time. ' +
+            'If the act already tours, find it in Search and claim its page instead: that one comes with its road history.'),
         h('form', { class: 'sh-form ca-form', novalidate: true,
           onsubmit: async function (e) {
             e.preventDefault();
@@ -3109,6 +3122,8 @@
     // The synced road story, when the page has one.
     var hc0 = histOf(id);
     var hsum = hc0.row && G.isObj(hc0.row.summary) ? hc0.row.summary : null;
+    // A history Greenroom reads by itself moves while someone is looking.
+    if (card && histBusy(hc0.row)) histPoll(id);
     var head = function (title) {
       if (!(S.route.manage && (!card || card.mine))) return viewerHead(title, false, backTo);
       return h('div', { class: 'headband' },
@@ -3132,7 +3147,9 @@
     var bandList = members.filter(function (m) { return m.kind === 'band'; });
     var crewList = members.filter(function (m) { return m.kind === 'crew'; });
     var tours = Array.isArray(card.tours) ? card.tours : [];
-    var tab = (S.actTab && S.actTab.id === id && S.actTab.tab) || 'band';
+    // A page nobody runs yet: no band or crew to show, so it opens on its tours.
+    var unclaimed = !!card.unclaimed;
+    var tab = (S.actTab && S.actTab.id === id && S.actTab.tab) || (unclaimed ? 'tours' : 'band');
     var pickTab = function (t) { S.actTab = { id: id, tab: t }; render(true); };
     var tabBtn = function (key, label, ic) {
       return h('button', { class: 'vp-tab' + (tab === key ? ' on' : ''), type: 'button', role: 'tab',
@@ -3189,6 +3206,7 @@
     var people = function (list, kind) {
       return [
         list.length ? h('ul', { class: 'tour-list rows vp-list am-list' }, list.map(memberRow))
+          : unclaimed ? emptyState('Nobody runs this page yet', 'Once ' + card.name + ' claims it, their ' + (kind === 'band' ? 'band' : 'crew') + ' shows up here.')
           : emptyState(kind === 'band' ? 'No band members yet' : 'No crew yet',
               manage ? 'Search for their Greenroom account to add them.' : card.name + ' hasn\u2019t added anyone here yet.'),
         manage ? h('div', { class: 'am-more' },
@@ -3229,8 +3247,16 @@
               action: 'Unfollow', danger: true, onConfirm: function () { setFollow(false); return true; } });
           } }, 'Following', icon('chevron', 14))
       : h('button', { class: 'pf-btn go', type: 'button', onclick: function () { setFollow(true); } }, 'Follow');
+    // Claiming a page nobody runs: who you are to the act goes to a Greenroom admin.
+    var claimBtn = !unclaimed || !B || !B.claimArtist ? null
+      : card.myClaim === 'pending'
+        ? h('button', { class: 'pf-btn on', type: 'button', onclick: function () { openClaimPage(id); } }, 'Claim sent', icon('chevron', 14))
+        : h('button', { class: 'pf-btn', type: 'button', onclick: function () { openClaimPage(id); } },
+            card.myClaim === 'declined' ? 'Claim again' : 'Claim this page');
+    var aboutLine = unclaimed ? [card.about, regionName(card.country)].filter(Boolean).join(' \u00b7 ') : '';
     return h('div', { class: 'page home profile has-tabs' },
-      head(card.handle),
+      // A page nobody runs has only a machine's username: its name leads instead.
+      head(unclaimed || machineHandle(card.handle) ? card.name : card.handle),
       h('section', { class: 'pf vp', 'aria-label': card.name + ' profile' },
         h('div', { class: 'pf-top' },
           h('div', { class: 'pf-photo-wrap' }, photo,
@@ -3252,21 +3278,27 @@
                 pfStat(crewList.length, 'crew', function () { pickTab('crew'); })
               ]),
             h('p', { class: 'hist-fans' }, plural(G.num(card.followers), 'fan')))),
-        h('p', { class: 'pf-roles' }, 'Artist'),
+        h('p', { class: 'pf-roles' }, 'Artist', unclaimed ? h('span', { class: 'act-tag' }, 'Unclaimed') : null),
         card.bio ? h('p', { class: 'pf-bio' }, card.bio)
+          : aboutLine ? h('p', { class: 'pf-bio act-about' }, aboutLine)
           : (manage ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
         historyBlock(id, manage, tours),
+        unclaimed ? h('p', { class: 'hist-note act-note' }, 'Nobody runs this page yet. If this is your band, claim it.') : null,
         manage ? h('div', { class: 'pf-actions' },
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openHistorySheet(id, card.name); } }, 'Tour history'))
-          : followBtn ? h('div', { class: 'pf-actions' }, followBtn) : null),
+          : (followBtn || claimBtn) ? h('div', { class: 'pf-actions' + (followBtn && claimBtn ? ' two' : '') }, followBtn, claimBtn) : null),
       // On the page you run: whoever is waiting on your yes for their tours.
       manage ? creditQueueCards(id) : null,
+      // For a Greenroom admin: whoever is asking to run this page.
+      unclaimed ? claimQueueCards(id) : null,
       h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Band', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
       tab === 'band' ? people(bandList, 'band')
         : tab === 'crew' ? people(crewList, 'crew')
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
-            : emptyState('No tours yet', manage ? 'Tours you file under ' + card.name + ' show up here.' : card.name + ' has no tours on Greenroom yet.')),
+            : emptyState('No tours yet', manage ? 'Tours you file under ' + card.name + ' show up here.'
+                : histBusy(hc0.row) ? (histWaiting(hc0.row) ? 'The rest of ' + card.name + '\u2019s road history comes in tomorrow.' : 'Reading ' + card.name + '\u2019s road history\u2026')
+                : card.name + ' has no tours on Greenroom yet.')),
       historyCredit(id),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(manage && id === actingAs() ? 'me' : ''));
@@ -3390,6 +3422,161 @@
     if (!last || last === first) return dayMD(first) + ', ' + y1;
     return y1 === y2 ? dayMD(first) + ' – ' + dayMD(last) + ', ' + y2
       : dayMD(first) + ', ' + y1 + ' – ' + dayMD(last) + ', ' + y2;
+  }
+  /* ---- Claiming a page. Every act has a page; one nobody runs can be asked
+     for by whoever is really in it. The ask (who you are to the act, and a
+     link that shows it) goes to a Greenroom admin; a yes makes the page
+     theirs to run, and verified. ---- */
+  function openClaimPage(id) {
+    var B = window.GR_BACKEND;
+    var card = S.actCards && S.actCards[id] && S.actCards[id].card;
+    if (!card || !B || !B.claimArtist) return;
+    var f = { note: '', link: '', busy: false };
+    var after = function () { actOf(id, true); S.claimQ = null; };
+    openSheet(function () {
+      if (card.myClaim === 'pending') {
+        return [
+          h('h2', { class: 'sh-title ca-title' }, 'Your claim is with Greenroom'),
+          h('p', { class: 'sh-sub' }, 'Someone at Greenroom checks every claim by hand. The moment it\u2019s approved, ' + card.name + ' is yours to run.'),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn danger block', type: 'button', onclick: function () {
+              confirmSheet({ title: 'Withdraw your claim?', body: 'You can claim ' + card.name + ' again any time.', action: 'Withdraw', danger: true,
+                onConfirm: async function () {
+                  try { await B.withdrawClaim(id); card.myClaim = null; after(); toast('Claim withdrawn'); return true; }
+                  catch (e) { saveFailed('claim', e); return false; }
+                } });
+            } }, 'Withdraw the claim'),
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+        ];
+      }
+      var send = h('button', { class: 'btn primary block', type: 'submit' }, 'Send the claim');
+      var ready = function () { send.disabled = f.note.trim().length < 3 || f.busy; };
+      ready();
+      return [
+        h('h2', { class: 'sh-title ca-title' }, 'Claim ' + card.name),
+        h('p', { class: 'sh-sub' }, (card.myClaim === 'declined' ? 'The last claim wasn\u2019t approved. Say more, or add a link that shows it\u2019s you. ' : '') +
+          'Tell Greenroom who you are to ' + card.name + '. Someone checks it by hand; a yes makes this page yours to run.'),
+        h('form', { class: 'sh-form ca-form', novalidate: true, onsubmit: async function (e) {
+          e.preventDefault();
+          if (send.disabled) return;
+          blurActive();
+          f.busy = true; ready();
+          try {
+            var r = await B.claimArtist(id, f.note.trim(), f.link.trim());
+            if (r && r.ok) { card.myClaim = 'pending'; after(); closeSheet(); toast('Claim sent'); render(true); return; }
+            f.busy = false; ready();
+            toast(r && r.why === 'taken' ? 'Someone already runs this page.' : 'Couldn\u2019t send that. Try again.');
+            if (r && r.why === 'taken') { after(); closeSheet(); }
+          } catch (x) {
+            f.busy = false; ready();
+            if (x && x.code === 'short') toast('Say who you are to ' + card.name + '.');
+            else if (x && x.code === 'too-many') toast('You have a lot of claims waiting. Let those be answered first.');
+            else saveFailed('claim', x);
+          }
+        } },
+          field('Who are you to ' + card.name + '?', h('textarea', { class: 'input', rows: 3, maxlength: 500,
+            placeholder: 'e.g. I sing in the band. / I\u2019m their tour manager.', 'aria-label': 'Who you are to ' + card.name,
+            oninput: function (e) { f.note = e.target.value; ready(); } })),
+          field('A link that shows it (optional)', h('input', { class: 'input', type: 'url', maxlength: 200, autocapitalize: 'none', autocorrect: 'off',
+            autocomplete: 'off', spellcheck: 'false', placeholder: 'The band\u2019s site or socials, where you appear', 'aria-label': 'A link that shows it',
+            oninput: function (e) { f.link = e.target.value; } })),
+          h('div', { class: 'stack' }, send,
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now')))
+      ];
+    }, { label: 'Claim ' + card.name, cls: 'ca-sheet' });
+  }
+  // For a Greenroom admin: every claim waiting. Everyone else gets nothing
+  // back and never sees a door to it.
+  function claimQ(fresh) {
+    var B = window.GR_BACKEND;
+    var c = S.claimQ || (S.claimQ = { list: null, at: 0, asking: false });
+    if (S.mode !== 'db' || !socialOn() || !B || !B.claimQueue) return c;
+    // An admin's list is asked again each minute; "not an admin" holds for ten.
+    if (!c.asking && (fresh || Date.now() - c.at > (c.list ? 60e3 : 600e3))) {
+      c.asking = true;
+      B.claimQueue().then(function (l) {
+        c.list = Array.isArray(l) ? l : null; c.at = Date.now(); c.asking = false; render();
+      }).catch(function () { c.asking = false; c.at = Date.now(); });
+    }
+    return c;
+  }
+  // On an unclaimed page, for an admin: who is asking to run it.
+  function claimQueueCards(artistId) {
+    var list = (claimQ().list || []).filter(function (x) { return x.artistId === artistId; });
+    if (!list.length) return null;
+    return h('div', { class: 'tc-asks' }, list.map(function (x) {
+      return h('button', { class: 'tc-ask on', type: 'button', onclick: function () { openClaimReview(x); } },
+        h('span', { class: 'tc-ask-t' }, (x.name || 'Someone') + ' is asking to run this page'), icon('chevron', 16));
+    }));
+  }
+  // Every claim waiting, for an admin (from Your profiles).
+  function openClaimQueue() {
+    var host = h('div', { class: 'acct-list' });
+    var draw = function () {
+      var list = claimQ().list || [];
+      fillEl(host, list.length ? list.map(function (x) {
+        return h('button', { class: 'acct-row', type: 'button', onclick: function () { openClaimReview(x, function () { openClaimQueue(); }); } },
+          personPhoto({ name: x.name, avatar: x.avatar }, 'xs'),
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'lr-title' }, x.artist),
+            h('span', { class: 'lr-sub' }, (x.name || 'Someone') + (x.handle ? ' \u00b7 @' + x.handle : ''))),
+          icon('chevron', 16));
+      }) : [h('p', { class: 'note' }, 'No claims waiting.')]);
+    };
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title pe-title' }, 'Page claims'),
+        h('p', { class: 'sh-sub' }, 'People asking to run an artist\u2019s page. A yes makes it theirs, and verified.'),
+        host,
+        h('div', { class: 'stack' }, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: 'Page claims', cls: 'acct-sheet' });
+  }
+  // One claim, to answer: who is asking, for which act, and what they said.
+  function openClaimReview(x, back) {
+    var B = window.GR_BACKEND, busy = false;
+    var done = function () { S.claimQ = null; claimQ(true); if (S.actCards && S.actCards[x.artistId]) actOf(x.artistId, true); myActs(true); };
+    var answer = async function (yes) {
+      if (busy) return true;
+      busy = true;
+      var r = null;
+      try { r = await B.decideClaim(x.id, yes); } catch (e) { busy = false; saveFailed('claim', e); return false; }
+      busy = false;
+      done();
+      toast(r && r.ok ? (yes ? x.artist + ' is now run by ' + (x.name || 'them') : 'Claim declined')
+        : r && r.why === 'taken' ? 'Someone already runs that page.' : 'That claim was already answered.');
+      closeSheet();
+      if (back) setTimeout(back, 300); else render(true);
+      return true;
+    };
+    var safeLink = /^https?:\/\//i.test(String(x.link || '')) ? x.link : '';
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title ca-title' }, 'Claim: ' + x.artist),
+        h('p', { class: 'sh-sub' }, [x.about, regionName(x.country)].filter(Boolean).join(' \u00b7 ') || 'Artist page nobody runs yet'),
+        h('div', { class: 'ledger cq-card' },
+          h('div', { class: 'row' }, h('div', { class: 'row-label' }, x.name || 'Someone',
+            h('span', { class: 'hint' }, [x.handle ? '@' + x.handle : ''].concat([x.tourRole].concat(x.roles || []).filter(function (v, i, all) { return v && all.indexOf(v) === i; })).filter(Boolean).join(' \u00b7 ')),
+            x.email ? h('span', { class: 'hint' }, x.email) : null),
+            h('button', { class: 'btn sm quiet', type: 'button', onclick: function () { closeSheet(true); openProfile(x.userId); } }, 'Profile')),
+          h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'What they said', h('span', { class: 'hint cq-said' }, x.note || '\u2014'))),
+          x.link ? h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'Their link',
+            safeLink ? h('a', { class: 'hint cq-link', href: safeLink, target: '_blank', rel: 'noopener noreferrer' }, x.link)
+              : h('span', { class: 'hint cq-said' }, x.link))) : null,
+          G.num(x.others) > 0 ? h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' },
+            plural(G.num(x.others), 'other person') .replace('persons', 'people') + ' also asked for this page',
+            h('span', { class: 'hint' }, 'Approving this one declines the rest.'))) : null),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: function () {
+            confirmSheet({ title: 'Give ' + x.artist + ' to ' + (x.name || 'them') + '?',
+              body: 'They\u2019ll run the page: its photo, bio, band, crew and tour history. It gets marked verified.',
+              action: 'Approve', onConfirm: function () { return answer(true); } });
+          } }, 'Approve'),
+          h('button', { class: 'btn danger block', type: 'button', onclick: function () { answer(false); } }, 'Decline'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); if (back) setTimeout(back, 300); } }, back ? 'Back' : 'Close'))
+      ];
+    }, { label: 'Claim: ' + x.artist, cls: 'ca-sheet' });
   }
   // On your own Artists tab: one line per artist that endorsed you.
   function creditAskCards() {
@@ -3708,11 +3895,44 @@
     if (S.mode !== 'db' || !B || !B.artistHistory) { c.none = true; return c; }
     if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
       c.asking = true;
-      B.artistHistory(id).then(function (row) {
-        c.row = row; c.at = Date.now(); c.asking = false; c.failed = false; render();
+      // Looking is also a nudge: a history Greenroom reads by itself steps
+      // along while its page is open (and the plain read stands in if the
+      // nudge can't be reached).
+      var was = c.row && c.row.status;
+      (B.historyNudge ? B.historyNudge(id).catch(function () { return B.artistHistory(id); }) : B.artistHistory(id)).then(function (row) {
+        c.row = row; c.at = Date.now(); c.asking = false; c.failed = false;
+        // The encyclopedia just confirmed the act (or said it isn't one): the page's own card has changed.
+        if (was === 'checking' && (!row || row.status !== 'checking')) actOf(id, true);
+        render();
       }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); render(); });
     }
     return c;
+  }
+  // Still being read in by Greenroom itself.
+  function histBusy(row) { return !!(row && row.auto && /^(new|finding|checking|syncing)$/.test(String(row.status))); }
+  // While such a page is open, ask again every few seconds until it settles.
+  // Still to read, but not right now: the day's setlist.fm allowance (or
+  // this account's share of it) is used up, or there's no key to read with
+  // yet. The server says so; the page waits instead of asking every few seconds.
+  function histWaiting(row) {
+    return histBusy(row) && row.status === 'syncing' && (row.waiting === true || /read its fill/.test(String(row.detail || '')));
+  }
+  function histPoll(id) {
+    S.histPolls = S.histPolls || {};
+    if (S.histPolls[id]) return;
+    var c = S.histCards && S.histCards[id];
+    S.histPolls[id] = setTimeout(function () {
+      S.histPolls[id] = 0;
+      if (!(S.route && S.route.name === 'act' && S.route.id === id)) return;
+      // Out of sight: keep the chain, and ask once the page is back in view.
+      if (document.hidden) histPoll(id); else histOf(id, true);
+    }, c && histWaiting(c.row) ? 300e3 : 3500);
+  }
+  // "US" -> "United States", where the phone knows how.
+  function regionName(code) {
+    var c = String(code || '').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) return '';
+    try { return new Intl.DisplayNames(['en'], { type: 'region' }).of(c) || c; } catch (e) { return c; }
   }
   // The one key per account, like squareInfo for Square.
   function setlistInfo(fresh) {
@@ -3729,13 +3949,19 @@
   }
   function histStatusLine(row) {
     if (!row) return '';
+    if (row.status === 'checking') return 'Looking the act up…';
+    if (row.status === 'idle') return '';
     if (row.status === 'finding') return 'Finding the band on setlist.fm…';
     if (row.status === 'syncing') {
+      if (histWaiting(row)) return 'Greenroom has read its fill from setlist.fm for today. The rest of the road history comes in tomorrow.';
       return 'Reading the road history…' +
         (row.pages > 0 ? ' page ' + Math.min(G.num(row.next_page) || 1, row.pages) + ' of ' + row.pages : '');
     }
     if (row.status === 'bad_token') return 'setlist.fm refused the key — replace it.';
-    if (row.status === 'error') return row.detail || 'setlist.fm had trouble. It tries again on its own.';
+    if (row.status === 'error') {
+      return row.auto ? 'setlist.fm had trouble, so this isn’t the whole story yet. It tries again on its own.'
+        : (row.detail || 'setlist.fm had trouble. It tries again on its own.');
+    }
     if (row.status === 'ok') {
       var sum = G.isObj(row.summary) ? row.summary : {};
       return 'Synced · ' + plural(G.num(sum.shows), 'show') +
@@ -3766,8 +3992,9 @@
       tier || since ? h('p', { class: 'hist-line' },
         tier ? h('span', { class: 'hist-tier tier-' + tier.key }, tier.label) : null,
         since ? 'On the road since ' + since : null) : null,
-      // While the history is still reading in, the owner sees how far along it is.
-      manage && row && !has ? h('p', { class: 'hist-note' }, histStatusLine(row)) : null
+      // While the history is still reading in, the owner sees how far along
+      // it is; so does anyone, on a page Greenroom is reading by itself.
+      (manage && row && !has) || histBusy(row) || (row && row.auto && row.status === 'error') ? h('p', { class: 'hist-note' }, histStatusLine(row)) : null
     ];
   }
   // Their data, their credit: one quiet line at the foot of a page that
@@ -3798,6 +4025,8 @@
         B && B.artistHistory ? B.artistHistory(id).catch(function () { return null; }) : Promise.resolve(null)
       ]).then(function (ans) {
         got.done = true; got.key = ans[0]; got.row = ans[1];
+        var card0 = S.actCards && S.actCards[id] && S.actCards[id].card;
+        got.verified = !card0 || card0.verified !== false;
         // Keep the page's own caches in step.
         if (S.setlist) { S.setlist.row = ans[0]; S.setlist.none = !ans[0]; S.setlist.at = Date.now(); }
         if (S.histCards && S.histCards[id]) { S.histCards[id].row = ans[1]; S.histCards[id].at = Date.now(); }
@@ -3808,6 +4037,22 @@
       var kids = [];
       if (!got.done) {
         kids.push(h('p', { class: 'note' }, 'Looking…'));
+      } else if (got.row && got.row.auto) {
+        // Greenroom reads this one with its own key: nothing to paste.
+        kids.push(h('p', { class: 'note' }, histStatusLine(got.row) || 'Greenroom keeps this page\u2019s road story up to date by itself.'));
+        kids.push(h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', disabled: histBusy(got.row) || null, onclick: async function (e) {
+            var b = e.currentTarget; b.disabled = true;
+            try { await B.historyNudge(id, true); } catch (x) { b.disabled = false; saveFailed('history', x); return; }
+            histOf(id, true); closeSheet(); toast('Reading it fresh');
+          } }, 'Sync fresh')));
+        kids.push(h('p', { class: 'note' }, 'Fan-logged data from ',
+          h('a', { class: 'hist-src', href: 'https://www.setlist.fm', target: '_blank', rel: 'noopener' }, 'setlist.fm'),
+          ' — a missing night just hasn’t been logged there yet.'));
+      } else if (!got.row && !got.verified) {
+        // A page made by hand isn't tied to a known act, so it can't borrow one's road story.
+        kids.push(h('p', { class: 'note' }, 'Tour history is for verified pages, so nobody can borrow another band\u2019s road story. ' +
+          'Find ' + (name || 'the act') + ' in Search and claim its page: that one comes with its history.'));
       } else if (!got.key) {
         kids.push(
           h('p', { class: 'note' }, 'First, the key: sign in at setlist.fm, then Settings → API. It’s free and instant.'),
@@ -4150,7 +4395,20 @@
           sub: p.handle ? [p.name, p.iFollow ? 'Following' : followers(p.followers)].filter(Boolean).join(' \u00b7 ') : roles.join(' \u00b7 '),
           canOpen: !!p.canOpen };
       },
-      artist: function (a) { return { kind: 'artist', id: a.id, title: a.handle, sub: [a.name, 'Artist'].join(' \u00b7 '), avatar: a.avatar || '', letter: a.name }; },
+      // A page nobody runs has no username of its own: the act's name leads.
+      artist: function (a) {
+        var bare = machineHandle(a.handle);
+        // Whether anyone runs the page is the server's to say; only a list
+        // that doesn't say is read by the username.
+        var ghost = a.unclaimed != null ? !!a.unclaimed : bare;
+        return ghost
+          ? { kind: 'artist', id: a.id, title: a.name, name: a.name, sub: [a.about, 'Artist', 'Unclaimed'].filter(Boolean).join(' \u00b7 '), avatar: '', letter: a.name }
+          : { kind: 'artist', id: a.id, title: bare ? a.name : a.handle, name: a.name, sub: bare ? 'Artist' : [a.name, 'Artist'].join(' \u00b7 '), avatar: a.avatar || '', letter: a.name };
+      },
+      // An act the encyclopedia knows that has no page on Greenroom yet.
+      mb: function (m) {
+        return { kind: 'mb', id: m.mbid, title: m.name, sub: [m.about, regionName(m.country), 'Artist'].filter(Boolean).join(' \u00b7 '), letter: m.name };
+      },
       folder: function (a) { return { kind: 'folder', id: a, title: a, sub: 'Your artist folder', avatar: artistLogo(a) || '', letter: a, logo: true }; },
       tour: function (t) {
         return { kind: 'tour', id: t.id, title: t.name || 'Untitled tour', sub: [t.artist, span(t)].filter(Boolean).join(' \u00b7 '),
@@ -4158,9 +4416,35 @@
       },
       term: function (q) { return { kind: 'term', id: q.toLowerCase(), title: q, sub: 'Search' }; }
     };
+    // Opening an act that has no page yet makes its page (unclaimed, run by
+    // nobody) and goes there. Recent then keeps the page, not the lookup.
+    var openMb = function (it) {
+      if (st.opening === it.id) return;   // this one is already on its way
+      st.opening = it.id;                 // the latest tap wins: an answer to an earlier one no longer navigates
+      var redraw = function () { if (results.isConnected) paint(); else if (S.route && S.route.name === 'search') render(true); };
+      var mine = function () { if (st.opening !== it.id) return false; st.opening = ''; return true; };
+      redraw();                           // its row reads "Opening…"
+      B.openMbArtist(it.id, it.title).then(function (r) {
+        if (r && r.id) remember({ kind: 'artist', id: r.id, title: it.title, name: it.title, sub: 'Artist', avatar: '', letter: it.title, unclaimed: true });
+        if (!mine()) return;
+        if (!r || !r.id) { toast('Couldn\u2019t open that page. Try again.'); redraw(); return; }
+        // Only while they're still waiting here: an answer never pulls someone
+        // off another page, or shuts a sheet opened since.
+        if (!S.route || S.route.name !== 'search') { st.res = null; st.mb = null; return; }
+        if (sheet) { redraw(); return; }
+        st.res = null; st.mb = null;   // the next search finds the page itself
+        openAct(r.id);
+      }, function (e) {
+        if (!mine()) return;
+        toast(e && e.code === 'too-many' ? 'That\u2019s a lot of new pages for one day. Try again tomorrow.'
+          : e && e.code === 'offline' ? NO_SIGNAL : 'Couldn\u2019t open that page. Try again.');
+        redraw();
+      });
+    };
     var open = function (it) {
-      if (it.kind !== 'term') remember(it);
-      if (it.kind === 'person') {
+      if (it.kind !== 'term' && it.kind !== 'mb') remember(it);
+      if (it.kind === 'mb') openMb(it);
+      else if (it.kind === 'person') {
         if (it.canOpen) openProfile(it.id);
         else { toast('You can open the profiles of people you tour with or share an artist with.'); paint(); }
       } else if (it.kind === 'artist') openAct(it.id);
@@ -4179,7 +4463,8 @@
         h('button', { class: 'sr-main', type: 'button', onclick: function () { open(it); } }, face,
           h('span', { class: 'lr-text' },
             h('span', { class: 'sr-title' }, h('span', { class: 'sr-title-t' }, it.title), it.verified ? verifiedBadge() : null),
-            it.sub ? h('span', { class: 'sr-sub' }, it.sub) : null)),
+            it.kind === 'mb' && st.opening === it.id ? h('span', { class: 'sr-sub' }, 'Opening\u2026')
+              : it.sub ? h('span', { class: 'sr-sub' }, it.sub) : null)),
         onDrop ? h('button', { class: 'sr-x', type: 'button', 'aria-label': 'Remove ' + it.title + ' from Recent', onclick: onDrop }, icon('close', 18)) : null);
     };
     // Your own tours and artist folders, matched on this phone.
@@ -4261,16 +4546,53 @@
       mine.tours.forEach(function (t) { seen[t.id] = true; });
       items = items.concat(mine.tours.map(asItem.tour), (r ? r.tours : []).filter(function (t) { return !seen[t.id]; }).map(asItem.tour));
       var kids = items.length ? [h('div', { class: 'sr-list' }, items.map(function (it) { return row(it); }))] : [];
+      // Every other act there is, under Greenroom's own answers (an act that
+      // already has a page shows once, as its page).
+      var mb = st.mb && st.mb.q === q ? st.mb : null;
+      var haveMb = {};
+      (r ? r.artists : []).forEach(function (a) { if (a.mbid) haveMb[a.mbid] = true; });
+      var more = (mb ? mb.list : []).filter(function (m) { return !haveMb[m.mbid]; }).map(asItem.mb);
+      if (more.length) {
+        kids.push(h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, items.length ? 'More artists' : 'Artists')),
+          h('div', { class: 'sr-list' }, more.map(function (it) { return row(it); })));
+      }
       if (st.busy || !r) kids.push(h('p', { class: 'note sr-hint' }, 'Searching\u2026'));
-      else if (r.failed) kids.push(h('p', { class: 'note sr-hint' }, 'Couldn\u2019t reach Greenroom. Check your signal and try again.'));
-      else if (!items.length) kids.push(h('p', { class: 'note sr-hint' }, 'Nothing found for \u201c' + q + '\u201d.'));
+      else if (r.failed && !more.length) kids.push(h('p', { class: 'note sr-hint' }, 'Couldn\u2019t reach Greenroom. Check your signal and try again.'));
+      else if (!items.length && !more.length) {
+        kids.push(h('p', { class: 'note sr-hint' }, st.mbWait === q ? 'Searching\u2026'
+          : mb && mb.failed ? 'Couldn\u2019t reach the artist list just now. Try again in a moment.'
+          : 'Nothing found for \u201c' + q + '\u201d.'));
+      }
       results.replaceChildren.apply(results, kids);
+    };
+    // Every act there is, from MusicBrainz (the open music encyclopedia).
+    // Asked on its own clock — it allows one question a second — so it never
+    // holds up Greenroom's own answers. A username search ("@...") never
+    // leaves Greenroom.
+    var askMb = function (q) {
+      clearTimeout(st.mbTimer);
+      st.mbWait = '';
+      // (A lookup that failed isn't an answer: the same words are asked again next time.)
+      if (!B.mbSearch || q.charAt(0) === '@' || (st.mb && st.mb.q === q && !st.mb.failed)) return;
+      st.mbWait = q;
+      st.mbTimer = setTimeout(function () {
+        st.mbAt = Date.now();
+        var settle = function (list, failed) {
+          if (st.mbWait === q) st.mbWait = '';
+          if (st.q.trim() !== q) return;
+          st.mb = { q: q, list: list || [], failed: !!failed };
+          if (results.isConnected) paint();
+          else if (S.route && S.route.name === 'search') render(true);
+        };
+        B.mbSearch(q).then(function (list) { settle(list, false); }, function () { settle([], true); });
+      }, Math.max(450, 1100 - (Date.now() - (st.mbAt || 0))));
     };
     var timer = 0;
     var run = function () {
       clearTimeout(timer);
       var q = st.q.trim();
-      if (q.replace(/^@/, '').length < 2) { st.busy = false; paint(); return; }
+      if (q.replace(/^@/, '').length < 2) { st.busy = false; clearTimeout(st.mbTimer); st.mbWait = ''; paint(); return; }
+      askMb(q);
       if (st.res && st.res.q === q) { st.busy = false; paint(); return; }
       st.busy = true;
       paint();
@@ -6342,6 +6664,7 @@
           // Only a name typed here is cut to size; a group picked from the list goes whole.
           var label = f.fresh.trim() ? f.fresh.trim().slice(0, 30) : f.pick;
           if (!label) { toast('Pick a group, or name a new one'); return; }
+          if (!G.vendorNorm(label)) { toast('Use letters or numbers in the group name'); return; }
           write(label);
         } },
           listHost,
@@ -6368,6 +6691,7 @@
           e.preventDefault(); blurActive();
           var name = f.name.trim().slice(0, cap);
           if (!name) { toast('Type a name'); return; }
+          if (!G.vendorNorm(name)) { toast('Use letters or numbers in the group name'); return; }
           // Other has no name to change back, so nothing is renamed into it.
           if (G.vendorNorm(name) === 'other') { toast('Other is where everything else goes. Swipe a charge and tap Group to move it there.'); return; }
           // The rename covers what sorts into this group by itself, and
@@ -8763,6 +9087,11 @@
           sub: (x.all ? 'All tours \u00b7 ' : '') + tallyText(x), open: function () { openCreditReview(x); } });
       });
     }
+    // For a Greenroom admin: people asking to run an artist's page.
+    (claimQ().list || []).forEach(function (x) {
+      tasks.push({ key: 'claim:' + x.id + ':' + (x.at || ''), standing: true, at: when(x.at), emoji: '\ud83c\udfa4', title: 'Page claim',
+        main: (x.name || 'Someone') + ' \u00b7 ' + x.artist, sub: 'Asking to run the page', open: function () { openClaimReview(x); } });
+    });
     tasks.forEach(function (c) { c.keys = c.keys || [c.key]; c.fresh = c.at > since; });
     // Handled is handled. Then the ones you haven't decided on, in order;
     // then the ones you put off, oldest "later" first.
@@ -11638,7 +11967,12 @@
       // until someone says so. One made in this sitting stays, as a plain
       // Received.
       function amountLanded(key) {
-        if (!((key === 'guarantee' ? gross : draft.merch) > 0)) return;
+        if (!((key === 'guarantee' ? gross : draft.merch) > 0)) {
+          // The line is empty again: a tick still showing beside it (one made
+          // by hand, not by the sheet) now means "nothing to wait for here".
+          if (recv[key] && !(key === 'guarantee' && recvAuto)) noneBy[key] = true;
+          return;
+        }
         if (noneStored[key]) {
           recv[key] = false;
           var rb = document.getElementById('rcv-' + key);

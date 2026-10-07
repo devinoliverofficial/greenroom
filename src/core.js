@@ -678,7 +678,8 @@
   function vendorGroups(entries, over) {
     var o = isObj(over) ? over : {};
     var one = isObj(o.one) ? o.one : {}, by = isObj(o.by) ? o.by : {}, names = isObj(o.names) ? o.names : {};
-    var said = function (v) { return typeof v === 'string' && v.trim() ? v.trim() : ''; };
+    // (A name with no letter or number in it can't be told from any other: it counts as not said.)
+    var said = function (v) { return typeof v === 'string' && vendorNorm(v) ? v.trim() : ''; };
     var map = {}, order = [];
     (entries || []).forEach(function (e) {
       var forced = (e.id != null && said(one[e.id])) || (!e.loose && said(by[vendorNorm(e.name)]));

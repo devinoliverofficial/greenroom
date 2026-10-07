@@ -2724,6 +2724,19 @@ button.fl-row { cursor: pointer; }
 .sw-undo { background: var(--neg); color: #fff; }
 .sw-hint { margin: -4px 2px 10px; }
 .sw-acts .sw-group { border-right: 1px solid var(--line-2); }
+/* Every artist: a page nobody runs yet wears a small tag beside "Artist",
+   and offers Claim next to Follow. */
+.act-tag { display: inline-block; margin-left: 8px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); vertical-align: 1px; }
+.pf-bio.act-about { color: var(--ink-2); }
+.hist-note.act-note { margin-top: 10px; }
+.pf-actions.two .pf-btn { flex: 1 1 0; min-width: 0; }
+/* A claim, for the admin answering it. */
+.cq-card { margin: 4px 0 16px; }
+.cq-card .row { min-height: 0; padding: 12px 15px; align-items: flex-start; }
+.cq-card .row-label { min-width: 0; }
+.cq-card .cq-said { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-size: 14px; line-height: 1.4; }
+.cq-card .cq-link { overflow-wrap: anywhere; color: var(--pos); text-decoration: underline; }
 /* A category that breaks down into its vendors (Monthly utilities): the
    dropdown under its line on Expenses. The toggle is a slim row; each group
    is a quieter, stepped-in copy of the category row, so its numbers sit

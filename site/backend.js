@@ -669,7 +669,7 @@
     },
     artistHistory: async function (artistId) {
       var q = await sb.from('artist_history')
-        .select('artist_id, status, detail, total, pages, next_page, summary, synced_at, mb_url')
+        .select('artist_id, status, detail, total, pages, next_page, summary, synced_at, mb_url, auto')
         .eq('artist_id', artistId).maybeSingle();
       if (q.error) throw mapError(q.error);
       return q.data || null;
