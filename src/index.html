@@ -2940,6 +2940,15 @@ button.fl-row { cursor: pointer; }
 .sw-edit { position: absolute; top: 0; right: 0; bottom: 0; width: 88px; border: 0; background: var(--pos); color: #0C0E00; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; }
 .sw-pane { position: relative; background: var(--bg); transition: transform .18s ease; will-change: transform; touch-action: pan-y; }
 .sw-row { list-style: none; }
+/* Two tours over the same nights: the tag on both, the contested nights, the picker. */
+.tn-conflict { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; border: 1px solid #E0A020; background: rgba(224, 160, 32, .14); color: #E0A020; font-size: 11px; font-weight: 700; letter-spacing: .03em; cursor: pointer; vertical-align: 2px; font-family: inherit; }
+.tn-tag.warn { color: #E0A020; border-color: #E0A020; }
+.tn-row.contested .tn-date { color: #E0A020; }
+.tc-row { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.tc-when { display: grid; gap: 2px; }
+.tc-picks { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tc-picks .pf-btn { height: auto; padding: 7px 11px; font-size: 13px; }
+.tc-none { font-size: 13px; color: var(--ink-3); }
 /* "claimed", in a whisper, beside an artist's check. */
 .pf-claimed { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: lowercase; color: var(--ink-3); margin-left: 4px; align-self: center; }
 .pf-claimed.sm { font-size: 10px; }

@@ -691,6 +691,17 @@
       if (q.error) throw mapError(q.error);
       return q.data;
     },
+    // Tour conflicts: the contested nights of a tour, and settling one (this tour, that tour, or '' for wasn't there).
+    artistTourConflicts: async function (artistId, name) {
+      var q = await sb.rpc('artist_tour_conflicts', { a_id: artistId, tour_name: name });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    artistTourPick: async function (artistId, date, name) {
+      var q = await sb.rpc('artist_tour_pick', { a_id: artistId, night: date, tour_name: name || '' });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
     tourCandidateUndo: async function (candId) {
       var q = await sb.rpc('tour_candidate_undo', { c_id: candId });
       if (q.error) throw mapError(q.error);

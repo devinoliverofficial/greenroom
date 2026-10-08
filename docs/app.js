@@ -3940,83 +3940,60 @@
         : !c.list.length ? h('p', { class: 'pt-next pt-nodates' }, 'No dates yet')
         : h('ul', { class: 'shows cal-list tn-list' }, c.list.map(function (n) {
             var where = [n.city, n.state && n.country === 'US' ? n.state : (n.country && n.country !== 'US' ? n.country : '')].filter(Boolean).join(', ');
-            return h('li', { class: 'tn-row' + (n.announced ? ' announced' : '') },
+            return h('li', { class: 'tn-row' + (n.announced ? ' announced' : '') + (n.contested ? ' contested' : '') },
               h('span', { class: 'tn-date' }, dayMD(n.date) + ', ' + String(n.date).slice(0, 4)),
               h('span', { class: 'tn-where' }, where || '\u2014', n.venue ? h('span', { class: 'tn-venue' }, ' \u00b7 ' + n.venue) : null),
-              n.announced ? h('span', { class: 'tn-tag' }, 'announced') : null);
+              n.contested ? h('span', { class: 'tn-tag warn' }, 'conflict') : n.announced ? h('span', { class: 'tn-tag' }, 'announced') : null);
           }));
     }
-    return h('li', { class: 'pt-run tn-run' + (open ? ' open' : '') },
+    // Two tours want some of the same nights: both are listed, both tagged; the
+    // owner settles the nights one by one (Devin: "Tour Conflict … get more granular").
+    var manage = !!(S.route && S.route.manage && S.route.name === 'act' && S.route.id === artistId);
+    var tag = r.conflict ? h('button', { class: 'tn-conflict', type: 'button', 'aria-label': 'Tour conflict: settle the dates',
+      onclick: function (e) { e.stopPropagation(); if (manage) openTourConflicts(artistId, r); else toast('Two tours claim some of these nights; the page\u2019s owner can settle them.'); } }, 'Tour conflict') : null;
+    return h('li', { class: 'pt-run tn-run' + (open ? ' open' : '') + (r.conflict ? ' has-conflict' : '') },
       h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
         onclick: function () { S.tnOpen[k] = !open; render(true); } },
-        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name), h('span', { class: 'lr-sub' }, span)),
+        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name, tag), h('span', { class: 'lr-sub' }, span)),
         icon('chevron', 16)),
       body);
   }
-  // Slide a row left and an Edit button comes out from under it (Devin: "slide
-  // a tour to the left and it will say 'edit'"). A tap on the row itself still
-  // opens it; a swipe never counts as a tap.
-  function swipeEditRow(row, onEdit) {
-    var wrap = h('li', { class: 'sw-wrap' }), pane = h('div', { class: 'sw-pane' }), open = false;
-    var edit = h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit this tour', onclick: function () { onEdit(); } }, 'Edit');
-    // The row is an <li>; it rides inside the pane as a block.
-    row.classList.add('sw-row');
-    pane.appendChild(row);
-    wrap.appendChild(edit); wrap.appendChild(pane);
-    var x0 = 0, y0 = 0, dx = 0, dragging = false, horizontal = null;
-    var setX = function (x) { pane.style.transform = x ? 'translateX(' + x + 'px)' : ''; };
-    pane.addEventListener('touchstart', function (e) {
-      var t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; dx = 0; dragging = true; horizontal = null; pane.style.transition = 'none';
-    }, { passive: true });
-    pane.addEventListener('touchmove', function (e) {
-      if (!dragging) return;
-      var t = e.touches[0], mx = t.clientX - x0, my = t.clientY - y0;
-      if (horizontal === null && (Math.abs(mx) > 6 || Math.abs(my) > 6)) horizontal = Math.abs(mx) > Math.abs(my);
-      if (!horizontal) return;
-      e.preventDefault();
-      dx = Math.max(-96, Math.min(0, (open ? -88 : 0) + mx));
-      setX(dx);
-    }, { passive: false });
-    var settle = function () {
-      dragging = false; pane.style.transition = '';
-      if (horizontal) { open = dx < -44; setX(open ? -88 : 0); wrap.classList.toggle('open', open); }
-      horizontal = null;
-    };
-    pane.addEventListener('touchend', function (e) { if (horizontal && e.cancelable) e.preventDefault(); settle(); });
-    pane.addEventListener('touchcancel', settle);
-    // No touch screen: a right-click (or long press on some phones) opens the same Edit.
-    pane.addEventListener('contextmenu', function (e) { e.preventDefault(); onEdit(); });
-    return wrap;
-  }
-  // Fixing a tour the page shows: a new name, or take it off the page. The
-  // correction sticks through every re-sync.
-  function openTourEdit(id, r) {
-    var st = { name: r.name };
+  // The contested nights of a tour: this tour, the other, or wasn't there — one tap each, saved at once.
+  function openTourConflicts(id, r) {
+    var B = window.GR_BACKEND, list = null, failed = false;
+    var host = h('div', { class: 'tc-host' });
+    function draw() {
+      var rows = !list ? h('p', { class: 'note' }, failed ? 'Couldn’t load the dates just now.' : 'Loading…')
+        : !list.length ? h('p', { class: 'note' }, 'All settled.')
+        : h('div', { class: 'ledger' }, list.map(function (n) {
+            var pick = async function (who, btn) {
+              btn.disabled = true;
+              try {
+                await B.artistTourPick(id, n.date, who);
+                list = list.filter(function (x) { return x.date !== n.date; });
+                toast(who ? dayMD(n.date) + ' → ' + who : dayMD(n.date) + ' taken off');
+                S.tourNights = null; histOf(id, true); draw(); render(true);
+              } catch (x) { btn.disabled = false; saveFailed('tours', x); }
+            };
+            return h('div', { class: 'tc-row' },
+              h('div', { class: 'tc-when' }, h('strong', null, dayMD(n.date) + ', ' + String(n.date).slice(0, 4)),
+                h('span', { class: 'hint' }, [n.city, n.venue].filter(Boolean).join(' · ') || '—')),
+              h('div', { class: 'tc-picks' },
+                [n.a, n.b].map(function (nm) {
+                  return h('button', { class: 'pf-btn' + (n.holder === nm ? ' on' : ''), type: 'button', onclick: function (e) { pick(nm, e.currentTarget); } }, nm);
+                }),
+                h('button', { class: 'linkbtn tc-none', type: 'button', onclick: function (e) { pick('', e.currentTarget); } }, 'Wasn’t there')));
+          }));
+      host.replaceChildren(rows);
+    }
+    B.artistTourConflicts(id, r.name).then(function (l) { list = Array.isArray(l) ? l : []; draw(); }, function () { failed = true; draw(); });
     openSheet(function () {
-      var input = h('input', { class: 'input', type: 'text', maxlength: 120, value: st.name, 'aria-label': 'Tour name',
-        oninput: function (e) { st.name = e.target.value; } });
-      return [h('h2', { class: 'sh-title' }, 'Edit this tour'),
-        h('p', { class: 'sh-sub' }, (r.first ? tourSpan(r.first, r.last) + ' · ' : '') + plural(G.num(r.n), 'show')),
-        input,
-        h('div', { class: 'stack', style: 'margin-top:14px' },
-          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
-            var nm = String(st.name || '').replace(/\s+/g, ' ').trim();
-            if (nm.length < 2) { toast('Give it a name'); return; }
-            if (nm === r.name) { closeSheet(); return; }
-            var b = e.currentTarget; b.disabled = true;
-            try { await window.GR_BACKEND.artistTourEdit(id, r.name, nm); closeSheet(); toast('Renamed ' + nm); histOf(id, true); render(true); }
-            catch (x) { b.disabled = false; saveFailed('tours', x); }
-          } }, 'Save name'),
-          h('button', { class: 'btn ghost block danger', type: 'button', onclick: function () {
-            confirmSheet({ title: 'Remove ' + r.name + '?', body: 'It comes off the Tours list. Nights setlist.fm knows about stay as shows; nights the search added for this tour go.',
-              action: 'Remove tour', danger: true,
-              onConfirm: async function () {
-                try { await window.GR_BACKEND.artistTourRemove(id, r.name); toast('Removed ' + r.name); histOf(id, true); render(true); return true; }
-                catch (x) { saveFailed('tours', x); return false; }
-              } });
-          } }, 'Remove this tour'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
-    }, { label: 'Edit this tour' });
+      draw();
+      return [h('h2', { class: 'sh-title' }, 'Tour conflict'),
+        h('p', { class: 'sh-sub' }, 'Two tours claim some of the same nights. For each night, tap the tour you were on — or Wasn’t there. The one lit up is where the night sits now.'),
+        host,
+        h('button', { class: 'btn ghost block', type: 'button', style: 'margin-top:14px', onclick: function () { closeSheet(); } }, 'Done')];
+    }, { label: 'Tour conflict' });
   }
   // A person's badge and "On the road since": the same ladder the artists climb.
   function roadLine(rs) {

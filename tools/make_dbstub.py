@@ -406,6 +406,15 @@ shim = r"""<script>
       Object.keys(H.histories || {}).forEach(function (k) { var hr = H.histories[k]; if (hr && hr.summary && hr.summary.toursList) hr.summary.toursList = hr.summary.toursList.filter(function (t) { return t.name !== name; }); });
       return Promise.resolve({});
     },
+    artistTourConflicts: function (artistId, name) {
+      var H = window.__harness; H.conflicts = H.conflicts || [{ date: '2016-07-01', a: 'Vans Warped Tour 2016', b: 'Pretend Side Run', holder: 'Vans Warped Tour 2016', city: 'Pomona', venue: 'Fairplex' },
+        { date: '2016-07-02', a: 'Vans Warped Tour 2016', b: 'Pretend Side Run', holder: 'Pretend Side Run', city: 'Ventura', venue: 'Fairgrounds' }];
+      return Promise.resolve(H.conflicts.filter(function (c) { return c.a === name || c.b === name; }));
+    },
+    artistTourPick: function (artistId, date, name) {
+      var H = window.__harness; H.picks = (H.picks || []).concat([{ date: date, name: name }]); H.conflicts = (H.conflicts || []).filter(function (c) { return c.date !== date; });
+      return Promise.resolve({ ok: true, left: H.conflicts.length });
+    },
     tourCandidateUndo: function (candId) {
       var H = window.__harness; var st = null;
       Object.keys(H.tf || {}).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; x.status = x.auto ? 'no' : 'new'; } }); });
@@ -460,7 +469,7 @@ shim = r"""<script>
           summary: { shows: 735, tours: 34, countries: 33, cities: 212, firstYear: 2007, lastYear: 2026,
             years: { 2026: 44, 2025: 21, 2024: 86 },
             toursList: [ { name: '10 Years In The Black', n: 33, first: '2016-11-01', last: '2017-02-18' },
-              { name: 'Treehouse Tour', n: 39, first: '2016-06-01', last: '2016-08-12' } ],
+              { name: 'Treehouse Tour', conflict: true, n: 39, first: '2016-06-01', last: '2016-08-12' } ],
             countriesList: [ { name: 'United States', n: 595 }, { name: 'United Kingdom', n: 27 } ] } };
       }
       var hr = H.histories[artistId];
