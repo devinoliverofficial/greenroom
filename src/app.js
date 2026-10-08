@@ -4605,6 +4605,7 @@
           ties.map(function (x) { return tfCandCard(id, x, c.busy); })] : null,
         !autoNow.length && !ties.length ? h('p', { class: 'note' }, st.detail || 'Nothing found in the announcements that isn’t already on the page.')
           : st.detail ? h('p', { class: 'note tf-p' }, st.detail) : null,
+        st.auto && st.finishedAt ? h('p', { class: 'note tf-p' }, 'Greenroom searched by itself on ' + dayMD(String(st.finishedAt).slice(0, 10)) + '. It looks again every month.') : null,
         st.sources && st.sources.lambgoat === 'none' && G.num(st.pages) > 0 ? h('p', { class: 'note' }, 'One of the archives didn’t answer this time; the others were read.') : null,
         rest.length ? h('details', { class: 'tf-more' },
           h('summary', null, plural(rest.length, 'tour') + ' found with nothing to add'),
@@ -4621,7 +4622,7 @@
     }
     return h('section', { class: 'tf-block', 'aria-label': 'Add missing tours' },
       h('h3', { class: 'mn-h mn-over tf-h' }, 'Add missing tours'),
-      h('p', { class: 'note tf-p' }, 'Greenroom reads nine music-news archives and Wikipedia for ' + ((card || {}).name || 'the act') + '’s tour announcements, then puts every tour it’s sure of on the page — the name, the dates, the venues where the article had them. When two finds want the same nights, it asks you.'),
+      h('p', { class: 'note tf-p' }, 'Greenroom reads nine music-news archives and Wikipedia for ' + ((card || {}).name || 'the act') + '’s tour announcements, then puts every tour it’s sure of on the page — the name, the dates, the venues where the article had them. When two finds want the same nights, it asks you.' + (st.brain ? ' It does this by itself, and looks again every month.' : '')),
       body);
   }
 
