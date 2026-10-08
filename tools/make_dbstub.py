@@ -98,7 +98,7 @@ shim = r"""<script>
     // The tour finder's reading: two tours out of the pretend archives.
     if (/TOUR FINDER/.test(String(prompt))) return Promise.resolve([
       { name: 'Let Light Overcome the Darkness Tour', role: 'support', start: '2019-11-05', end: '2019-12-08', region: 'US', lineup: 'Our Last Night, The Word Alive, Ashland',
-        dates: [{ date: '2019-11-05', city: 'Omaha, NE', venue: 'Slowdown' }, { date: '2019-12-08', city: 'Lake Buena Vista, FL', venue: 'House of Blues' }], source: 'https://www.theprp.com/2019/09/x/' },
+        dates: ['2019-11-05 | Omaha, NE | Slowdown', '2019-12-08 | Lake Buena Vista, FL | House of Blues'], source: 'https://www.theprp.com/2019/09/x/' },
       { name: 'Spring 2018 run with Dance Gavin Dance', role: 'support', start: '2018-05-26', end: '2018-06-21', region: 'US/Canada', lineup: 'Dance Gavin Dance, Erra, Sianvar',
         dates: [{ date: '2018-05-26', city: 'San Antonio, TX', venue: 'Aztec Theatre' }], source: 'https://lambgoat.com/news/2/x/' }]);
     if (/concert venue with web search/.test(String(prompt))) {
@@ -323,12 +323,14 @@ shim = r"""<script>
     tourFindStart: function (artistId) {
       var H = window.__harness; H.tf = H.tf || {};
       H.tf[artistId] = { status: 'reading', detail: '', day: new Date().toISOString().slice(0, 10), pages: 0, waiting: 6,
-        sources: { theprp: 'reading', lambgoat: 'new' }, candidates: (H.tf[artistId] && H.tf[artistId].candidates || []).filter(function (c) { return c.status !== 'new'; }) };
+        sources: { theprp: 'reading', lambgoat: 'new' }, candidates: (H.tf[artistId] && H.tf[artistId].candidates || []).filter(function (c) { return c.status !== 'new'; }),
+        runs: [{ first: '2018-05-26', last: '2018-06-21', n: 15, countries: 'CA, US', nights: [{ date: '2018-05-26', city: 'San Antonio', state: 'TX', country: 'US', venue: 'Aztec Theatre' }, { date: '2018-05-27', city: 'Houston', state: 'TX', country: 'US', venue: 'Warehouse Live' }] },
+               { first: '2017-07-15', last: '2017-08-04', n: 11, countries: 'US', nights: [{ date: '2017-07-15', city: 'St. Louis', state: 'MO', country: 'US', venue: 'Pop\u2019s' }] }] };
       return Promise.resolve(JSON.parse(JSON.stringify(H.tf[artistId])));
     },
     tourFindState: function (artistId) {
       var H = window.__harness; H.tf = H.tf || {};
-      var st = H.tf[artistId] || { status: 'idle', detail: '', pages: 0, waiting: 0, sources: {}, candidates: [] };
+      var st = H.tf[artistId] || { status: 'idle', detail: '', pages: 0, waiting: 0, sources: {}, candidates: [], runs: [] };
       if (st.status === 'reading') { st.pages += 3; st.waiting -= 3; if (st.waiting <= 0) { st.waiting = 0; st.status = 'ready'; st.sources = { theprp: 'done', lambgoat: 'done' }; } }
       return Promise.resolve(JSON.parse(JSON.stringify(st)));
     },
@@ -341,8 +343,11 @@ shim = r"""<script>
       H.proposed = (H.proposed || []).concat(cands);
       (cands || []).forEach(function (c, i) {
         st.candidates.push({ id: 'cand' + (st.candidates.length + 1), name: c.name, role: c.role, first: c.start, last: c.end, region: c.region, lineup: c.lineup,
-          n: (c.dates || []).length, sources: c.sources || [], status: 'new', matched: i === 0 ? 16 : 0, have: i === 0 ? 16 : 0 });
+          n: (c.dates || []).length, sources: c.sources || [], status: 'new', matched: i === 0 ? 16 : 0, have: i === 0 ? 16 : 0, toAdd: i === 0 ? 2 : 1, fill: false });
       });
+      // And one tour the page already has, with dates the page lacks.
+      st.candidates.push({ id: 'candfill', name: 'The Godmode', role: 'support', first: '2024-05-07', last: '2024-05-25', region: 'US', lineup: 'In This Moment, Kim Dracula',
+        n: 13, sources: ['https://www.theprp.com/2024/02/13/x/'], status: 'new', matched: 0, have: 2, toAdd: 11, fill: true });
       st.status = 'done';
       return Promise.resolve(JSON.parse(JSON.stringify(st)));
     },
@@ -352,6 +357,19 @@ shim = r"""<script>
       c.status = add ? 'added' : 'no'; if (add && name) c.name = name;
       // What the real server reports back: how many nights took the name, how many dates were added.
       return Promise.resolve(Object.assign(JSON.parse(JSON.stringify(st)), add ? { renamed: c.matched, inserted: Math.max(0, c.n - c.have) } : {}));
+    },
+    tourNights: function (artistId, name) {
+      // Three pretend nights for any named tour.
+      return Promise.resolve([{ date: '2025-03-01', city: 'Dallas', state: 'TX', country: 'US', venue: 'House of Blues', url: '', announced: false },
+        { date: '2025-03-02', city: 'Austin', state: 'TX', country: 'US', venue: 'Emo\u2019s', url: '', announced: false },
+        { date: '2025-03-04', city: 'Houston', state: 'TX', country: 'US', venue: 'Warehouse Live', url: '', announced: true }]);
+    },
+    tourRunName: function (artistId, first, last, name) {
+      var H = window.__harness; H.tf = H.tf || {}; var st = H.tf[artistId] || (H.tf[artistId] = { status: 'idle', detail: '', pages: 0, waiting: 0, sources: {}, candidates: [], runs: [] });
+      st.runs = (st.runs || []).filter(function (r) { return r.first !== first; });
+      st.candidates.push({ id: 'run' + Date.now(), name: name, role: '', first: first, last: last, n: 3, sources: [], status: 'added', matched: 0, have: 3, fill: false });
+      H.namedRuns = (H.namedRuns || []).concat([{ first: first, last: last, name: name }]);
+      return Promise.resolve(Object.assign(JSON.parse(JSON.stringify(st)), { named: 3 }));
     },
     tourCandidateUndo: function (candId) {
       var H = window.__harness; var st = null;

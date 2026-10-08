@@ -662,6 +662,17 @@
       if (q.error) throw mapError(q.error);
       return q.data;
     },
+    // The nights of one tour on an artist page (anyone signed in), and naming a run on your own page.
+    tourNights: async function (artistId, name) {
+      var q = await sb.rpc('artist_tour_nights', { a_id: artistId, tour_name: name });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    tourRunName: async function (artistId, first, last, name) {
+      var q = await sb.rpc('tour_run_name', { a_id: artistId, first_day: first, last_day: last, new_name: name });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
     tourCandidateUndo: async function (candId) {
       var q = await sb.rpc('tour_candidate_undo', { c_id: candId });
       if (q.error) throw mapError(q.error);

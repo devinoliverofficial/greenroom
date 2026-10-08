@@ -1929,7 +1929,7 @@
     var checked = !!(uid && cardOf(uid).card && cardOf(uid).card.verified);
     syncSocial();
     return h('section', { class: 'pf', 'aria-label': 'Your profile' },
-      h('div', { class: 'pf-top' },
+      h('div', { class: 'pf-top pf-grid' },
         h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
           card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
         h('div', { class: 'vp-side' },
@@ -2376,7 +2376,7 @@
     return h('div', { class: 'page home profile has-tabs' },
       head(card.handle || card.name || 'Profile', card.verified),
       h('section', { class: 'pf vp', 'aria-label': (card.name || 'Their') + ' profile' },
-        h('div', { class: 'pf-top' },
+        h('div', { class: 'pf-top pf-grid' },
           h('div', { class: 'pf-photo-wrap' }, personPhoto(card)),
           h('div', { class: 'vp-side' },
             (card.handle && card.name) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, card.name),
@@ -3241,9 +3241,10 @@
     var pastTours = hsum && Array.isArray(hsum.toursList) ? hsum.toursList : [];
     var tourRows = G.tourTimeline(tours, pastTours, G.tourToday()).map(function (r) {
       var t = r.tour;
-      return timelineRow(r, r.own ? function () {
+      if (!r.own) return historyTourRow(id, r);
+      return timelineRow(r, function () {
         if ((manage || !card.mine) && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, id);
-      } : null, false);
+      }, false);
     });
     // Anyone can follow an artist's page; shown at once, put back if it didn't take.
     var following = false;
@@ -3281,7 +3282,7 @@
       // A page nobody runs has only a machine's username: its name leads instead.
       head(unclaimed || machineHandle(card.handle) ? card.name : card.handle),
       h('section', { class: 'pf vp', 'aria-label': card.name + ' profile' },
-        h('div', { class: 'pf-top' },
+        h('div', { class: 'pf-top pf-grid' },
           h('div', { class: 'pf-photo-wrap' }, photo,
             (manage && !card.avatar) ? h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14)) : null),
           h('div', { class: 'vp-side' },
@@ -3300,7 +3301,7 @@
                 pfStat(bandList.length, 'band', function () { pickTab('band'); }),
                 pfStat(crewList.length, 'crew', function () { pickTab('crew'); })
               ]),
-            h('p', { class: 'hist-fans' }, plural(G.num(card.followers), 'fan')))),
+            h('p', { class: 'hist-fans' }, h('span', { class: 'hf-txt' }, plural(G.num(card.followers), 'fan'))))),
         h('p', { class: 'pf-roles' }, 'Artist', unclaimed ? h('span', { class: 'act-tag' }, 'Unclaimed') : null),
         card.bio ? h('p', { class: 'pf-bio' }, card.bio)
           : aboutLine ? h('p', { class: 'pf-bio act-about' }, aboutLine)
@@ -3898,6 +3899,47 @@
       onTap ? h('button', { class: 'list-row tour-row', type: 'button', onclick: onTap }, inner)
         : h('div', { class: 'list-row tour-row still' }, inner));
   }
+  // A tour from the synced history: tap it and every night drops down
+  // (Devin, 2026-10-07: like the tours on a crew member's profile).
+  function tourNightsOf(artistId, name, fresh) {
+    var B = window.GR_BACKEND;
+    S.tourNights = S.tourNights || {};
+    var k = artistId + '|' + name;
+    var c = S.tourNights[k] || (S.tourNights[k] = { list: null, at: 0, asking: false, failed: false });
+    if (S.mode !== 'db' || !B || !B.tourNights) { c.none = true; return c; }
+    if (!c.asking && (fresh || !c.at)) {
+      c.asking = true;
+      B.tourNights(artistId, name).then(function (list) { c.list = Array.isArray(list) ? list : []; c.at = Date.now(); c.asking = false; c.failed = false; render(true); },
+        function () { c.failed = true; c.at = Date.now(); c.asking = false; render(true); });
+    }
+    return c;
+  }
+  function historyTourRow(artistId, r) {
+    S.tnOpen = S.tnOpen || {};
+    var k = artistId + '|' + r.name, open = !!S.tnOpen[k];
+    var span = r.first ? tourSpan(r.first, r.last) + (r.n ? ' \u00b7 ' + plural(r.n, 'show') : '') : (r.n ? plural(r.n, 'show') : 'No dates yet');
+    var body = null;
+    if (open) {
+      var c = tourNightsOf(artistId, r.name);
+      body = c.none ? null
+        : c.failed && !c.list ? h('p', { class: 'pt-next pt-nodates' }, 'Couldn\u2019t load the dates just now.')
+        : !c.list ? h('p', { class: 'pt-next pt-nodates' }, 'Loading\u2026')
+        : !c.list.length ? h('p', { class: 'pt-next pt-nodates' }, 'No dates yet')
+        : h('ul', { class: 'shows cal-list tn-list' }, c.list.map(function (n) {
+            var where = [n.city, n.state && n.country === 'US' ? n.state : (n.country && n.country !== 'US' ? n.country : '')].filter(Boolean).join(', ');
+            return h('li', { class: 'tn-row' + (n.announced ? ' announced' : '') },
+              h('span', { class: 'tn-date' }, dayMD(n.date) + ', ' + String(n.date).slice(0, 4)),
+              h('span', { class: 'tn-where' }, where || '\u2014', n.venue ? h('span', { class: 'tn-venue' }, ' \u00b7 ' + n.venue) : null),
+              n.announced ? h('span', { class: 'tn-tag' }, 'announced') : null);
+          }));
+    }
+    return h('li', { class: 'pt-run tn-run' + (open ? ' open' : '') },
+      h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
+        onclick: function () { S.tnOpen[k] = !open; render(true); } },
+        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name), h('span', { class: 'lr-sub' }, span)),
+        icon('chevron', 16)),
+      body);
+  }
   // A person's badge and "On the road since": the same ladder the artists climb.
   function roadLine(rs) {
     if (!G.isObj(rs)) return null;
@@ -4062,7 +4104,7 @@
       'Fields: "name" (the announced tour name; if the run had no name, a short description such as "Fall 2018 run with Dance Gavin Dance"), ' +
       '"role" (one of headline, co-headline, support, festival), "start" and "end" (YYYY-MM-DD; when a listing gives month/day only, take the year from the article date, and remember a run announced in the fall may start the next year), ' +
       '"lineup" (the other acts, comma separated), "region" (US, UK/Europe, Australia, Japan, Canada\u2026), ' +
-      '"dates" (every date listed for ' + name + ' as {"date":"YYYY-MM-DD","city":"City, ST","venue":"Venue"}; an empty array if none are listed), "source" (the article URL). ' +
+      '"dates" (every date listed for ' + name + ', each as one short string "YYYY-MM-DD | City, ST | Venue"; an empty array if none are listed), "source" (the article URL). ' +
       'Rules: only runs ' + name + ' is on; skip one-off festival appearances and anything that is not a tour (album news, videos, members leaving); when a later article updates an earlier one (dates added, moved or cancelled) fold them into one item; never invent dates; if nothing qualifies return [].\n\n';
     return head + pages.map(function (p, i) {
       return '--- ARTICLE ' + (i + 1) + ' | ' + (p.published || 'date unknown') + ' | ' + p.url + '\n' + (p.title ? p.title + '\n' : '') + p.body + '\n';
@@ -4086,6 +4128,25 @@
     } catch (e) { /* Wikipedia is a bonus; the archives carry the day. */ }
     return out;
   }
+  // One batch through the reader. An answer that doesn't parse (the reader
+  // ran out of room) is asked again in two halves, down to one article.
+  async function tfRead(name, batch) {
+    try {
+      return await S.sample.json(tfPrompt(name, batch), { cache: false });
+    } catch (e) {
+      if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e;
+      if (e && e.code === 'rate_limited') {
+        await new Promise(function (r) { setTimeout(r, 4000); });
+        try { return await S.sample.json(tfPrompt(name, batch), { cache: false }); } catch (e2) { if (e2 && (e2.code === 'session_expired' || SAMPLE_GONE.indexOf(e2.code) >= 0)) throw e2; }
+      }
+      if (batch.length > 1) {
+        var mid = Math.ceil(batch.length / 2);
+        var a = await tfRead(name, batch.slice(0, mid)), b = await tfRead(name, batch.slice(mid));
+        return (Array.isArray(a) ? a : []).concat(Array.isArray(b) ? b : []);
+      }
+      return [];
+    }
+  }
   async function tfExtract(id) {
     var B = window.GR_BACKEND, c = tfOf(id);
     if (c.busy || !S.sample) return;
@@ -4095,10 +4156,13 @@
       var pages = await B.tourFindPages(id);
       if (pages === null) { c.error = 'Another phone is sorting the tours right now. Give it a few minutes.'; throw { code: 'busy' }; }
       var wiki = await tfWikipedia(name);
+      // Small batches: the reader answers in full for a handful of articles
+      // and runs out of room for twenty (that is how a first run came back
+      // with one tour out of 137 articles).
       var all = pages.concat(wiki), batches = [], cur = [], size = 0;
       all.forEach(function (p) {
         var len = String(p.body || '').length + 200;
-        if (cur.length && size + len > 60000) { batches.push(cur); cur = []; size = 0; }
+        if (cur.length && (size + len > 12000 || cur.length >= 6)) { batches.push(cur); cur = []; size = 0; }
         cur.push(p); size += len;
       });
       if (cur.length) batches.push(cur);
@@ -4109,17 +4173,7 @@
         var key = batches[i].map(function (p) { return p.url; }).join('|');
         if (done[key]) continue;
         c.progress = (i + 1) + ' of ' + batches.length; render(true);
-        var out = null;
-        try {
-          out = await S.sample.json(tfPrompt(name, batches[i]), { cache: false });
-        } catch (e) {
-          if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e;
-          if (e && e.code === 'rate_limited') {
-            await new Promise(function (r) { setTimeout(r, 4000); });
-            try { out = await S.sample.json(tfPrompt(name, batches[i]), { cache: false }); } catch (e2) { out = null; }
-          }
-          // One batch the reader couldn't make sense of is skipped; the rest still count.
-        }
+        var out = await tfRead(name, batches[i]);
         if (Array.isArray(out)) found.push.apply(found, out);
         done[key] = true;
       }
@@ -4182,13 +4236,55 @@
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
     }, { label: 'Tour name' });
   }
+  // A run of nights already on the page with no tour name: the owner names it in one go.
+  function tfRunCard(id, run, cands, busy) {
+    var nights = Array.isArray(run.nights) ? run.nights : [];
+    var cities = nights.map(function (n) { return n.city; }).filter(Boolean);
+    var where = cities.length ? cities[0] + (cities.length > 1 ? ' \u2192 ' + cities[cities.length - 1] : '') : '';
+    // The found tours that fall on these dates are the likely names.
+    var guesses = (cands || []).filter(function (c) { return c.status === 'new' && c.first && c.last && c.first <= run.last && run.first <= c.last; });
+    return h('div', { class: 'tf-card tf-run' },
+      h('p', { class: 'tf-name tf-run-t' }, tfSpan(run.first, run.last)),
+      h('p', { class: 'tf-sub' }, plural(G.num(run.n), 'show') + (run.countries ? ' \u00b7 ' + run.countries : '') + (where ? ' \u00b7 ' + where : '')),
+      guesses.length ? h('p', { class: 'tf-fit' }, 'Could be: ' + guesses.map(function (c) { return c.name; }).slice(0, 2).join(' or ')) : h('p', { class: 'tf-sub' }, 'No tour name on these nights yet'),
+      h('div', { class: 'pt-two tf-acts' },
+        h('button', { class: 'btn primary', type: 'button', disabled: busy, onclick: function () { openRunName(id, run, guesses); } }, 'Name this run')));
+  }
+  function openRunName(id, run, guesses) {
+    var st = { name: guesses && guesses.length ? guesses[0].name : '' };
+    openSheet(function () {
+      var input = h('input', { class: 'input', type: 'text', maxlength: 120, value: st.name, placeholder: 'Tour name', 'aria-label': 'Tour name',
+        oninput: function (e) { st.name = e.target.value; } });
+      return [h('h2', { class: 'sh-title' }, 'Name this run'),
+        h('p', { class: 'sh-sub' }, tfSpan(run.first, run.last) + ' \u00b7 ' + plural(G.num(run.n), 'show') + '. Every one of these nights takes the name.'),
+        guesses && guesses.length ? h('div', { class: 'tf-guess' }, guesses.slice(0, 3).map(function (c) {
+          return h('button', { class: 'pf-btn', type: 'button', onclick: function () { st.name = c.name; input.value = c.name; } }, c.name);
+        })) : null,
+        input,
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+            var nm = String(st.name || '').replace(/\s+/g, ' ').trim();
+            if (nm.length < 2) { toast('Give it a name'); return; }
+            var b = e.currentTarget; b.disabled = true;
+            var B = window.GR_BACKEND, c = tfOf(id);
+            try {
+              var res = await B.tourRunName(id, run.first, run.last, nm);
+              c.state = res; closeSheet();
+              toast(plural(G.num(res && res.named), 'show') + ' named ' + nm);
+              histOf(id, true); render(true);
+            } catch (x) { b.disabled = false; saveFailed('tours', x); }
+          } }, 'Name it'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
+    }, { label: 'Name this run' });
+  }
   function tfCandCard(id, x, busy) {
     var what = [TF_ROLE[x.role] || null, x.lineup ? 'with ' + x.lineup : null].filter(Boolean).join(' \u00b7 ');
     var toAdd = x.toAdd == null ? G.num(x.n) : G.num(x.toAdd);
     var fit = G.num(x.matched) > 0 ? plural(G.num(x.matched), 'unnamed show') + ' on the page fall in these dates' + (toAdd ? ', ' + plural(toAdd, 'announced date') + ' to add' : '')
       : toAdd > 0 ? plural(toAdd, 'announced date') + ' to add'
       : G.num(x.have) > 0 ? 'These dates are already on the page under another name' : 'No dates listed';
-    return h('div', { class: 'tf-card' },
+    return h('div', { class: 'tf-card' + (x.fill ? ' tf-fill' : '') },
+      x.fill ? h('p', { class: 'tf-kicker' }, 'Already on the page \u2014 fill in its dates') : null,
       h('button', { class: 'tf-name', type: 'button', 'aria-label': 'Change the name: ' + x.name, onclick: function () { openTfRename(id, x); } },
         h('span', { class: 'tf-name-t' }, x.name), icon('chevron', 14)),
       h('p', { class: 'tf-sub' }, tfSpan(x.first, x.last) + (x.region ? ' \u00b7 ' + x.region : '')),
@@ -4218,7 +4314,11 @@
     if (status === 'loading') body = h('p', { class: 'note tf-status' }, 'Looking\u2026');
     else if (status === 'failed') body = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { tfOf(id, true); render(true); } }, 'Try again');
     else if (status === 'idle' || status === 'error') {
-      body = [status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn\u2019t finish.') : null, findBtn(status === 'error' ? 'Try again' : 'Find missing tours')];
+      var idleRuns = Array.isArray(st.runs) ? st.runs : [];
+      body = [status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn\u2019t finish.') : null, findBtn(status === 'error' ? 'Try again' : 'Find missing tours'),
+        idleRuns.length ? [h('h4', { class: 'tf-h2' }, 'Nights on the page with no tour name'),
+          h('p', { class: 'note tf-p' }, 'setlist.fm has these shows but nobody named the tour. Name a run and every night in it is filed under it.'),
+          idleRuns.map(function (r) { return tfRunCard(id, r, cands, c.busy); })] : null];
     } else if (status === 'reading') {
       body = h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }),
         'Reading tour announcements\u2026 ' + plural(G.num(st.pages), 'article') + (G.num(st.waiting) > 0 ? ', ' + st.waiting + ' to go' : ''));
@@ -4228,10 +4328,15 @@
         : [h('p', { class: 'note bad' }, c.error || 'Reading isn\u2019t available right now.'),
            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { c.error = ''; tfExtract(id); } }, 'Try again')];
     } else {
+      var runs = Array.isArray(st.runs) ? st.runs : [];
       body = [
         c.error ? h('p', { class: 'note bad' }, c.error) : null,
+        st.sources && st.sources.lambgoat === 'none' && G.num(st.pages) > 0 ? h('p', { class: 'note' }, 'One of the two archives didn\u2019t answer this time; the other was read.') : null,
         fresh.length ? fresh.map(function (x) { return tfCandCard(id, x, c.busy); })
-          : h('p', { class: 'note' }, st.detail || (added.length ? 'Nothing else found. Everything the archives mention is on the page.' : 'Nothing found that isn\u2019t already on the page.')),
+          : h('p', { class: 'note' }, st.detail || (added.length ? 'Nothing else found in the announcements.' : 'Nothing found in the announcements that isn\u2019t already on the page.')),
+        runs.length ? [h('h4', { class: 'tf-h2' }, 'Nights on the page with no tour name'),
+          h('p', { class: 'note tf-p' }, 'setlist.fm has these shows but nobody named the tour. Name a run and every night in it is filed under it.'),
+          runs.map(function (r) { return tfRunCard(id, r, cands, c.busy); })] : null,
         added.length ? h('details', { class: 'tf-added' },
           h('summary', null, plural(added.length, 'tour') + ' added from here'),
           added.map(function (x) {
@@ -6540,8 +6645,9 @@
     var by = G.isObj(c.incomeBy) ? c.incomeBy : {};
     var guar = Math.max(0, G.num(by.guarantee) + G.num(by.backend)), merch = Math.max(0, G.num(by.merch));
     var income = Math.max(0, G.num(c.income));
-    var incParts = [{ label: 'Guarantees', v: guar, cls: 'guar' }, { label: 'Merch', v: merch, cls: 'merch' },
-      { label: 'Other', v: Math.max(0, income - guar - merch), cls: 'inother' }];
+    var incParts = Array.isArray(c.incParts) ? c.incParts.map(function (x) { return { label: x.label, v: Math.max(0, G.num(x.v)), cls: x.cls }; })
+      : [{ label: 'Guarantees', v: guar, cls: 'guar' }, { label: 'Merch', v: merch, cls: 'merch' },
+         { label: 'Other', v: Math.max(0, income - guar - merch), cls: 'inother' }];
     var r2 = function (v) { return Math.round(v * 100) / 100; };
     expParts = expParts.map(function (x) { return { label: x.label, v: r2(x.v), cls: x.cls }; });
     var spent = r2(expParts.reduce(function (n, x) { return n + x.v; }, 0));
@@ -6865,8 +6971,12 @@
     var typed = G.num((G.normExpenses(t && t.expenses)[key] || {}).paid);
     if (typed > 0) out.push({ date: '', label: 'Paid (typed in)', amount: typed, detail: 'One total, typed in by hand',
       source: 'MANUAL', typed: true, counts: true });
-    // Oldest first; the balances going in (no date) lead the list.
-    return out.sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
+    // Newest first (Devin, 2026-10-07); the balances going in (no date) still lead the list.
+    return out.sort(function (a, b) {
+      var ua = a.date ? 1 : 0, ub = b.date ? 1 : 0;
+      if (ua !== ub) return ua - ub;
+      return String(b.date).localeCompare(String(a.date)) || (G.num(b.createdAt) - G.num(a.createdAt));
+    });
   }
   /* A category that's really many bills under one line breaks down into the
      vendors behind them (G.vendorGroups): Monthly utilities into Amazon,
@@ -8343,17 +8453,47 @@
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { myPayInfo(id, true); render(true); } }, 'Try again'));
     }
     if (!c.info) return h('p', { class: 'note pay-note' }, 'Loading\u2026');
-    var st = G.payStanding(c.info), book = G.payBook(c.book);
-    var fig = function (label, v, cls) {
-      return h('div', { class: 'pay-fig' + (cls ? ' ' + cls : '') }, h('strong', { class: 'pay-n num' }, money(v)), h('span', { class: 'pay-l' }, label));
+    var st = G.payStanding(c.info), book = G.payBook(c.book), inc = G.payIncome(c.book, c.info.payments);
+    S.payTab = S.payTab || {};
+    var tab = S.payTab[id] === 'income' ? 'income' : 'expenses';
+    var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null, meCard = me ? cardOf(me).card : null;
+    // Devin (2026-10-07): your photo up top with two summary tabs, INCOME and
+    // EXPENSES, on both tabs, and the same graph the tour has underneath.
+    var sumTab = function (key, label, amount) {
+      var on = tab === key;
+      return h('button', { class: 'pay-sum-tab' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false',
+        onclick: function () { S.payTab[id] = key; render(true); } },
+        h('span', { class: 'pay-sum-k' }, label), h('strong', { class: 'pay-sum-v num' }, money(amount)));
     };
-    var head = st.onCrew
-      ? h('div', { class: 'pay-head' }, fig('Total pay', st.total), fig('Paid to date', st.paid), fig('Still owed', st.owed, st.owed > 0 ? 'owed' : 'ok'))
-      : h('p', { class: 'note pay-note' }, 'You\u2019re not on this tour\u2019s crew list yet. When the tour manager adds you under Crew with your email, your pay shows here.');
+    var head = h('div', { class: 'pay-top' },
+      h('div', { class: 'pay-photo' }, meCard ? personPhoto(meCard, 'sm') : null),
+      h('div', { class: 'pay-sum-tabs', role: 'tablist' }, sumTab('income', 'INCOME', inc.gross), sumTab('expenses', 'EXPENSES', book.spent)));
+    var inCls = { tour: 'guar', weekly: 'merch', perdiem: 'inother', buyout: 'guar', bonus: 'merch', other: 'inother' };
+    var exCls = { food: 'crew', lodging: 'bus', travel: 'lcard', gear: 'mbill', other: 'other' };
+    var chart = expenseSummary({ income: inc.gross, incomeBy: {},
+        incParts: inc.lines.filter(function (l) { return l.total > 0; }).map(function (l) { return { label: l.label, v: l.total, cls: inCls[l.key] || 'inother' }; }) },
+      book.lines.filter(function (l) { return l.total > 0; }).map(function (l) { return { label: l.label, v: l.total, cls: exCls[l.key] || 'other' }; }), false)
+      || h('p', { class: 'note pay-note' }, 'Nothing logged yet. Log your pay under INCOME and what you spend under EXPENSES, and the picture draws itself.');
+    var net = Math.round((inc.gross - book.spent) * 100) / 100;
+    var netLine = h('p', { class: 'pay-sum' }, 'Gross ', h('strong', { class: 'num' }, money(inc.gross)), ' \u00b7 spent ', h('strong', { class: 'num' }, money(book.spent)),
+      ' \u00b7 net ', h('strong', { class: 'num' + (net < 0 ? ' neg' : '') }, money(net)));
     var pays = Array.isArray(c.info.payments) ? c.info.payments : [];
-    var payRow = h('button', { class: 'row rowbtn ex-row pay-row', type: 'button', onclick: function () { openMyPayments(c.info); } },
-      h('div', { class: 'row-label' }, 'Payments to you', h('span', { class: 'hint' }, pays.length ? plural(pays.length, 'payment') : 'none logged yet')),
-      h('span', { class: 'amt num glow' }, money(st.paid)), icon('chevron', 18));
+    if (tab === 'income') {
+      var incRows = inc.lines.map(function (l) {
+        var tourLine = l.key === 'tour';
+        return h('button', { class: 'row rowbtn ex-row', type: 'button', onclick: function () { if (tourLine) openMyPayments(c.info); else openMyPayIncome(id, l.key); } },
+          h('div', { class: 'row-label' }, l.label, h('span', { class: 'hint' }, tourLine ? (pays.length ? plural(pays.length, 'payment') + ' logged by the tour manager' : 'none logged by the tour manager yet')
+            : (l.n ? plural(l.n, 'entry') : ''))),
+          h('span', { class: 'amt num' + (l.total > 0 ? ' glow' : '') }, l.total > 0 ? money(l.total) : '\u2014'), icon('chevron', 18));
+      });
+      return [head, chart, netLine,
+        st.onCrew ? h('p', { class: 'note pay-note' }, 'Pay plan: ' + money(st.total) + ' for the tour \u00b7 ' + money(st.paid) + ' logged as paid \u00b7 ' + money(st.owed) + ' still owed')
+          : h('p', { class: 'note pay-note' }, 'You\u2019re not on this tour\u2019s crew list yet, so there is no pay plan here. The tour manager adds you under Crew with your email.'),
+        h('h3', { class: 'mn-h mn-over' }, 'My income'),
+        h('div', { class: 'ledger' }, incRows),
+        h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'button', onclick: function () { openMyPayIncome(id, null); } },
+          icon('plus', 18), 'Log income'))];
+    }
     var colHead = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
       h('span', null, ''), h('span', { class: 'ex-proj' }, 'Projected'), h('span', { class: 'ex-paid' }, 'Credit'),
       h('span', { class: 'ex-done' }, 'Debit'), h('span', { class: 'ex-cash' }, 'Cash'), h('span', { class: 'ex-chev', 'aria-hidden': 'true' }));
@@ -8368,15 +8508,67 @@
         cell(l.credit, 'ex-paid', 'Credit'), cell(l.debit, 'ex-done', 'Debit'), cell(l.cash, 'ex-cash', 'Cash'),
         icon('chevron', 18));
     });
-    var sum = h('p', { class: 'pay-sum' }, 'Spent on tour ', h('strong', { class: 'num' }, money(book.spent)),
-      st.onCrew ? [' \u00b7 pay still owed ', h('strong', { class: 'num' }, money(st.owed))] : null);
-    return [head,
-      h('div', { class: 'ledger' }, payRow),
+    return [head, chart, netLine,
       h('h3', { class: 'mn-h mn-over' }, 'My expenses'),
       h('div', { class: 'ledger' }, colHead, lines),
-      sum,
       h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'button', onclick: function () { openMyPayCat(id, null); } },
         icon('plus', 18), 'Add expense'))];
+  }
+  // Logging what came in: weekly pay, per diems, buyouts, a bonus.
+  function openMyPayIncome(id, key, keep) {
+    var c = myPayInfo(id);
+    var st = keep || { key: key || 'weekly', amount: null, date: G.ymd(new Date()), note: '', closed: false, saving: false };
+    st.closed = false;
+    var again = function () { if (!st.closed) openMyPayIncome(id, st.key, st); };
+    openSheet(function () {
+      var book = G.isObj(c.book) ? c.book : {};
+      var cats = G.MY_PAY_INCOME;
+      var idx = Math.max(0, cats.map(function (x) { return x.key; }).indexOf(st.key));
+      var entries = G.rows(book.income).filter(function (e) { return (e.category || 'other') === st.key; })
+        .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+      var amount = h('input', { class: 'input', type: 'number', inputmode: 'decimal', step: '0.01', min: '0', placeholder: '0.00',
+        'aria-label': 'Amount', value: st.amount == null ? '' : st.amount,
+        oninput: function (e) { st.amount = e.target.value === '' ? null : Number(e.target.value); } });
+      var date = h('input', { class: 'input', type: 'date', 'aria-label': 'Day', value: st.date, oninput: function (e) { st.date = e.target.value; } });
+      var note = h('input', { class: 'input', type: 'text', maxlength: 60, placeholder: 'A note (optional)', 'aria-label': 'Note', value: st.note,
+        oninput: function (e) { st.note = e.target.value; } });
+      var add = async function (e) {
+        e.preventDefault(); blurActive();
+        if (st.saving) return;
+        if (!(st.amount > 0) || !isFinite(st.amount) || st.amount > 1e7) { toast('Enter the amount'); return; }
+        if (!G.parseDay(st.date)) { toast('Pick the day'); return; }
+        var amount = Math.round(st.amount * 100) / 100, entry = { date: st.date, amount: amount, category: st.key,
+          note: String(st.note || '').trim().slice(0, 60), createdAt: Date.now() };
+        st.saving = true;
+        var ok = await saveMyPayBook(id, function (next) { next.income = G.isObj(next.income) ? next.income : {}; next.income[newId()] = entry; });
+        st.saving = false;
+        if (ok) { toast(money(amount) + ' logged'); st.amount = null; st.note = ''; again(); }
+      };
+      var drop = function (eid) {
+        return async function () {
+          if (st.saving) return;
+          st.saving = true;
+          var ok = await saveMyPayBook(id, function (next) { if (G.isObj(next.income)) delete next.income[eid]; });
+          st.saving = false;
+          if (ok) { toast('Removed'); again(); }
+        };
+      };
+      return [
+        h('h2', { class: 'sh-title' }, 'Log income'),
+        segmented(cats.map(function (x) { return x.label; }), idx, function (i) { st.key = cats[i].key; again(); }, 'Kind of pay'),
+        h('form', { class: 'stack', onsubmit: add },
+          h('div', { class: 'pt-two' }, amount, date),
+          note,
+          h('button', { class: 'btn primary block', type: 'submit' }, 'Log it')),
+        entries.length ? h('div', { class: 'ledger' }, entries.map(function (e) {
+          return h('div', { class: 'row ex-row' },
+            h('div', { class: 'row-label' }, e.note || cats[idx].label, h('span', { class: 'hint' }, e.date ? dayMD(e.date) : '')),
+            h('span', { class: 'amt num' }, money(G.num(e.amount))),
+            h('button', { class: 'pay-entry-x', type: 'button', 'aria-label': 'Remove this entry', onclick: drop(e.id) }, '\u00d7'));
+        })) : h('p', { class: 'note' }, 'Nothing under ' + cats[idx].label.toLowerCase() + ' yet.'),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+      ];
+    }, { label: 'Log income', onClose: function () { st.closed = true; } });
   }
   // What the tour manager has logged as paid to you, newest first.
   function openMyPayments(info) {

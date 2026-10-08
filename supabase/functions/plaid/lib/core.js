@@ -772,6 +772,34 @@
     var projected = round(lines.reduce(function (t, l) { return t + (l.projected == null ? 0 : l.projected); }, 0) * 100) / 100;
     return { lines: lines, spent: spent, projected: projected };
   }
+  // What a crew member logs as coming in (Devin, 2026-10-07: "Crew gets
+  // buyouts, weekly pay, per diems, & you can put Bonus as well"), beside
+  // the pay the tour manager logged to them. Gross is the lot.
+  var MY_PAY_INCOME = [
+    { key: 'weekly', label: 'Weekly pay' },
+    { key: 'perdiem', label: 'Per diems' },
+    { key: 'buyout', label: 'Buyouts' },
+    { key: 'bonus', label: 'Bonus' },
+    { key: 'other', label: 'Other' }
+  ];
+  function payIncome(book, payments) {
+    var b = isObj(book) ? book : {};
+    var by = {};
+    MY_PAY_INCOME.forEach(function (c) { by[c.key] = { key: c.key, label: c.label, total: 0, n: 0 }; });
+    var tour = { key: 'tour', label: 'Pay from the tour', total: 0, n: 0 };
+    (Array.isArray(payments) ? payments : rows(payments)).forEach(function (p) {
+      var a = num(p && p.amount);
+      if (a > 0) { tour.total += a; tour.n += 1; }
+    });
+    rows(b.income).forEach(function (e) {
+      var g = by[e && e.category] || by.other, a = num(e && e.amount);
+      if (!(a > 0)) return;
+      g.total += a; g.n += 1;
+    });
+    var lines = [tour].concat(MY_PAY_INCOME.map(function (c) { return by[c.key]; }));
+    lines.forEach(function (l) { l.total = round(l.total * 100) / 100; });
+    return { lines: lines, gross: round(lines.reduce(function (t, l) { return t + l.total; }, 0) * 100) / 100 };
+  }
   // Where one crew member stands: their pay for the tour (the plan on their
   // crew row, run over the tour's dates), what's been logged as paid to
   // them, and what's still owed.
@@ -812,6 +840,13 @@
     return null;
   }
   function daysApart(a, b) { return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5); }
+  // One listed night, as an object or as the compact line the reader is
+  // asked for ("2019-11-05 | Omaha, NE | Slowdown").
+  function tourDate(d) {
+    if (isObj(d)) return parseDay(d.date) ? { date: d.date, city: String(d.city || '').trim(), venue: String(d.venue || '').trim() } : null;
+    var parts = String(d || '').split('|').map(function (x) { return x.trim(); });
+    return parseDay(parts[0]) ? { date: parts[0], city: parts[1] || '', venue: parts[2] || '' } : null;
+  }
   function actsOf(lineup) {
     return String(lineup || '').toLowerCase().split(/,|\band\b|&|\//).map(function (x) { return x.trim(); }).filter(function (x) { return x.length > 1; });
   }
@@ -836,8 +871,7 @@
       var key = tourKeyLoose(name);
       if (!key) return;
       var role = tourRole(c.role);
-      var dates = (Array.isArray(c.dates) ? c.dates : []).filter(function (d) { return isObj(d) && parseDay(d.date); })
-        .map(function (d) { return { date: d.date, city: String(d.city || '').trim(), venue: String(d.venue || '').trim() }; });
+      var dates = (Array.isArray(c.dates) ? c.dates : []).map(tourDate).filter(Boolean);
       var sources = (Array.isArray(c.sources) ? c.sources : c.source ? [c.source] : [])
         .map(String).filter(function (u) { return /^https:\/\//.test(u); });
       var lineup = String(c.lineup || '').replace(/\s+/g, ' ').trim();
@@ -1839,7 +1873,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

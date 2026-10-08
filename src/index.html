@@ -2813,6 +2813,37 @@ button.fl-row { cursor: pointer; }
 .fw-mine { padding: 12px 12px 10px; }
 .hist-tier.sm { flex: none; font-size: 10px; padding: 1px 6px; }
 /* The sign-in page's one line about the door. */
+/* Profile header, Devin's 2026-10-07 reading: the name beside the photo
+   where it always was, the four counts centred on the photo, followers and
+   following under the photo. The side column's children become grid items
+   so each can take its own cell. */
+.pf-top.pf-grid { display: grid; grid-template-columns: 86px minmax(0, 1fr); grid-template-areas: "photo name" "photo stats" "fans ." "fl fl";
+  column-gap: 22px; row-gap: 4px; align-items: center; }
+.pf-grid .vp-side { display: contents; }
+.pf-grid .pf-photo-wrap { grid-area: photo; align-self: end; justify-self: center; }
+.pf-grid .vp-name { grid-area: name; align-self: end; margin-bottom: 2px; }
+.pf-grid .pf-stats { grid-area: stats; align-self: center; }
+.pf-grid .pf-stats.four { row-gap: 6px; }
+.pf-grid .hist-fans { grid-area: fans; justify-self: center; display: flex; flex-direction: column; align-items: center; gap: 1px; margin: 6px 0 0; font-size: 0; line-height: 1.3; }
+.pf-grid .hist-fans .hf-btn, .pf-grid .hist-fans .hf-txt { font-size: 12.5px; }
+.pf-grid .pf-flowers { grid-area: fl; justify-self: start; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 8px; }
+.page.profile .pf-grid .pf-top { gap: 0; }
+.page.profile .pf-top.pf-grid { column-gap: 23px; }
+/* A past tour on an artist page opens to its nights. */
+.tn-run .pt-run-h { padding-left: 2px; }
+.tn-list { margin: 0 0 8px 2px; padding: 0; list-style: none; }
+.tn-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+.tn-row:last-child { border-bottom: 0; }
+.tn-date { flex: none; min-width: 92px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.tn-where { flex: 1; min-width: 0; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tn-venue { color: var(--ink-3); }
+.tn-tag { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--pos-soft); color: var(--pos); }
+/* The finder's second pass: unnamed runs and fill-ins. */
+.tf-h2 { margin: 18px 0 2px; font-size: 14.5px; font-weight: 700; }
+.tf-run-t { font-size: 15px; }
+.tf-kicker { margin: 0 0 2px; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--pos); }
+.tf-guess { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.tf-guess .pf-btn { height: auto; padding: 6px 10px; font-size: 13px; }
 /* MY PAY (Devin, 2026-10-07): the tour's name and MY PAY sit side by side
    at the top of the Budget tab, two equal tabs; the tour's book is ALL
    ACCESS only, MY PAY is everyone's own. */
@@ -2822,6 +2853,16 @@ button.fl-row { cursor: pointer; }
 .pay-tabs + .bk-tabs { margin-top: -4px; }
 .pay-locked { margin: 36px 2px 0; text-align: center; }
 .pay-locked-t { margin: 0 0 8px; font-size: 15px; font-weight: 800; letter-spacing: .08em; color: var(--ink-2); }
+.pay-top { display: flex; align-items: center; gap: 14px; margin: 10px 2px 12px; }
+.pay-photo { flex: none; }
+.pay-sum-tabs { flex: 1; min-width: 0; display: flex; gap: 8px; }
+.pay-sum-tab { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; appearance: none; border: 0; border-bottom: 2px solid transparent;
+  background: none; padding: 4px 2px 8px; margin: 0; font: inherit; color: var(--ink-2); text-align: left; cursor: pointer; }
+.pay-sum-tab.on { color: var(--ink); border-bottom-color: var(--pos); }
+.pay-sum-k { font-size: 11.5px; font-weight: 800; letter-spacing: .08em; }
+.pay-sum-v { font-size: 20px; font-weight: 700; letter-spacing: -.01em; line-height: 1.15; color: inherit; }
+.pay-page .xs-card { margin-top: 0; overflow: hidden; }
+.pay-sum .neg { color: var(--neg); }
 .pay-head { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 2px 16px; }
 .pay-fig { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pay-n { font-size: 19px; font-weight: 700; letter-spacing: -.01em; line-height: 1.2; color: var(--ink); }

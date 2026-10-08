@@ -1690,6 +1690,15 @@
       near(b.spent, 127.5); near(b.projected, 350); eq(by.lodging.projected, null, 'not set reads as null');
       eq(b.lines.map(function (l) { return l.key; }).join(','), 'food,lodging,travel,gear,other');
     });
+    test('payIncome adds the tour\u2019s payments to what the member logged, by category', function () {
+      var inc = G.payIncome({ income: { a: { category: 'weekly', amount: 500 }, b: { category: 'perdiem', amount: 40 }, c: { category: 'perdiem', amount: 40 },
+        d: { category: 'mystery', amount: 10 }, e: { category: 'bonus', amount: 0 } } }, [{ amount: 250 }, { amount: 250 }]);
+      var by = {}; inc.lines.forEach(function (l) { by[l.key] = l; });
+      eq(inc.lines[0].key, 'tour', 'the tour\u2019s own payments lead'); near(by.tour.total, 500); eq(by.tour.n, 2);
+      near(by.weekly.total, 500); near(by.perdiem.total, 80); eq(by.perdiem.n, 2); near(by.other.total, 10, 'an unknown category lands under Other');
+      eq(by.bonus.n, 0); near(inc.gross, 1090);
+      near(G.payIncome(null, []).gross, 0);
+    });
     test('payStanding runs the pay plan over the tour dates and nets off what was paid', function () {
       var st = G.payStanding({ crew: { rate: 500, per: 'week', payTyped: false }, payments: [{ amount: 500 }, { amount: 250 }],
         tour: { first: '2026-09-27', last: '2026-10-04' } });
@@ -1728,6 +1737,10 @@
         { name: 'Warped Tour', role: 'festival', start: '2013-07-01', end: '2013-08-04' }]);
       eq(yearly.map(function (t) { return t.name; }).join(' | '), 'Warped Tour 2010 | Warped Tour 2013', 'a yearly name splits by year and gets the year');
       eq(yearly[1].end, '2013-08-04', 'the two 2013 accounts fold into one');
+      var compact = G.mergeTourCandidates([{ name: 'Compact run', role: 'headline', start: '2024-07-11', end: '2024-07-18',
+        dates: ['2024-07-11 | Birmingham, AL | Saturn', '2024-07-12|Memphis, TN', 'junk', { date: '2024-07-13', city: 'Little Rock, AR' }] }]);
+      eq(compact[0].dates.length, 3, 'compact lines and objects both read; junk is dropped');
+      eq(compact[0].dates[0].venue, 'Saturn'); eq(compact[0].dates[1].city, 'Memphis, TN'); eq(compact[0].dates[1].venue, '');
       eq(oln.dates.length, 2, 'dates kept once each'); eq(oln.dates[1].date, '2019-12-08');
       eq(oln.sources.join(','), 'https://a.example/1,https://a.example/2', 'https sources add up');
       eq(oln.lineup, 'Our Last Night, The Word Alive', 'the fuller lineup stays');
