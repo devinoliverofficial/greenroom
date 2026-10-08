@@ -15,6 +15,7 @@ small model for the finder), but a cap is a brake, not a plan.
 ## Done today (2026-10-08)
 - [x] Tour search runs by itself for every page with a road story; trusts what it finds; ties settled, never asked
 - [x] Slide a tour left → Edit (rename / remove); corrections survive re-syncs
+- [x] Tour conflicts: both tours stay, tagged; settle the nights one by one (this tour / that tour / wasn't there)
 - [x] Reading meter: small model, monthly ceiling; Anthropic: $20 credit, auto-reload, $50/month limit
 
 ## 2. Concert Archives — every artist, zero steps
