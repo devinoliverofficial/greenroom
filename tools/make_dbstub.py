@@ -376,6 +376,30 @@ shim = r"""<script>
       Object.keys(H.tf).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; x.status = 'new'; } }); });
       return Promise.resolve(JSON.parse(JSON.stringify(st)));
     },
+    // MY PAY's own cards: two pretend charges and a deposit wait in the inbox.
+    myPayAccounts: function () { var H = window.__harness; return Promise.resolve((H.myPayAccounts || []).slice()); },
+    myPayClaimAccounts: function (list) {
+      var H = window.__harness; H.myPayAccounts = H.myPayAccounts || [];
+      (list || []).forEach(function (x) { if (!H.myPayAccounts.some(function (a) { return a.account_id === x.id; })) H.myPayAccounts.push({ account_id: x.id, name: x.id === 'acc-chk' ? 'My Checking' : 'Card ' + x.id, card: x.card || 'debit' }); });
+      return Promise.resolve({ ok: true, n: (list || []).length });
+    },
+    myPayReleaseAccount: function (id) { var H = window.__harness; H.myPayAccounts = (H.myPayAccounts || []).filter(function (a) { return a.account_id !== id; }); return Promise.resolve(); },
+    myPayInbox: function () {
+      var H = window.__harness;
+      if (!H.myPayInbox) H.myPayInbox = [{ id: 'tx-a', kind: 'charge', date: '2026-10-02', merchant: 'Whole Foods', amount: 18.2, account: 'My Checking', card: 'debit' },
+        { id: 'tx-b', kind: 'charge', date: '2026-10-01', merchant: 'Shell', amount: 42.5, account: 'My Checking', card: 'debit' },
+        { id: 'dep-a', kind: 'deposit', date: '2026-10-03', merchant: 'Deposit', amount: 500, account: '', card: 'debit' }];
+      return Promise.resolve(H.myPayInbox.slice());
+    },
+    myPayFile: function (tourId, itemId, category, how) {
+      var H = window.__harness; H.payBooks = H.payBooks || {}; var doc = H.payBooks[tourId] || (H.payBooks[tourId] = {});
+      var it = (H.myPayInbox || []).filter(function (x) { return x.id === itemId; })[0]; if (!it) return Promise.reject({ code: 'not_found' });
+      if (it.kind === 'charge') { doc.entries = doc.entries || {}; doc.entries['b' + itemId] = { date: it.date, amount: it.amount, how: how || it.card, category: category, note: it.merchant, bank: itemId, createdAt: Date.now() }; }
+      else { doc.income = doc.income || {}; doc.income['b' + itemId] = { date: it.date, amount: it.amount, category: category, note: 'From the bank', bank: itemId, createdAt: Date.now() }; }
+      H.myPayInbox = H.myPayInbox.filter(function (x) { return x.id !== itemId; });
+      return Promise.resolve();
+    },
+    myPaySkip: function (itemId) { var H = window.__harness; H.myPayInbox = (H.myPayInbox || []).filter(function (x) { return x.id !== itemId; }); return Promise.resolve(); },
     // MY PAY: the harness Devin is a crew member paid by the week, with one payment logged.
     myPay: function (tourId) {
       return Promise.resolve(tourId === 't1' ? { crew: { id: 'c-dev', name: 'Devin Oliver', title: 'Vocals', pay: 0, rate: 500, per: 'week', payTyped: false },

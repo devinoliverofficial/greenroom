@@ -3292,10 +3292,11 @@
             left: synced ? [pfStat(G.num(hsum.tours), G.num(hsum.tours) === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
                             pfStat(G.num(hsum.shows), G.num(hsum.shows) === 1 ? 'show' : 'shows')]
               : [pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
-                 pfStat(bandList.length, 'band', function () { pickTab('band'); })],
+                 pfStat(tours.reduce(function (n, x) { return n + G.num(x.shows); }, 0), tours.reduce(function (n, x) { return n + G.num(x.shows); }, 0) === 1 ? 'show' : 'shows')],
             right: synced ? [pfStat(G.num(hsum.countries) + '/195', 'countries'),
                              pfStat(G.num(hsum.cities), G.num(hsum.cities) === 1 ? 'city' : 'cities')]
-              : [pfStat(crewList.length, 'crew', function () { pickTab('crew'); })],
+              : [pfStat(bandList.length, 'band', function () { pickTab('band'); }),
+                 pfStat(crewList.length, 'crew', function () { pickTab('crew'); })],
             under: h('p', { class: 'hist-fans' }, h('span', { class: 'hf-txt' }, plural(G.num(card.followers), 'fan')))
           });
         })(),
@@ -6399,6 +6400,8 @@
     Object.keys(reg).forEach(function (k) {
       var c = reg[k];
       if (!G.isObj(c) || !c.name) return;
+      // An account you marked as your own on MY PAY is not one of the tour's cards.
+      if (isMyPayAccount(k)) return;
       var debt = debts.filter(function (d) { return used.indexOf(d) < 0 && (d.id === 'feed-' + k || d.feed.name === c.name); })[0] || null;
       if (debt) used.push(debt);
       out.push({ id: k, name: String(c.name), bank: String(c.bank || ''), kind: c.kind === 'debit' ? 'debit' : 'credit', debt: debt,
@@ -8491,6 +8494,7 @@
           h('span', { class: 'amt num' + (l.total > 0 ? ' glow' : '') }, l.total > 0 ? money(l.total) : '\u2014'), icon('chevron', 18));
       });
       return [head, climb || h('p', { class: 'note pay-note' }, 'The graph draws itself once there\u2019s a payment or an entry to show.'), netLine,
+        h('div', { class: 'ledger' }, myPayCardsRow(id)),
         st.onCrew ? h('p', { class: 'note pay-note' }, 'Pay plan: ' + money(st.total) + ' for the tour \u00b7 ' + money(st.paid) + ' logged as paid \u00b7 ' + money(st.owed) + ' still owed')
           : h('p', { class: 'note pay-note' }, 'You\u2019re not on this tour\u2019s crew list yet, so there is no pay plan here. The tour manager adds you under Crew with your email.'),
         h('h3', { class: 'mn-h mn-over' }, 'My income'),
@@ -8513,6 +8517,7 @@
         icon('chevron', 18));
     });
     return [head, chart, netLine,
+      h('div', { class: 'ledger' }, myPayCardsRow(id)),
       h('h3', { class: 'mn-h mn-over' }, 'My expenses'),
       h('div', { class: 'ledger' }, colHead, lines),
       h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'button', onclick: function () { openMyPayCat(id, null); } },
@@ -8573,6 +8578,114 @@
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
       ];
     }, { label: 'Log income', onClose: function () { st.closed = true; } });
+  }
+  /* ---- MY PAY's own cards (Devin, 2026-10-08): a separate connection from
+     the tour's. Accounts you claim as yours feed your inbox here, never the
+     tour's new charges; you file each one into your book, or skip it. ---- */
+  function myPayCardsInfo(fresh) {
+    var B = window.GR_BACKEND;
+    var c = S.myPayCards || (S.myPayCards = { accounts: [], inbox: [], at: 0, asking: false, failed: false, none: false });
+    if (S.mode !== 'db' || !B || !B.myPayAccounts) { c.none = true; return c; }
+    if (!c.asking && (fresh || !c.at || Date.now() - c.at > 60000)) {
+      c.asking = true;
+      Promise.all([B.myPayAccounts(), B.myPayInbox()]).then(function (got) {
+        c.accounts = Array.isArray(got[0]) ? got[0] : []; c.inbox = Array.isArray(got[1]) ? got[1] : [];
+        c.failed = false; c.at = Date.now(); c.asking = false; render(true);
+      }, function () { c.failed = true; c.at = Date.now(); c.asking = false; render(true); });
+    }
+    return c;
+  }
+  function isMyPayAccount(accountId) {
+    var c = S.myPayCards;
+    return !!(c && c.accounts.some(function (a) { return a.account_id === accountId; }));
+  }
+  function myPayCardsRow(id) {
+    var c = myPayCardsInfo();
+    if (c.none) return null;
+    var n = c.inbox.length, k = c.accounts.length;
+    return h('button', { class: 'row rowbtn ex-row pay-row', type: 'button', onclick: function () { openMyPayCards(id); } },
+      h('div', { class: 'row-label' }, 'Your cards', h('span', { class: 'hint' }, k ? plural(k, 'account') + ' connected' : 'Connect your own card')),
+      n ? h('span', { class: 'amt num glow' }, n + ' new') : null, icon('chevron', 18));
+  }
+  // The bank accounts on your feed that aren't claimed as yours yet.
+  function unclaimedAccounts() {
+    var row = S.feed && S.feed.row, acc = row && G.isObj(row.accounts) ? row.accounts : {};
+    return Object.keys(acc).filter(function (k) { return G.isObj(acc[k]) && acc[k].name && !isMyPayAccount(k); })
+      .map(function (k) { return { id: k, name: String(acc[k].name), type: acc[k].type === 'creditCard' ? 'credit' : 'debit', asked: !!acc[k].asked }; });
+  }
+  function openMyPayCards(id, justLinked) {
+    var B = window.GR_BACKEND;
+    var again = function () { if (sheet && sheet.myPayCards) openMyPayCards(id); };
+    openSheet(function () {
+      var c = myPayCardsInfo();
+      // You run a tour too: the feed can't tell your deposits from the tour's, so those are logged by hand.
+      var runsTours = allTourEntries(false).some(function (e) { return createdTour(e[0]); });
+      var claim = async function (a, e) {
+        var b = e.currentTarget; b.disabled = true;
+        try {
+          await B.myPayClaimAccounts([{ id: a.id, card: a.type }]);
+          // The tour's side never asks about it, and never files it by itself.
+          try { await B.feedCall('setup', { account: { id: a.id, card: a.type, mode: 'ask', income: runsTours || a.type === 'credit' ? [] : ['merch', 'guarantees'] } }); } catch (x) { /* the account is still yours */ }
+          if (S.feed) S.feed.at = 0;
+          myPayCardsInfo(true); toast(a.name + ' is yours'); again();
+        } catch (x) { b.disabled = false; saveFailed('cards', x); }
+      };
+      var release = function (a) {
+        return async function () {
+          try { await B.myPayReleaseAccount(a.account_id); myPayCardsInfo(true); toast(a.name + ' taken off'); again(); }
+          catch (x) { saveFailed('cards', x); }
+        };
+      };
+      var file = function (it, cat, how) {
+        return async function (e) {
+          var b = e.currentTarget; b.disabled = true;
+          try { await B.myPayFile(id, it.id, cat, how); c.inbox = c.inbox.filter(function (x) { return x.id !== it.id; }); myPayInfo(id, true); toast(money(G.num(it.amount)) + ' filed'); again(); }
+          catch (x) { b.disabled = false; saveFailed('cards', x); }
+        };
+      };
+      var skip = function (it) {
+        return async function (e) {
+          var b = e.currentTarget; b.disabled = true;
+          try { await B.myPaySkip(it.id); c.inbox = c.inbox.filter(function (x) { return x.id !== it.id; }); toast('Skipped'); again(); }
+          catch (x) { b.disabled = false; saveFailed('cards', x); }
+        };
+      };
+      var inboxCard = function (it) {
+        var charge = it.kind === 'charge';
+        var cats = charge ? G.MY_PAY_CATS : G.MY_PAY_INCOME;
+        // Short names here: five of them have to share one phone-wide row.
+        var shortNames = { food: 'Food', lodging: 'Lodging', travel: 'Travel', gear: 'Gear', other: 'Other', weekly: 'Weekly', perdiem: 'Per diem', buyout: 'Buyout', bonus: 'Bonus' };
+        var pick = { cat: charge ? 'other' : 'weekly' };
+        var idx = cats.map(function (x) { return x.key; }).indexOf(pick.cat);
+        return h('div', { class: 'tf-card mpc-item' },
+          h('p', { class: 'tf-name tf-run-t' }, charge ? (it.merchant || 'Charge') : 'Deposit', h('span', { class: 'mpc-amt num' }, money(G.num(it.amount)))),
+          h('p', { class: 'tf-sub' }, [it.date ? dayMD(it.date) : '', it.account, charge ? (it.card === 'credit' ? 'Credit' : 'Debit') : ''].filter(Boolean).join(' \u00b7 ')),
+          segmented(cats.map(function (x) { return shortNames[x.key] || x.label; }), idx, function (i) { pick.cat = cats[i].key; }, charge ? 'Category' : 'Kind of pay'),
+          h('div', { class: 'pt-two tf-acts' },
+            h('button', { class: 'btn primary', type: 'button', onclick: function (e) { file(it, pick.cat, charge ? it.card : null)(e); } }, charge ? 'File it' : 'Log it'),
+            h('button', { class: 'btn ghost', type: 'button', onclick: skip(it) }, 'Skip')));
+      };
+      var free = unclaimedAccounts();
+      return [
+        h('h2', { class: 'sh-title' }, 'Your cards'),
+        h('p', { class: 'sh-sub' }, 'Your own bank or cards, kept apart from the tour\u2019s. What lands on them comes to you here, and you file it into your MY PAY book.'),
+        justLinked && free.length ? h('p', { class: 'note' }, 'Your bank is connected. Tick the accounts that are yours.') : null,
+        c.accounts.length ? h('div', { class: 'ledger' }, c.accounts.map(function (a) {
+          return h('div', { class: 'row ex-row' }, h('div', { class: 'row-label' }, a.name, h('span', { class: 'hint' }, a.card === 'credit' ? 'Credit card' : 'Debit card')),
+            h('button', { class: 'pf-btn', type: 'button', onclick: release(a) }, 'Remove'));
+        })) : h('p', { class: 'note' }, 'No account of yours yet.'),
+        free.length ? [h('h3', { class: 'sh-h3' }, 'On your bank connection, not claimed'),
+          h('div', { class: 'ledger' }, free.map(function (a) {
+            return h('div', { class: 'row ex-row' }, h('div', { class: 'row-label' }, a.name, h('span', { class: 'hint' }, a.type === 'credit' ? 'Credit card' : 'Debit card')),
+              h('button', { class: 'pf-btn', type: 'button', onclick: function (e) { claim(a, e); } }, 'This is mine'));
+          }))] : null,
+        h('button', { class: 'btn primary block', type: 'button', onclick: function () { connectCards(id, null, { myPay: true }); } }, icon('card', 18), 'Connect a bank or card'),
+        runsTours && c.accounts.length ? h('p', { class: 'note' }, 'You run a tour too, so the bank feed can\u2019t tell your deposits from the tour\u2019s: log your pay under Log income. Charges on your accounts still come here.') : null,
+        c.inbox.length ? [h('h3', { class: 'sh-h3' }, plural(c.inbox.length, 'new item') + ' from your cards'), c.inbox.map(inboxCard)] : null,
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+      ];
+    }, { label: 'Your cards' });
+    if (sheet) sheet.myPayCards = true;
   }
   // What the tour manager has logged as paid to you, newest first.
   function openMyPayments(info) {
@@ -15817,6 +15930,8 @@
     }
     var names = r.institutions && r.institutions.length ? r.institutions.join(' and ') : 'Bank';
     toast(names + ' connected' + (r.test ? ' (test bank)' : ''));
+    // A bank connected from MY PAY: its accounts are claimed as your own there, not set up for the tour.
+    if (trip.myPay) { whenLoaded(function () { myPayCardsInfo(true); openMyPayCards(trip.tourId || null, true); }); return; }
     whenLoaded(function () { openFeedSheet(trip.tourId || null, true); });
   }
   document.addEventListener('visibilitychange', function () {
@@ -15826,12 +15941,12 @@
 
   // Connect a bank (or, with itemId, sign back in to one that asked). Plaid's
   // page opens from a real tap on a link, so the phone never blocks it.
-  async function connectCards(tourId, itemId) {
+  async function connectCards(tourId, itemId, opts) {
     var B = window.GR_BACKEND;
     var r = null;
     try { r = await B.feedCall('link', itemId ? { itemId: itemId } : {}); } catch (e) { r = null; }
     if (!r || !r.ok || !r.url) { toast(feedProblem(r && (r.status || r.error))); return; }
-    keepPlaidTrip({ tourId: tourId || null, itemId: itemId || null, at: Date.now() });
+    keepPlaidTrip({ tourId: tourId || null, itemId: itemId || null, myPay: !!(opts && opts.myPay), at: Date.now() });
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, itemId ? 'Sign back in to your bank' : 'Connect a bank or card'),
@@ -16456,11 +16571,10 @@
             'Ask me first: every charge waits for you.'));
       }
       if (ans.what === 'income' || ans.what === 'both') {
-        kids.push(
-          h('h3', { class: 'sh-h3' }, 'Which income?'),
-          h('div', { class: 'fa-ticks' },
-            tick('merch', 'Merch', 'atVenu payouts. A deposit that matches what atVenu says a show should pay marks that show\u2019s merch received.'),
-            tick('guarantees', 'Guarantees', 'A deposit that matches a show\u2019s guarantee, in full or less your booking agent\u2019s cut, marks it received.')));
+        // Devin (2026-10-07): every deposit on an income account shows up to be
+        // logged; the merch/guarantee matching is a suggestion, not a filter.
+        ans.income = ['merch', 'guarantees'];
+        kids.push(h('p', { class: 'note' }, 'Every deposit into this account shows up under New deposits. One that matches a show\u2019s merch or guarantee marks that show received; the rest wait for you to log.'));
       }
       box.replaceChildren.apply(box, kids);
     }

@@ -678,6 +678,36 @@
       if (q.error) throw mapError(q.error);
       return q.data;
     },
+    /* ---- MY PAY's own cards: which bank accounts are yours, the inbox of
+       what landed on them, and filing into your book. */
+    myPayAccounts: async function () {
+      var q = await sb.from('my_pay_accounts').select('account_id, name, card').eq('user_id', session.user.id);
+      if (q.error) throw mapError(q.error);
+      return q.data || [];
+    },
+    myPayClaimAccounts: async function (list) {
+      var q = await sb.rpc('my_pay_claim_accounts', { ids: list || [] });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
+    myPayReleaseAccount: async function (accountId) {
+      var q = await sb.rpc('my_pay_release_account', { acct: accountId });
+      if (q.error) throw mapError(q.error);
+    },
+    myPayInbox: async function () {
+      var q = await sb.from('my_pay_feed').select('id, kind, date, merchant, amount, account, card').eq('user_id', session.user.id)
+        .eq('status', 'new').order('date', { ascending: false }).limit(200);
+      if (q.error) throw mapError(q.error);
+      return q.data || [];
+    },
+    myPayFile: async function (tourId, itemId, category, how) {
+      var q = await sb.rpc('my_pay_file', { t_id: tourId, item_id: itemId, category: category, how: how || null });
+      if (q.error) throw mapError(q.error);
+    },
+    myPaySkip: async function (itemId) {
+      var q = await sb.rpc('my_pay_skip', { item_id: itemId });
+      if (q.error) throw mapError(q.error);
+    },
     /* ---- MY PAY: your slice of a tour's money (the server picks out your
        crew row and the pay logged to you) and your own book of spending. */
     myPay: async function (tourId) {
