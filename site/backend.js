@@ -634,6 +634,56 @@
       var q = await sb.from('square_connect').delete().eq('owner_id', session.user.id);
       if (q.error) throw mapError(q.error);
     },
+    /* ---- Add missing tours: the server reads the news archives; the app
+       reads the articles with the reading brain and hands back the tours. */
+    tourFindStart: async function (artistId) {
+      var q = await sb.rpc('tour_find_start', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
+    tourFindState: async function (artistId) {
+      var q = await sb.rpc('tour_find_state', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
+    tourFindPages: async function (artistId) {
+      var q = await sb.rpc('tour_find_pages_get', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      // null = another phone holds the read for a few minutes.
+      return q.data === null ? null : (Array.isArray(q.data) ? q.data : []);
+    },
+    tourFindPropose: async function (artistId, cands) {
+      var q = await sb.rpc('tour_find_propose', { a_id: artistId, cands: cands || [] });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
+    tourCandidateDecide: async function (candId, add, name) {
+      var q = await sb.rpc('tour_candidate_decide', { c_id: candId, add: !!add, new_name: name || null });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
+    tourCandidateUndo: async function (candId) {
+      var q = await sb.rpc('tour_candidate_undo', { c_id: candId });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
+    /* ---- MY PAY: your slice of a tour's money (the server picks out your
+       crew row and the pay logged to you) and your own book of spending. */
+    myPay: async function (tourId) {
+      var q = await sb.rpc('my_pay', { t_id: tourId });
+      if (q.error) throw mapError(q.error);
+      return q.data || null;
+    },
+    myPayBook: async function (tourId) {
+      var q = await sb.from('my_pay_books').select('doc').eq('tour_id', tourId).eq('user_id', session.user.id).maybeSingle();
+      if (q.error) throw mapError(q.error);
+      return q.data && q.data.doc ? q.data.doc : {};
+    },
+    saveMyPayBook: async function (tourId, doc) {
+      var q = await sb.from('my_pay_books').upsert({ tour_id: tourId, user_id: session.user.id, doc: doc || {}, updated_at: new Date().toISOString() },
+        { onConflict: 'tour_id,user_id' });
+      if (q.error) throw mapError(q.error);
+    },
     /* ---- Tour history (setlist.fm). The key is write-only, like Square's:
        saved or replaced, never read back. The history row itself is as
        public as the artist page. ---- */

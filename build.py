@@ -32,7 +32,7 @@ def add_csp(html):
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' https://fonts.gstatic.com data:",
         "img-src 'self' data: blob: https:",
-        'connect-src ' + ' '.join(connect),
+        'connect-src ' + ' '.join(connect + ['https://en.wikipedia.org']),
         "frame-src 'none'", "object-src 'none'", "base-uri 'self'", "form-action 'self'",
         "worker-src 'self'", "manifest-src 'self'"])
     return re.sub(r'<title>', '<meta http-equiv="Content-Security-Policy" content="' + policy.replace('\\', '\\\\') + '">\n<title>', html, count=1)

@@ -95,6 +95,12 @@ shim = r"""<script>
   fakeSample.json = function (prompt) {
     window.__harness.reads = (window.__harness.reads || 0) + 1;
     if (/concert tour flyer/.test(String(prompt))) return Promise.resolve((window.__harness.flyers || []).shift() || []);
+    // The tour finder's reading: two tours out of the pretend archives.
+    if (/TOUR FINDER/.test(String(prompt))) return Promise.resolve([
+      { name: 'Let Light Overcome the Darkness Tour', role: 'support', start: '2019-11-05', end: '2019-12-08', region: 'US', lineup: 'Our Last Night, The Word Alive, Ashland',
+        dates: [{ date: '2019-11-05', city: 'Omaha, NE', venue: 'Slowdown' }, { date: '2019-12-08', city: 'Lake Buena Vista, FL', venue: 'House of Blues' }], source: 'https://www.theprp.com/2019/09/x/' },
+      { name: 'Spring 2018 run with Dance Gavin Dance', role: 'support', start: '2018-05-26', end: '2018-06-21', region: 'US/Canada', lineup: 'Dance Gavin Dance, Erra, Sianvar',
+        dates: [{ date: '2018-05-26', city: 'San Antonio, TX', venue: 'Aztec Theatre' }], source: 'https://lambgoat.com/news/2/x/' }]);
     if (/concert venue with web search/.test(String(prompt))) {
       window.__harness.venueAsks = (window.__harness.venueAsks || []).concat([{ prompt: String(prompt), opts: arguments[1] || {} }]);
       var v = window.__harness.venue || { address: null, phone: null };
@@ -313,6 +319,54 @@ shim = r"""<script>
       return Promise.resolve();
     },
     setlistDisconnect: function () { window.__harness.setlist = null; return Promise.resolve(); },
+    // Add missing tours: the pretend archives come in over a few polls, then two candidates.
+    tourFindStart: function (artistId) {
+      var H = window.__harness; H.tf = H.tf || {};
+      H.tf[artistId] = { status: 'reading', detail: '', day: new Date().toISOString().slice(0, 10), pages: 0, waiting: 6,
+        sources: { theprp: 'reading', lambgoat: 'new' }, candidates: (H.tf[artistId] && H.tf[artistId].candidates || []).filter(function (c) { return c.status !== 'new'; }) };
+      return Promise.resolve(JSON.parse(JSON.stringify(H.tf[artistId])));
+    },
+    tourFindState: function (artistId) {
+      var H = window.__harness; H.tf = H.tf || {};
+      var st = H.tf[artistId] || { status: 'idle', detail: '', pages: 0, waiting: 0, sources: {}, candidates: [] };
+      if (st.status === 'reading') { st.pages += 3; st.waiting -= 3; if (st.waiting <= 0) { st.waiting = 0; st.status = 'ready'; st.sources = { theprp: 'done', lambgoat: 'done' }; } }
+      return Promise.resolve(JSON.parse(JSON.stringify(st)));
+    },
+    tourFindPages: function (artistId) {
+      return Promise.resolve([{ url: 'https://www.theprp.com/2019/09/x/', source: 'theprp', title: 'Our Last Night tour', published: '2019-09-10', body: 'Our Last Night ... 11/05 Omaha, NE' },
+        { url: 'https://lambgoat.com/news/2/x/', source: 'lambgoat', title: 'DGD tour', published: '2018-03-01', body: 'Dance Gavin Dance ... 5/26 San Antonio, TX' }]);
+    },
+    tourFindPropose: function (artistId, cands) {
+      var H = window.__harness; var st = H.tf[artistId];
+      H.proposed = (H.proposed || []).concat(cands);
+      (cands || []).forEach(function (c, i) {
+        st.candidates.push({ id: 'cand' + (st.candidates.length + 1), name: c.name, role: c.role, first: c.start, last: c.end, region: c.region, lineup: c.lineup,
+          n: (c.dates || []).length, sources: c.sources || [], status: 'new', matched: i === 0 ? 16 : 0, have: i === 0 ? 16 : 0 });
+      });
+      st.status = 'done';
+      return Promise.resolve(JSON.parse(JSON.stringify(st)));
+    },
+    tourCandidateDecide: function (candId, add, name) {
+      var H = window.__harness; var st = null, c = null;
+      Object.keys(H.tf).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; c = x; } }); });
+      c.status = add ? 'added' : 'no'; if (add && name) c.name = name;
+      // What the real server reports back: how many nights took the name, how many dates were added.
+      return Promise.resolve(Object.assign(JSON.parse(JSON.stringify(st)), add ? { renamed: c.matched, inserted: Math.max(0, c.n - c.have) } : {}));
+    },
+    tourCandidateUndo: function (candId) {
+      var H = window.__harness; var st = null;
+      Object.keys(H.tf).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; x.status = 'new'; } }); });
+      return Promise.resolve(JSON.parse(JSON.stringify(st)));
+    },
+    // MY PAY: the harness Devin is a crew member paid by the week, with one payment logged.
+    myPay: function (tourId) {
+      return Promise.resolve(tourId === 't1' ? { crew: { id: 'c-dev', name: 'Devin Oliver', title: 'Vocals', pay: 0, rate: 500, per: 'week', payTyped: false },
+        payments: [{ id: 'p1', date: '2026-09-28', amount: 500, how: 'Debit', label: 'Devin Oliver \u2014 pay' }],
+        tour: { spanStart: null, spanEnd: null, rehearsalStart: null, first: '2026-09-27', last: '2026-10-04' } }
+        : { crew: null, payments: [], tour: { first: null, last: null } });
+    },
+    myPayBook: function (tourId) { var H = window.__harness; H.payBooks = H.payBooks || {}; return Promise.resolve(H.payBooks[tourId] || {}); },
+    saveMyPayBook: function (tourId, doc) { var H = window.__harness; H.payBooks = H.payBooks || {}; H.payBooks[tourId] = doc; return Promise.resolve(); },
     artistHistory: function (artistId) {
       var H = window.__harness;
       H.histories = H.histories || {};

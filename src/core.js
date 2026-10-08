@@ -736,6 +736,167 @@
     return rows(tour && tour.crew).reduce(function (t, p) { return t + crewPay(tour, p); }, 0);
   }
 
+  /* ---------------- My Pay (a crew member's own book) ---------------- */
+
+  // Devin's MY PAY: everyone on a tour sees their own pay and keeps their own
+  // spending, laid out like the tour's Expenses. These read the small book
+  // the server keeps for each person on each tour.
+  var MY_PAY_CATS = [
+    { key: 'food', label: 'Food & drink' },
+    { key: 'lodging', label: 'Lodging' },
+    { key: 'travel', label: 'Travel' },
+    { key: 'gear', label: 'Gear & supplies' },
+    { key: 'other', label: 'Other' }
+  ];
+  // The book's lines, one per category: projected (when typed), then what
+  // went on credit, debit and cash, as the Expenses tab reads them.
+  function payBook(book) {
+    var b = isObj(book) ? book : {};
+    var entries = rows(b.entries), proj = isObj(b.projected) ? b.projected : {};
+    var by = {};
+    MY_PAY_CATS.forEach(function (c) {
+      by[c.key] = { key: c.key, label: c.label, projected: optNum(proj[c.key]), credit: 0, debit: 0, cash: 0, total: 0, n: 0 };
+    });
+    entries.forEach(function (e) {
+      var g = by[e && e.category] || by.other, a = num(e && e.amount);
+      if (!(a > 0)) return;
+      g[e.how === 'cash' ? 'cash' : e.how === 'debit' ? 'debit' : 'credit'] += a;
+      g.total += a; g.n += 1;
+    });
+    var lines = MY_PAY_CATS.map(function (c) {
+      var g = by[c.key];
+      ['credit', 'debit', 'cash', 'total'].forEach(function (k) { g[k] = round(g[k] * 100) / 100; });
+      return g;
+    });
+    var spent = round(lines.reduce(function (t, l) { return t + l.total; }, 0) * 100) / 100;
+    var projected = round(lines.reduce(function (t, l) { return t + (l.projected == null ? 0 : l.projected); }, 0) * 100) / 100;
+    return { lines: lines, spent: spent, projected: projected };
+  }
+  // Where one crew member stands: their pay for the tour (the plan on their
+  // crew row, run over the tour's dates), what's been logged as paid to
+  // them, and what's still owed.
+  function payStanding(info) {
+    var i = isObj(info) ? info : {};
+    var tour = isObj(i.tour) ? i.tour : {};
+    var like = { shows: {}, spanStart: tour.spanStart, spanEnd: tour.spanEnd, rehearsalStart: tour.rehearsalStart };
+    if (parseDay(tour.first)) like.shows.a = { date: tour.first };
+    if (parseDay(tour.last)) like.shows.b = { date: tour.last };
+    var total = isObj(i.crew) ? crewPay(like, i.crew) : 0;
+    var list = Array.isArray(i.payments) ? i.payments : rows(i.payments);
+    var paid = round(list.reduce(function (t, p) { return t + num(p && p.amount); }, 0) * 100) / 100;
+    return { total: round(total * 100) / 100, paid: paid, owed: Math.max(0, round((total - paid) * 100) / 100), onCrew: isObj(i.crew) };
+  }
+
+  /* ---------------- Add missing tours (the tour finder) ---------------- */
+
+  // A tour name boiled down for matching across articles: lower-case, no
+  // punctuation, the filler words dropped (years kept: Warped 2010 is not
+  // Warped 2013). The server does its own, by sound, before anything lands.
+  var TOUR_FILLER = /\b(the|tour|tours|a|an|of|and|with|presents|leg|part|pt|run)\b/g;
+  function tourKeyLoose(name) {
+    return String(name || '').toLowerCase().replace(/[\u2019'".,:;!?()\[\]\-\u2013\u2014\/&+]/g, ' ')
+      .replace(TOUR_FILLER, ' ').replace(/\s+/g, ' ').trim();
+  }
+  var TOUR_ROLES = ['headline', 'co-headline', 'support', 'festival'];
+  function tourRole(r) { r = String(r || '').toLowerCase().trim(); return TOUR_ROLES.indexOf(r) >= 0 ? r : ''; }
+  // "2019-11" reads as a month: its first day as a start, its last as an
+  // end — but a month is a guess, and a guess never stretches a real date.
+  function dayOrMonth(s, asEnd) {
+    s = String(s || '').trim();
+    if (parseDay(s)) return { d: s, exact: true };
+    if (/^\d{4}-\d{2}$/.test(s)) {
+      if (!asEnd) return { d: s + '-01', exact: false };
+      var d = new Date(Date.UTC(Number(s.slice(0, 4)), Number(s.slice(5, 7)), 0));
+      return { d: s + '-' + String(d.getUTCDate()).padStart(2, '0'), exact: false };
+    }
+    return null;
+  }
+  function daysApart(a, b) { return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5); }
+  function actsOf(lineup) {
+    return String(lineup || '').toLowerCase().split(/,|\band\b|&|\//).map(function (x) { return x.trim(); }).filter(function (x) { return x.length > 1; });
+  }
+  function sharesAct(a, b) {
+    var x = actsOf(a), y = actsOf(b);
+    return x.some(function (n) { return y.indexOf(n) >= 0; });
+  }
+  // A description the reader made up ("Fall 2018 run with…") gives way to a real name.
+  function madeUpName(n) { return /^(spring|summer|fall|autumn|winter|early|late|\d{4}|[a-z]+ \d{4})\b/i.test(String(n || '')); }
+  // The reader's finds from every batch of articles, folded into one list:
+  // the same tour spelled two ways is one tour; two accounts of one run
+  // (same dates, same role, an act in common) are one run. Dates are kept
+  // once each; the sources add up.
+  function mergeTourCandidates(list) {
+    var out = [];
+    (Array.isArray(list) ? list : []).forEach(function (c) {
+      if (!isObj(c)) return;
+      var name = String(c.name || '').replace(/\s+/g, ' ').trim();
+      var s0 = dayOrMonth(c.start, false), e0 = dayOrMonth(c.end, true);
+      if (name.length < 2 || !s0 || !e0 || e0.d < s0.d) return;
+      var start = s0.d, end = e0.d;
+      var key = tourKeyLoose(name);
+      if (!key) return;
+      var role = tourRole(c.role);
+      var dates = (Array.isArray(c.dates) ? c.dates : []).filter(function (d) { return isObj(d) && parseDay(d.date); })
+        .map(function (d) { return { date: d.date, city: String(d.city || '').trim(), venue: String(d.venue || '').trim() }; });
+      var sources = (Array.isArray(c.sources) ? c.sources : c.source ? [c.source] : [])
+        .map(String).filter(function (u) { return /^https:\/\//.test(u); });
+      var lineup = String(c.lineup || '').replace(/\s+/g, ' ').trim();
+      var hit = null;
+      out.forEach(function (o) {
+        if (hit) return;
+        // The same name is the same tour only when the two accounts are
+        // near each other in time: Warped Tour comes round every year.
+        var near = o.start <= end && start <= o.end || Math.abs(daysApart(o.end, start)) <= 120 || Math.abs(daysApart(end, o.start)) <= 120;
+        if (o.key === key && near) hit = o;
+        else if (o.start <= end && start <= o.end && o.role === role && sharesAct(o.lineup, lineup)) hit = o;
+      });
+      if (!hit) {
+        out.push({ key: key, name: name, role: role, start: start, end: end, startExact: s0.exact, endExact: e0.exact,
+          region: String(c.region || '').trim(), lineup: lineup, dates: dates, sources: sources });
+        return;
+      }
+      // A real date beats a month's guess; among real dates the wider wins.
+      if (s0.exact && !hit.startExact) { hit.start = start; hit.startExact = true; }
+      else if (s0.exact === hit.startExact && start < hit.start) hit.start = start;
+      if (e0.exact && !hit.endExact) { hit.end = end; hit.endExact = true; }
+      else if (e0.exact === hit.endExact && end > hit.end) hit.end = end;
+      if (madeUpName(hit.name) && !madeUpName(name)) { hit.name = name; hit.key = key; }
+      if (lineup.length > hit.lineup.length) hit.lineup = lineup;
+      if (!hit.region && c.region) hit.region = String(c.region).trim();
+      var have = {};
+      hit.dates.forEach(function (d) { have[d.date] = true; });
+      dates.forEach(function (d) { if (!have[d.date]) { have[d.date] = true; hit.dates.push(d); } });
+      sources.forEach(function (u) { if (hit.sources.indexOf(u) < 0 && hit.sources.length < 6) hit.sources.push(u); });
+    });
+    // A name that comes round in more than one year (a package tour) gets
+    // its year, so each year stands on its own on the page.
+    var byKey = {};
+    out.forEach(function (o) { byKey[o.key] = (byKey[o.key] || 0) + 1; });
+    out.forEach(function (o) {
+      if (byKey[o.key] > 1 && !/\b(19|20)\d{2}\b/.test(o.name)) { o.name = o.name + ' ' + o.start.slice(0, 4); o.key = tourKeyLoose(o.name); }
+      o.dates.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+      delete o.startExact; delete o.endExact;
+    });
+    return out;
+  }
+  // Whether a found tour is already on the page, by its loose name.
+  function tourKnown(name, toursList) {
+    var k = tourKeyLoose(name);
+    return !!k && (Array.isArray(toursList) ? toursList : []).some(function (t) { return tourKeyLoose(t && t.name) === k; });
+  }
+  // From a long article, only the paragraphs that mention the act (and
+  // their neighbours), so the reader isn't handed a whole encyclopedia.
+  function paragraphsAbout(text, name) {
+    var nm = String(name || '').toLowerCase().trim();
+    if (!nm) return '';
+    var paras = String(text || '').split(/\n+/), keep = {}, idx = [];
+    paras.forEach(function (p, i) {
+      if (p.toLowerCase().indexOf(nm) < 0) return;
+      [i - 1, i, i + 1].forEach(function (j) { if (j >= 0 && j < paras.length && !keep[j]) { keep[j] = true; idx.push(j); } });
+    });
+    return idx.sort(function (a, b) { return a - b; }).map(function (i) { return paras[i].trim(); }).filter(Boolean).join('\n').slice(0, 6000);
+  }
+
   /* ---------------- Commission ---------------- */
 
   // The checked streams' total for one deal, or null when the rule carries no
@@ -1678,7 +1839,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

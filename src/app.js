@@ -3262,13 +3262,14 @@
       }
       following = false;
     };
+    // Artists have fans, not followers (Devin's rule): the button says so.
     var followBtn = !B || !B.followArtist ? null : card.iFollow
-      ? h('button', { class: 'pf-btn on', type: 'button', 'aria-label': 'Following ' + card.name + '. Tap to unfollow.',
+      ? h('button', { class: 'pf-btn on', type: 'button', 'aria-label': 'You are a fan of ' + card.name + '. Tap to stop being one.',
           onclick: function () {
-            confirmSheet({ title: 'Unfollow ' + card.name + '?', body: 'You can follow them again any time.',
-              action: 'Unfollow', danger: true, onConfirm: function () { setFollow(false); return true; } });
-          } }, 'Following', icon('chevron', 14))
-      : h('button', { class: 'pf-btn go', type: 'button', onclick: function () { setFollow(true); } }, 'Follow');
+            confirmSheet({ title: 'Not a fan of ' + card.name + ' anymore?', body: 'You can be a fan again any time.',
+              action: 'Not a fan', danger: true, onConfirm: function () { setFollow(false); return true; } });
+          } }, 'Fan', icon('chevron', 14))
+      : h('button', { class: 'pf-btn go', type: 'button', onclick: function () { setFollow(true); } }, 'Fan');
     // Claiming a page nobody runs: who you are to the act goes to a Greenroom admin.
     var claimBtn = !unclaimed || !B || !B.claimArtist ? null
       : card.myClaim === 'pending'
@@ -3317,10 +3318,12 @@
       h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Band', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
       tab === 'band' ? people(bandList, 'band')
         : tab === 'crew' ? people(crewList, 'crew')
-        : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
+        : [tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', manage ? 'Tours you file under ' + card.name + ' show up here.'
                 : histBusy(hc0.row) ? (histWaiting(hc0.row) ? 'The rest of ' + card.name + '\u2019s road history comes in tomorrow.' : 'Reading ' + card.name + '\u2019s road history\u2026')
-                : card.name + ' has no tours on Greenroom yet.')),
+                : card.name + ' has no tours on Greenroom yet.'),
+           // Under the tours, for whoever runs the page: the ones setlist.fm never named.
+           tourFinderBlock(id, card, manage, unclaimed)],
       historyCredit(id),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(manage && id === actingAs() ? 'me' : ''));
@@ -3994,6 +3997,257 @@
   // Under the bio: the road badge and "On the road since YYYY" — every
   // artist page says it. The year is the first night on record, or, until
   // a page has its history, its first tour on Greenroom.
+  /* ========================== Add missing tours ==========================
+     Devin (2026-10-07): "a bunch of tours I've done in the app are missing"
+     — because no database keeps tour names. So the page's owner (or a
+     Greenroom admin, on a page nobody runs) presses Find missing tours: the
+     server reads the two news archives that keep a page per band (ThePRP,
+     Lambgoat), the app reads Wikipedia, the reading brain boils the articles
+     down to tours, and each one waits here for a yes or no. A yes names the
+     blank nights inside its dates and adds the announced dates setlist.fm
+     never had. It looks like Greenroom all the way: the sources are only
+     ever a guide. */
+  function tfOf(id, fresh) {
+    var B = window.GR_BACKEND;
+    S.tf = S.tf || {};
+    var c = S.tf[id] || (S.tf[id] = { state: null, at: 0, asking: false, failed: false, busy: false, phase: '', progress: '', none: false, timer: null });
+    if (S.mode !== 'db' || !B || !B.tourFindState) { c.none = true; return c; }
+    if (!c.asking && (fresh || !c.at)) {
+      c.asking = true;
+      B.tourFindState(id).then(function (st) {
+        c.state = G.isObj(st) ? st : { status: 'idle', candidates: [] };
+        c.failed = false; c.at = Date.now(); c.asking = false; tfAfter(id); render(true);
+      }, function () {
+        c.failed = true; c.at = Date.now(); c.asking = false;
+        // Mid-read, a missed answer is asked again a little later.
+        if (c.state && c.state.status === 'reading') { clearTimeout(c.timer); c.timer = setTimeout(function () { c.timer = null; c.at = 0; render(true); }, 8000); }
+        render(true);
+      });
+    }
+    return c;
+  }
+  // While the archives are being read, ask again every few seconds (each
+  // ask also moves the read along); once they're in, read them.
+  function tfAfter(id) {
+    var c = S.tf && S.tf[id], st = c && c.state;
+    if (!st) return;
+    clearTimeout(c.timer); c.timer = null;
+    if (st.status === 'reading') {
+      c.timer = setTimeout(function () {
+        c.timer = null;
+        // Away from the page: stop asking, and make the next look a fresh one.
+        if (S.route && S.route.name === 'act' && S.route.id === id) tfOf(id, true); else c.at = 0;
+      }, 4000);
+    } else if (st.status === 'ready' && !c.busy && !c.error && S.sample) {
+      tfExtract(id);
+    }
+  }
+  async function tfStart(id) {
+    var B = window.GR_BACKEND, c = tfOf(id);
+    if (c.busy) return;
+    var before = c.state || {};
+    c.busy = true; c.phase = 'Starting\u2026'; c.error = ''; render(true);
+    try {
+      c.state = await B.tourFindStart(id); c.failed = false; c.at = Date.now();
+      // The server reads once a day; asked twice, it hands the same read back.
+      if (before.day && c.state && c.state.day === before.day && before.status === c.state.status) toast('Already read today \u2014 look again tomorrow');
+    } catch (e) { saveFailed('tours', e); }
+    c.busy = false; c.phase = '';
+    tfAfter(id); render(true);
+  }
+  // The reading brain's brief, one batch of articles at a time.
+  function tfPrompt(name, pages) {
+    var head = 'TOUR FINDER. You are helping a touring app list the tours of the act "' + name + '". Below are news articles and encyclopedia passages, each with its date and URL. ' +
+      'Return ONLY a JSON array. Each item is one tour or run that ' + name + ' was part of: a headline or co-headline tour, a support slot on another act\u2019s tour, or a package/festival tour (Warped, Taste of Chaos). ' +
+      'Fields: "name" (the announced tour name; if the run had no name, a short description such as "Fall 2018 run with Dance Gavin Dance"), ' +
+      '"role" (one of headline, co-headline, support, festival), "start" and "end" (YYYY-MM-DD; when a listing gives month/day only, take the year from the article date, and remember a run announced in the fall may start the next year), ' +
+      '"lineup" (the other acts, comma separated), "region" (US, UK/Europe, Australia, Japan, Canada\u2026), ' +
+      '"dates" (every date listed for ' + name + ' as {"date":"YYYY-MM-DD","city":"City, ST","venue":"Venue"}; an empty array if none are listed), "source" (the article URL). ' +
+      'Rules: only runs ' + name + ' is on; skip one-off festival appearances and anything that is not a tour (album news, videos, members leaving); when a later article updates an earlier one (dates added, moved or cancelled) fold them into one item; never invent dates; if nothing qualifies return [].\n\n';
+    return head + pages.map(function (p, i) {
+      return '--- ARTICLE ' + (i + 1) + ' | ' + (p.published || 'date unknown') + ' | ' + p.url + '\n' + (p.title ? p.title + '\n' : '') + p.body + '\n';
+    }).join('\n');
+  }
+  // Wikipedia, read from the phone: the articles that mention the act, cut to the paragraphs that do.
+  async function tfWikipedia(name) {
+    if (window.__harness) return [];
+    var out = [];
+    try {
+      var api = 'https://en.wikipedia.org/w/api.php?format=json&origin=*&action=query';
+      var q = await fetch(api + '&list=search&srlimit=12&srsearch=' + encodeURIComponent('"' + name + '"')).then(function (r) { return r.json(); });
+      var hits = (q && q.query && Array.isArray(q.query.search) ? q.query.search : []).map(function (x) { return x.title; });
+      for (var i = 0; i < hits.length; i++) {
+        var r = await fetch(api + '&prop=extracts&explaintext=1&titles=' + encodeURIComponent(hits[i])).then(function (x) { return x.json(); });
+        var pages = r && r.query && r.query.pages ? r.query.pages : {};
+        var pg = pages[Object.keys(pages)[0]];
+        var about = pg ? G.paragraphsAbout(pg.extract, name) : '';
+        if (about) out.push({ url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(hits[i].replace(/ /g, '_')), source: 'wikipedia', title: hits[i], published: null, body: about });
+      }
+    } catch (e) { /* Wikipedia is a bonus; the archives carry the day. */ }
+    return out;
+  }
+  async function tfExtract(id) {
+    var B = window.GR_BACKEND, c = tfOf(id);
+    if (c.busy || !S.sample) return;
+    var name = (actOf(id).card || {}).name || '';
+    c.busy = true; c.phase = 'Sorting out the tours\u2026'; c.progress = ''; c.error = ''; render(true);
+    try {
+      var pages = await B.tourFindPages(id);
+      if (pages === null) { c.error = 'Another phone is sorting the tours right now. Give it a few minutes.'; throw { code: 'busy' }; }
+      var wiki = await tfWikipedia(name);
+      var all = pages.concat(wiki), batches = [], cur = [], size = 0;
+      all.forEach(function (p) {
+        var len = String(p.body || '').length + 200;
+        if (cur.length && size + len > 60000) { batches.push(cur); cur = []; size = 0; }
+        cur.push(p); size += len;
+      });
+      if (cur.length) batches.push(cur);
+      // What earlier tries already read is kept: a Try again never re-spends it.
+      var found = Array.isArray(c.found) ? c.found : (c.found = []);
+      var done = c.doneBatches || (c.doneBatches = {});
+      for (var i = 0; i < batches.length; i++) {
+        var key = batches[i].map(function (p) { return p.url; }).join('|');
+        if (done[key]) continue;
+        c.progress = (i + 1) + ' of ' + batches.length; render(true);
+        var out = null;
+        try {
+          out = await S.sample.json(tfPrompt(name, batches[i]), { cache: false });
+        } catch (e) {
+          if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e;
+          if (e && e.code === 'rate_limited') {
+            await new Promise(function (r) { setTimeout(r, 4000); });
+            try { out = await S.sample.json(tfPrompt(name, batches[i]), { cache: false }); } catch (e2) { out = null; }
+          }
+          // One batch the reader couldn't make sense of is skipped; the rest still count.
+        }
+        if (Array.isArray(out)) found.push.apply(found, out);
+        done[key] = true;
+      }
+      var hc = histOf(id), sum = hc.row && G.isObj(hc.row.summary) ? hc.row.summary : {};
+      var merged = G.mergeTourCandidates(found).filter(function (x) { return !G.tourKnown(x.name, sum.toursList); })
+        .map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; });
+      c.state = await B.tourFindPropose(id, merged);
+      c.at = Date.now(); c.found = null; c.doneBatches = null;
+    } catch (e) {
+      if (!(e && e.code === 'busy')) c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn\u2019t sort the tours just now.';
+      if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
+    }
+    c.busy = false; c.phase = ''; c.progress = ''; render(true);
+  }
+  async function tfDecide(id, x, add, name) {
+    var B = window.GR_BACKEND, c = tfOf(id);
+    if (c.busy) return;
+    c.busy = true; render(true);
+    try {
+      var st = await B.tourCandidateDecide(x.id, add, name || null);
+      c.state = st;
+      var did = G.num(st && st.renamed), put = G.num(st && st.inserted);
+      toast(!add ? 'Left off'
+        : did || put ? (name || x.name) + ' is on the page: ' + [did ? plural(did, 'show') + ' named' : null, put ? plural(put, 'date') + ' added' : null].filter(Boolean).join(', ')
+        : (name || x.name) + ' is on the page, though those nights already had a name');
+      if (add) histOf(id, true);
+    } catch (e) { saveFailed('tours', e); }
+    c.busy = false; render(true);
+  }
+  async function tfUndo(id, x) {
+    var B = window.GR_BACKEND, c = tfOf(id);
+    if (c.busy) return;
+    c.busy = true; render(true);
+    try { c.state = await B.tourCandidateUndo(x.id); toast(x.name + ' taken off'); histOf(id, true); }
+    catch (e) { saveFailed('tours', e); }
+    c.busy = false; render(true);
+  }
+  function tfSpan(a, b) {
+    if (!G.parseDay(a) || !G.parseDay(b)) return '';
+    var ya = a.slice(0, 4), yb = b.slice(0, 4);
+    if (a === b) return dayMD(a) + ', ' + ya;
+    return ya === yb ? dayMD(a) + ' \u2013 ' + dayMD(b) + ', ' + ya : dayMD(a) + ', ' + ya + ' \u2013 ' + dayMD(b) + ', ' + yb;
+  }
+  var TF_ROLE = { headline: 'Headliner', 'co-headline': 'Co-headliner', support: 'Support', festival: 'Festival tour' };
+  // Add it under a name of your own (the one on the poster, say).
+  function openTfRename(id, x) {
+    var st = { name: x.name };
+    openSheet(function () {
+      var input = h('input', { class: 'input', type: 'text', maxlength: 120, value: st.name, 'aria-label': 'Tour name',
+        oninput: function (e) { st.name = e.target.value; } });
+      return [h('h2', { class: 'sh-title' }, 'Add this tour as\u2026'),
+        h('p', { class: 'sh-sub' }, tfSpan(x.first, x.last) + (x.lineup ? ' \u00b7 with ' + x.lineup : '')),
+        input,
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: function () {
+            var nm = String(st.name || '').replace(/\s+/g, ' ').trim();
+            if (nm.length < 2) { toast('Give it a name'); return; }
+            closeSheet(); tfDecide(id, x, true, nm);
+          } }, 'Add to the page'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
+    }, { label: 'Tour name' });
+  }
+  function tfCandCard(id, x, busy) {
+    var what = [TF_ROLE[x.role] || null, x.lineup ? 'with ' + x.lineup : null].filter(Boolean).join(' \u00b7 ');
+    var toAdd = x.toAdd == null ? G.num(x.n) : G.num(x.toAdd);
+    var fit = G.num(x.matched) > 0 ? plural(G.num(x.matched), 'unnamed show') + ' on the page fall in these dates' + (toAdd ? ', ' + plural(toAdd, 'announced date') + ' to add' : '')
+      : toAdd > 0 ? plural(toAdd, 'announced date') + ' to add'
+      : G.num(x.have) > 0 ? 'These dates are already on the page under another name' : 'No dates listed';
+    return h('div', { class: 'tf-card' },
+      h('button', { class: 'tf-name', type: 'button', 'aria-label': 'Change the name: ' + x.name, onclick: function () { openTfRename(id, x); } },
+        h('span', { class: 'tf-name-t' }, x.name), icon('chevron', 14)),
+      h('p', { class: 'tf-sub' }, tfSpan(x.first, x.last) + (x.region ? ' \u00b7 ' + x.region : '')),
+      what ? h('p', { class: 'tf-sub' }, what) : null,
+      h('p', { class: 'tf-fit' }, fit),
+      h('div', { class: 'pt-two tf-acts' },
+        h('button', { class: 'btn primary', type: 'button', disabled: busy, onclick: function () { tfDecide(id, x, true); } }, 'Add'),
+        h('button', { class: 'btn ghost', type: 'button', disabled: busy, onclick: function () { tfDecide(id, x, false); } }, 'Not ours')));
+  }
+  function tourFinderBlock(id, card, manage, unclaimed) {
+    if (!manage && !(unclaimed && claimQ().list)) return null;
+    if (!(manage ? card.verified : true) || !histOf(id).row) return null;
+    var c = tfOf(id);
+    if (c.none) return null;
+    var st = c.state || {}, status = c.state ? (st.status || 'idle') : (c.failed ? 'failed' : 'loading');
+    // A read left mid-way (the page was closed) picks up where it was; the
+    // articles are read as soon as the reading brain is here.
+    if ((status === 'reading' && !c.timer && !c.asking) || (status === 'ready' && !c.busy && !c.error && S.sample)) tfAfter(id);
+    if (status === 'extracting' && !c.busy) status = 'ready';
+    var cands = Array.isArray(st.candidates) ? st.candidates : [];
+    var fresh = cands.filter(function (x) { return x.status === 'new'; });
+    var added = cands.filter(function (x) { return x.status === 'added'; });
+    var findBtn = function (label) {
+      return h('button', { class: 'btn primary block', type: 'button', disabled: c.busy, onclick: function () { tfStart(id); } }, icon('search', 18), label);
+    };
+    var body;
+    if (status === 'loading') body = h('p', { class: 'note tf-status' }, 'Looking\u2026');
+    else if (status === 'failed') body = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { tfOf(id, true); render(true); } }, 'Try again');
+    else if (status === 'idle' || status === 'error') {
+      body = [status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn\u2019t finish.') : null, findBtn(status === 'error' ? 'Try again' : 'Find missing tours')];
+    } else if (status === 'reading') {
+      body = h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }),
+        'Reading tour announcements\u2026 ' + plural(G.num(st.pages), 'article') + (G.num(st.waiting) > 0 ? ', ' + st.waiting + ' to go' : ''));
+    } else if (status === 'ready' || (c.busy && c.phase)) {
+      body = c.busy ? h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }), c.phase + (c.progress ? ' ' + c.progress : ''))
+        : S.sample && !c.error ? h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }), 'Sorting out the tours\u2026')
+        : [h('p', { class: 'note bad' }, c.error || 'Reading isn\u2019t available right now.'),
+           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { c.error = ''; tfExtract(id); } }, 'Try again')];
+    } else {
+      body = [
+        c.error ? h('p', { class: 'note bad' }, c.error) : null,
+        fresh.length ? fresh.map(function (x) { return tfCandCard(id, x, c.busy); })
+          : h('p', { class: 'note' }, st.detail || (added.length ? 'Nothing else found. Everything the archives mention is on the page.' : 'Nothing found that isn\u2019t already on the page.')),
+        added.length ? h('details', { class: 'tf-added' },
+          h('summary', null, plural(added.length, 'tour') + ' added from here'),
+          added.map(function (x) {
+            return h('div', { class: 'row tf-added-row' },
+              h('div', { class: 'row-label' }, x.name, h('span', { class: 'hint' }, tfSpan(x.first, x.last))),
+              h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfUndo(id, x); } }, 'Take off'));
+          })) : null,
+        st.day && st.today && st.day !== st.today ? findBtn('Look again') : h('p', { class: 'note tf-again' }, 'The archives are read once a day. Come back tomorrow to look again.')
+      ];
+    }
+    return h('section', { class: 'tf-block', 'aria-label': 'Add missing tours' },
+      h('h3', { class: 'mn-h mn-over tf-h' }, 'Add missing tours'),
+      h('p', { class: 'note tf-p' }, 'Tours setlist.fm never named. Greenroom reads the tour announcements and lists what it finds; you say which are yours, and they go on the page.'),
+      body);
+  }
+
   function historyBlock(id, manage, tours) {
     var c = histOf(id);
     var row = c.row;
@@ -8021,6 +8275,193 @@
   }
 
 
+  /* ============================== My Pay ==============================
+     Devin (2026-10-07): the Budget tab is for everyone on the tour. Up top,
+     the tour's name and MY PAY sit side by side, two equal tabs. The tour's
+     own book is ALL ACCESS only; MY PAY is each person's own: their pay for
+     the tour, what's been paid to them, and the spending they keep for
+     themselves, laid out like Expenses. The server hands each person only
+     their own crew row, so GA never sees anyone else's line. */
+  function payTabs(id, t, current) {
+    var tabs = [{ view: 'costs', label: t.name || 'Untitled tour' }, { view: 'mypay', label: 'MY PAY' }];
+    return h('div', { class: 'vp-tabs pt-tabs pay-tabs', role: 'tablist' }, tabs.map(function (x) {
+      var on = x.view === current;
+      return h('button', { class: 'vp-tab pt-tab' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false',
+        onclick: function () { if (!on || S.route.view !== x.view) go({ name: 'tour', id: id, view: x.view }); } },
+        h('span', { class: 'pay-tab-t' }, x.label));
+    }));
+  }
+  function payLocked() {
+    return h('div', { class: 'pay-locked' },
+      h('p', { class: 'pay-locked-t' }, 'ALL ACCESS MEMBERS ONLY'),
+      h('p', { class: 'note' }, 'The tour\u2019s budget is for the tour manager and ALL ACCESS. Your own pay and spending are under MY PAY.'));
+  }
+  // Your slice (from the server) and your own book, asked for together and kept a minute.
+  function myPayInfo(id, fresh) {
+    var B = window.GR_BACKEND;
+    S.myPay = S.myPay || {};
+    var c = S.myPay[id] || (S.myPay[id] = { info: null, book: null, at: 0, asking: false, failed: false, none: false });
+    if (S.mode !== 'db' || !B || !B.myPay) { c.none = true; return c; }
+    if (!c.asking && (fresh || !c.at || Date.now() - c.at > 60000)) {
+      c.asking = true;
+      Promise.all([B.myPay(id), B.myPayBook(id)]).then(function (got) {
+        c.info = G.isObj(got[0]) ? got[0] : { crew: null, payments: [], tour: {} };
+        c.book = G.isObj(got[1]) ? got[1] : {};
+        c.failed = false; c.at = Date.now(); c.asking = false; render(true);
+      }, function () { c.failed = true; c.at = Date.now(); c.asking = false; render(true); });
+    }
+    return c;
+  }
+  // Saves go one at a time, each one built from the book as it stands when
+  // its turn comes, so two quick taps can't overwrite each other.
+  function saveMyPayBook(id, change) {
+    var B = window.GR_BACKEND;
+    S.myPay = S.myPay || {};
+    var c = S.myPay[id] || (S.myPay[id] = { info: null, book: {}, at: Date.now(), asking: false, failed: false, none: false });
+    var step = function () {
+      var next = JSON.parse(JSON.stringify(G.isObj(c.book) ? c.book : {}));
+      next = change(next) || next;
+      return B.saveMyPayBook(id, next).then(function () { c.book = next; render(true); return true; },
+        function (e) { saveFailed('pay', e); return false; });
+    };
+    c.saving = (c.saving || Promise.resolve()).then(step, step);
+    return c.saving;
+  }
+  function viewMyPay(id, t) {
+    return h('div', { class: 'page tour has-tabs exp-page pay-page' },
+      tourBand(t, id, 'mypay'),
+      payTabs(id, t, 'mypay'),
+      dbBanner(),
+      myPayBody(id, t),
+      tourTabs(id, 'mypay'));
+  }
+  function myPayBody(id, t) {
+    var c = myPayInfo(id);
+    if (c.none) return emptyState('MY PAY is for a signed-in tour', 'Once you\u2019re signed in, your pay and your own spending for this tour live here.');
+    if (c.failed && !c.info) {
+      return h('div', { class: 'stack' }, h('p', { class: 'note' }, 'Couldn\u2019t load your pay just now.'),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { myPayInfo(id, true); render(true); } }, 'Try again'));
+    }
+    if (!c.info) return h('p', { class: 'note pay-note' }, 'Loading\u2026');
+    var st = G.payStanding(c.info), book = G.payBook(c.book);
+    var fig = function (label, v, cls) {
+      return h('div', { class: 'pay-fig' + (cls ? ' ' + cls : '') }, h('strong', { class: 'pay-n num' }, money(v)), h('span', { class: 'pay-l' }, label));
+    };
+    var head = st.onCrew
+      ? h('div', { class: 'pay-head' }, fig('Total pay', st.total), fig('Paid to date', st.paid), fig('Still owed', st.owed, st.owed > 0 ? 'owed' : 'ok'))
+      : h('p', { class: 'note pay-note' }, 'You\u2019re not on this tour\u2019s crew list yet. When the tour manager adds you under Crew with your email, your pay shows here.');
+    var pays = Array.isArray(c.info.payments) ? c.info.payments : [];
+    var payRow = h('button', { class: 'row rowbtn ex-row pay-row', type: 'button', onclick: function () { openMyPayments(c.info); } },
+      h('div', { class: 'row-label' }, 'Payments to you', h('span', { class: 'hint' }, pays.length ? plural(pays.length, 'payment') : 'none logged yet')),
+      h('span', { class: 'amt num glow' }, money(st.paid)), icon('chevron', 18));
+    var colHead = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
+      h('span', null, ''), h('span', { class: 'ex-proj' }, 'Projected'), h('span', { class: 'ex-paid' }, 'Credit'),
+      h('span', { class: 'ex-done' }, 'Debit'), h('span', { class: 'ex-cash' }, 'Cash'), h('span', { class: 'ex-chev', 'aria-hidden': 'true' }));
+    var cell = function (v, cls, label) {
+      return h('span', { class: 'amt num ' + cls, 'aria-label': label + ' ' + money(v) }, v > 0.004 ? money(v) : '\u2014');
+    };
+    var lines = book.lines.map(function (l) {
+      return h('button', { class: 'row rowbtn ex-row', type: 'button', onclick: function () { openMyPayCat(id, l.key); } },
+        h('div', { class: 'row-label' }, l.label, l.n ? h('span', { class: 'hint' }, plural(l.n, 'expense')) : null),
+        h('span', { class: 'amt num glow ex-proj', 'aria-label': 'Projected ' + (l.projected == null ? 'not set' : money(l.projected)) },
+          l.projected == null ? '\u2014' : money(l.projected)),
+        cell(l.credit, 'ex-paid', 'Credit'), cell(l.debit, 'ex-done', 'Debit'), cell(l.cash, 'ex-cash', 'Cash'),
+        icon('chevron', 18));
+    });
+    var sum = h('p', { class: 'pay-sum' }, 'Spent on tour ', h('strong', { class: 'num' }, money(book.spent)),
+      st.onCrew ? [' \u00b7 pay still owed ', h('strong', { class: 'num' }, money(st.owed))] : null);
+    return [head,
+      h('div', { class: 'ledger' }, payRow),
+      h('h3', { class: 'mn-h mn-over' }, 'My expenses'),
+      h('div', { class: 'ledger' }, colHead, lines),
+      sum,
+      h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'button', onclick: function () { openMyPayCat(id, null); } },
+        icon('plus', 18), 'Add expense'))];
+  }
+  // What the tour manager has logged as paid to you, newest first.
+  function openMyPayments(info) {
+    var pays = Array.isArray(info && info.payments) ? info.payments : [];
+    openSheet(function () {
+      return [h('h2', { class: 'sh-title' }, 'Payments to you'),
+        pays.length ? h('div', { class: 'ledger' }, pays.map(function (p) {
+          return h('div', { class: 'row ex-row' },
+            h('div', { class: 'row-label' }, p.label || 'Pay', h('span', { class: 'hint' }, [p.date ? dayMD(p.date) : '', p.how].filter(Boolean).join(' \u00b7 '))),
+            h('span', { class: 'amt num' }, money(G.num(p.amount))));
+        })) : h('p', { class: 'note' }, 'Nothing logged as paid to you yet. The tour manager logs pay under Crew.'),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close')];
+    }, { label: 'Payments' });
+  }
+  // One category of your own spending: its entries, a projected figure, and a way to add one.
+  function openMyPayCat(id, key, keep) {
+    var c = myPayInfo(id);
+    var st = keep || { key: key || 'food', amount: null, how: 'debit', date: G.ymd(new Date()), note: '', closed: false };
+    st.closed = false;
+    // Dismissed while a save was still on its way: it stays dismissed.
+    var again = function () { if (!st.closed) openMyPayCat(id, st.key, st); };
+    openSheet(function () {
+      var book = G.isObj(c.book) ? c.book : {};
+      var cats = G.MY_PAY_CATS;
+      var idx = Math.max(0, cats.map(function (x) { return x.key; }).indexOf(st.key));
+      var entries = G.rows(book.entries).filter(function (e) { return (e.category || 'other') === st.key; })
+        .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+      var proj = G.isObj(book.projected) ? book.projected : {};
+      var amount = h('input', { class: 'input', type: 'number', inputmode: 'decimal', step: '0.01', min: '0', placeholder: '0.00',
+        'aria-label': 'Amount', value: st.amount == null ? '' : st.amount,
+        oninput: function (e) { st.amount = e.target.value === '' ? null : Number(e.target.value); } });
+      var date = h('input', { class: 'input', type: 'date', 'aria-label': 'Day', value: st.date, oninput: function (e) { st.date = e.target.value; } });
+      var note = h('input', { class: 'input', type: 'text', maxlength: 60, placeholder: 'What for (optional)', 'aria-label': 'Note', value: st.note,
+        oninput: function (e) { st.note = e.target.value; } });
+      var projIn = h('input', { class: 'input', type: 'number', inputmode: 'decimal', step: '1', min: '0', placeholder: 'Not set',
+        'aria-label': 'Projected for this category', value: proj[st.key] == null ? '' : proj[st.key],
+        onchange: async function (e) {
+          var v = e.target.value;
+          if (await saveMyPayBook(id, function (next) {
+            next.projected = G.isObj(next.projected) ? next.projected : {};
+            if (v === '') delete next.projected[st.key]; else next.projected[st.key] = Math.max(0, Number(v) || 0);
+          })) toast('Projected saved');
+        } });
+      var add = async function (e) {
+        e.preventDefault(); blurActive();
+        if (st.saving) return;
+        if (!(st.amount > 0) || !isFinite(st.amount) || st.amount > 1e7) { toast('Enter the amount'); return; }
+        if (!G.parseDay(st.date)) { toast('Pick the day'); return; }
+        var amount = Math.round(st.amount * 100) / 100, entry = { date: st.date, amount: amount, how: st.how, category: st.key,
+          note: String(st.note || '').trim().slice(0, 60), createdAt: Date.now() };
+        st.saving = true;
+        var ok = await saveMyPayBook(id, function (next) { next.entries = G.isObj(next.entries) ? next.entries : {}; next.entries[newId()] = entry; });
+        st.saving = false;
+        if (ok) { toast(money(amount) + ' added'); st.amount = null; st.note = ''; again(); }
+      };
+      var drop = function (eid) {
+        return async function () {
+          if (st.saving) return;
+          st.saving = true;
+          var ok = await saveMyPayBook(id, function (next) { if (G.isObj(next.entries)) delete next.entries[eid]; });
+          st.saving = false;
+          if (ok) { toast('Removed'); again(); }
+        };
+      };
+      return [
+        h('h2', { class: 'sh-title' }, 'My expenses'),
+        segmented(cats.map(function (x) { return x.label; }), idx, function (i) { st.key = cats[i].key; again(); }, 'Category'),
+        h('form', { class: 'stack', onsubmit: add },
+          h('div', { class: 'pt-two' }, amount, date),
+          note,
+          segmented(['Credit', 'Debit', 'Cash'], ['credit', 'debit', 'cash'].indexOf(st.how), function (i) { st.how = ['credit', 'debit', 'cash'][i]; }, 'How it was paid'),
+          h('button', { class: 'btn primary block', type: 'submit' }, 'Add')),
+        h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Projected for ' + cats[idx].label.toLowerCase()), projIn),
+        entries.length ? h('div', { class: 'ledger' }, entries.map(function (e) {
+          return h('div', { class: 'row ex-row' },
+            h('div', { class: 'row-label' }, e.note || cats[idx].label,
+              h('span', { class: 'hint' }, [e.date ? dayMD(e.date) : '', e.how === 'cash' ? 'Cash' : e.how === 'debit' ? 'Debit' : 'Credit'].filter(Boolean).join(' \u00b7 '))),
+            h('span', { class: 'amt num' }, money(G.num(e.amount))),
+            h('button', { class: 'pay-entry-x', type: 'button', 'aria-label': 'Remove this expense', onclick: drop(e.id) }, '\u00d7'));
+        })) : h('p', { class: 'note' }, 'Nothing under ' + cats[idx].label.toLowerCase() + ' yet.'),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+      ];
+    }, { label: 'My expenses', onClose: function () { st.closed = true; } });
+  }
+
   /* Five tabs along the bottom. The day sheet is where a tour opens. */
   var TOUR_TABS = [
     { view: 'details', label: 'Overview', icon: 'tabmap' },
@@ -8035,14 +8476,15 @@
   /* A tour's tabs, either side of your photo. The money is one tab, Budget,
      which opens Expenses; Expenses and Income are two tabs above the chart
      there. GA never sees the Budget tab. */
-  var BOOK_TABS = ['costs', 'cards', 'money'];
+  var BOOK_TABS = ['costs', 'cards', 'money', 'mypay'];
   var BOOK_STRIP = [{ view: 'costs', label: 'Expenses', icon: 'tabcost' }, { view: 'cards', label: 'Cards', icon: 'card' },
     { view: 'money', label: 'Income', icon: 'tabmoney' }];
   var BUDGET_TAB = { view: 'costs', label: 'Budget', icon: 'tabmoney', book: true };
   function tourTabs(id, current) {
-    var money = canSeeMoney(id);
+    // Everyone gets the Budget tab now (Devin, 2026-10-07): GA opens it to
+    // MY PAY; the tour's own book inside stays ALL ACCESS only.
     var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
-    if (money) tabs.splice(1, 0, BUDGET_TAB);
+    tabs.splice(1, 0, BUDGET_TAB);
     var buttons = tabs.map(function (t) {
       // Budget is lit on Expenses and Income (their own two tabs sit above the chart).
       var on = t.book ? BOOK_TABS.indexOf(current) >= 0 : t.view === current;
@@ -8582,7 +9024,7 @@
     // GA never sees money: only the screens named here open for them; anything
     // else (Budget, Expenses and their sub-pages, or a name nobody recognises,
     // which would otherwise fall through to Budget) is Overview.
-    if (!canSeeMoney(id) && ['details', 'day', 'guests', 'chat', 'calendar', 'stats'].indexOf(view) < 0) {
+    if (!canSeeMoney(id) && ['details', 'day', 'guests', 'chat', 'calendar', 'stats', 'costs', 'mypay'].indexOf(view) < 0) {
       view = 'details';
     }
     if (view === 'day' || view === 'details' || view === 'guests') {
@@ -8591,11 +9033,21 @@
     if (view === 'chat') return viewTourChat(id, t);
     if (view === 'calendar') return viewCalendar(id, t);
     if (view === 'stats') return viewStats(id, t);
+    if (view === 'mypay') return viewMyPay(id, t);
+    // GA on the Budget tab: the tour's book is ALL ACCESS only; MY PAY is theirs.
+    if (view === 'costs' && !canSeeMoney(id)) {
+      return h('div', { class: 'page tour has-tabs exp-page' },
+        tourBand(t, id, 'costs'),
+        payTabs(id, t, 'costs'),
+        dbBanner(),
+        payLocked(),
+        tourTabs(id, 'costs'));
+    }
     var c = G.calc(t);
     if (view === 'costs') {
       return h('div', { class: 'page tour has-tabs exp-page' },
         tourBand(t, id, 'costs'),
-        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+        payTabs(id, t, 'costs'),
         bookStrip(id, 'costs'),
         dbBanner(),
         tabExpenses(id, t, c),
@@ -8604,7 +9056,7 @@
     if (view === 'cards') {
       return h('div', { class: 'page tour has-tabs exp-page' },
         tourBand(t, id, 'cards'),
-        h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+        payTabs(id, t, 'costs'),
         bookStrip(id, 'cards'),
         dbBanner(),
         tabCards(id, t),
@@ -8632,7 +9084,7 @@
 
     return h('div', { class: 'page tour has-tabs budget-page' },
       tourBand(t, id, 'money'),
-      h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
+      payTabs(id, t, 'costs'),
       bookStrip(id, 'money'),
       dbBanner(),
       !t.setupDone && canEditTour(id)
@@ -9882,17 +10334,48 @@
   // One person on the tour: photo, name (with their road badge), the three numbers, and Give flowers.
   function flowerCard(id, p, me, data) {
     var mine = p.userId === me;
-    return h('li', { class: 'fw-card' + (mine ? ' me' : '') },
-      h('button', { class: 'fw-face', type: 'button', 'aria-label': mine ? 'Your profile' : 'Open ' + fwName(p) + '’s profile',
-        onclick: function () { openProfile(p.userId); } }, personPhoto(p, 'fw-photo')),
-      h('div', { class: 'fw-side' },
-        h('p', { class: 'fw-name' }, h('span', { class: 'fw-name-t' }, fwName(p)), roadPill(id, p.userId), p.verified ? verifiedBadge('sm') : null,
-          mine ? h('span', { class: 'fw-you' }, 'You') : null),
-        p.tourRole ? h('p', { class: 'fw-role' }, p.tourRole) : null,
-        fwStats(p.here, p.counts),
-        mine || !data.canGive ? null : h('button', { class: 'fw-give', type: 'button', disabled: data.left <= 0,
-          onclick: function () { openGiveFlowers(id, p, data.left); } },
-          data.left > 0 ? ['Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All ' + FLOWERS_EACH + ' given')));
+    // Tap a crew member and the flowers they were given open under them:
+    // who gave them, the note, when (Devin, 2026-10-07: not a list for the
+    // whole page, a dropdown per person).
+    var open = !!(S.fwOpen && S.fwOpen[p.userId]);
+    var toggle = function () { S.fwOpen = S.fwOpen || {}; S.fwOpen[p.userId] = !open; render(true); };
+    return h('li', { class: 'fw-card' + (mine ? ' me' : '') + (open ? ' open' : '') },
+      h('div', { class: 'fw-main' },
+        h('button', { class: 'fw-face', type: 'button', 'aria-label': mine ? 'Your profile' : 'Open ' + fwName(p) + '’s profile',
+          onclick: function () { openProfile(p.userId); } }, personPhoto(p, 'fw-photo')),
+        h('div', { class: 'fw-side' },
+          h('button', { class: 'fw-name fw-name-btn', type: 'button', 'aria-expanded': open ? 'true' : 'false',
+            'aria-label': (open ? 'Hide' : 'Show') + ' the flowers ' + (mine ? 'you were' : fwName(p) + ' was') + ' given', onclick: toggle },
+            h('span', { class: 'fw-name-t' }, fwName(p)), roadPill(id, p.userId), p.verified ? verifiedBadge('sm') : null,
+            mine ? h('span', { class: 'fw-you' }, 'You') : null,
+            h('span', { class: 'fw-chev', 'aria-hidden': 'true' }, icon('chevron', 14))),
+          p.tourRole ? h('p', { class: 'fw-role' }, p.tourRole) : null,
+          fwStats(p.here, p.counts),
+          mine || !data.canGive ? null : h('button', { class: 'fw-give', type: 'button', disabled: data.left <= 0,
+            onclick: function () { openGiveFlowers(id, p, data.left); } },
+            data.left > 0 ? ['Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All ' + FLOWERS_EACH + ' given'))),
+      open ? fwGiven(p, me, data) : null);
+  }
+  // The flowers one person was given on this tour, newest first: the giver, how many, the note, when.
+  function fwGiven(p, me, data) {
+    var by = {};
+    data.people.forEach(function (x) { by[x.userId] = x; });
+    var nameOf = function (uid, given) {
+      if (uid === me) return 'You';
+      return by[uid] ? fwFirst(by[uid]) : (String(given || '').trim().split(/\s+/)[0] || 'Someone');
+    };
+    var got = (data.given || []).filter(function (g) { return g.to === p.userId; });
+    if (!got.length) return h('div', { class: 'fw-drop' }, h('p', { class: 'fw-none' }, 'No flowers yet.'));
+    return h('ul', { class: 'fw-drop fw-feed' }, got.map(function (g) {
+      var giver = by[g.from] || { name: g.fromName || '?' };
+      return h('li', { class: 'fw-gift' },
+        personPhoto(giver, 'xs'),
+        h('div', { class: 'fw-gift-t' },
+          h('p', { class: 'fw-gift-l' }, h('strong', null, nameOf(g.from, g.fromName)), ' gave ' + plural(g.n, 'flower') + ' ',
+            h('span', { 'aria-hidden': 'true' }, FLOWER), catTag(g.category)),
+          g.note ? h('p', { class: 'fw-note' }, '\u201c' + g.note + '\u201d') : null,
+          h('p', { class: 'fw-when' }, dmWhen(g.at))));
+    }));
   }
   // Give flowers, pinned at the bottom of the screen on Crew Stats, with this year's count under it, the way your profile shows it.
   function fwMine(id, data, me) {
@@ -9920,30 +10403,6 @@
         }))
       ];
     }, { label: 'Give flowers' });
-  }
-  // Who gave whom flowers on this tour, newest first. Giving is final: nothing here takes them back.
-  function fwFeed(id, data, me) {
-    var by = {};
-    data.people.forEach(function (p) { by[p.userId] = p; });
-    var nameOf = function (uid, given) {
-      if (uid === me) return 'You';
-      return by[uid] ? fwFirst(by[uid]) : (String(given || '').trim().split(/\s+/)[0] || 'Someone');
-    };
-    if (!data.given.length) return null;
-    return [
-      h('h2', { class: 'fw-h' }, 'Flowers given'),
-      h('ul', { class: 'fw-feed' }, data.given.map(function (g) {
-        var giver = by[g.from] || { name: g.fromName || '?' };
-        return h('li', { class: 'fw-gift' },
-          personPhoto(giver, 'xs'),
-          h('div', { class: 'fw-gift-t' },
-            h('p', { class: 'fw-gift-l' }, h('strong', null, nameOf(g.from, g.fromName)), ' gave ',
-              h('strong', null, g.to === me ? 'you' : nameOf(g.to, g.toName)), ' ' + plural(g.n, 'flower') + ' ',
-              h('span', { 'aria-hidden': 'true' }, FLOWER), catTag(g.category)),
-            g.note ? h('p', { class: 'fw-note' }, '“' + g.note + '”') : null,
-            h('p', { class: 'fw-when' }, dmWhen(g.at))));
-      }))
-    ];
   }
   /* Check In, at the bottom of the screen on your profile's Today (pinned:
      it stays put above the bottom bar): your way of saying you've seen the
@@ -10062,7 +10521,6 @@
       : !data ? fwLoading('Picking the flowers…')
       : data.error ? fwFailed(function () { B.flowersFor(id, true); })
       : [h('ul', { class: 'fw-list' }, data.people.map(function (p) { return flowerCard(id, p, me, data); })),
-         fwFeed(id, data, me),
          fwMine(id, data, me)];
     return h('div', { class: 'page tour has-tabs fw-page' },
       tourBand(t, id, 'stats'),

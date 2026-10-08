@@ -1676,5 +1676,72 @@
     });
   })();
 
+  // ---- MY PAY: a crew member's own book and standing ----
+  (function () {
+    test('payBook sums each category by how it was paid, and the projected figures', function () {
+      var b = G.payBook({ entries: {
+        a: { category: 'food', amount: 12.5, how: 'cash' }, b: { category: 'food', amount: 30, how: 'credit' },
+        c: { category: 'travel', amount: 80, how: 'debit' }, d: { category: 'nonsense', amount: 5, how: 'debit' },
+        e: { category: 'gear', amount: 0, how: 'cash' } }, projected: { food: 200, travel: '150' } });
+      var by = {}; b.lines.forEach(function (l) { by[l.key] = l; });
+      near(by.food.cash, 12.5); near(by.food.credit, 30); near(by.food.total, 42.5); eq(by.food.n, 2);
+      near(by.travel.debit, 80); eq(by.travel.projected, 150, 'a typed string is a number');
+      near(by.other.debit, 5, 'an unknown category lands under Other'); eq(by.gear.n, 0, 'a zero amount is not an expense');
+      near(b.spent, 127.5); near(b.projected, 350); eq(by.lodging.projected, null, 'not set reads as null');
+      eq(b.lines.map(function (l) { return l.key; }).join(','), 'food,lodging,travel,gear,other');
+    });
+    test('payStanding runs the pay plan over the tour dates and nets off what was paid', function () {
+      var st = G.payStanding({ crew: { rate: 500, per: 'week', payTyped: false }, payments: [{ amount: 500 }, { amount: 250 }],
+        tour: { first: '2026-09-27', last: '2026-10-04' } });
+      near(st.total, 1000, '8 days is two weeks'); near(st.paid, 750); near(st.owed, 250); eq(st.onCrew, true);
+      var over = G.payStanding({ crew: { pay: 600, payTyped: true, rate: 500, per: 'week' }, payments: { x: { amount: 900 } }, tour: { first: '2026-09-27', last: '2026-10-04' } });
+      near(over.total, 600, 'a typed total wins over the rate'); near(over.owed, 0, 'owed never goes below zero');
+      var none = G.payStanding({ crew: null, payments: [], tour: {} });
+      eq(none.onCrew, false); near(none.total, 0); near(none.owed, 0);
+    });
+  })();
+
+  // ---- Add missing tours: folding the reader's finds into one list ----
+  (function () {
+    test('mergeTourCandidates folds respellings and two accounts of one run, keeps distinct years apart', function () {
+      var m = G.mergeTourCandidates([
+        { name: 'Let Light Overcome The Darkness Tour', role: 'support', start: '2019-11-05', end: '2019-12-01', lineup: 'Our Last Night, The Word Alive',
+          dates: [{ date: '2019-11-05', city: 'Omaha, NE' }], source: 'https://a.example/1' },
+        { name: 'Let Light Overcome the Darkness', role: 'support', start: '2019-11-20', end: '2019-12-08', lineup: 'Our Last Night',
+          dates: [{ date: '2019-11-05', city: 'Omaha, NE' }, { date: '2019-12-08', city: 'Lake Buena Vista, FL' }], sources: ['https://a.example/2', 'http://insecure'] },
+        { name: 'Fall 2019 run with Our Last Night', role: 'support', start: '2019-11', end: '2019-12', lineup: 'Our Last Night, Ashland' },
+        { name: 'Vans Warped Tour 2010', role: 'festival', start: '2010-06-25', end: '2010-07-30' },
+        { name: 'Vans Warped Tour 2013', role: 'festival', start: '2013-06-15', end: '2013-07-31' },
+        { name: 'X', start: '2020-01-01', end: '2020-02-01' },
+        { name: 'Backwards', start: '2020-03-01', end: '2020-02-01' },
+        { name: 'No dates at all' }
+      ]);
+      eq(m.length, 3, 'one Our Last Night run, two Warped years');
+      var oln = m[0];
+      eq(oln.name, 'Let Light Overcome The Darkness Tour', 'the real name wins over a made-up description');
+      eq(oln.start, '2019-11-05', 'a month-only guess never stretches a real start'); eq(oln.end, '2019-12-08', 'nor a real end');
+      var vague = G.mergeTourCandidates([{ name: 'Summer run', role: 'support', start: '2019-06', end: '2019-08', lineup: 'X' }]);
+      eq(vague[0].start + '..' + vague[0].end, '2019-06-01..2019-08-31', 'alone, a month reads as its first and last day');
+      var yearly = G.mergeTourCandidates([
+        { name: 'Warped Tour', role: 'festival', start: '2010-06-25', end: '2010-07-30' },
+        { name: 'Warped Tour', role: 'festival', start: '2013-06-15', end: '2013-07-31' },
+        { name: 'Warped Tour', role: 'festival', start: '2013-07-01', end: '2013-08-04' }]);
+      eq(yearly.map(function (t) { return t.name; }).join(' | '), 'Warped Tour 2010 | Warped Tour 2013', 'a yearly name splits by year and gets the year');
+      eq(yearly[1].end, '2013-08-04', 'the two 2013 accounts fold into one');
+      eq(oln.dates.length, 2, 'dates kept once each'); eq(oln.dates[1].date, '2019-12-08');
+      eq(oln.sources.join(','), 'https://a.example/1,https://a.example/2', 'https sources add up');
+      eq(oln.lineup, 'Our Last Night, The Word Alive', 'the fuller lineup stays');
+    });
+    test('tourKnown matches a found tour against the page by loose name; paragraphsAbout keeps the right paragraphs', function () {
+      eq(G.tourKnown('The Treehouse Tour', [{ name: 'Treehouse Tour' }]), true);
+      eq(G.tourKnown('Spin the Wheel Tour', [{ name: 'Spin The Wheel' }]), true);
+      eq(G.tourKnown('Warped Tour 2016', [{ name: 'Vans Warped Tour 2013' }]), false, 'a different year is a different tour');
+      eq(G.tourKeyLoose('Started From the Bottom Now We Here'), 'started from bottom now we here');
+      var p = G.paragraphsAbout('Intro line.\nDance Gavin Dance toured in 2018.\nWith Erra and I See Stars from May 26.\nUnrelated.\nFooter.', 'I See Stars');
+      eq(p, 'Dance Gavin Dance toured in 2018.\nWith Erra and I See Stars from May 26.\nUnrelated.', 'the mention and its neighbours');
+      eq(G.paragraphsAbout('Nothing here.', 'I See Stars'), '');
+    });
+  })();
+
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };
 })();
