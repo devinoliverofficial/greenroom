@@ -699,6 +699,11 @@
       if (q.error) throw mapError(q.error);
       return q.data;
     },
+    myPayTwins: async function () {
+      var q = await sb.rpc('my_pay_twins');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
     myPayItemIds: async function () {
       var q = await sb.rpc('my_pay_item_ids');
       if (q.error) throw mapError(q.error);

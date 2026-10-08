@@ -8663,8 +8663,21 @@
         toast(plural(list.length, 'account') + ' added to MY PAY');
       } catch (e) { saveFailed('cards', e); }
     }
+    await quietTwins();
     myPayCardsInfo(true);
     openMyPayCards(trip.tourId || null, true);
+  }
+  // The same bank account connected on both sides is one account: the person
+  // said it's theirs, so the tour's copy is switched off (it stops reading).
+  async function quietTwins() {
+    var B = window.GR_BACKEND;
+    if (!B.myPayTwins) return;
+    var twins = [];
+    try { twins = await B.myPayTwins(); } catch (e) { twins = []; }
+    for (var i = 0; i < twins.length; i++) {
+      try { await B.feedCall('setup', { account: { id: twins[i].id, mode: 'off', income: [] } }); } catch (e) { /* tried */ }
+    }
+    if (twins.length) { if (S.feed) S.feed.at = 0; toast(plural(twins.length, 'account') + ' moved from the tour\u2019s cards to yours'); }
   }
   /* ---- MY PAY's own cards (Devin, 2026-10-08): a separate connection from
      the tour's. Accounts you claim as yours feed your inbox here, never the
@@ -8699,12 +8712,6 @@
     var again = function () { if (sheet && sheet.myPayCards) openMyPayCards(id); };
     openSheet(function () {
       var c = myPayCardsInfo();
-      // The tour's accounts are never listed here, and these are never listed there.
-      var tourNames = (function () {
-        var row = S.feed && S.feed.row, acc = row && G.isObj(row.accounts) ? row.accounts : {};
-        return Object.keys(acc).filter(function (k) { return G.isObj(acc[k]) && !isMyPayAccount(k); }).map(function (k) { return String(acc[k].name || ''); });
-      })();
-      var clash = c.accounts.filter(function (a) { return tourNames.indexOf(a.name) >= 0; });
       var release = function (a) {
         return async function () {
           try { await B.myPayReleaseAccount(a.account_id); myPayCardsInfo(true); toast(a.name + ' taken off'); again(); }
@@ -8748,8 +8755,6 @@
           return h('div', { class: 'row ex-row' }, h('div', { class: 'row-label' }, a.name, h('span', { class: 'hint' }, a.card === 'credit' ? 'Credit card' : 'Debit card')),
             h('button', { class: 'pf-btn', type: 'button', onclick: release(a) }, 'Remove'));
         })) : h('p', { class: 'note' }, 'No bank connected here yet.'),
-        clash.length ? h('p', { class: 'note bad' }, 'An account here has the same name as one on the tour (' + clash.map(function (a) { return a.name; }).join(', ') +
-          '). The bank reader can\u2019t tell those two apart, so their charges stay with the tour until one of them has a different nickname at your bank.') : null,
         h('button', { class: 'btn primary block', type: 'button', onclick: function () { connectCards(id, null, { myPay: true }); } }, icon('card', 18), 'Connect a bank or card'),
         c.inbox.length ? [h('h3', { class: 'sh-h3' }, plural(c.inbox.length, 'new item') + ' from your cards'), c.inbox.map(inboxCard)] : null,
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')

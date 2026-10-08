@@ -386,6 +386,7 @@ shim = r"""<script>
     },
     myPayClaimItems: function (items) { var H = window.__harness; H.myPayAccounts = H.myPayAccounts || []; (items || []).forEach(function (it) { H.myPayAccounts.push({ account_id: 'acc-' + it, name: 'Personal ' + it, card: 'debit' }); }); return Promise.resolve({ ok: true, accounts: (items || []).length, list: H.myPayAccounts.slice() }); },
     myPayItemIds: function () { return Promise.resolve([]); },
+    myPayTwins: function () { return Promise.resolve([]); },
     myPayReleaseAccount: function (id) { var H = window.__harness; H.myPayAccounts = (H.myPayAccounts || []).filter(function (a) { return a.account_id !== id; }); return Promise.resolve(); },
     myPayInbox: function () {
       var H = window.__harness;
