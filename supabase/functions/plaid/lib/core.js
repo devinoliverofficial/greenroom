@@ -1050,6 +1050,31 @@
     });
   }
 
+  // Wikitext down to words (links to their text, {{dts|…}} to its date, table plumbing gone).
+  function wikiText(t) {
+    return String(t || '')
+      .replace(/\{\{dts\|([^}|]*)[^}]*\}\}/g, '$1')
+      .replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, '$1')
+      .replace(/(?:row|col)span="?\d+"?\s*\|/g, '')
+      .replace(/style="[^"]*"\s*\|?/g, '')
+      .replace(/<ref[^>]*\/>|<ref[^>]*>[\s\S]*?<\/ref>/g, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/'{2,3}/g, '');
+  }
+  // The stretches of a tour article that name the act: a little before each
+  // mention to well after it (the leg's table of nights follows the header
+  // that names the support acts).
+  function wikiCut(wt, name) {
+    var t = wikiText(wt), lo = String(name || '').toLowerCase().trim(), out = '', start = 0;
+    if (!lo) return '';
+    while (start < t.length && out.length < 9000) {
+      var i = t.toLowerCase().indexOf(lo, start);
+      if (i < 0) break;
+      out += (out ? '\n…\n' : '') + t.slice(Math.max(0, i - 300), i + 4000);
+      start = i + 4000;
+    }
+    return out.slice(0, 9000);
+  }
   // "Come back in ~15 min": the finder's time left, rounded the way a person
   // would say it (to the minute under ten, to five minutes under an hour).
   function etaText(sec) {
@@ -2005,7 +2030,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

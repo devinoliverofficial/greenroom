@@ -4128,17 +4128,28 @@
   // Wikipedia, read from the phone: the articles that mention the act, cut to the paragraphs that do.
   async function tfWikipedia(name) {
     if (window.__harness) return [];
-    var out = [];
+    var out = [], seen = {};
     try {
       var api = 'https://en.wikipedia.org/w/api.php?format=json&origin=*&action=query';
-      var q = await fetch(api + '&list=search&srlimit=12&srsearch=' + encodeURIComponent('"' + name + '"')).then(function (r) { return r.json(); });
-      var hits = (q && q.query && Array.isArray(q.query.search) ? q.query.search : []).map(function (x) { return x.title; });
-      for (var i = 0; i < hits.length; i++) {
-        var r = await fetch(api + '&prop=extracts&explaintext=1&titles=' + encodeURIComponent(hits[i])).then(function (x) { return x.json(); });
-        var pages = r && r.query && r.query.pages ? r.query.pages : {};
-        var pg = pages[Object.keys(pages)[0]];
-        var about = pg ? G.paragraphsAbout(pg.extract, name) : '';
-        if (about) out.push({ url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(hits[i].replace(/ /g, '_')), source: 'wikipedia', title: hits[i], published: null, body: about });
+      var asks = [encodeURIComponent('"' + name + '"'), encodeURIComponent('"' + name + '" intitle:Tour')];
+      for (var a = 0; a < asks.length; a++) {
+        var q = await fetch(api + '&list=search&srlimit=' + (a ? 10 : 12) + '&srsearch=' + asks[a]).then(function (r) { return r.json(); });
+        var hits = (q && q.query && Array.isArray(q.query.search) ? q.query.search : []).map(function (x) { return x.title; });
+        for (var i = 0; i < hits.length; i++) {
+          if (seen[hits[i]]) continue; seen[hits[i]] = true;
+          var about = '';
+          if (/\btour/i.test(hits[i])) {
+            // A tour article: its date table lives in the wikitext (plain extracts drop tables).
+            var w = await fetch('https://en.wikipedia.org/w/api.php?format=json&origin=*&action=parse&prop=wikitext&page=' + encodeURIComponent(hits[i])).then(function (x) { return x.json(); });
+            about = G.wikiCut(w && w.parse && w.parse.wikitext && w.parse.wikitext['*'], name);
+          } else {
+            var r = await fetch(api + '&prop=extracts&explaintext=1&titles=' + encodeURIComponent(hits[i])).then(function (x) { return x.json(); });
+            var pages = r && r.query && r.query.pages ? r.query.pages : {};
+            var pg = pages[Object.keys(pages)[0]];
+            about = pg ? G.paragraphsAbout(pg.extract, name) : '';
+          }
+          if (about) out.push({ url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(hits[i].replace(/ /g, '_')), source: 'wikipedia', title: hits[i], published: null, body: about });
+        }
       }
     } catch (e) { /* Wikipedia is a bonus; the archives carry the day. */ }
     return out;

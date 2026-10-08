@@ -1778,6 +1778,15 @@
       var tsv = G.parseCsv('date\tvenue\tcity\n2020-01-01\tA\tB\n');
       eq(tsv[1][1], 'A', 'tabs read too');
     });
+    test('wikiCut keeps the stretch of a tour article that names the act, as words', function () {
+      var wt = "intro\n|- style=\"background:#ddd;\"\n| colspan=\"4\"|'''North America, Leg #2'''<br><small> Supporting [[Falling in Reverse]] w/ [[letlive.]] and [[I See Stars]]</small>\n|-\n| {{dts|17 October 2012}}\n| Salt Lake City\n| rowspan=\"35\"|United States\n| The Complex\n|-\n| {{dts|18 October 2012}}\n| [[Denver]]\n| Summit Music Hall<ref>x</ref>\n";
+      var cut = G.wikiCut(wt, 'I See Stars');
+      eq(cut.indexOf('I See Stars') >= 0, true);
+      eq(cut.indexOf('17 October 2012') >= 0, true, 'the date template reads as its date');
+      eq(cut.indexOf('rowspan') < 0 && cut.indexOf('[[') < 0 && cut.indexOf('<ref') < 0 && cut.indexOf("'''") < 0, true, 'table plumbing, links, refs and bold marks are gone');
+      eq(cut.indexOf('Denver') >= 0 && cut.indexOf('Summit Music Hall') >= 0, true);
+      eq(G.wikiCut('nothing about them', 'I See Stars'), '');
+    });
     test('etaText says the finder’s time left the way a person would', function () {
       eq(G.etaText(0), '', 'nothing left, nothing said');
       eq(G.etaText(45), 'Almost done.');
