@@ -350,7 +350,7 @@ shim = r"""<script>
       return Promise.resolve([{ url: 'https://www.theprp.com/2019/09/x/', source: 'theprp', title: 'Our Last Night tour', published: '2019-09-10', body: 'Our Last Night ... 11/05 Omaha, NE' },
         { url: 'https://lambgoat.com/news/2/x/', source: 'lambgoat', title: 'DGD tour', published: '2018-03-01', body: 'Dance Gavin Dance ... 5/26 San Antonio, TX' }]);
     },
-    tourFindPropose: function (artistId, cands, readUrls) {
+    tourFindPropose: function (artistId, cands, readUrls, trusted) {
       var H = window.__harness; H.tf = H.tf || {};
       // A poster or pasted page can come before any search: the entry is made on the spot.
       var st = H.tf[artistId] || (H.tf[artistId] = { status: 'idle', detail: '', pages: 0, waiting: 0, sources: {}, candidates: [], runs: [], brain: false, eta: 0, batches: { total: 0, done: 0 } });
@@ -358,8 +358,10 @@ shim = r"""<script>
       H.readUrls = (H.readUrls || []).concat(readUrls || []);
       // The first find adds dates, so the server fills it in by itself; the second is left to look at.
       var filled = 0;
+      H.trusted = (H.trusted || []).concat([!!trusted]);
       (cands || []).forEach(function (c, i) {
-        var sure = i === 0;
+        // Handed over (trusted): everything with dates fills in; from the archives only the first find is sure.
+        var sure = trusted ? (c.dates || []).length > 0 : i === 0;
         if (sure) filled += 1;
         st.candidates.push({ id: 'cand' + (st.candidates.length + 1), name: c.name, role: c.role, first: c.start, last: c.end, region: c.region, lineup: c.lineup,
           n: (c.dates || []).length, sources: c.sources || [], status: sure ? 'added' : 'new', auto: sure, decidedAt: sure ? new Date().toISOString() : null,

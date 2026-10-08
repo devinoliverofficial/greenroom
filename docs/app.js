@@ -4348,9 +4348,18 @@
   // sure ones filled in. One line says how it went.
   async function tfHandOver(id, found, what) {
     var B = window.GR_BACKEND, c = tfOf(id);
-    var merged = G.mergeTourCandidates(found).map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; });
+    var named = [], oneoffs = [];
+    (Array.isArray(found) ? found : []).forEach(function (x) {
+      if (!G.isObj(x)) return;
+      if (String(x.name || '').trim()) { named.push(x); return; }
+      // One-off shows: no tour name, just nights. Kept as handed over, one item per year.
+      var dates = (Array.isArray(x.dates) ? x.dates : []).map(G.tourDate).filter(Boolean).sort(function (p, q) { return p.date < q.date ? -1 : p.date > q.date ? 1 : 0; });
+      if (dates.length) oneoffs.push({ name: '', role: '', start: dates[0].date, end: dates[dates.length - 1].date, region: String(x.region || ''), lineup: '', dates: dates, sources: Array.isArray(x.sources) ? x.sources : [] });
+    });
+    var merged = G.mergeTourCandidates(named).map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; }).concat(oneoffs);
     if (!merged.length) { toast('No tour dates found on ' + what); return; }
-    var st = await B.tourFindPropose(id, merged, []);
+    // The owner's word: what they handed over goes on the page by itself (ties are still asked about).
+    var st = await B.tourFindPropose(id, merged, [], true);
     c.state = st; c.at = Date.now(); c.since = c.since || Date.now();
     var added = G.num(st && st.added), filled = G.num(st && st.filled);
     toast(filled ? plural(filled, 'tour') + ' added to the page from ' + what + (added > filled ? ', ' + (added - filled) + ' to look at' : '')
@@ -4393,9 +4402,11 @@
   // owner hands the page over: copied text, a saved PDF, or screenshots.
   function tfPagePrompt(name, text, asImage) {
     return 'TOUR FINDER. ' + (asImage ? 'The attached image shows' : 'The text below is') + ' a list of concerts for the act "' + name + '", saved from a concert archive (Concert Archives, Songkick, Bandsintown, a fan wiki). Today is ' + G.ymd(new Date()) + '. ' +
-      'Return ONLY a JSON array of the tours and runs on it. Group the shows by the tour name the list gives; shows with no tour name that fall within five days of each other with the same other acts are one run, named like "Spring 2012 run with Blessthefall". ' +
-      'Fields per item: "name", "role" (headline, co-headline, support or festival; "" if the list doesn’t say), "start" and "end" (YYYY-MM-DD), "lineup" (the other acts, comma separated), "region", ' +
-      '"dates" (every show in it as one short string "YYYY-MM-DD | City, ST | Venue"; leave the venue blank when it isn’t given). Keep every show that has a date; never invent one; a one-off show with no run around it goes in an item named for its date and city. If there are no concerts return [].' +
+      'Return ONLY a JSON array. Group the shows by the tour name the list gives (an item per tour, "name" exactly as the list names it; a festival or package tour is a tour too). ' +
+      'Shows the list gives NO tour name for are one-off shows: put all of a calendar year’s one-off shows in ONE item with "name": "" (an item per year). ' +
+      'Fields per item: "name", "role" (headline, co-headline, support or festival; "" if the list doesn’t say), "start" and "end" (YYYY-MM-DD, the first and last show in the item), "lineup" (the other acts on the bill, comma separated; "" for one-offs), "region", ' +
+      '"dates": every show in the item as one short string "YYYY-MM-DD | City, ST | Venue" — for the US and Canada the two-letter state or province after the city, anywhere else the country after the city (e.g. "2016-02-20 | London, United Kingdom | O2 Academy Islington"); leave the venue blank when it isn’t given. ' +
+      'Keep every show that has a date; never invent one; never skip a year. If the list has no concerts return [].' +
       (asImage ? '' : '\n\n' + text);
   }
   async function tfPage(id, text, files) {
@@ -4465,8 +4476,8 @@
       : G.num(x.have) > 0 ? 'These dates are already on the page under another name' : 'No dates listed';
     return h('div', { class: 'tf-card' + (x.fill ? ' tf-fill' : '') },
       x.fill ? h('p', { class: 'tf-kicker' }, 'Already on the page — fill in its dates') : null,
-      h('button', { class: 'tf-name', type: 'button', 'aria-label': 'Change the name: ' + x.name, onclick: function () { openTfRename(id, x); } },
-        h('span', { class: 'tf-name-t' }, x.name), icon('chevron', 14)),
+      h('button', { class: 'tf-name', type: 'button', 'aria-label': 'Change the name: ' + tfName(x), onclick: function () { openTfRename(id, x); } },
+        h('span', { class: 'tf-name-t' }, tfName(x)), icon('chevron', 14)),
       h('p', { class: 'tf-sub' }, tfSpan(x.first, x.last) + (x.region ? ' · ' + x.region : '')),
       what ? h('p', { class: 'tf-sub' }, what) : null,
       h('p', { class: 'tf-fit' }, fit),
@@ -4474,6 +4485,8 @@
         h('button', { class: 'btn primary', type: 'button', disabled: busy, onclick: function () { tfDecide(id, x, true); } }, 'Add'),
         h('button', { class: 'btn ghost', type: 'button', disabled: busy, onclick: function () { tfDecide(id, x, false); } }, 'Not ours')));
   }
+  // A find with no name is one-off shows: nights, no tour.
+  function tfName(x) { return String(x && x.name || '').trim() || 'One-off shows'; }
   // Does a find add anything to the page? (Ties are asked about; the rest
   // of what's left over is only listed.)
   function tfUseful(x) { return G.num(x.matched) > 0 || G.num(x.toAdd) > 0 || !!x.fill; }
@@ -4527,7 +4540,7 @@
       h('summary', null, plural(added.length, 'tour') + ' added from here'),
       added.map(function (x) {
         return h('div', { class: 'row tf-added-row' },
-          h('div', { class: 'row-label' }, x.name, h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (x.auto ? ' · added by itself' : ''))),
+          h('div', { class: 'row-label' }, tfName(x), h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (x.auto ? ' · added by itself' : ''))),
           h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfUndo(id, x); } }, 'Take off'));
       })) : null;
     var body;
@@ -4558,7 +4571,7 @@
           autoNow.map(function (x) {
             var bits = [G.num(x.named) ? plural(G.num(x.named), 'night') : null, TF_ROLE[x.role] || null, x.lineup ? 'with ' + x.lineup : null].filter(Boolean).join(' · ');
             return h('div', { class: 'tf-auto-row' },
-              h('div', { class: 'row-label' }, x.name, h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (bits ? ' · ' + bits : ''))),
+              h('div', { class: 'row-label' }, tfName(x), h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (bits ? ' · ' + bits : ''))),
               h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfUndo(id, x); } }, 'Take off'));
           })] : null,
         ties.length ? [h('h4', { class: 'tf-h2' }, 'Which is it?'),
@@ -4572,7 +4585,7 @@
           h('p', { class: 'note tf-p' }, 'Announced, but no dates the page doesn’t already have.'),
           rest.map(function (x) {
             return h('div', { class: 'tf-row-x' },
-              h('span', null, x.name, h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (x.lineup ? ' · with ' + x.lineup : ''))),
+              h('span', null, tfName(x), h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (x.lineup ? ' · with ' + x.lineup : ''))),
               h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfDecide(id, x, false); } }, 'Not ours'));
           })) : null,
         runsBlock, addedBlock,

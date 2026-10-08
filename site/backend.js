@@ -654,8 +654,9 @@
     },
     // readUrls: the articles the phone actually read (a batch the reader failed
     // on stays unread and is asked again); posters and pasted pages pass [].
-    tourFindPropose: async function (artistId, cands, readUrls) {
-      var q = await sb.rpc('tour_find_propose', { a_id: artistId, cands: cands || [], read_urls: Array.isArray(readUrls) ? readUrls : null });
+    // trusted: a page or poster the owner handed over — their word, so it fills the page in by itself.
+    tourFindPropose: async function (artistId, cands, readUrls, trusted) {
+      var q = await sb.rpc('tour_find_propose', { a_id: artistId, cands: cands || [], read_urls: Array.isArray(readUrls) ? readUrls : null, trusted: !!trusted });
       if (q.error) throw mapError(q.error);
       return q.data;
     },
