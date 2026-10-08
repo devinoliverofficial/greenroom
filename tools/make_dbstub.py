@@ -396,6 +396,16 @@ shim = r"""<script>
       return Promise.resolve(Object.assign(JSON.parse(JSON.stringify(st)), { named: 3 }));
     },
     tourFindNote: function (artistId, note) { var H = window.__harness; H.tfNotes = (H.tfNotes || []).concat([note]); return Promise.resolve(); },
+    artistTourEdit: function (artistId, name, newName) {
+      var H = window.__harness; H.tourEdits = (H.tourEdits || []).concat([{ artistId: artistId, name: name, newName: newName }]);
+      Object.keys(H.histories || {}).forEach(function (k) { var hr = H.histories[k]; (hr && hr.summary && hr.summary.toursList || []).forEach(function (t) { if (t.name === name) t.name = newName; }); });
+      return Promise.resolve({});
+    },
+    artistTourRemove: function (artistId, name) {
+      var H = window.__harness; H.tourRemoved = (H.tourRemoved || []).concat([{ artistId: artistId, name: name }]);
+      Object.keys(H.histories || {}).forEach(function (k) { var hr = H.histories[k]; if (hr && hr.summary && hr.summary.toursList) hr.summary.toursList = hr.summary.toursList.filter(function (t) { return t.name !== name; }); });
+      return Promise.resolve({});
+    },
     tourCandidateUndo: function (candId) {
       var H = window.__harness; var st = null;
       Object.keys(H.tf || {}).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; x.status = x.auto ? 'no' : 'new'; } }); });

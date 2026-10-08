@@ -680,6 +680,17 @@
       var q = await sb.rpc('tour_find_note', { a_id: artistId, note: note || '' });
       if (q.error) throw mapError(q.error);
     },
+    // Correcting a tour the page shows: a new name, or off the page (sticks through re-syncs).
+    artistTourEdit: async function (artistId, name, newName) {
+      var q = await sb.rpc('artist_tour_edit', { a_id: artistId, tour_name: name, new_name: newName });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
+    artistTourRemove: async function (artistId, name) {
+      var q = await sb.rpc('artist_tour_remove', { a_id: artistId, tour_name: name });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
     tourCandidateUndo: async function (candId) {
       var q = await sb.rpc('tour_candidate_undo', { c_id: candId });
       if (q.error) throw mapError(q.error);

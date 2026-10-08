@@ -3254,7 +3254,7 @@
     var pastTours = hsum && Array.isArray(hsum.toursList) ? hsum.toursList : [];
     var tourRows = G.tourTimeline(tours, pastTours, G.tourToday()).map(function (r) {
       var t = r.tour;
-      if (!r.own) return historyTourRow(id, r);
+      if (!r.own) return manage ? swipeEditRow(historyTourRow(id, r), function () { openTourEdit(id, r); }) : historyTourRow(id, r);
       return timelineRow(r, function () {
         if ((manage || !card.mine) && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, id);
       }, false);
@@ -3953,6 +3953,71 @@
         icon('chevron', 16)),
       body);
   }
+  // Slide a row left and an Edit button comes out from under it (Devin: "slide
+  // a tour to the left and it will say 'edit'"). A tap on the row itself still
+  // opens it; a swipe never counts as a tap.
+  function swipeEditRow(row, onEdit) {
+    var wrap = h('li', { class: 'sw-wrap' }), pane = h('div', { class: 'sw-pane' }), open = false;
+    var edit = h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit this tour', onclick: function () { onEdit(); } }, 'Edit');
+    // The row is an <li>; it rides inside the pane as a block.
+    row.classList.add('sw-row');
+    pane.appendChild(row);
+    wrap.appendChild(edit); wrap.appendChild(pane);
+    var x0 = 0, y0 = 0, dx = 0, dragging = false, horizontal = null;
+    var setX = function (x) { pane.style.transform = x ? 'translateX(' + x + 'px)' : ''; };
+    pane.addEventListener('touchstart', function (e) {
+      var t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; dx = 0; dragging = true; horizontal = null; pane.style.transition = 'none';
+    }, { passive: true });
+    pane.addEventListener('touchmove', function (e) {
+      if (!dragging) return;
+      var t = e.touches[0], mx = t.clientX - x0, my = t.clientY - y0;
+      if (horizontal === null && (Math.abs(mx) > 6 || Math.abs(my) > 6)) horizontal = Math.abs(mx) > Math.abs(my);
+      if (!horizontal) return;
+      e.preventDefault();
+      dx = Math.max(-96, Math.min(0, (open ? -88 : 0) + mx));
+      setX(dx);
+    }, { passive: false });
+    var settle = function () {
+      dragging = false; pane.style.transition = '';
+      if (horizontal) { open = dx < -44; setX(open ? -88 : 0); wrap.classList.toggle('open', open); }
+      horizontal = null;
+    };
+    pane.addEventListener('touchend', function (e) { if (horizontal && e.cancelable) e.preventDefault(); settle(); });
+    pane.addEventListener('touchcancel', settle);
+    // No touch screen: a right-click (or long press on some phones) opens the same Edit.
+    pane.addEventListener('contextmenu', function (e) { e.preventDefault(); onEdit(); });
+    return wrap;
+  }
+  // Fixing a tour the page shows: a new name, or take it off the page. The
+  // correction sticks through every re-sync.
+  function openTourEdit(id, r) {
+    var st = { name: r.name };
+    openSheet(function () {
+      var input = h('input', { class: 'input', type: 'text', maxlength: 120, value: st.name, 'aria-label': 'Tour name',
+        oninput: function (e) { st.name = e.target.value; } });
+      return [h('h2', { class: 'sh-title' }, 'Edit this tour'),
+        h('p', { class: 'sh-sub' }, (r.first ? tourSpan(r.first, r.last) + ' · ' : '') + plural(G.num(r.n), 'show')),
+        input,
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+            var nm = String(st.name || '').replace(/\s+/g, ' ').trim();
+            if (nm.length < 2) { toast('Give it a name'); return; }
+            if (nm === r.name) { closeSheet(); return; }
+            var b = e.currentTarget; b.disabled = true;
+            try { await window.GR_BACKEND.artistTourEdit(id, r.name, nm); closeSheet(); toast('Renamed ' + nm); histOf(id, true); render(true); }
+            catch (x) { b.disabled = false; saveFailed('tours', x); }
+          } }, 'Save name'),
+          h('button', { class: 'btn ghost block danger', type: 'button', onclick: function () {
+            confirmSheet({ title: 'Remove ' + r.name + '?', body: 'It comes off the Tours list. Nights setlist.fm knows about stay as shows; nights the search added for this tour go.',
+              action: 'Remove tour', danger: true,
+              onConfirm: async function () {
+                try { await window.GR_BACKEND.artistTourRemove(id, r.name); toast('Removed ' + r.name); histOf(id, true); render(true); return true; }
+                catch (x) { saveFailed('tours', x); return false; }
+              } });
+          } }, 'Remove this tour'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
+    }, { label: 'Edit this tour' });
+  }
   // A person's badge and "On the road since": the same ladder the artists climb.
   function roadLine(rs) {
     if (!G.isObj(rs)) return null;
@@ -4554,48 +4619,23 @@
     var c = tfOf(id);
     if (c.none) return null;
     var st = c.state || {}, status = c.state ? (st.status || 'idle') : (c.failed ? 'failed' : 'loading');
-    // A read left mid-way (the page was closed) picks up where it was; the
-    // articles are read as soon as the reading brain is here.
     if (c.state && !c.timer && !c.asking && !c.busy) tfAfter(id);
     var cands = Array.isArray(st.candidates) ? st.candidates : [];
-    var fresh = cands.filter(function (x) { return x.status === 'new'; });
-    var ties = fresh.filter(tfUseful), rest = fresh.filter(function (x) { return !tfUseful(x); });
-    var added = cands.filter(function (x) { return x.status === 'added'; });
-    // What this run put on the page by itself (since the search was started).
-    var since = st.startedAt ? Date.parse(st.startedAt) : 0;
-    var autoNow = added.filter(function (x) { return x.auto && x.decidedAt && Date.parse(x.decidedAt) >= since - 1000; });
     var runs = Array.isArray(st.runs) ? st.runs : [];
     var findBtn = function (label) {
-      return h('button', { class: 'btn primary block', type: 'button', disabled: c.busy, onclick: function () { tfStart(id); } }, icon('search', 18), label);
+      return h('button', { class: 'btn ghost block', type: 'button', disabled: c.busy, onclick: function () { tfStart(id); } }, icon('search', 18), label);
     };
     var pageBtn = S.sample ? h('button', { class: 'btn ghost block', type: 'button', disabled: c.busy, onclick: function () { openTfPage(id); } }, icon('plus', 18), 'Add from a saved page') : null;
     var runsBlock = runs.length ? h('details', { class: 'tf-more' },
-      h('summary', null, plural(runs.length, 'run') + ' of nights on the page with no tour name'),
+      h('summary', null, plural(runs.length, 'run') + ' of nights with no tour name'),
       h('p', { class: 'note tf-p' }, 'setlist.fm has these shows but nobody named the tour. Name a run and every night in it is filed under it.'),
       runs.map(function (r) { return tfRunCard(id, r, cands, c.busy); })) : null;
-    var addedBlock = added.length ? h('details', { class: 'tf-added' },
-      h('summary', null, plural(added.length, 'tour') + ' added from here'),
-      added.map(function (x) {
-        return h('div', { class: 'row tf-added-row' },
-          h('div', { class: 'row-label' }, tfName(x), h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (x.auto ? ' · added by itself' : ''))),
-          h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfUndo(id, x); } }, 'Take off'));
-      })) : null;
     var body;
     if (status === 'loading') body = h('p', { class: 'note tf-status' }, 'Looking…');
     else if (status === 'failed') body = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { tfOf(id, true); render(true); } }, 'Try again');
-    else if (c.busy && c.phase && status !== 'reading' && status !== 'thinking') {
-      body = tfWaitBlock(st, c, true);
-    } else if (status === 'idle' || status === 'error') {
-      body = [status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn’t finish.') : null,
-        findBtn(status === 'error' ? 'Try again' : 'Find missing tours'),
-        pageBtn, tfPosterButton(id, c.busy),
-        ties.length ? [h('h4', { class: 'tf-h2' }, 'Your call'), ties.map(function (x) { return tfCandCard(id, x, c.busy); })] : null,
-        runsBlock, addedBlock];
-    } else if (status === 'reading' || status === 'thinking' || (status === 'ready' && st.brain)) {
-      // Without the key in Vault the archives are still read by the server, but the
-      // articles are sorted on this phone once they're in: say so.
-      body = tfWaitBlock(st, c, !st.brain);
-    } else if (status === 'ready' || status === 'extracting') {
+    else if (c.busy && c.phase && status !== 'reading' && status !== 'thinking') body = tfWaitBlock(st, c, true);
+    else if (status === 'reading' || status === 'thinking' || (status === 'ready' && st.brain)) body = tfWaitBlock(st, c, !st.brain);
+    else if (status === 'ready' || status === 'extracting') {
       body = S.sample && !c.error ? tfWaitBlock(st, c, true)
         : status === 'extracting' ? [tfWaitBlock(st, c, true), h('p', { class: 'note' }, 'Another phone is sorting the tours right now.')]
         : [h('p', { class: 'note bad' }, c.error || 'Reading isn’t available right now.'),
@@ -4603,37 +4643,16 @@
     } else {
       body = [
         c.error ? h('p', { class: 'note bad' }, c.error) : null,
-        autoNow.length ? [h('h4', { class: 'tf-h2' }, plural(autoNow.length, 'tour') + ' added to the page'),
-          h('p', { class: 'note tf-p' }, 'Name, dates and venues where the announcements had them. Wrong one? Take it off.'),
-          autoNow.map(function (x) {
-            var bits = [G.num(x.named) ? plural(G.num(x.named), 'night') : null, TF_ROLE[x.role] || null, x.lineup ? 'with ' + x.lineup : null].filter(Boolean).join(' · ');
-            return h('div', { class: 'tf-auto-row' },
-              h('div', { class: 'row-label' }, tfName(x), h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (bits ? ' · ' + bits : ''))),
-              h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfUndo(id, x); } }, 'Take off'));
-          })] : null,
-        ties.length ? [h('h4', { class: 'tf-h2' }, 'Which is it?'),
-          h('p', { class: 'note tf-p' }, 'These want some of the same nights, so it’s your call. Add the right one; the other goes.'),
-          ties.map(function (x) { return tfCandCard(id, x, c.busy); })] : null,
-        !autoNow.length && !ties.length ? h('p', { class: 'note' }, st.detail || 'Nothing found in the announcements that isn’t already on the page.')
-          : st.detail ? h('p', { class: 'note tf-p' }, st.detail) : null,
-        st.auto && st.finishedAt ? h('p', { class: 'note tf-p' }, 'Greenroom searched by itself on ' + dayMD(String(st.finishedAt).slice(0, 10)) + '. It looks again every month.') : null,
-        st.sources && st.sources.lambgoat === 'none' && G.num(st.pages) > 0 ? h('p', { class: 'note' }, 'One of the archives didn’t answer this time; the others were read.') : null,
-        rest.length ? h('details', { class: 'tf-more' },
-          h('summary', null, plural(rest.length, 'tour') + ' found with nothing to add'),
-          h('p', { class: 'note tf-p' }, 'Announced, but no dates the page doesn’t already have.'),
-          rest.map(function (x) {
-            return h('div', { class: 'tf-row-x' },
-              h('span', null, tfName(x), h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (x.lineup ? ' · with ' + x.lineup : ''))),
-              h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfDecide(id, x, false); } }, 'Not ours'));
-          })) : null,
-        runsBlock, addedBlock,
+        status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn’t finish.') : null,
+        status === 'done' && st.finishedAt ? h('p', { class: 'note tf-p' }, (st.auto ? 'Greenroom searched by itself on ' : 'Searched on ') + dayMD(String(st.finishedAt).slice(0, 10)) + (st.detail ? ' — ' + st.detail.replace(/^Read /, 'read ') : '') + '. It looks again every month; slide a tour left to correct it.') : null,
         pageBtn, tfPosterButton(id, c.busy),
-        st.day && st.today && st.day !== st.today ? findBtn('Look again') : h('p', { class: 'note tf-again' }, 'The archives are read once a day. Come back tomorrow to look again.')
+        runsBlock,
+        status === 'idle' || status === 'error' || (st.day && st.today && st.day !== st.today) ? findBtn(status === 'error' ? 'Try again' : 'Look again now') : null
       ];
     }
-    return h('section', { class: 'tf-block', 'aria-label': 'Add missing tours' },
-      h('h3', { class: 'mn-h mn-over tf-h' }, 'Add missing tours'),
-      h('p', { class: 'note tf-p' }, 'Greenroom reads nine music-news archives and Wikipedia for ' + ((card || {}).name || 'the act') + '’s tour announcements, then puts every tour it’s sure of on the page — the name, the dates, the venues where the article had them. When two finds want the same nights, it asks you.' + (st.brain ? ' It does this by itself, and looks again every month.' : '')),
+    return h('section', { class: 'tf-block', 'aria-label': 'Tour search' },
+      h('h3', { class: 'mn-h mn-over tf-h' }, 'Tour search'),
+      h('p', { class: 'note tf-p' }, 'Greenroom reads twelve music-news archives and Wikipedia for ' + ((card || {}).name || 'the act') + '’s tour announcements and puts every tour it finds on the page — name, dates, venues where the article had them. It does this by itself. Wrong one? Slide it left on the Tours list and fix it.'),
       body);
   }
 
