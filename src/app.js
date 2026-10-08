@@ -15035,6 +15035,53 @@
   function feedOn() { return !!(S.feed && S.feed.row && S.feed.row.switched_on); }
   function feedSince() { return S.feed && S.feed.row && S.feed.row.since ? dayMD(S.feed.row.since) : 'the feed started'; }
 
+  /* A charge logged some other way first (a statement upload, typed by
+     hand) comes round again as the bank's copy on the next refresh. When
+     the bank's copies pair off one to one with charges already on the tour
+     (same amount, within a day), there's no doubt which they are, so they
+     are set aside by themselves and never show up as new. Where the count
+     doesn't match (three hotel rooms at one price and only two logged), the
+     extra waits in the "may already be logged" fold, because one of them is
+     real. Charges that came in through the feed itself never pair: the bank
+     never sends the same charge twice, so a look-alike of one of those is a
+     second, real charge. */
+  function autoAsideTwins(id) {
+    var B = window.GR_BACKEND, t = getTour(id);
+    if (S.mode !== 'db' || !B || !B.feedCall || !t || !canEditTour(id)) return;
+    var P = S.pile && S.pile[id];
+    if (!(createdTour(id) || (P && P.lead))) return;
+    S.asideDone = S.asideDone || {};
+    var waiting = feedWaiting(id).filter(function (it) { return G.num(it.amount) > 0 && !S.asideDone[it.id]; });
+    if (!waiting.length) return;
+    var others = G.rows(t.charges).filter(function (ch) { return chargeSource(t, ch) !== 'PLAID' && G.parseDay(ch.date); })
+      .concat(G.rows(t.extras).filter(function (x) { return G.parseDay(x.date); }));
+    if (!others.length) return;
+    var key = function (v) { return (Math.round(G.num(v) * 100) / 100).toFixed(2); };
+    var byAmt = {};
+    waiting.forEach(function (it) { (byAmt[key(it.amount)] = byAmt[key(it.amount)] || []).push(it); });
+    var picks = [];
+    Object.keys(byAmt).forEach(function (k) {
+      var items = byAmt[k];
+      var twins = others.filter(function (c) {
+        return key(c.amount) === k && items.some(function (it) { return Math.abs(G.daysBetween(String(c.date), String(it.date))) <= 1; });
+      });
+      if (twins.length && items.length <= twins.length) items.forEach(function (it) { picks.push(it); });
+    });
+    if (!picks.length) return;
+    picks.forEach(function (it) { S.asideDone[it.id] = true; });
+    B.feedCall('file', { tourId: id, picks: picks.map(function (it) {
+      return { id: it.id, keep: false, category: null, accounted: false, dest: 'tour', to: id };
+    }) }).then(function (r) {
+      if (!r || !r.ok) { picks.forEach(function (it) { delete S.asideDone[it.id]; }); return; }
+      var gone = {};
+      picks.forEach(function (it) { gone[it.id] = true; });
+      if (S.feed && S.feed.items) S.feed.items = S.feed.items.filter(function (it) { return !gone[it.id]; });
+      if (P && P.items) P.items = P.items.filter(function (it) { return !gone[it.id]; });
+      toast(picks.length === 1 ? 'A charge you\u2019d already logged came round from the bank and was set aside.'
+        : picks.length + ' charges you\u2019d already logged came round from the bank and were set aside.');
+      render(true);
+    }).catch(function () { picks.forEach(function (it) { delete S.asideDone[it.id]; }); });
+  }
   function feedWaiting(tourId) {
     var P = S.pile && S.pile[tourId];
     if (P && P.lead) return P.items || [];
@@ -15194,6 +15241,7 @@
     // Connected but not set up yet: the one time the choices are asked.
     if (!row.switched_on) return addCard(function () { openFeedSheet(id); });
     // Set up: one button does the rest. The choices are in the tour menu.
+    autoAsideTwins(id);
     var n = feedWaiting(id).length;
     var label = h('span', null, 'Refresh Card');
     // A tour without logging dates yet gets asked for them first.
@@ -15489,6 +15537,7 @@
 
   function tabCards(id, t) {
     syncCards(id);
+    autoAsideTwins(id);
     var waiting = feedWaiting(id);
     var cards = tourCards(t);
     // A card with charges waiting that isn't on the list yet still shows.
@@ -15642,6 +15691,7 @@
   }
 
   function openFeedReview(tourId, done, only) {
+    autoAsideTwins(tourId);
     var cards = [];
     feedWaiting(tourId).slice().sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); })
       .forEach(function (it) { var k = it.account || ''; if (cards.indexOf(k) < 0 && (only == null || k === only)) cards.push(k); });
