@@ -12,6 +12,11 @@ small model for the finder), but a cap is a brake, not a plan.
 - [ ] Concert Archives license (below) — if it lands, most of the tour searching goes away
 - [ ] Show the month's meter somewhere Devin can see it in the app
 
+## Done today (2026-10-08)
+- [x] Tour search runs by itself for every page with a road story; trusts what it finds; ties settled, never asked
+- [x] Slide a tour left → Edit (rename / remove); corrections survive re-syncs
+- [x] Reading meter: small model, monthly ceiling; Anthropic: $20 credit, auto-reload, $50/month limit
+
 ## 2. Concert Archives — every artist, zero steps
 - [ ] Email sent 2026-10-08 to support@concertarchives.org (all bands, licensing terms asked). Waiting on reply
 - [ ] When they answer: agree terms, get the export/API, build the import so every claimed page fills itself
