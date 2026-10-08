@@ -1752,6 +1752,32 @@
       eq(oln.sources.join(','), 'https://a.example/1,https://a.example/2', 'https sources add up');
       eq(oln.lineup, 'Our Last Night, The Word Alive', 'the fuller lineup stays');
     });
+    test('a handed-over spreadsheet reads as tours and one-off nights', function () {
+      var csv = 'Date,Concert Title or Tour Title,Bands,Venue,Location\r\n' +
+        '"Sep 02, 2023",Taste Of Chaos Tour,"Hollywood Undead / In This Moment / I See Stars",The Fillmore,"Detroit, Michigan, United States"\r\n' +
+        '"Sep 04, 2023",Taste Of Chaos Tour,"In This Moment / I See Stars",Agora Theatre,"Cleveland, Ohio, United States"\r\n' +
+        '"Feb 20, 2016",,"I See Stars / The Word Alive",O2 Academy Islington,"London, England, United Kingdom"\r\n' +
+        '"Mar 7, 2016",,I See Stars,"Thekla, Bristol","Bristol, England, United Kingdom"\r\n' +
+        '"Jul 1, 2016","Warped Fest / Vans Warped Tour","Many / Bands",Pomona Fairplex,"Pomona, California, United States"\r\n' +
+        '"Jul 2, 2015",Vans Warped Tour,Many,Seattle Center,"Seattle, Washington, United States"\r\n' +
+        'not a date,x,y,z,w\r\n';
+      var rows = G.parseCsv(csv);
+      eq(rows.length, 8, 'header + 7 rows; the quoted comma in "Thekla, Bristol" stays one cell');
+      eq(rows[4][3], 'Thekla, Bristol');
+      var list = G.concertRows(rows);
+      eq(list.length, 6, 'the row without a date is dropped');
+      eq(list[0].date, '2023-09-02'); eq(list[0].where, 'Detroit, Michigan, United States');
+      var items = G.concertItems(list, 'I See Stars');
+      var names = items.map(function (i) { return i.name + '@' + i.start.slice(0, 4); }).join(' | ');
+      eq(names, 'Taste Of Chaos Tour@2023 | @2016 | Vans Warped Tour@2016 | Vans Warped Tour@2015', 'tours by title and year, one-offs by year, the tour is the last " / " part');
+      eq(items[0].dates.length, 2); eq(items[0].dates[0], '2023-09-02 | Detroit, Michigan, United States | The Fillmore');
+      eq(items[0].lineup, 'In This Moment, Hollywood Undead', 'the other acts, the act itself left out, the most frequent first');
+      eq(items[1].name, ''); eq(items[1].dates.length, 2); eq(items[1].lineup, '');
+      eq(G.concertRows([['Nothing', 'useful'], ['a', 'b']]), null, 'unknown headings: not a concert list');
+      eq(G.readDay('Sat, Sep 02, 2023'), '2023-09-02'); eq(G.readDay('20 Feb 2016'), '2016-02-20'); eq(G.readDay('2/20/16'), '2016-02-20'); eq(G.readDay('2016-02-30'), '', 'no such day');
+      var tsv = G.parseCsv('date\tvenue\tcity\n2020-01-01\tA\tB\n');
+      eq(tsv[1][1], 'A', 'tabs read too');
+    });
     test('etaText says the finder’s time left the way a person would', function () {
       eq(G.etaText(0), '', 'nothing left, nothing said');
       eq(G.etaText(45), 'Almost done.');

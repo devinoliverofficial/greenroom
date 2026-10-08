@@ -951,6 +951,105 @@
     });
     return idx.sort(function (a, b) { return a - b; }).map(function (i) { return paras[i].trim(); }).filter(Boolean).join('\n').slice(0, 6000);
   }
+  /* ---------------- Handed-over concert lists ---------------- */
+
+  // A spreadsheet's rows: quotes, doubled quotes, commas or tabs, CRLF. Blank rows go.
+  function parseCsv(text) {
+    var s = String(text || '').replace(/^﻿/, '');
+    var sep = (s.split('\n')[0] || '').indexOf('\t') >= 0 ? '\t' : ',';
+    var rows = [], row = [], cell = '', q = false, i, ch;
+    var keep = function () { row.push(cell); cell = ''; if (row.some(function (c) { return c.trim() !== ''; })) rows.push(row); row = []; };
+    for (i = 0; i < s.length; i++) {
+      ch = s[i];
+      if (q) {
+        if (ch === '"') { if (s[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === sep) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') { if (ch === '\r' && s[i + 1] === '\n') i++; keep(); }
+      else cell += ch;
+    }
+    keep();
+    return rows;
+  }
+  var MONTH_NO = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+  // A date however a sheet writes it: 2016-02-20, Feb 20, 2016, Sep 02, 2023, 20 Feb 2016, 02/20/2016, 2/20/16 (a weekday in front is fine).
+  function readDay(s) {
+    s = String(s || '').trim().replace(/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+/i, '');
+    var m, y, mo, d;
+    if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s))) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+    else if ((m = /^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/.exec(s))) { mo = MONTH_NO[m[1].slice(0, 3).toLowerCase()]; d = +m[2]; y = +m[3]; }
+    else if ((m = /^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})/.exec(s))) { d = +m[1]; mo = MONTH_NO[m[2].slice(0, 3).toLowerCase()]; y = +m[3]; }
+    else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(s))) { mo = +m[1]; d = +m[2]; y = +m[3]; if (y < 100) y += 2000; }
+    else return '';
+    if (!mo || !d || !y) return '';
+    var out = y + '-' + pad(mo) + '-' + pad(d);
+    return parseDay(out) ? out : '';
+  }
+  // Which column is which, by its heading (a Concert Archives export, Songkick, Bandsintown, anyone's sheet).
+  var CONCERT_COLS = {
+    date: /^(date|day|event ?date|show ?date|concert ?date|datetime|start ?date|start)$/i,
+    title: /^(concert|title|tour|tour ?title|tour ?name|concert ?title|concert ?title ?(or|\/) ?tour ?title|event|event ?name|event ?title|name)$/i,
+    bands: /^(bands?|artists?|line-?up|acts|performers?|with|support(ing)?|bill|other ?bands|bands? on the bill)$/i,
+    venue: /^(venue|venue ?name|place|location ?name)$/i,
+    city: /^(city|town)$/i, state: /^(state|region|province|state ?(\/|or) ?province|county)$/i, country: /^(country|nation)$/i,
+    location: /^(location|where|city, ?state, ?country|city ?\/ ?state ?\/ ?country|address)$/i
+  };
+  function concertColumns(header) {
+    var cols = {}, h = (Array.isArray(header) ? header : []).map(function (c) { return String(c || '').replace(/[_\s]+/g, ' ').trim(); });
+    Object.keys(CONCERT_COLS).forEach(function (k) {
+      h.forEach(function (c, i) { if (cols[k] == null && CONCERT_COLS[k].test(c)) cols[k] = i; });
+    });
+    return cols.date != null && (cols.venue != null || cols.location != null || cols.city != null) ? cols : null;
+  }
+  // The shows on a handed-over spreadsheet, one per row with a date; null when
+  // the headings aren't a concert list (then the reader is asked instead).
+  function concertRows(rows) {
+    if (!Array.isArray(rows) || rows.length < 2) return null;
+    var cols = concertColumns(rows[0]);
+    if (!cols) return null;
+    var get = function (r, k) { return cols[k] == null ? '' : String(r[cols[k]] || '').replace(/\s+/g, ' ').trim(); };
+    var out = [];
+    rows.slice(1).forEach(function (r) {
+      var date = readDay(get(r, 'date'));
+      if (!date) return;
+      var where = get(r, 'location') || [get(r, 'city'), get(r, 'state'), get(r, 'country')].filter(Boolean).join(', ');
+      out.push({ date: date, title: get(r, 'title'), bands: get(r, 'bands'), venue: get(r, 'venue'), where: where });
+    });
+    return out;
+  }
+  // Rows → the finder's items: one per tour title and year (Concert Archives
+  // writes "Concert Title / Tour Title" when a show has both: the tour is the
+  // last part), the shows with no title as one-offs by year. The other acts
+  // on the bill become the lineup, the act itself left out.
+  function concertItems(list, actName) {
+    var me = String(actName || '').toLowerCase().trim();
+    var items = {}, order = [];
+    (Array.isArray(list) ? list : []).forEach(function (r) {
+      if (!parseDay(r.date)) return;
+      var parts = String(r.title || '').split(/\s+\/\s+/).map(function (p) { return p.trim(); }).filter(Boolean);
+      var tour = parts.length ? parts[parts.length - 1] : '';
+      // A "title" that is only the bill (Band / Band) is no tour name.
+      if (tour && String(r.bands || '').toLowerCase().indexOf(tour.toLowerCase()) >= 0 && parts.length === 1) tour = '';
+      var key = (tour ? tourKeyLoose(tour) : '') + '|' + r.date.slice(0, 4);
+      var it = items[key];
+      if (!it) { it = items[key] = { name: tour, role: '', start: r.date, end: r.date, region: '', acts: {}, dates: [], seen: {} }; order.push(key); }
+      if (r.date < it.start) it.start = r.date;
+      if (r.date > it.end) it.end = r.date;
+      if (!it.seen[r.date]) { it.seen[r.date] = true; it.dates.push(r.date + ' | ' + String(r.where || '').trim() + ' | ' + String(r.venue || '').trim()); }
+      String(r.bands || '').split(/\s*\/\s*|\s*,\s*|\s*;\s*/).forEach(function (b) {
+        b = b.trim(); if (!b || b.toLowerCase() === me) return;
+        it.acts[b] = (it.acts[b] || 0) + 1;
+      });
+    });
+    return order.map(function (k) {
+      var it = items[k];
+      var lineup = it.name ? Object.keys(it.acts).sort(function (a, b) { return it.acts[b] - it.acts[a] || a.localeCompare(b); }).slice(0, 6).join(', ') : '';
+      it.dates.sort();
+      return { name: it.name, role: '', start: it.start, end: it.end, region: '', lineup: lineup, dates: it.dates, sources: [] };
+    });
+  }
+
   // "Come back in ~15 min": the finder's time left, rounded the way a person
   // would say it (to the minute under ten, to five minutes under an hour).
   function etaText(sec) {
@@ -1906,7 +2005,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

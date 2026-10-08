@@ -446,7 +446,7 @@ shim = r"""<script>
         H.histSeeded = true;
         H.histories[artistId] = { artist_id: artistId, status: 'ok', detail: '', total: 735, pages: 37, next_page: 0,
           synced_at: new Date(Date.now() - 36e5).toISOString(),
-          mb_url: 'https://www.setlist.fm/setlists/i-see-stars-3bd2d464.html',
+          mb_url: 'https://www.setlist.fm/setlists/i-see-stars-3bd2d464.html', credits: ['concertarchives.org'],
           summary: { shows: 735, tours: 34, countries: 33, cities: 212, firstYear: 2007, lastYear: 2026,
             years: { 2026: 44, 2025: 21, 2024: 86 },
             toursList: [ { name: '10 Years In The Black', n: 33, first: '2016-11-01', last: '2017-02-18' },
@@ -458,7 +458,7 @@ shim = r"""<script>
       // Only the columns the real read asks for, so a field the app leans on
       // that isn't among them shows up here as missing.
       var cols = {};
-      ['artist_id', 'status', 'detail', 'total', 'pages', 'next_page', 'summary', 'synced_at', 'mb_url', 'auto'].forEach(function (k) { cols[k] = hr[k] == null && k === 'auto' ? false : hr[k]; });
+      ['artist_id', 'status', 'detail', 'total', 'pages', 'next_page', 'summary', 'synced_at', 'mb_url', 'auto', 'credits'].forEach(function (k) { cols[k] = hr[k] == null && k === 'auto' ? false : hr[k] == null && k === 'credits' ? [] : hr[k]; });
       return Promise.resolve(cols);
     },
     historyStart: function (artistId) {

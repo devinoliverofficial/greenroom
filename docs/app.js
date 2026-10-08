@@ -4358,10 +4358,15 @@
     });
     var merged = G.mergeTourCandidates(named).map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; }).concat(oneoffs);
     if (!merged.length) { toast('No tour dates found on ' + what); return; }
-    // The owner's word: what they handed over goes on the page by itself (ties are still asked about).
-    var st = await B.tourFindPropose(id, merged, [], true);
+    // The owner's word: what they handed over goes on the page by itself (ties
+    // are still asked about). A whole history goes over a hundred finds at a time.
+    var st = null, added = 0, filled = 0;
+    for (var at = 0; at < merged.length; at += 100) {
+      c.progress = Math.min(merged.length, at + 100) + ' of ' + merged.length; render(true);
+      st = await B.tourFindPropose(id, merged.slice(at, at + 100), [], true);
+      added += G.num(st && st.added); filled += G.num(st && st.filled);
+    }
     c.state = st; c.at = Date.now(); c.since = c.since || Date.now();
-    var added = G.num(st && st.added), filled = G.num(st && st.filled);
     toast(filled ? plural(filled, 'tour') + ' added to the page from ' + what + (added > filled ? ', ' + (added - filled) + ' to look at' : '')
       : added ? plural(added, 'tour') + ' from ' + what + ' to look at below'
       : 'Everything on ' + what + ' was already on the page');
@@ -4409,16 +4414,28 @@
       'Keep every show that has a date; never invent one; never skip a year. If the list has no concerts return [].' +
       (asImage ? '' : '\n\n' + text);
   }
-  async function tfPage(id, text, files) {
+  async function tfPage(id, text, files, source) {
     var c = tfOf(id);
     if (!S.sample) { toast('Reading isn’t available right now.'); return; }
     if (c.busy) return;
     var name = (actOf(id).card || {}).name || '';
     c.busy = true; c.phase = 'Reading the page…'; c.progress = ''; c.error = ''; render(true);
-    var found = [], parts = [], images = [], missed = 0;
+    var found = [], parts = [], images = [], sheets = [], missed = 0;
+    var src = (TF_SOURCES.filter(function (o) { return o[0] === source; })[0] || TF_SOURCES[TF_SOURCES.length - 1])[2];
     try {
-      (files || []).forEach(function (f) { if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '')) parts.push(f); else if (tfImageOk(f)) images.push(f); });
+      (files || []).forEach(function (f) {
+        if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '')) parts.push(f);
+        else if (/\.(csv|tsv|txt)$/i.test(f.name || '') || /^text\//i.test(f.type)) sheets.push(f);
+        else if (tfImageOk(f)) images.push(f);
+      });
       var body = String(text || '');
+      // A spreadsheet with concert headings is read exactly, row by row; a text file without them is read as a pasted page.
+      for (var si = 0; si < sheets.length; si++) {
+        var sheetText = await sheets[si].text();
+        var list = G.concertRows(G.parseCsv(sheetText));
+        if (list && list.length) G.concertItems(list, name).forEach(function (x) { x.sources = [src]; found.push(x); });
+        else body += '\n' + sheetText;
+      }
       for (var i = 0; i < parts.length; i++) {
         try { var got = await pdfToText(parts[i], 200); body += '\n' + String(got && got.text || ''); } catch (e) { /* a PDF with no text layer: nothing to add */ }
       }
@@ -4426,44 +4443,53 @@
       if (body.length > 300000) { toast('That\u2019s a lot of text \u2014 reading the first 300,000 characters'); body = body.slice(0, 300000); }
       // Long lists go in slices (the reader answers a few hundred shows at a time).
       var slices = [];
+      body = body.trim();
       for (var at = 0; at < body.length; at += 30000) slices.push(body.slice(at, at + 30000));
       var total = slices.length + images.length, k = 0;
-      var take = function (out, src) { if (Array.isArray(out)) out.forEach(function (x) { if (G.isObj(x)) { x.sources = [src]; found.push(x); } }); };
+      var take = function (out, from) { if (Array.isArray(out)) out.forEach(function (x) { if (G.isObj(x)) { x.sources = [from]; found.push(x); } }); };
       for (var s = 0; s < slices.length; s++) {
         k += 1; c.progress = k + ' of ' + total; render(true);
         var o1 = await tfAsk(tfPagePrompt(name, slices[s], false), { cache: false });
-        if (Array.isArray(o1)) take(o1, 'https://devinoliverofficial.github.io/greenroom/#page'); else missed += 1;
+        if (Array.isArray(o1)) take(o1, src); else missed += 1;
       }
       for (var m = 0; m < images.length; m++) {
         k += 1; c.progress = k + ' of ' + total; render(true);
         var o2 = await tfAsk(tfPagePrompt(name, '', true), { images: [images[m]], cache: false });
-        if (Array.isArray(o2)) take(o2, 'https://devinoliverofficial.github.io/greenroom/#page'); else missed += 1;
+        if (Array.isArray(o2)) take(o2, src); else missed += 1;
       }
       if (missed) c.error = missed + ' of ' + total + ' parts couldn\u2019t be read this time.';
-      if (total) await tfHandOver(id, found, 'that page');
+      if (total || sheets.length) await tfHandOver(id, found, sheets.length && !total ? 'that spreadsheet' : 'that page');
     } catch (e) {
       c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn’t read the page just now.';
       if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
     }
     c.busy = false; c.phase = ''; c.progress = ''; render(true);
   }
+  var TF_SOURCES = [['concertarchives', 'Concert Archives', 'https://www.concertarchives.org/'], ['songkick', 'Songkick', 'https://www.songkick.com/'],
+    ['bandsintown', 'Bandsintown', 'https://www.bandsintown.com/'], ['other', 'Somewhere else', 'https://devinoliverofficial.github.io/greenroom/#page']];
   function openTfPage(id) {
-    var st = { text: '', files: [] };
+    var st = { text: '', files: [], source: 'concertarchives' };
     openSheet(function () {
-      var ta = h('textarea', { class: 'input tf-paste', placeholder: 'Paste the list of shows here', 'aria-label': 'The copied list of shows',
+      var ta = h('textarea', { class: 'input tf-paste', placeholder: 'Or paste the list of shows here', 'aria-label': 'The copied list of shows',
         oninput: function (e) { st.text = e.target.value; } });
       ta.value = st.text;
       var picked = h('p', { class: 'note' }, st.files.length ? plural(st.files.length, 'file') + ' ready: ' + st.files.map(function (f) { return f.name; }).join(', ') : '');
+      var srcRow = h('div', { class: 'tf-guess' }, TF_SOURCES.map(function (o) {
+        return h('button', { class: 'pf-btn' + (st.source === o[0] ? ' on' : ''), type: 'button', 'aria-pressed': st.source === o[0] ? 'true' : 'false',
+          onclick: function () { st.source = o[0]; Array.prototype.forEach.call(srcRow.children, function (ch, i) { ch.classList.toggle('on', TF_SOURCES[i][0] === o[0]); ch.setAttribute('aria-pressed', TF_SOURCES[i][0] === o[0] ? 'true' : 'false'); }); } }, o[1]);
+      }));
       return [h('h2', { class: 'sh-title' }, 'Add from a saved page'),
-        h('p', { class: 'sh-sub' }, 'Open the act’s page on Concert Archives (or Songkick, Bandsintown, a fan wiki) in Safari. Select the list of shows and copy it, or Share → Print → save it as a PDF. Hand it over here: Greenroom reads every show on it — date, venue, city, tour name, who played — and fills the page in.'),
-        ta,
+        h('p', { class: 'sh-sub' }, 'The best door is a spreadsheet: on Concert Archives, a verified band account can export the band’s whole concert list (date, tour title, bands, venue, city). Hand that file over here and every show lands — tours by name, one-off nights as nights. A copied page, a saved PDF or screenshots work too, a page at a time.'),
+        h('p', { class: 'note tf-p' }, 'Where is it from?'),
+        srcRow,
         h('div', { class: 'stack', style: 'margin-top:10px' },
-          fileControl({ accept: 'application/pdf,' + imageAccept(), multiple: true, cls: 'btn ghost block', icon: 'plus', label: 'Or pick a PDF or screenshots', ariaLabel: 'Pick a saved PDF or screenshots',
+          fileControl({ accept: '.csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/pdf,' + imageAccept(), multiple: true, cls: 'btn primary block', icon: 'plus', label: 'Pick the spreadsheet, PDF or screenshots', ariaLabel: 'Pick a spreadsheet, a saved PDF or screenshots',
             onFiles: function (files) { st.files = files.slice(0, 12); picked.textContent = plural(st.files.length, 'file') + ' ready: ' + st.files.map(function (f) { return f.name; }).join(', '); } }),
           picked,
+          ta,
           h('button', { class: 'btn primary block', type: 'button', onclick: function () {
-            if (!st.text.trim() && !st.files.length) { toast('Paste the list, or pick a file'); return; }
-            closeSheet(); tfPage(id, st.text, st.files);
+            if (!st.text.trim() && !st.files.length) { toast('Pick a file, or paste the list'); return; }
+            closeSheet(); tfPage(id, st.text, st.files, st.source);
           } }, 'Read it'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
     }, { label: 'Add from a saved page' });
@@ -4631,13 +4657,17 @@
     var c = histOf(id), row = c.row;
     var sum = row && G.isObj(row.summary) ? row.summary : null;
     if (!(sum && G.num(sum.shows) > 0)) return null;
-    return setlistCredit(row.mb_url);
+    return setlistCredit(row.mb_url, row.credits);
   }
-  function setlistCredit(url) {
+  // setlist.fm, and the sites the band handed pages over from (Concert Archives asks to be cited).
+  var TF_CREDIT = { 'concertarchives.org': ['Concert Archives', 'https://www.concertarchives.org/'], 'songkick.com': ['Songkick', 'https://www.songkick.com/'], 'bandsintown.com': ['Bandsintown', 'https://www.bandsintown.com/'] };
+  function setlistCredit(url, credits) {
+    var more = (Array.isArray(credits) ? credits : []).map(function (k) { return TF_CREDIT[k]; }).filter(Boolean);
     return h('p', { class: 'hist-credit' }, 'Tour data: ',
       h('a', { class: 'hist-src', target: '_blank', rel: 'noopener',
         href: /^https:\/\/www\.setlist\.fm\//.test(String(url || '')) ? url : 'https://www.setlist.fm' },
-        'setlist.fm'));
+        'setlist.fm'),
+      more.map(function (m) { return [' \u00b7 ', h('a', { class: 'hist-src', target: '_blank', rel: 'noopener', href: m[1] }, m[0])]; }));
   }
   // The owner's switchboard: the key, and the switch per artist page. The
   // sheet reads the key row and the history row itself, and redraws when
