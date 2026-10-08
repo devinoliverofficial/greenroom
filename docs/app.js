@@ -3147,14 +3147,20 @@
     if (card && histBusy(hc0.row)) histPoll(id);
     var head = function (title) {
       if (!(S.route.manage && (!card || card.mine))) return viewerHead(title, false, backTo);
+      // The same green head as your own page (Devin, 2026-10-08: "it should be
+      // the exact same"): + on the left, the mark, the menu, then the
+      // username with its check and the switcher arrow.
       return h('div', { class: 'headband' },
         h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' }),
+          h('span', { class: 'top-side' },
+            canWrite() ? h('button', { class: 'iconbtn pf-add', type: 'button', 'aria-label': 'Add an artist or a tour',
+              onclick: function () { go({ name: 'newartist' }); } }, icon('plus', 24)) : null),
           h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-          h('span', { class: 'top-side right' })),
+          h('span', { class: 'top-side right' }, menuBtn())),
         h('div', { class: 'band-row' }, h('h1', { class: 'band-name vp-user mid' },
           h('button', { class: 'acct-btn', type: 'button', 'aria-label': 'Your profiles: ' + title, onclick: function () { openAccounts(); } },
-            h('span', { class: 'vp-user-t' }, title), h('span', { class: 'acct-arrow', 'aria-hidden': 'true' }, icon('chevron', 16))))));
+            h('span', { class: 'vp-user-t' }, title), card && card.verified ? verifiedBadge() : null,
+            h('span', { class: 'acct-arrow', 'aria-hidden': 'true' }, icon('chevron', 16))))));
     };
     if (!card) {
       return h('div', { class: 'page home profile has-tabs' }, head('Artist'),
@@ -4176,9 +4182,12 @@
         done[key] = true;
       }
       var hc = histOf(id), sum = hc.row && G.isObj(hc.row.summary) ? hc.row.summary : {};
-      var merged = G.mergeTourCandidates(found).filter(function (x) { return !G.tourKnown(x.name, sum.toursList); })
+      var all2 = G.mergeTourCandidates(found);
+      var merged = all2.filter(function (x) { return !G.tourKnown(x.name, sum.toursList); })
         .map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; });
       c.state = await B.tourFindPropose(id, merged);
+      // How the reading went, kept on the server (so a run that ends with nothing can be understood).
+      if (B.tourFindNote) { try { await B.tourFindNote(id, 'Read ' + all.length + ' articles in ' + batches.length + ' batches: ' + found.length + ' mentions, ' + all2.length + ' tours, ' + (all2.length - merged.length) + ' already on the page, ' + G.num(c.state && c.state.added) + ' new'); } catch (e) { /* a note, nothing more */ } }
       c.at = Date.now(); c.found = null; c.doneBatches = null;
     } catch (e) {
       if (!(e && e.code === 'busy')) c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn\u2019t sort the tours just now.';
@@ -4275,6 +4284,52 @@
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
     }, { label: 'Name this run' });
   }
+  // Posters and flyers (Devin: "every flyer"): the one source that always
+  // carries the tour's name and its dates. Each image is read on its own.
+  function tfPosterPrompt(name) {
+    return 'TOUR FINDER. The attached image is a concert tour poster, flyer or admat. Today is ' + G.ymd(new Date()) + '. The act we care about is "' + name + '". ' +
+      'Return ONLY a JSON array with one item per tour or run the poster announces that ' + name + ' is on (usually one). Fields: "name" (the tour name as printed; if none, a short description like "Fall 2018 run with Dance Gavin Dance"), ' +
+      '"role" (headline, co-headline, support or festival), "start" and "end" (YYYY-MM-DD; when the poster has no year, pick the most likely year from the context and say so in "note"), ' +
+      '"lineup" (the other acts), "region", "dates" (every date on the poster as "YYYY-MM-DD | City, ST | Venue"), "note" (anything uncertain). Never invent dates; if the image is not a tour poster return [].';
+  }
+  async function tfPosters(id, files) {
+    var B = window.GR_BACKEND, c = tfOf(id);
+    if (!S.sample) { toast('Reading isn\u2019t available right now.'); return; }
+    if (c.busy) return;
+    var name = (actOf(id).card || {}).name || '';
+    c.busy = true; c.phase = 'Reading the posters\u2026'; c.progress = ''; c.error = ''; render(true);
+    var found = [];
+    try {
+      for (var i = 0; i < files.length; i++) {
+        c.progress = (i + 1) + ' of ' + files.length; render(true);
+        try {
+          var out = await S.sample.json(tfPosterPrompt(name), { images: [files[i]], cache: false });
+          if (Array.isArray(out)) out.forEach(function (x) { if (G.isObj(x)) { x.sources = ['https://devinoliverofficial.github.io/greenroom/#poster']; found.push(x); } });
+        } catch (e) {
+          if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e;
+          // One poster the reader couldn't make out is skipped.
+        }
+      }
+      var hc = histOf(id), sum = hc.row && G.isObj(hc.row.summary) ? hc.row.summary : {};
+      var merged = G.mergeTourCandidates(found).map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; });
+      if (!merged.length) { toast('No tour dates found on ' + (files.length === 1 ? 'that poster' : 'those posters')); }
+      else {
+        var st = await B.tourFindPropose(id, merged);
+        c.state = st; c.at = Date.now();
+        toast(plural(G.num(st && st.added), 'tour') + ' from ' + plural(files.length, 'poster') + (G.num(st && st.added) < merged.length ? ' (the rest were already on the page)' : ''));
+      }
+    } catch (e) {
+      c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn\u2019t read the posters just now.';
+      if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
+    }
+    c.busy = false; c.phase = ''; c.progress = ''; render(true);
+  }
+  function tfPosterButton(id, busy) {
+    if (!S.sample) return null;
+    return fileControl({ accept: imageAccept(), multiple: true, cls: 'btn ghost block', icon: 'plus',
+      label: 'Add from posters', ariaLabel: 'Add tours from poster photos',
+      onFiles: function (files) { tfPosters(id, files.slice(0, 20)); } });
+  }
   function tfCandCard(id, x, busy) {
     var what = [TF_ROLE[x.role] || null, x.lineup ? 'with ' + x.lineup : null].filter(Boolean).join(' \u00b7 ');
     var toAdd = x.toAdd == null ? G.num(x.n) : G.num(x.toAdd);
@@ -4314,12 +4369,16 @@
     else if (status === 'idle' || status === 'error') {
       var idleRuns = Array.isArray(st.runs) ? st.runs : [];
       body = [status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn\u2019t finish.') : null, findBtn(status === 'error' ? 'Try again' : 'Find missing tours'),
+        tfPosterButton(id, c.busy),
         idleRuns.length ? [h('h4', { class: 'tf-h2' }, 'Nights on the page with no tour name'),
           h('p', { class: 'note tf-p' }, 'setlist.fm has these shows but nobody named the tour. Name a run and every night in it is filed under it.'),
           idleRuns.map(function (r) { return tfRunCard(id, r, cands, c.busy); })] : null];
     } else if (status === 'reading') {
+      var srcs = st.sources || {};
       body = h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }),
-        'Reading tour announcements\u2026 ' + plural(G.num(st.pages), 'article') + (G.num(st.waiting) > 0 ? ', ' + st.waiting + ' to go' : ''));
+        'Reading tour announcements\u2026 ' + plural(G.num(st.pages), 'article') +
+        (G.num(srcs.sites) ? ' from ' + G.num(srcs.sitesWithNews) + ' of ' + (G.num(srcs.sites) + 2) + ' sites so far' : '') +
+        (G.num(st.waiting) > 0 ? ', ' + st.waiting + ' to go' : ''));
     } else if (status === 'ready' || (c.busy && c.phase)) {
       body = c.busy ? h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }), c.phase + (c.progress ? ' ' + c.progress : ''))
         : S.sample && !c.error ? h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }), 'Sorting out the tours\u2026')
@@ -4342,6 +4401,7 @@
               h('div', { class: 'row-label' }, x.name, h('span', { class: 'hint' }, tfSpan(x.first, x.last))),
               h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfUndo(id, x); } }, 'Take off'));
           })) : null,
+        tfPosterButton(id, c.busy),
         st.day && st.today && st.day !== st.today ? findBtn('Look again') : h('p', { class: 'note tf-again' }, 'The archives are read once a day. Come back tomorrow to look again.')
       ];
     }
@@ -8579,6 +8639,33 @@
       ];
     }, { label: 'Log income', onClose: function () { st.closed = true; } });
   }
+  async function claimNewLogin(trip) {
+    var B = window.GR_BACKEND, st = null;
+    try { st = await B.feedCall('status'); } catch (e) { st = null; }
+    var acc = st && G.isObj(st.accounts) ? st.accounts : (S.feed && S.feed.row && G.isObj(S.feed.row.accounts) ? S.feed.row.accounts : {});
+    if (S.feed && st && G.isObj(st.accounts)) { S.feed.row = st; S.feed.at = Date.now(); }
+    var before = Array.isArray(trip.itemsBefore) ? trip.itemsBefore : [];
+    var mine = [];
+    try { mine = await B.myPayItemIds(); } catch (e) { mine = []; }
+    var fresh = Object.keys(acc).map(function (k) { return acc[k] && acc[k].item; }).filter(Boolean)
+      .filter(function (x, i, a) { return a.indexOf(x) === i && before.indexOf(x) < 0 && mine.indexOf(x) < 0; });
+    if (fresh.length) {
+      try {
+        var r = await B.myPayClaimItems(fresh);
+        var list = r && Array.isArray(r.list) ? r.list : [];
+        // Each new account: ask-only on the feed, and watched for 'guarantees' alone — the tag that says "personal" to the deposit routing.
+        for (var i = 0; i < list.length; i++) {
+          var a = acc[list[i].id] || {};
+          if (!fresh.some(function (it) { return it === a.item; })) continue;
+          try { await B.feedCall('setup', { account: { id: list[i].id, card: list[i].card, mode: 'ask', income: list[i].card === 'credit' ? [] : ['guarantees'] } }); } catch (e) { /* still yours */ }
+        }
+        if (S.feed) S.feed.at = 0;
+        toast(plural(list.length, 'account') + ' added to MY PAY');
+      } catch (e) { saveFailed('cards', e); }
+    }
+    myPayCardsInfo(true);
+    openMyPayCards(trip.tourId || null, true);
+  }
   /* ---- MY PAY's own cards (Devin, 2026-10-08): a separate connection from
      the tour's. Accounts you claim as yours feed your inbox here, never the
      tour's new charges; you file each one into your book, or skip it. ---- */
@@ -8607,29 +8694,17 @@
       h('div', { class: 'row-label' }, 'Your cards', h('span', { class: 'hint' }, k ? plural(k, 'account') + ' connected' : 'Connect your own card')),
       n ? h('span', { class: 'amt num glow' }, n + ' new') : null, icon('chevron', 18));
   }
-  // The bank accounts on your feed that aren't claimed as yours yet.
-  function unclaimedAccounts() {
-    var row = S.feed && S.feed.row, acc = row && G.isObj(row.accounts) ? row.accounts : {};
-    return Object.keys(acc).filter(function (k) { return G.isObj(acc[k]) && acc[k].name && !isMyPayAccount(k); })
-      .map(function (k) { return { id: k, name: String(acc[k].name), type: acc[k].type === 'creditCard' ? 'credit' : 'debit', asked: !!acc[k].asked }; });
-  }
   function openMyPayCards(id, justLinked) {
     var B = window.GR_BACKEND;
     var again = function () { if (sheet && sheet.myPayCards) openMyPayCards(id); };
     openSheet(function () {
       var c = myPayCardsInfo();
-      // You run a tour too: the feed can't tell your deposits from the tour's, so those are logged by hand.
-      var runsTours = allTourEntries(false).some(function (e) { return createdTour(e[0]); });
-      var claim = async function (a, e) {
-        var b = e.currentTarget; b.disabled = true;
-        try {
-          await B.myPayClaimAccounts([{ id: a.id, card: a.type }]);
-          // The tour's side never asks about it, and never files it by itself.
-          try { await B.feedCall('setup', { account: { id: a.id, card: a.type, mode: 'ask', income: runsTours || a.type === 'credit' ? [] : ['merch', 'guarantees'] } }); } catch (x) { /* the account is still yours */ }
-          if (S.feed) S.feed.at = 0;
-          myPayCardsInfo(true); toast(a.name + ' is yours'); again();
-        } catch (x) { b.disabled = false; saveFailed('cards', x); }
-      };
+      // The tour's accounts are never listed here, and these are never listed there.
+      var tourNames = (function () {
+        var row = S.feed && S.feed.row, acc = row && G.isObj(row.accounts) ? row.accounts : {};
+        return Object.keys(acc).filter(function (k) { return G.isObj(acc[k]) && !isMyPayAccount(k); }).map(function (k) { return String(acc[k].name || ''); });
+      })();
+      var clash = c.accounts.filter(function (a) { return tourNames.indexOf(a.name) >= 0; });
       var release = function (a) {
         return async function () {
           try { await B.myPayReleaseAccount(a.account_id); myPayCardsInfo(true); toast(a.name + ' taken off'); again(); }
@@ -8665,22 +8740,17 @@
             h('button', { class: 'btn primary', type: 'button', onclick: function (e) { file(it, pick.cat, charge ? it.card : null)(e); } }, charge ? 'File it' : 'Log it'),
             h('button', { class: 'btn ghost', type: 'button', onclick: skip(it) }, 'Skip')));
       };
-      var free = unclaimedAccounts();
       return [
         h('h2', { class: 'sh-title' }, 'Your cards'),
-        h('p', { class: 'sh-sub' }, 'Your own bank or cards, kept apart from the tour\u2019s. What lands on them comes to you here, and you file it into your MY PAY book.'),
-        justLinked && free.length ? h('p', { class: 'note' }, 'Your bank is connected. Tick the accounts that are yours.') : null,
+        h('p', { class: 'sh-sub' }, 'Your own bank or cards, nothing to do with the tour\u2019s. A bank you connect here is yours, every account on it. What lands on them comes to you here, and you file it into your MY PAY book.'),
+        justLinked && !c.accounts.length ? h('p', { class: 'note' }, 'Your bank is connected. Its accounts land here as soon as the bank hands them over (a minute or so).') : null,
         c.accounts.length ? h('div', { class: 'ledger' }, c.accounts.map(function (a) {
           return h('div', { class: 'row ex-row' }, h('div', { class: 'row-label' }, a.name, h('span', { class: 'hint' }, a.card === 'credit' ? 'Credit card' : 'Debit card')),
             h('button', { class: 'pf-btn', type: 'button', onclick: release(a) }, 'Remove'));
-        })) : h('p', { class: 'note' }, 'No account of yours yet.'),
-        free.length ? [h('h3', { class: 'sh-h3' }, 'On your bank connection, not claimed'),
-          h('div', { class: 'ledger' }, free.map(function (a) {
-            return h('div', { class: 'row ex-row' }, h('div', { class: 'row-label' }, a.name, h('span', { class: 'hint' }, a.type === 'credit' ? 'Credit card' : 'Debit card')),
-              h('button', { class: 'pf-btn', type: 'button', onclick: function (e) { claim(a, e); } }, 'This is mine'));
-          }))] : null,
+        })) : h('p', { class: 'note' }, 'No bank connected here yet.'),
+        clash.length ? h('p', { class: 'note bad' }, 'An account here has the same name as one on the tour (' + clash.map(function (a) { return a.name; }).join(', ') +
+          '). The bank reader can\u2019t tell those two apart, so their charges stay with the tour until one of them has a different nickname at your bank.') : null,
         h('button', { class: 'btn primary block', type: 'button', onclick: function () { connectCards(id, null, { myPay: true }); } }, icon('card', 18), 'Connect a bank or card'),
-        runsTours && c.accounts.length ? h('p', { class: 'note' }, 'You run a tour too, so the bank feed can\u2019t tell your deposits from the tour\u2019s: log your pay under Log income. Charges on your accounts still come here.') : null,
         c.inbox.length ? [h('h3', { class: 'sh-h3' }, plural(c.inbox.length, 'new item') + ' from your cards'), c.inbox.map(inboxCard)] : null,
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
       ];
@@ -15930,8 +16000,10 @@
     }
     var names = r.institutions && r.institutions.length ? r.institutions.join(' and ') : 'Bank';
     toast(names + ' connected' + (r.test ? ' (test bank)' : ''));
-    // A bank connected from MY PAY: its accounts are claimed as your own there, not set up for the tour.
-    if (trip.myPay) { whenLoaded(function () { myPayCardsInfo(true); openMyPayCards(trip.tourId || null, true); }); return; }
+    // A bank connected from MY PAY is yours, whole: every account on the new
+    // login is claimed, set to ask (never files itself anywhere), and tagged
+    // so its deposits come to you. The tour's side never lists it.
+    if (trip.myPay) { whenLoaded(function () { claimNewLogin(trip); }); return; }
     whenLoaded(function () { openFeedSheet(trip.tourId || null, true); });
   }
   document.addEventListener('visibilitychange', function () {
@@ -15946,7 +16018,11 @@
     var r = null;
     try { r = await B.feedCall('link', itemId ? { itemId: itemId } : {}); } catch (e) { r = null; }
     if (!r || !r.ok || !r.url) { toast(feedProblem(r && (r.status || r.error))); return; }
-    keepPlaidTrip({ tourId: tourId || null, itemId: itemId || null, myPay: !!(opts && opts.myPay), at: Date.now() });
+    // Started from MY PAY: remember which bank logins the feed had, so the new one can be claimed whole.
+    var acc = S.feed && S.feed.row && G.isObj(S.feed.row.accounts) ? S.feed.row.accounts : {};
+    var itemsBefore = Object.keys(acc).map(function (k) { return acc[k] && acc[k].item; }).filter(Boolean)
+      .filter(function (x, i, a) { return a.indexOf(x) === i; });
+    keepPlaidTrip({ tourId: tourId || null, itemId: itemId || null, myPay: !!(opts && opts.myPay), itemsBefore: itemsBefore, at: Date.now() });
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, itemId ? 'Sign back in to your bank' : 'Connect a bank or card'),

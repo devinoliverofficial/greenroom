@@ -673,6 +673,10 @@
       if (q.error) throw mapError(q.error);
       return q.data;
     },
+    tourFindNote: async function (artistId, note) {
+      var q = await sb.rpc('tour_find_note', { a_id: artistId, note: note || '' });
+      if (q.error) throw mapError(q.error);
+    },
     tourCandidateUndo: async function (candId) {
       var q = await sb.rpc('tour_candidate_undo', { c_id: candId });
       if (q.error) throw mapError(q.error);
@@ -689,6 +693,16 @@
       var q = await sb.rpc('my_pay_claim_accounts', { ids: list || [] });
       if (q.error) throw mapError(q.error);
       return q.data;
+    },
+    myPayClaimItems: async function (items) {
+      var q = await sb.rpc('my_pay_claim_items', { ids: items || [] });
+      if (q.error) throw mapError(q.error);
+      return q.data;
+    },
+    myPayItemIds: async function () {
+      var q = await sb.rpc('my_pay_item_ids');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
     },
     myPayReleaseAccount: async function (accountId) {
       var q = await sb.rpc('my_pay_release_account', { acct: accountId });

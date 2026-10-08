@@ -371,6 +371,7 @@ shim = r"""<script>
       H.namedRuns = (H.namedRuns || []).concat([{ first: first, last: last, name: name }]);
       return Promise.resolve(Object.assign(JSON.parse(JSON.stringify(st)), { named: 3 }));
     },
+    tourFindNote: function (artistId, note) { var H = window.__harness; H.tfNotes = (H.tfNotes || []).concat([note]); return Promise.resolve(); },
     tourCandidateUndo: function (candId) {
       var H = window.__harness; var st = null;
       Object.keys(H.tf).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; x.status = 'new'; } }); });
@@ -383,6 +384,8 @@ shim = r"""<script>
       (list || []).forEach(function (x) { if (!H.myPayAccounts.some(function (a) { return a.account_id === x.id; })) H.myPayAccounts.push({ account_id: x.id, name: x.id === 'acc-chk' ? 'My Checking' : 'Card ' + x.id, card: x.card || 'debit' }); });
       return Promise.resolve({ ok: true, n: (list || []).length });
     },
+    myPayClaimItems: function (items) { var H = window.__harness; H.myPayAccounts = H.myPayAccounts || []; (items || []).forEach(function (it) { H.myPayAccounts.push({ account_id: 'acc-' + it, name: 'Personal ' + it, card: 'debit' }); }); return Promise.resolve({ ok: true, accounts: (items || []).length, list: H.myPayAccounts.slice() }); },
+    myPayItemIds: function () { return Promise.resolve([]); },
     myPayReleaseAccount: function (id) { var H = window.__harness; H.myPayAccounts = (H.myPayAccounts || []).filter(function (a) { return a.account_id !== id; }); return Promise.resolve(); },
     myPayInbox: function () {
       var H = window.__harness;
