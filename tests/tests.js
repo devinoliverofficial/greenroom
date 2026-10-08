@@ -657,7 +657,7 @@
     var c = G.calc(t);
     var line = c.lines.filter(function (l) { return l.key === 'commission'; })[0];
     near(c.income, 13000, 'the held guarantee is income');
-    eq(G.showMoneyState(t.shows.r0), 'settled', 'and not shown as owed');
+    eq(G.showMoneyState(t.shows.r0), 'owed', 'but the night reads owed until its box is ticked (Devin: logged AND checked off)');
     near(c.agentOwed, 1200, 'the agent has earned 10% of $12,000');
     near(c.agencyAdvance, 8000, 'and holds all of Detroit\u2019s $8,000');
     eq(c.agencyShows.length, 1, 'one agency show'); eq(c.agencyShows[0].city, 'Detroit, MI', 'which one');
@@ -1069,7 +1069,7 @@
 
   test('shows logged before the Received box keep counting', function () {
     eq(G.calc(tourOne()).income, 73500, 'legacy income');
-    eq(G.showMoneyState(tourOne().shows.r0), 'settled', 'legacy show reads settled');
+    eq(G.showMoneyState(tourOne().shows.r0), 'owed', 'a legacy night reads owed until both boxes are ticked');
   });
 
   test('a show is owed until BOTH the guarantee and the merch are received', function () {
@@ -1086,9 +1086,11 @@
     eq(G.showMoneyState(s), 'settled', 'both in');
     eq(G.showMoneyState({ income: { guarantee: 1 } }), null, 'a night not logged has no colour');
     // All-cash merch has no deposit to wait for, so the merch half is in...
+    // All-cash merch: the sheet ticks Received itself when it saves (nothing to wait for), so the flag is what counts.
     var cashOnly = { loggedAt: 1, income: { merch: 400 }, merchCash: 400, merchReceived: false };
-    eq(G.showReceived(cashOnly).merch, true, 'all-cash merch is in');
-    eq(G.showMoneyState(cashOnly), 'owed', '...but with no guarantee logged or ticked the night is not paid');
+    eq(G.showReceived(cashOnly).merch, false, 'unticked merch is not in, cash or not');
+    cashOnly.merchReceived = true;
+    eq(G.showMoneyState(cashOnly), 'owed', '...and with no guarantee logged or ticked the night is still not paid');
     cashOnly.guaranteeNone = true;
     eq(G.showMoneyState(cashOnly), 'settled', 'ticking Received on the empty guarantee settles it');
   });
@@ -1112,8 +1114,11 @@
     eq(G.showMoneyState({ loggedAt: 1, income: { guarantee: 5000 }, guaranteeReceived: true, merchReceived: true }), 'owed',
       'merchReceived beside an empty merch line does not settle the night');
     eq(G.showReceived({ guaranteeNone: true, merchNone: true }).guarantee, true, 'both ticked on a night with nothing logged');
-    // Nights logged before the boxes existed read as received where money is logged.
-    eq(G.showMoneyState({ loggedAt: 1, income: { guarantee: 5000, merch: 900 } }), 'settled', 'old night, both logged');
+    // Nights logged before the boxes existed are owed until both boxes are ticked.
+    eq(G.showMoneyState({ loggedAt: 1, income: { guarantee: 5000, merch: 900 } }), 'owed', 'old night, both logged, nothing ticked');
+    eq(G.showMoneyState({ loggedAt: 1, income: { guarantee: 5000, merch: 900 }, guaranteeReceived: true, merchReceived: true }), 'settled', 'both ticked');
+    // An agency deposit is counted by the budget (the agent holds it) but the night stays red until its box is ticked.
+    eq(G.showMoneyState({ loggedAt: 1, income: { guarantee: 5000, merch: 900 }, guaranteePaidBy: 'agency', guaranteeReceived: false, merchReceived: true }), 'owed', 'agency, unticked');
     eq(G.showMoneyState({ loggedAt: 1, income: { vip: 300 } }), 'owed', 'only other income logged: neither box is ticked');
   });
 

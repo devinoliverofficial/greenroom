@@ -11896,9 +11896,11 @@
        it gives way the moment an amount turns up on its line. */
     var noneBy = { guarantee: !(gross > 0) && s.guaranteeNone === true, merch: !(draft.merch > 0) && s.merchNone === true };
     var noneStored = { guarantee: noneBy.guarantee, merch: noneBy.merch };
+    // Ticked only when the show says so: a night logged before the boxes
+    // existed opens unticked, and reads red until someone ticks it.
     var recv = {
-      guarantee: s.guaranteeReceived === true || (s.guaranteeReceived == null && legacy && draft.guarantee > 0) || noneBy.guarantee,
-      merch: s.merchReceived === true || (s.merchReceived == null && legacy && draft.merch > 0) || noneBy.merch
+      guarantee: s.guaranteeReceived === true || noneBy.guarantee,
+      merch: s.merchReceived === true || noneBy.merch
     };
     // A deposit only stands beside a received guarantee.
     if (!recv.guarantee) { dep = null; depSeen = null; }
@@ -14988,8 +14990,15 @@
       if (dup.length) {
         kids.push(h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:18px',
           onclick: function () { openDup = !openDup; draw(); } },
-          (openDup ? 'Hide ' : 'Show ') + plural(dup.length, 'charge') + ' already imported'));
-        if (openDup) kids.push(h('div', { class: 'review' }, dup.map(chargeRow)));
+          (openDup ? 'Hide ' : 'Show ') + plural(dup.length, 'charge') + (feed ? ' that may already be logged' : ' already imported')));
+        if (openDup) {
+          if (feed) {
+            kids.push(h('p', { class: 'note' }, 'Each of these matches a charge already on the tour \u2014 same amount, within a day \u2014 ' +
+              'so it\u2019s probably the bank\u2019s copy of one you logged from a statement or by hand. Adding it would count the money twice: ' +
+              'set it aside unless it really is a second charge.'));
+          }
+          kids.push(h('div', { class: 'review' }, dup.map(chargeRow)));
+        }
       }
       listHost.replaceChildren.apply(listHost, kids);
       refreshBar();
@@ -15658,8 +15667,11 @@
       return {
         feedId: it.id, date: it.date, posted: it.posted || it.date, seq: it.seq, merchant: it.merchant, amount: amt, account: it.account || '',
         category: cat, source: cat ? 'learned' : null, why: it.why || '',
-        duplicate: false, preCutoff: false,
-        // Refunds and look-alikes of charges already on the tour start unticked.
+        // A look-alike of a charge already on the tour (same amount, within a
+        // day — usually the bank's copy of one logged from a statement or by
+        // hand) waits in its own fold, unticked, so it isn't added twice.
+        duplicate: it.why === 'Maybe already in', preCutoff: false,
+        // Refunds and look-alikes start unticked.
         keep: amt > 0 && it.why !== 'Maybe already in'
       };
     });
