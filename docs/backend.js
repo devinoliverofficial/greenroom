@@ -876,7 +876,7 @@
     /* ---- New income: bank deposits on watched accounts (date and amount
        only) that no matcher claimed. RLS hands them to their owner alone. ---- */
     incomeNew: async function () {
-      var q = await sb.from('merch_deposits').select('id, date, amount, atvenu')
+      var q = await sb.from('merch_deposits').select('id, date, amount, atvenu, watch')
         .eq('matched', false).order('date', { ascending: false }).limit(200);
       if (q.error) throw mapError(q.error);
       return q.data || [];

@@ -4174,14 +4174,20 @@
       // What earlier tries already read is kept: a Try again never re-spends it.
       var found = Array.isArray(c.found) ? c.found : (c.found = []);
       var done = c.doneBatches || (c.doneBatches = {});
-      for (var i = 0; i < batches.length; i++) {
-        var key = batches[i].map(function (p) { return p.url; }).join('|');
-        if (done[key]) continue;
-        c.progress = (i + 1) + ' of ' + batches.length; render(true);
-        var out = await tfRead(name, batches[i]);
-        if (Array.isArray(out)) found.push.apply(found, out);
-        done[key] = true;
-      }
+      // Three batches at a time: the reader answers each on its own, so the wait is a third.
+      var todo = batches.filter(function (b) { return !done[b.map(function (p) { return p.url; }).join('|')]; });
+      var finished = batches.length - todo.length, next = 0;
+      var worker = async function () {
+        while (next < todo.length) {
+          var b = todo[next++];
+          var out = await tfRead(name, b);
+          if (Array.isArray(out)) found.push.apply(found, out);
+          done[b.map(function (p) { return p.url; }).join('|')] = true;
+          finished += 1; c.progress = finished + ' of ' + batches.length; render(true);
+        }
+      };
+      c.progress = finished + ' of ' + batches.length; render(true);
+      await Promise.all([worker(), worker(), worker()]);
       var hc = histOf(id), sum = hc.row && G.isObj(hc.row.summary) ? hc.row.summary : {};
       var all2 = G.mergeTourCandidates(found);
       var merged = all2.filter(function (x) { return !G.tourKnown(x.name, sum.toursList); })
@@ -16172,11 +16178,61 @@
       ['up', 'Upcoming Tour', ups.length ? '' : 'No upcoming tours yet']
     ] : [];
     var live = ((S.incomeNew && S.incomeNew.items) || []).map(function (d) {
-      return { id: String(d.id), date: String(d.date || ''), amount: G.num(d.amount), av: !!d.atvenu,
+      return { id: String(d.id), date: String(d.date || ''), amount: G.num(d.amount), av: !!d.atvenu, watch: String(d.watch || ''),
         dest: curTour ? 'cur' : 'off', upTo: ups.length ? ups[0].id : null,
         kind: d.atvenu ? 'merch' : '', show: '', showTouched: false, armed: false };
     });
     if (!live.length) { toast('No new income'); return; }
+    // Which account it landed in: the bank feed files a deposit by what the
+    // account is watched for (merch, guarantees, both), so when only one of
+    // your accounts is watched that way, that's the account.
+    function accountOf(r) {
+      var row = S.feed && S.feed.row, acc = row && G.isObj(row.accounts) ? row.accounts : {};
+      var names = Object.keys(acc).filter(function (k) {
+        var a = acc[k]; if (!G.isObj(a) || a.type === 'creditCard' || isMyPayAccount(k)) return false;
+        var inc = Array.isArray(a.income) ? a.income : [], m = inc.indexOf('merch') >= 0, g = inc.indexOf('guarantees') >= 0;
+        var w = m && g ? 'both' : m ? 'merch' : g ? 'guarantees' : '';
+        return w && w === r.watch;
+      }).map(function (k) { return String(acc[k].name || ''); });
+      return names.length === 1 ? names[0] : '';
+    }
+    // Money already on the books that this deposit is the size of (to the
+    // dollar, or within 1%): a night's merch, a guarantee in full, or a
+    // guarantee less the booking agent's cut — on the tours of this band,
+    // within three weeks of the night. Devin: "if any of the deposits match
+    // any of the merch numbers or guarantees it should say something".
+    function suggest(r) {
+      var hits = [];
+      var near = function (a, b) { return Math.abs(a - b) <= Math.max(1, b * 0.01); };
+      var books = band ? allTourEntries(false).filter(function (e) { return artistOf(e[1]) === band; }) : [[tourId, base]];
+      books.forEach(function (e) {
+        var tid = e[0], t2 = e[1];
+        G.rows(t2 && t2.shows).forEach(function (s) {
+          if (!G.parseDay(s.date) || !s.loggedAt) return;
+          if (Math.abs(G.daysBetween(s.date, r.date)) > 21) return;
+          var inc = G.isObj(s.income) ? s.income : {};
+          var merch = G.merchDue(s), mdep = G.num(s.merchDeposit) || G.num(s.merchCardDeposit);
+          if (merch > 0 && (near(r.amount, merch) || (mdep > 0 && near(r.amount, mdep)))) {
+            hits.push({ kind: 'merch', tourId: tid, show: s, received: s.merchReceived === true, what: 'the merch for' });
+          }
+          var g = G.num(inc.guarantee);
+          if (g > 0) {
+            // Less the booking agent's cut: the dollars logged on the night, else the deal's percentage.
+            var why = G.guaranteeWhy ? G.guaranteeWhy(s) : {};
+            var comm = G.normCommission ? G.normCommission(t2 && t2.commission) : {};
+            var pct = G.num(comm && comm.agent && comm.agent.value);
+            var net1 = G.num(why && why.agent) > 0 ? Math.round((g - G.num(why.agent)) * 100) / 100 : 0;
+            var net2 = pct > 0 && pct < 100 ? Math.round(g * (1 - pct / 100) * 100) / 100 : 0;
+            if (near(r.amount, g) || (net1 > 0 && near(r.amount, net1)) || (net2 > 0 && near(r.amount, net2)) ||
+                (G.num(s.guaranteeDeposit) > 0 && near(r.amount, G.num(s.guaranteeDeposit)))) {
+              hits.push({ kind: 'guarantee', tourId: tid, show: s, received: s.guaranteeReceived === true && !(G.guaranteeOwed(s) > 0), what: 'the guarantee for' });
+            }
+          }
+        });
+      });
+      hits.sort(function (a, b) { return Math.abs(G.daysBetween(a.show.date, r.date)) - Math.abs(G.daysBetween(b.show.date, r.date)); });
+      return hits[0] || null;
+    }
     // The book a deposit lands on (null = the Off Tour book, made if needed).
     function landsOn(r) {
       if (r.dest === 'off') return null;
@@ -16362,13 +16418,31 @@
           r.armed ? 'Clear it for good?' : 'Not tour income — clear it');
         logBtn.onclick = function () { logOne(r, row); };
         aside.onclick = function () { skipOne(r, row); };
+        var acct = accountOf(r);
+        var hit = r.hitDone ? null : suggest(r);
+        var hitLine = !hit ? null : h('div', { class: 'iv-hit' },
+          h('p', { class: 'iv-hit-t' }, 'Same size as ' + hit.what + ' ' + dayMD(hit.show.date) + (hit.show.city ? ' \u00b7 ' + String(hit.show.city).split(',')[0] : '') +
+            (hit.received ? ' \u2014 already logged and ticked Received' : ' \u2014 logged, not yet marked Received')),
+          h('div', { class: 'pt-two' },
+            h('button', { class: 'btn sm ghost', type: 'button', disabled: r.busy || null, onclick: function () {
+              // It's the money already on the books: set the deposit aside for good, nothing doubles.
+              r.armed = true; skipOne(r, row);
+            } }, 'Already logged'),
+            h('button', { class: 'btn sm primary', type: 'button', disabled: r.busy || null, onclick: function () {
+              // Not yet: log it as that night's money (the night's own line marks it received).
+              r.kind = hit.kind; r.show = hit.show.id; r.showTouched = true; r.hitDone = true;
+              if (hit.tourId && curTour && hit.tourId === curTour.id) r.dest = 'cur';
+              redraw();
+            } }, 'Not logged yet')));
         fillEl(wrap,
           h('div', { class: 'rv-fields' },
             h('div', { class: 'rv-head' },
-              h('span', { class: 'rv-name' }, 'Bank deposit'),
+              h('span', { class: 'rv-name' }, acct ? 'Deposit \u00b7 ' + acct : 'Bank deposit'),
               h('span', { class: 'amt num' }, G.moneyCents(r.amount))),
             h('div', { class: 'rv-sub' }, dayMD(r.date),
-              r.av ? h('span', { class: 'rv-flag' }, 'Looks like atVenu') : null),
+              r.av ? h('span', { class: 'rv-flag' }, 'Looks like atVenu') : null,
+              r.watch ? h('span', { class: 'hint' }, ' \u00b7 watched for ' + (r.watch === 'both' ? 'merch and guarantees' : r.watch)) : null),
+            hitLine,
             destPills(r, redraw),
             h('div', { class: 'iv-sels' }, kindSel, showSel),
             h('div', { class: 'rv-act iv-act' }, logBtn, aside)));
