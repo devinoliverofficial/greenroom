@@ -2917,6 +2917,27 @@ button.fl-row { cursor: pointer; }
 .tf-added-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .tf-added-row .row-label { flex: 1; min-width: 0; }
 .tf-again { margin-top: 12px; }
+/* The search in progress: the van from the opening screen, driving in place,
+   with how long is left. Devin: "Greenroom is searching. Come back in 15min". */
+.tf-wait { display: grid; justify-items: center; gap: 6px; padding: 18px 0 14px; text-align: center; }
+.tf-van { width: 120px; height: 56px; background-color: var(--pos); -webkit-mask: var(--busmark-img) center / contain no-repeat; mask: var(--busmark-img) center / contain no-repeat;
+  animation: tf-drive 2.2s ease-in-out infinite; }
+@keyframes tf-drive { 0%, 100% { transform: translateX(-14px) translateY(0); } 25% { transform: translateX(-4px) translateY(-1px); } 50% { transform: translateX(14px) translateY(0); } 75% { transform: translateX(4px) translateY(-1px); } }
+@media (prefers-reduced-motion: reduce) { .tf-van { animation: none; } }
+.tf-wait-t { margin: 10px 0 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+.tf-eta { margin: 0; font-size: 15px; color: var(--ink-2); }
+.tf-wait-sub { margin: 4px 0 0; font-size: 13px; color: var(--ink-3); }
+.tf-wait .tf-status { margin: 8px 0 0; justify-content: center; }
+.tf-auto-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.tf-auto-row .row-label { flex: 1; min-width: 0; }
+.tf-more { margin-top: 12px; }
+.tf-more summary { cursor: pointer; font-size: 14px; color: var(--ink-2); padding: 6px 0; }
+.tf-row-x { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.tf-row-x .hint { display: block; }
+.tf-paste { width: 100%; min-height: 140px; resize: vertical; margin-top: 10px; }
+/* "claimed", in a whisper, beside an artist's check. */
+.pf-claimed { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: lowercase; color: var(--ink-3); margin-left: 4px; align-self: center; }
+.pf-claimed.sm { font-size: 10px; }
 .gate-note { margin: 14px 0 0; font-size: 13px; line-height: 1.4; color: var(--ink-3); text-align: center; }
 /* The day sheet's poll button on a day off: the Calendar's, bigger, centred. */
 .ds-poll { display: flex; justify-content: center; margin: 4px 0 18px; }

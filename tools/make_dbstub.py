@@ -322,33 +322,53 @@ shim = r"""<script>
     // Add missing tours: the pretend archives come in over a few polls, then two candidates.
     tourFindStart: function (artistId) {
       var H = window.__harness; H.tf = H.tf || {};
-      H.tf[artistId] = { status: 'reading', detail: '', day: new Date().toISOString().slice(0, 10), pages: 0, waiting: 6,
-        sources: { theprp: 'reading', lambgoat: 'new' }, candidates: (H.tf[artistId] && H.tf[artistId].candidates || []).filter(function (c) { return c.status !== 'new'; }),
+      H.tf[artistId] = { status: 'reading', detail: '', day: new Date().toISOString().slice(0, 10), pages: 0, waiting: 6, brain: !!H.tfBrain, eta: 540, unread: 0, batches: { total: 0, done: 0 },
+        startedAt: new Date().toISOString(),
+        sources: { theprp: 'reading', lambgoat: 'new' }, candidates: (H.tf[artistId] && H.tf[artistId].candidates || []),
         runs: [{ first: '2018-05-26', last: '2018-06-21', n: 15, countries: 'CA, US', nights: [{ date: '2018-05-26', city: 'San Antonio', state: 'TX', country: 'US', venue: 'Aztec Theatre' }, { date: '2018-05-27', city: 'Houston', state: 'TX', country: 'US', venue: 'Warehouse Live' }] },
                { first: '2017-07-15', last: '2017-08-04', n: 11, countries: 'US', nights: [{ date: '2017-07-15', city: 'St. Louis', state: 'MO', country: 'US', venue: 'Pop\u2019s' }] }] };
       return Promise.resolve(JSON.parse(JSON.stringify(H.tf[artistId])));
     },
     tourFindState: function (artistId) {
       var H = window.__harness; H.tf = H.tf || {};
-      var st = H.tf[artistId] || { status: 'idle', detail: '', pages: 0, waiting: 0, sources: {}, candidates: [], runs: [] };
-      if (st.status === 'reading') { st.pages += 3; st.waiting -= 3; if (st.waiting <= 0) { st.waiting = 0; st.status = 'ready'; st.sources = { theprp: 'done', lambgoat: 'done' }; } }
+      var st = H.tf[artistId] || { status: 'idle', detail: '', pages: 0, waiting: 0, sources: {}, candidates: [], runs: [], brain: false, eta: 0, batches: { total: 0, done: 0 } };
+      if (st.status === 'reading') { st.pages += 3; st.waiting -= 3; st.eta = 300; if (st.waiting <= 0) { st.waiting = 0; st.status = st.brain ? 'thinking' : 'ready'; st.sources = { theprp: 'done', lambgoat: 'done' }; st.batches = { total: 4, done: 0 }; st.eta = 60; } }
+      else if (st.status === 'thinking') {
+        // The server's own read: four batches, then the finds land and the sure one fills in.
+        st.batches.done += 2; st.eta = Math.max(0, (st.batches.total - st.batches.done) * 12);
+        if (st.batches.done >= st.batches.total) {
+          st.status = 'done'; st.eta = 0; st.detail = 'Read 6 articles: 2 tours found, 2 new, 1 added to the page';
+          st.candidates.push({ id: 'auto1', name: 'Let Light Overcome the Darkness Tour', role: 'support', first: '2019-11-05', last: '2019-12-08', region: 'US', lineup: 'Our Last Night, The Word Alive',
+            n: 2, sources: [], status: 'added', auto: true, decidedAt: new Date().toISOString(), matched: 0, have: 2, named: 2, toAdd: 0, fill: false });
+          st.candidates.push({ id: 'tie1', name: 'Tie One', role: 'support', first: '2018-05-26', last: '2018-06-21', region: 'US', lineup: 'Dance Gavin Dance', n: 0, sources: [], status: 'new', auto: false, matched: 15, have: 15, toAdd: 0, fill: false });
+          st.candidates.push({ id: 'tie2', name: 'Tie Two', role: 'support', first: '2018-05-28', last: '2018-06-30', region: 'US', lineup: 'Erra', n: 0, sources: [], status: 'new', auto: false, matched: 15, have: 15, toAdd: 0, fill: false });
+        }
+      }
       return Promise.resolve(JSON.parse(JSON.stringify(st)));
     },
     tourFindPages: function (artistId) {
       return Promise.resolve([{ url: 'https://www.theprp.com/2019/09/x/', source: 'theprp', title: 'Our Last Night tour', published: '2019-09-10', body: 'Our Last Night ... 11/05 Omaha, NE' },
         { url: 'https://lambgoat.com/news/2/x/', source: 'lambgoat', title: 'DGD tour', published: '2018-03-01', body: 'Dance Gavin Dance ... 5/26 San Antonio, TX' }]);
     },
-    tourFindPropose: function (artistId, cands) {
+    tourFindPropose: function (artistId, cands, readUrls) {
       var H = window.__harness; var st = H.tf[artistId];
       H.proposed = (H.proposed || []).concat(cands);
+      H.readUrls = (H.readUrls || []).concat(readUrls || []);
+      // The first find adds dates, so the server fills it in by itself; the second is left to look at.
+      var filled = 0;
       (cands || []).forEach(function (c, i) {
+        var sure = i === 0;
+        if (sure) filled += 1;
         st.candidates.push({ id: 'cand' + (st.candidates.length + 1), name: c.name, role: c.role, first: c.start, last: c.end, region: c.region, lineup: c.lineup,
-          n: (c.dates || []).length, sources: c.sources || [], status: 'new', matched: i === 0 ? 16 : 0, have: i === 0 ? 16 : 0, toAdd: i === 0 ? 2 : 1, fill: false });
+          n: (c.dates || []).length, sources: c.sources || [], status: sure ? 'added' : 'new', auto: sure, decidedAt: sure ? new Date().toISOString() : null,
+          matched: i === 0 ? 16 : 0, have: i === 0 ? 16 : 0, named: sure ? 16 : 0, toAdd: i === 0 ? 2 : 0, fill: false });
       });
+      st.filled = filled;
       // And one tour the page already has, with dates the page lacks.
       st.candidates.push({ id: 'candfill', name: 'The Godmode', role: 'support', first: '2024-05-07', last: '2024-05-25', region: 'US', lineup: 'In This Moment, Kim Dracula',
         n: 13, sources: ['https://www.theprp.com/2024/02/13/x/'], status: 'new', matched: 0, have: 2, toAdd: 11, fill: true });
-      st.status = 'done';
+      st.status = 'done'; st.eta = 0; st.added = (cands || []).length;
+      st.detail = 'Read 2 articles: ' + (cands || []).length + ' tours found, ' + (cands || []).length + ' new, ' + filled + ' added to the page';
       return Promise.resolve(JSON.parse(JSON.stringify(st)));
     },
     tourCandidateDecide: function (candId, add, name) {
@@ -862,13 +882,13 @@ shim = r"""<script>
         var gf = (H.artistFollows || []).indexOf(g.id) >= 0;
         var mc = (H.claims || []).filter(function (c) { return c.artistId === g.id && c.userId === 'u-devin'; })[0];
         return Promise.resolve({ id: g.id, handle: g.handle, name: g.name, bio: '', avatar: '', mine: false,
-          unclaimed: !g.owner, verified: !!g.owner, about: g.about || '', country: g.country || '', myClaim: mc ? mc.status : null,
+          unclaimed: !g.owner, verified: !!g.owner, checkmark: true, claimed: !!g.owner, about: g.about || '', country: g.country || '', myClaim: mc ? mc.status : null,
           iFollow: gf, followers: gf ? 1 : 0, members: [], tours: [] });
       }
       if (!a) return Promise.resolve(null);
       var fol = (H.artistFollows || []).indexOf(a.id) >= 0;
       return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '', mine: true,
-        unclaimed: false, verified: !!a.verified || /i see stars/i.test(a.name || ''), about: a.about || '', country: a.country || '', myClaim: null,
+        unclaimed: false, verified: !!a.verified || /i see stars/i.test(a.name || ''), checkmark: !!a.verified || /i see stars/i.test(a.name || ''), claimed: !!a.verified || /i see stars/i.test(a.name || ''), about: a.about || '', country: a.country || '', myClaim: null,
         iFollow: fol, followers: (a.followers || 0) + (fol ? 1 : 0),
         members: a.members.map(function (m) { return Object.assign({ userId: m.userId, kind: m.kind, role: m.role || '', avatar: '', endorsed: !!m.endorsed,
           hasCredits: !!((H.creditRows || {})[a.id + ':' + m.userId] && H.creditRows[a.id + ':' + m.userId].approved) }, P[m.userId], m.userId === 'u-devin' ? { handle: H.handle || '' } : {}); }),

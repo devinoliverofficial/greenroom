@@ -652,8 +652,10 @@
       // null = another phone holds the read for a few minutes.
       return q.data === null ? null : (Array.isArray(q.data) ? q.data : []);
     },
-    tourFindPropose: async function (artistId, cands) {
-      var q = await sb.rpc('tour_find_propose', { a_id: artistId, cands: cands || [] });
+    // readUrls: the articles the phone actually read (a batch the reader failed
+    // on stays unread and is asked again); posters and pasted pages pass [].
+    tourFindPropose: async function (artistId, cands, readUrls) {
+      var q = await sb.rpc('tour_find_propose', { a_id: artistId, cands: cands || [], read_urls: Array.isArray(readUrls) ? readUrls : null });
       if (q.error) throw mapError(q.error);
       return q.data;
     },

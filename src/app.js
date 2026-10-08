@@ -1910,6 +1910,14 @@
       '<circle cx="20.30" cy="12.00" r="2.75"/><circle cx="18.71" cy="16.88" r="2.75"/><circle cx="14.56" cy="19.89" r="2.75"/><circle cx="9.44" cy="19.89" r="2.75"/><circle cx="5.29" cy="16.88" r="2.75"/><circle cx="3.70" cy="12.00" r="2.75"/><circle cx="5.29" cy="7.12" r="2.75"/><circle cx="9.44" cy="4.11" r="2.75"/><circle cx="14.56" cy="4.11" r="2.75"/><circle cx="18.71" cy="7.12" r="2.75"/></g><path class="tick" d="M8.1 12.3l2.7 2.7 5.1-5.6"/></svg>';
     return b;
   }
+  // "claimed", in a whisper, beside an artist page's check: the act's own
+  // people run it. (Every page made from the encyclopedia wears the check.)
+  function claimedTag(cls) { return h('span', { class: 'pf-claimed' + (cls ? ' ' + cls : '') }, 'claimed'); }
+  function artistMarks(card, cls) {
+    if (!card) return null;
+    var check = card.checkmark != null ? !!card.checkmark : !!card.verified;
+    return [check ? verifiedBadge(cls) : null, check && card.claimed ? claimedTag(cls) : null];
+  }
   function profilePhoto(cls, after) {
     var card = myCard(), name = profileName();
     return fileControl({
@@ -2259,10 +2267,10 @@
      anyone else gets it). Black, not green: this isn't your own page. One
      row, the way a social app heads a profile: the back arrow, then the
      username and its check right beside it; the GR mark keeps the far corner. */
-  function viewerHead(title, checked, backTo) {
+  function viewerHead(title, checked, backTo, marks) {
     return h('div', { class: 'headband dark vp-head' },
       h('header', { class: 'topbar vp-top' },
-        h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title), checked ? verifiedBadge() : null),
+        h('h1', { class: 'band-name vp-user' }, h('span', { class: 'vp-user-t' }, title), marks || (checked ? verifiedBadge() : null)),
         h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' })));
   }
   function viewProfile() {
@@ -3146,7 +3154,7 @@
     // A history Greenroom reads by itself moves while someone is looking.
     if (card && histBusy(hc0.row)) histPoll(id);
     var head = function (title) {
-      if (!(S.route.manage && (!card || card.mine))) return viewerHead(title, false, backTo);
+      if (!(S.route.manage && (!card || card.mine))) return viewerHead(title, false, backTo, artistMarks(card));
       // The same green head as your own page (Devin, 2026-10-08: "it should be
       // the exact same"): + on the left, the mark, the menu, then the
       // username with its check and the switcher arrow.
@@ -3159,7 +3167,7 @@
           h('span', { class: 'top-side right' }, menuBtn())),
         h('div', { class: 'band-row' }, h('h1', { class: 'band-name vp-user mid' },
           h('button', { class: 'acct-btn', type: 'button', 'aria-label': 'Your profiles: ' + title, onclick: function () { openAccounts(); } },
-            h('span', { class: 'vp-user-t' }, title), card && card.verified ? verifiedBadge() : null,
+            h('span', { class: 'vp-user-t' }, title), artistMarks(card),
             h('span', { class: 'acct-arrow', 'aria-hidden': 'true' }, icon('chevron', 16))))));
     };
     if (!card) {
@@ -4067,25 +4075,27 @@
       }, function () {
         c.failed = true; c.at = Date.now(); c.asking = false;
         // Mid-read, a missed answer is asked again a little later.
-        if (c.state && c.state.status === 'reading') { clearTimeout(c.timer); c.timer = setTimeout(function () { c.timer = null; c.at = 0; render(true); }, 8000); }
+        if (c.state && (c.state.status === 'reading' || c.state.status === 'thinking')) { clearTimeout(c.timer); c.timer = setTimeout(function () { c.timer = null; c.at = 0; render(true); }, 8000); }
         render(true);
       });
     }
     return c;
   }
-  // While the archives are being read, ask again every few seconds (each
-  // ask also moves the read along); once they're in, read them.
+  // While the server reads (the archives, then — with the key in Vault — the
+  // articles themselves), ask again every few seconds; each ask also moves
+  // the read along. Without the key, the phone reads the articles itself.
   function tfAfter(id) {
     var c = S.tf && S.tf[id], st = c && c.state;
     if (!st) return;
     clearTimeout(c.timer); c.timer = null;
-    if (st.status === 'reading') {
+    var serverBusy = st.status === 'reading' || st.status === 'thinking' || (st.status === 'ready' && st.brain) || (st.status === 'extracting' && !c.busy);
+    if (serverBusy) {
       c.timer = setTimeout(function () {
         c.timer = null;
         // Away from the page: stop asking, and make the next look a fresh one.
         if (S.route && S.route.name === 'act' && S.route.id === id) tfOf(id, true); else c.at = 0;
-      }, 4000);
-    } else if (st.status === 'ready' && !c.busy && !c.error && S.sample) {
+      }, st.status === 'thinking' ? 6000 : 4000);
+    } else if (st.status === 'ready' && !st.brain && !c.busy && !c.error && S.sample) {
       tfExtract(id);
     }
   }
@@ -4093,11 +4103,11 @@
     var B = window.GR_BACKEND, c = tfOf(id);
     if (c.busy) return;
     var before = c.state || {};
-    c.busy = true; c.phase = 'Starting\u2026'; c.error = ''; render(true);
+    c.busy = true; c.phase = 'Starting…'; c.error = ''; render(true);
     try {
-      c.state = await B.tourFindStart(id); c.failed = false; c.at = Date.now();
+      c.state = await B.tourFindStart(id); c.failed = false; c.at = Date.now(); c.since = Date.now();
       // The server reads once a day; asked twice, it hands the same read back.
-      if (before.day && c.state && c.state.day === before.day && before.status === c.state.status) toast('Already read today \u2014 look again tomorrow');
+      if (before.day && c.state && c.state.day === before.day && before.status === c.state.status) toast('Already read today — look again tomorrow');
     } catch (e) { saveFailed('tours', e); }
     c.busy = false; c.phase = '';
     tfAfter(id); render(true);
@@ -4105,10 +4115,10 @@
   // The reading brain's brief, one batch of articles at a time.
   function tfPrompt(name, pages) {
     var head = 'TOUR FINDER. You are helping a touring app list the tours of the act "' + name + '". Below are news articles and encyclopedia passages, each with its date and URL. ' +
-      'Return ONLY a JSON array. Each item is one tour or run that ' + name + ' was part of: a headline or co-headline tour, a support slot on another act\u2019s tour, or a package/festival tour (Warped, Taste of Chaos). ' +
+      'Return ONLY a JSON array. Each item is one tour or run that ' + name + ' was part of: a headline or co-headline tour, a support slot on another act’s tour, or a package/festival tour (Warped, Taste of Chaos). ' +
       'Fields: "name" (the announced tour name; if the run had no name, a short description such as "Fall 2018 run with Dance Gavin Dance"), ' +
       '"role" (one of headline, co-headline, support, festival), "start" and "end" (YYYY-MM-DD; when a listing gives month/day only, take the year from the article date, and remember a run announced in the fall may start the next year), ' +
-      '"lineup" (the other acts, comma separated), "region" (US, UK/Europe, Australia, Japan, Canada\u2026), ' +
+      '"lineup" (the other acts, comma separated), "region" (US, UK/Europe, Australia, Japan, Canada…), ' +
       '"dates" (every date listed for ' + name + ', each as one short string "YYYY-MM-DD | City, ST | Venue"; an empty array if none are listed), "source" (the article URL). ' +
       'Rules: only runs ' + name + ' is on; skip one-off festival appearances and anything that is not a tour (album news, videos, members leaving); when a later article updates an earlier one (dates added, moved or cancelled) fold them into one item; never invent dates; if nothing qualifies return [].\n\n';
     return head + pages.map(function (p, i) {
@@ -4133,37 +4143,43 @@
     } catch (e) { /* Wikipedia is a bonus; the archives carry the day. */ }
     return out;
   }
-  // One batch through the reader. An answer that doesn't parse (the reader
-  // ran out of room) is asked again in two halves, down to one article.
+  function tfWait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  // One batch through the reader: what it found, which articles it answered
+  // for, and which it couldn't. Told to slow down, it waits and asks again;
+  // an answer that doesn't parse (the reader ran out of room) is asked again
+  // in two halves, down to one article. Nothing is ever marked read that
+  // wasn't (a run once read 327 articles and reported nothing, every answer
+  // lost to a rate limit).
   async function tfRead(name, batch) {
-    try {
-      return await S.sample.json(tfPrompt(name, batch), { cache: false });
-    } catch (e) {
-      if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e;
-      if (e && e.code === 'rate_limited') {
-        await new Promise(function (r) { setTimeout(r, 4000); });
-        try { return await S.sample.json(tfPrompt(name, batch), { cache: false }); } catch (e2) { if (e2 && (e2.code === 'session_expired' || SAMPLE_GONE.indexOf(e2.code) >= 0)) throw e2; }
+    var tries = 0, urls = batch.map(function (p) { return p.url; });
+    while (true) {
+      try {
+        var out = await S.sample.json(tfPrompt(name, batch), { cache: false });
+        if (Array.isArray(out)) return { found: out, read: urls, failed: [] };
+        throw { code: 'invalid_json' };
+      } catch (e) {
+        if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e;
+        if (e && e.code === 'rate_limited' && tries < 3) { tries += 1; await tfWait(15000 * tries); continue; }
+        if (e && e.code !== 'rate_limited' && batch.length > 1) {
+          var mid = Math.ceil(batch.length / 2);
+          var a = await tfRead(name, batch.slice(0, mid)), b = await tfRead(name, batch.slice(mid));
+          return { found: a.found.concat(b.found), read: a.read.concat(b.read), failed: a.failed.concat(b.failed) };
+        }
+        return { found: [], read: [], failed: urls, why: e && e.code };
       }
-      if (batch.length > 1) {
-        var mid = Math.ceil(batch.length / 2);
-        var a = await tfRead(name, batch.slice(0, mid)), b = await tfRead(name, batch.slice(mid));
-        return (Array.isArray(a) ? a : []).concat(Array.isArray(b) ? b : []);
-      }
-      return [];
     }
   }
   async function tfExtract(id) {
     var B = window.GR_BACKEND, c = tfOf(id);
     if (c.busy || !S.sample) return;
     var name = (actOf(id).card || {}).name || '';
-    c.busy = true; c.phase = 'Sorting out the tours\u2026'; c.progress = ''; c.error = ''; render(true);
+    c.busy = true; c.phase = 'Sorting out the tours…'; c.progress = ''; c.error = ''; render(true);
     try {
       var pages = await B.tourFindPages(id);
-      if (pages === null) { c.error = 'Another phone is sorting the tours right now. Give it a few minutes.'; throw { code: 'busy' }; }
+      if (pages === null) { c.error = ''; throw { code: 'busy' }; }
       var wiki = await tfWikipedia(name);
       // Small batches: the reader answers in full for a handful of articles
-      // and runs out of room for twenty (that is how a first run came back
-      // with one tour out of 137 articles).
+      // and runs out of room for twenty.
       var all = pages.concat(wiki), batches = [], cur = [], size = 0;
       all.forEach(function (p) {
         var len = String(p.body || '').length + 200;
@@ -4174,33 +4190,39 @@
       // What earlier tries already read is kept: a Try again never re-spends it.
       var found = Array.isArray(c.found) ? c.found : (c.found = []);
       var done = c.doneBatches || (c.doneBatches = {});
-      // Three batches at a time: the reader answers each on its own, so the wait is a third.
+      var read = Array.isArray(c.readUrls) ? c.readUrls : (c.readUrls = []);
+      var failed = [];
       var todo = batches.filter(function (b) { return !done[b.map(function (p) { return p.url; }).join('|')]; });
-      var finished = batches.length - todo.length, next = 0;
-      var worker = async function () {
-        while (next < todo.length) {
-          var b = todo[next++];
-          var out = await tfRead(name, b);
-          if (Array.isArray(out)) found.push.apply(found, out);
-          done[b.map(function (p) { return p.url; }).join('|')] = true;
-          finished += 1; c.progress = finished + ' of ' + batches.length; render(true);
-        }
-      };
-      c.progress = finished + ' of ' + batches.length; render(true);
-      await Promise.all([worker(), worker(), worker()]);
+      var finished = batches.length - todo.length;
+      // One batch at a time: the reader's rate limit counts the room each ask
+      // is given, and three at once were all turned away.
+      for (var i = 0; i < todo.length; i++) {
+        var b = todo[i];
+        c.progress = (finished + 1) + ' of ' + batches.length; render(true);
+        var out = await tfRead(name, b);
+        found.push.apply(found, out.found);
+        read.push.apply(read, out.read);
+        failed.push.apply(failed, out.failed);
+        if (!out.failed.length) done[b.map(function (p) { return p.url; }).join('|')] = true;
+        finished += 1;
+      }
       var hc = histOf(id), sum = hc.row && G.isObj(hc.row.summary) ? hc.row.summary : {};
       var all2 = G.mergeTourCandidates(found);
       var merged = all2.filter(function (x) { return !G.tourKnown(x.name, sum.toursList); })
         .map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; });
-      c.state = await B.tourFindPropose(id, merged);
-      // How the reading went, kept on the server (so a run that ends with nothing can be understood).
-      if (B.tourFindNote) { try { await B.tourFindNote(id, 'Read ' + all.length + ' articles in ' + batches.length + ' batches: ' + found.length + ' mentions, ' + all2.length + ' tours, ' + (all2.length - merged.length) + ' already on the page, ' + G.num(c.state && c.state.added) + ' new'); } catch (e) { /* a note, nothing more */ } }
-      c.at = Date.now(); c.found = null; c.doneBatches = null;
+      // Only the articles actually read are marked read: the rest are asked again next time.
+      var readOnly = read.filter(function (u) { return failed.indexOf(u) < 0 && !/^https:\/\/en\.wikipedia\.org\//.test(u); });
+      c.state = await B.tourFindPropose(id, merged, readOnly);
+      c.since = c.since || Date.now();
+      if (B.tourFindNote) { try { await B.tourFindNote(id, 'Phone read ' + (all.length - failed.length) + ' of ' + all.length + ' articles in ' + batches.length + ' batches: ' + found.length + ' mentions, ' + all2.length + ' tours, ' + (all2.length - merged.length) + ' already on the page, ' + G.num(c.state && c.state.added) + ' new, ' + G.num(c.state && c.state.filled) + ' added to the page' + (failed.length ? ', ' + failed.length + ' unread' : '')); } catch (e) { /* a note, nothing more */ } }
+      if (failed.length) c.error = plural(failed.length, 'article') + ' couldn’t be read this time (the reader was busy); they’re kept for the next look.';
+      c.at = Date.now(); c.found = null; c.doneBatches = null; c.readUrls = null;
     } catch (e) {
-      if (!(e && e.code === 'busy')) c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn\u2019t sort the tours just now.';
+      if (!(e && e.code === 'busy')) c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn’t sort the tours just now.';
       if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
     }
     c.busy = false; c.phase = ''; c.progress = ''; render(true);
+    if (c.state && c.state.status === 'extracting') tfAfter(id);
   }
   async function tfDecide(id, x, add, name) {
     var B = window.GR_BACKEND, c = tfOf(id);
@@ -4229,7 +4251,7 @@
     if (!G.parseDay(a) || !G.parseDay(b)) return '';
     var ya = a.slice(0, 4), yb = b.slice(0, 4);
     if (a === b) return dayMD(a) + ', ' + ya;
-    return ya === yb ? dayMD(a) + ' \u2013 ' + dayMD(b) + ', ' + ya : dayMD(a) + ', ' + ya + ' \u2013 ' + dayMD(b) + ', ' + yb;
+    return ya === yb ? dayMD(a) + ' – ' + dayMD(b) + ', ' + ya : dayMD(a) + ', ' + ya + ' – ' + dayMD(b) + ', ' + yb;
   }
   var TF_ROLE = { headline: 'Headliner', 'co-headline': 'Co-headliner', support: 'Support', festival: 'Festival tour' };
   // Add it under a name of your own (the one on the poster, say).
@@ -4238,8 +4260,8 @@
     openSheet(function () {
       var input = h('input', { class: 'input', type: 'text', maxlength: 120, value: st.name, 'aria-label': 'Tour name',
         oninput: function (e) { st.name = e.target.value; } });
-      return [h('h2', { class: 'sh-title' }, 'Add this tour as\u2026'),
-        h('p', { class: 'sh-sub' }, tfSpan(x.first, x.last) + (x.lineup ? ' \u00b7 with ' + x.lineup : '')),
+      return [h('h2', { class: 'sh-title' }, 'Add this tour as…'),
+        h('p', { class: 'sh-sub' }, tfSpan(x.first, x.last) + (x.lineup ? ' · with ' + x.lineup : '')),
         input,
         h('div', { class: 'stack', style: 'margin-top:14px' },
           h('button', { class: 'btn primary block', type: 'button', onclick: function () {
@@ -4254,12 +4276,12 @@
   function tfRunCard(id, run, cands, busy) {
     var nights = Array.isArray(run.nights) ? run.nights : [];
     var cities = nights.map(function (n) { return n.city; }).filter(Boolean);
-    var where = cities.length ? cities[0] + (cities.length > 1 ? ' \u2192 ' + cities[cities.length - 1] : '') : '';
+    var where = cities.length ? cities[0] + (cities.length > 1 ? ' → ' + cities[cities.length - 1] : '') : '';
     // The found tours that fall on these dates are the likely names.
     var guesses = (cands || []).filter(function (c) { return c.status === 'new' && c.first && c.last && c.first <= run.last && run.first <= c.last; });
     return h('div', { class: 'tf-card tf-run' },
       h('p', { class: 'tf-name tf-run-t' }, tfSpan(run.first, run.last)),
-      h('p', { class: 'tf-sub' }, plural(G.num(run.n), 'show') + (run.countries ? ' \u00b7 ' + run.countries : '') + (where ? ' \u00b7 ' + where : '')),
+      h('p', { class: 'tf-sub' }, plural(G.num(run.n), 'show') + (run.countries ? ' · ' + run.countries : '') + (where ? ' · ' + where : '')),
       guesses.length ? h('p', { class: 'tf-fit' }, 'Could be: ' + guesses.map(function (c) { return c.name; }).slice(0, 2).join(' or ')) : h('p', { class: 'tf-sub' }, 'No tour name on these nights yet'),
       h('div', { class: 'pt-two tf-acts' },
         h('button', { class: 'btn primary', type: 'button', disabled: busy, onclick: function () { openRunName(id, run, guesses); } }, 'Name this run')));
@@ -4270,7 +4292,7 @@
       var input = h('input', { class: 'input', type: 'text', maxlength: 120, value: st.name, placeholder: 'Tour name', 'aria-label': 'Tour name',
         oninput: function (e) { st.name = e.target.value; } });
       return [h('h2', { class: 'sh-title' }, 'Name this run'),
-        h('p', { class: 'sh-sub' }, tfSpan(run.first, run.last) + ' \u00b7 ' + plural(G.num(run.n), 'show') + '. Every one of these nights takes the name.'),
+        h('p', { class: 'sh-sub' }, tfSpan(run.first, run.last) + ' · ' + plural(G.num(run.n), 'show') + '. Every one of these nights takes the name.'),
         guesses && guesses.length ? h('div', { class: 'tf-guess' }, guesses.slice(0, 3).map(function (c) {
           return h('button', { class: 'pf-btn', type: 'button', onclick: function () { st.name = c.name; input.value = c.name; } }, c.name);
         })) : null,
@@ -4299,12 +4321,26 @@
       '"role" (headline, co-headline, support or festival), "start" and "end" (YYYY-MM-DD; when the poster has no year, pick the most likely year from the context and say so in "note"), ' +
       '"lineup" (the other acts), "region", "dates" (every date on the poster as "YYYY-MM-DD | City, ST | Venue"), "note" (anything uncertain). Never invent dates; if the image is not a tour poster return [].';
   }
-  async function tfPosters(id, files) {
+  // What a handed-over list of finds does on the page: proposed, and the
+  // sure ones filled in. One line says how it went.
+  async function tfHandOver(id, found, what) {
     var B = window.GR_BACKEND, c = tfOf(id);
-    if (!S.sample) { toast('Reading isn\u2019t available right now.'); return; }
+    var merged = G.mergeTourCandidates(found).map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; });
+    if (!merged.length) { toast('No tour dates found on ' + what); return; }
+    var st = await B.tourFindPropose(id, merged, []);
+    c.state = st; c.at = Date.now(); c.since = c.since || Date.now();
+    var added = G.num(st && st.added), filled = G.num(st && st.filled);
+    toast(filled ? plural(filled, 'tour') + ' added to the page from ' + what + (added > filled ? ', ' + (added - filled) + ' to look at' : '')
+      : added ? plural(added, 'tour') + ' from ' + what + ' to look at below'
+      : 'Everything on ' + what + ' was already on the page');
+    histOf(id, true);
+  }
+  async function tfPosters(id, files) {
+    var c = tfOf(id);
+    if (!S.sample) { toast('Reading isn’t available right now.'); return; }
     if (c.busy) return;
     var name = (actOf(id).card || {}).name || '';
-    c.busy = true; c.phase = 'Reading the posters\u2026'; c.progress = ''; c.error = ''; render(true);
+    c.busy = true; c.phase = 'Reading the posters…'; c.progress = ''; c.error = ''; render(true);
     var found = [];
     try {
       for (var i = 0; i < files.length; i++) {
@@ -4317,16 +4353,9 @@
           // One poster the reader couldn't make out is skipped.
         }
       }
-      var hc = histOf(id), sum = hc.row && G.isObj(hc.row.summary) ? hc.row.summary : {};
-      var merged = G.mergeTourCandidates(found).map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; });
-      if (!merged.length) { toast('No tour dates found on ' + (files.length === 1 ? 'that poster' : 'those posters')); }
-      else {
-        var st = await B.tourFindPropose(id, merged);
-        c.state = st; c.at = Date.now();
-        toast(plural(G.num(st && st.added), 'tour') + ' from ' + plural(files.length, 'poster') + (G.num(st && st.added) < merged.length ? ' (the rest were already on the page)' : ''));
-      }
+      await tfHandOver(id, found, files.length === 1 ? 'that poster' : 'those posters');
     } catch (e) {
-      c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn\u2019t read the posters just now.';
+      c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn’t read the posters just now.';
       if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
     }
     c.busy = false; c.phase = ''; c.progress = ''; render(true);
@@ -4337,22 +4366,114 @@
       label: 'Add from posters', ariaLabel: 'Add tours from poster photos',
       onFiles: function (files) { tfPosters(id, files.slice(0, 20)); } });
   }
+  // A saved page (Devin, 2026-10-08: Concert Archives "shows all the info on
+  // each show including the tour name, the bands that were on the tour, the
+  // venue, and the city"). That site turns automated readers away, so the
+  // owner hands the page over: copied text, a saved PDF, or screenshots.
+  function tfPagePrompt(name, text, asImage) {
+    return 'TOUR FINDER. ' + (asImage ? 'The attached image shows' : 'The text below is') + ' a list of concerts for the act "' + name + '", saved from a concert archive (Concert Archives, Songkick, Bandsintown, a fan wiki). Today is ' + G.ymd(new Date()) + '. ' +
+      'Return ONLY a JSON array of the tours and runs on it. Group the shows by the tour name the list gives; shows with no tour name that fall within five days of each other with the same other acts are one run, named like "Spring 2012 run with Blessthefall". ' +
+      'Fields per item: "name", "role" (headline, co-headline, support or festival; "" if the list doesn’t say), "start" and "end" (YYYY-MM-DD), "lineup" (the other acts, comma separated), "region", ' +
+      '"dates" (every show in it as one short string "YYYY-MM-DD | City, ST | Venue"; leave the venue blank when it isn’t given). Keep every show that has a date; never invent one; a one-off show with no run around it goes in an item named for its date and city. If there are no concerts return [].' +
+      (asImage ? '' : '\n\n' + text);
+  }
+  async function tfPage(id, text, files) {
+    var c = tfOf(id);
+    if (!S.sample) { toast('Reading isn’t available right now.'); return; }
+    if (c.busy) return;
+    var name = (actOf(id).card || {}).name || '';
+    c.busy = true; c.phase = 'Reading the page…'; c.progress = ''; c.error = ''; render(true);
+    var found = [], parts = [], images = [];
+    try {
+      (files || []).forEach(function (f) { if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '')) parts.push(f); else images.push(f); });
+      var body = String(text || '');
+      for (var i = 0; i < parts.length; i++) {
+        try { var got = await pdfToText(parts[i]); body += '\n' + String(got && got.text || ''); } catch (e) { /* a PDF with no text layer: nothing to add */ }
+      }
+      body = body.replace(/[ \t]+\n/g, '\n').trim();
+      // Long lists go in slices (the reader answers a few hundred shows at a time).
+      var slices = [];
+      for (var at = 0; at < body.length; at += 30000) slices.push(body.slice(at, at + 30000));
+      var total = slices.length + images.length, k = 0;
+      var take = function (out, src) { if (Array.isArray(out)) out.forEach(function (x) { if (G.isObj(x)) { x.sources = [src]; found.push(x); } }); };
+      for (var s = 0; s < slices.length; s++) {
+        k += 1; c.progress = k + ' of ' + total; render(true);
+        try { take(await S.sample.json(tfPagePrompt(name, slices[s], false), { cache: false }), 'https://devinoliverofficial.github.io/greenroom/#page'); }
+        catch (e) { if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e; }
+      }
+      for (var m = 0; m < images.length; m++) {
+        k += 1; c.progress = k + ' of ' + total; render(true);
+        try { take(await S.sample.json(tfPagePrompt(name, '', true), { images: [images[m]], cache: false }), 'https://devinoliverofficial.github.io/greenroom/#page'); }
+        catch (e) { if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e; }
+      }
+      await tfHandOver(id, found, 'that page');
+    } catch (e) {
+      c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn’t read the page just now.';
+      if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
+    }
+    c.busy = false; c.phase = ''; c.progress = ''; render(true);
+  }
+  function openTfPage(id) {
+    var st = { text: '', files: [] };
+    openSheet(function () {
+      var ta = h('textarea', { class: 'input tf-paste', placeholder: 'Paste the list of shows here', 'aria-label': 'The copied list of shows',
+        oninput: function (e) { st.text = e.target.value; } });
+      ta.value = st.text;
+      var picked = h('p', { class: 'note' }, st.files.length ? plural(st.files.length, 'file') + ' ready: ' + st.files.map(function (f) { return f.name; }).join(', ') : '');
+      return [h('h2', { class: 'sh-title' }, 'Add from a saved page'),
+        h('p', { class: 'sh-sub' }, 'Open the act’s page on Concert Archives (or Songkick, Bandsintown, a fan wiki) in Safari. Select the list of shows and copy it, or Share → Print → save it as a PDF. Hand it over here: Greenroom reads every show on it — date, venue, city, tour name, who played — and fills the page in.'),
+        ta,
+        h('div', { class: 'stack', style: 'margin-top:10px' },
+          fileControl({ accept: 'application/pdf,' + imageAccept(), multiple: true, cls: 'btn ghost block', icon: 'plus', label: 'Or pick a PDF or screenshots', ariaLabel: 'Pick a saved PDF or screenshots',
+            onFiles: function (files) { st.files = files.slice(0, 12); picked.textContent = plural(st.files.length, 'file') + ' ready: ' + st.files.map(function (f) { return f.name; }).join(', '); } }),
+          picked,
+          h('button', { class: 'btn primary block', type: 'button', onclick: function () {
+            if (!st.text.trim() && !st.files.length) { toast('Paste the list, or pick a file'); return; }
+            closeSheet(); tfPage(id, st.text, st.files);
+          } }, 'Read it'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
+    }, { label: 'Add from a saved page' });
+  }
   function tfCandCard(id, x, busy) {
-    var what = [TF_ROLE[x.role] || null, x.lineup ? 'with ' + x.lineup : null].filter(Boolean).join(' \u00b7 ');
+    var what = [TF_ROLE[x.role] || null, x.lineup ? 'with ' + x.lineup : null].filter(Boolean).join(' · ');
     var toAdd = x.toAdd == null ? G.num(x.n) : G.num(x.toAdd);
     var fit = G.num(x.matched) > 0 ? plural(G.num(x.matched), 'unnamed show') + ' on the page fall in these dates' + (toAdd ? ', ' + plural(toAdd, 'announced date') + ' to add' : '')
       : toAdd > 0 ? plural(toAdd, 'announced date') + ' to add'
       : G.num(x.have) > 0 ? 'These dates are already on the page under another name' : 'No dates listed';
     return h('div', { class: 'tf-card' + (x.fill ? ' tf-fill' : '') },
-      x.fill ? h('p', { class: 'tf-kicker' }, 'Already on the page \u2014 fill in its dates') : null,
+      x.fill ? h('p', { class: 'tf-kicker' }, 'Already on the page — fill in its dates') : null,
       h('button', { class: 'tf-name', type: 'button', 'aria-label': 'Change the name: ' + x.name, onclick: function () { openTfRename(id, x); } },
         h('span', { class: 'tf-name-t' }, x.name), icon('chevron', 14)),
-      h('p', { class: 'tf-sub' }, tfSpan(x.first, x.last) + (x.region ? ' \u00b7 ' + x.region : '')),
+      h('p', { class: 'tf-sub' }, tfSpan(x.first, x.last) + (x.region ? ' · ' + x.region : '')),
       what ? h('p', { class: 'tf-sub' }, what) : null,
       h('p', { class: 'tf-fit' }, fit),
       h('div', { class: 'pt-two tf-acts' },
         h('button', { class: 'btn primary', type: 'button', disabled: busy, onclick: function () { tfDecide(id, x, true); } }, 'Add'),
         h('button', { class: 'btn ghost', type: 'button', disabled: busy, onclick: function () { tfDecide(id, x, false); } }, 'Not ours')));
+  }
+  // Does a find add anything to the page? (Ties are asked about; the rest
+  // of what's left over is only listed.)
+  function tfUseful(x) { return G.num(x.matched) > 0 || G.num(x.toAdd) > 0 || !!x.fill; }
+  // The search in progress: the van, how long is left, what it's doing.
+  function tfWaitBlock(st, c, phone) {
+    var doing;
+    if (st.status === 'reading') {
+      var srcs = st.sources || {};
+      doing = 'Reading tour announcements — ' + plural(G.num(st.pages), 'article') +
+        (G.num(srcs.sites) ? ' from ' + G.num(srcs.sitesWithNews) + ' of ' + (G.num(srcs.sites) + 2) + ' sites so far' : '') +
+        (G.num(st.waiting) > 0 ? ', ' + st.waiting + ' to go' : '');
+    } else if (st.status === 'thinking') {
+      var bt = st.batches || {};
+      doing = 'Sorting out the tours' + (G.num(bt.total) ? ' — ' + G.num(bt.done) + ' of ' + G.num(bt.total) + ' batches of articles read' : '…');
+    } else {
+      doing = (c.phase || 'Sorting out the tours…') + (c.progress ? ' ' + c.progress : '');
+    }
+    return h('div', { class: 'tf-wait', role: 'status', 'aria-live': 'polite' },
+      h('div', { class: 'tf-van', 'aria-hidden': 'true' }),
+      h('p', { class: 'tf-wait-t' }, 'Greenroom is searching.'),
+      h('p', { class: 'tf-eta' }, G.etaText(st.eta) || 'Almost done.'),
+      h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }), doing),
+      h('p', { class: 'tf-wait-sub' }, phone ? 'Keep this page open while the tours are sorted out.' : 'You can close the app — the search keeps going, and the page fills in by itself.'));
   }
   function tourFinderBlock(id, card, manage, unclaimed) {
     if (!manage && !(unclaimed && claimQ().list)) return null;
@@ -4362,59 +4483,83 @@
     var st = c.state || {}, status = c.state ? (st.status || 'idle') : (c.failed ? 'failed' : 'loading');
     // A read left mid-way (the page was closed) picks up where it was; the
     // articles are read as soon as the reading brain is here.
-    if ((status === 'reading' && !c.timer && !c.asking) || (status === 'ready' && !c.busy && !c.error && S.sample)) tfAfter(id);
-    if (status === 'extracting' && !c.busy) status = 'ready';
+    if (c.state && !c.timer && !c.asking && !c.busy) tfAfter(id);
     var cands = Array.isArray(st.candidates) ? st.candidates : [];
     var fresh = cands.filter(function (x) { return x.status === 'new'; });
+    var ties = fresh.filter(tfUseful), rest = fresh.filter(function (x) { return !tfUseful(x); });
     var added = cands.filter(function (x) { return x.status === 'added'; });
+    // What this run put on the page by itself (since the search was started).
+    var since = st.startedAt ? Date.parse(st.startedAt) : 0;
+    var autoNow = added.filter(function (x) { return x.auto && x.decidedAt && Date.parse(x.decidedAt) >= since - 1000; });
+    var runs = Array.isArray(st.runs) ? st.runs : [];
     var findBtn = function (label) {
       return h('button', { class: 'btn primary block', type: 'button', disabled: c.busy, onclick: function () { tfStart(id); } }, icon('search', 18), label);
     };
+    var pageBtn = S.sample ? h('button', { class: 'btn ghost block', type: 'button', disabled: c.busy, onclick: function () { openTfPage(id); } }, icon('plus', 18), 'Add from a saved page') : null;
+    var runsBlock = runs.length ? h('details', { class: 'tf-more' },
+      h('summary', null, plural(runs.length, 'run') + ' of nights on the page with no tour name'),
+      h('p', { class: 'note tf-p' }, 'setlist.fm has these shows but nobody named the tour. Name a run and every night in it is filed under it.'),
+      runs.map(function (r) { return tfRunCard(id, r, cands, c.busy); })) : null;
+    var addedBlock = added.length ? h('details', { class: 'tf-added' },
+      h('summary', null, plural(added.length, 'tour') + ' added from here'),
+      added.map(function (x) {
+        return h('div', { class: 'row tf-added-row' },
+          h('div', { class: 'row-label' }, x.name, h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (x.auto ? ' · added by itself' : ''))),
+          h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfUndo(id, x); } }, 'Take off'));
+      })) : null;
     var body;
-    if (status === 'loading') body = h('p', { class: 'note tf-status' }, 'Looking\u2026');
+    if (status === 'loading') body = h('p', { class: 'note tf-status' }, 'Looking…');
     else if (status === 'failed') body = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { tfOf(id, true); render(true); } }, 'Try again');
-    else if (status === 'idle' || status === 'error') {
-      var idleRuns = Array.isArray(st.runs) ? st.runs : [];
-      body = [status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn\u2019t finish.') : null, findBtn(status === 'error' ? 'Try again' : 'Find missing tours'),
-        tfPosterButton(id, c.busy),
-        idleRuns.length ? [h('h4', { class: 'tf-h2' }, 'Nights on the page with no tour name'),
-          h('p', { class: 'note tf-p' }, 'setlist.fm has these shows but nobody named the tour. Name a run and every night in it is filed under it.'),
-          idleRuns.map(function (r) { return tfRunCard(id, r, cands, c.busy); })] : null];
-    } else if (status === 'reading') {
-      var srcs = st.sources || {};
-      body = h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }),
-        'Reading tour announcements\u2026 ' + plural(G.num(st.pages), 'article') +
-        (G.num(srcs.sites) ? ' from ' + G.num(srcs.sitesWithNews) + ' of ' + (G.num(srcs.sites) + 2) + ' sites so far' : '') +
-        (G.num(st.waiting) > 0 ? ', ' + st.waiting + ' to go' : ''));
-    } else if (status === 'ready' || (c.busy && c.phase)) {
-      body = c.busy ? h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }), c.phase + (c.progress ? ' ' + c.progress : ''))
-        : S.sample && !c.error ? h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }), 'Sorting out the tours\u2026')
-        : [h('p', { class: 'note bad' }, c.error || 'Reading isn\u2019t available right now.'),
+    else if (c.busy && c.phase && status !== 'reading' && status !== 'thinking') {
+      body = tfWaitBlock(st, c, true);
+    } else if (status === 'idle' || status === 'error') {
+      body = [status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn’t finish.') : null,
+        findBtn(status === 'error' ? 'Try again' : 'Find missing tours'),
+        pageBtn, tfPosterButton(id, c.busy),
+        ties.length ? [h('h4', { class: 'tf-h2' }, 'Which is it?'), ties.map(function (x) { return tfCandCard(id, x, c.busy); })] : null,
+        runsBlock, addedBlock];
+    } else if (status === 'reading' || status === 'thinking' || (status === 'ready' && st.brain)) {
+      // Without the key in Vault the archives are still read by the server, but the
+      // articles are sorted on this phone once they're in: say so.
+      body = tfWaitBlock(st, c, !st.brain);
+    } else if (status === 'ready' || status === 'extracting') {
+      body = S.sample && !c.error ? tfWaitBlock(st, c, true)
+        : status === 'extracting' ? [tfWaitBlock(st, c, true), h('p', { class: 'note' }, 'Another phone is sorting the tours right now.')]
+        : [h('p', { class: 'note bad' }, c.error || 'Reading isn’t available right now.'),
            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { c.error = ''; tfExtract(id); } }, 'Try again')];
     } else {
-      var runs = Array.isArray(st.runs) ? st.runs : [];
       body = [
         c.error ? h('p', { class: 'note bad' }, c.error) : null,
-        st.sources && st.sources.lambgoat === 'none' && G.num(st.pages) > 0 ? h('p', { class: 'note' }, 'One of the two archives didn\u2019t answer this time; the other was read.') : null,
-        fresh.length ? fresh.map(function (x) { return tfCandCard(id, x, c.busy); })
-          : h('p', { class: 'note' }, st.detail || (added.length ? 'Nothing else found in the announcements.' : 'Nothing found in the announcements that isn\u2019t already on the page.')),
-        runs.length ? [h('h4', { class: 'tf-h2' }, 'Nights on the page with no tour name'),
-          h('p', { class: 'note tf-p' }, 'setlist.fm has these shows but nobody named the tour. Name a run and every night in it is filed under it.'),
-          runs.map(function (r) { return tfRunCard(id, r, cands, c.busy); })] : null,
-        added.length ? h('details', { class: 'tf-added' },
-          h('summary', null, plural(added.length, 'tour') + ' added from here'),
-          added.map(function (x) {
-            return h('div', { class: 'row tf-added-row' },
-              h('div', { class: 'row-label' }, x.name, h('span', { class: 'hint' }, tfSpan(x.first, x.last))),
+        autoNow.length ? [h('h4', { class: 'tf-h2' }, plural(autoNow.length, 'tour') + ' added to the page'),
+          h('p', { class: 'note tf-p' }, 'Name, dates and venues where the announcements had them. Wrong one? Take it off.'),
+          autoNow.map(function (x) {
+            var bits = [G.num(x.named) ? plural(G.num(x.named), 'night') : null, TF_ROLE[x.role] || null, x.lineup ? 'with ' + x.lineup : null].filter(Boolean).join(' · ');
+            return h('div', { class: 'tf-auto-row' },
+              h('div', { class: 'row-label' }, x.name, h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (bits ? ' · ' + bits : ''))),
               h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfUndo(id, x); } }, 'Take off'));
+          })] : null,
+        ties.length ? [h('h4', { class: 'tf-h2' }, 'Which is it?'),
+          h('p', { class: 'note tf-p' }, 'These want some of the same nights, so it’s your call. Add the right one; the other goes.'),
+          ties.map(function (x) { return tfCandCard(id, x, c.busy); })] : null,
+        !autoNow.length && !ties.length ? h('p', { class: 'note' }, st.detail || 'Nothing found in the announcements that isn’t already on the page.')
+          : st.detail ? h('p', { class: 'note tf-p' }, st.detail) : null,
+        st.sources && st.sources.lambgoat === 'none' && G.num(st.pages) > 0 ? h('p', { class: 'note' }, 'One of the archives didn’t answer this time; the others were read.') : null,
+        rest.length ? h('details', { class: 'tf-more' },
+          h('summary', null, plural(rest.length, 'tour') + ' found with nothing to add'),
+          h('p', { class: 'note tf-p' }, 'Announced, but no dates the page doesn’t already have.'),
+          rest.map(function (x) {
+            return h('div', { class: 'tf-row-x' },
+              h('span', null, x.name, h('span', { class: 'hint' }, tfSpan(x.first, x.last) + (x.lineup ? ' · with ' + x.lineup : ''))),
+              h('button', { class: 'pf-btn', type: 'button', disabled: c.busy, onclick: function () { tfDecide(id, x, false); } }, 'Not ours'));
           })) : null,
-        tfPosterButton(id, c.busy),
+        runsBlock, addedBlock,
+        pageBtn, tfPosterButton(id, c.busy),
         st.day && st.today && st.day !== st.today ? findBtn('Look again') : h('p', { class: 'note tf-again' }, 'The archives are read once a day. Come back tomorrow to look again.')
       ];
     }
     return h('section', { class: 'tf-block', 'aria-label': 'Add missing tours' },
       h('h3', { class: 'mn-h mn-over tf-h' }, 'Add missing tours'),
-      h('p', { class: 'note tf-p' }, 'Tours setlist.fm never named. Greenroom reads the tour announcements and lists what it finds; you say which are yours, and they go on the page.'),
+      h('p', { class: 'note tf-p' }, 'Greenroom reads nine music-news archives and Wikipedia for ' + ((card || {}).name || 'the act') + '’s tour announcements, then puts every tour it’s sure of on the page — the name, the dates, the venues where the article had them. When two finds want the same nights, it asks you.'),
       body);
   }
 
@@ -4848,9 +4993,10 @@
         // Whether anyone runs the page is the server's to say; only a list
         // that doesn't say is read by the username.
         var ghost = a.unclaimed != null ? !!a.unclaimed : bare;
+        var marks = { verified: !!a.checkmark, claimed: !!a.claimed };
         return ghost
-          ? { kind: 'artist', id: a.id, title: a.name, name: a.name, sub: [a.about, 'Artist', 'Unclaimed'].filter(Boolean).join(' \u00b7 '), avatar: '', letter: a.name }
-          : { kind: 'artist', id: a.id, title: bare ? a.name : a.handle, name: a.name, sub: bare ? 'Artist' : [a.name, 'Artist'].join(' \u00b7 '), avatar: a.avatar || '', letter: a.name };
+          ? Object.assign({ kind: 'artist', id: a.id, title: a.name, name: a.name, sub: [a.about, 'Artist', 'Unclaimed'].filter(Boolean).join(' \u00b7 '), avatar: '', letter: a.name }, marks)
+          : Object.assign({ kind: 'artist', id: a.id, title: bare ? a.name : a.handle, name: a.name, sub: bare ? 'Artist' : [a.name, 'Artist'].join(' \u00b7 '), avatar: a.avatar || '', letter: a.name }, marks);
       },
       // An act the encyclopedia knows that has no page on Greenroom yet.
       mb: function (m) {
@@ -4909,7 +5055,7 @@
       return h('div', { class: 'sr-row' },
         h('button', { class: 'sr-main', type: 'button', onclick: function () { open(it); } }, face,
           h('span', { class: 'lr-text' },
-            h('span', { class: 'sr-title' }, h('span', { class: 'sr-title-t' }, it.title), it.verified ? verifiedBadge() : null),
+            h('span', { class: 'sr-title' }, h('span', { class: 'sr-title-t' }, it.title), it.verified ? verifiedBadge() : null, it.verified && it.claimed ? claimedTag('sm') : null),
             it.kind === 'mb' && st.opening === it.id ? h('span', { class: 'sr-sub' }, 'Opening\u2026')
               : it.sub ? h('span', { class: 'sr-sub' }, it.sub) : null)),
         onDrop ? h('button', { class: 'sr-x', type: 'button', 'aria-label': 'Remove ' + it.title + ' from Recent', onclick: onDrop }, icon('close', 18)) : null);
@@ -16204,6 +16350,11 @@
     function suggest(r) {
       var hits = [];
       var near = function (a, b) { return Math.abs(a - b) <= Math.max(1, b * 0.01); };
+      // What the account is watched for says what the money can be: a merch
+      // account's deposit is never a guarantee (the same rule the automatic
+      // matchers follow). An account watched for both, or unknown, can be either.
+      var mayMerch = r.watch === 'merch' || r.watch === 'both' || !r.watch;
+      var mayGuar = r.watch === 'guarantees' || r.watch === 'both' || !r.watch;
       var books = band ? allTourEntries(false).filter(function (e) { return artistOf(e[1]) === band; }) : [[tourId, base]];
       books.forEach(function (e) {
         var tid = e[0], t2 = e[1];
@@ -16211,30 +16362,37 @@
           if (!G.parseDay(s.date) || !s.loggedAt) return;
           if (Math.abs(G.daysBetween(s.date, r.date)) > 21) return;
           var inc = G.isObj(s.income) ? s.income : {};
-          var merch = G.merchDue(s), mdep = G.num(s.merchDeposit) || G.num(s.merchCardDeposit);
-          if (merch > 0 && (near(r.amount, merch) || (mdep > 0 && near(r.amount, mdep)))) {
-            hits.push({ kind: 'merch', tourId: tid, show: s, received: s.merchReceived === true, what: 'the merch for' });
+          // Merch: the night's take (or its card-deposit figure). A night whose
+          // merch deposit the bank already showed can't be this deposit too.
+          var merch = G.merchDue(s);
+          if (mayMerch && merch > 0 && !s.merchReceivedAt && near(r.amount, merch)) {
+            hits.push({ kind: 'merch', tourId: tid, show: s, waiting: owedBit({ kind: 'merch' }, s), received: s.merchReceived === true, what: 'the merch for' });
           }
           var g = G.num(inc.guarantee);
-          if (g > 0) {
+          if (mayGuar && g > 0 && !(s.guaranteeReceivedAt && unseen(s) <= 1)) {
             // Less the booking agent's cut: the dollars logged on the night, else the deal's percentage.
             var why = G.guaranteeWhy ? G.guaranteeWhy(s) : {};
             var comm = G.normCommission ? G.normCommission(t2 && t2.commission) : {};
             var pct = G.num(comm && comm.agent && comm.agent.value);
             var net1 = G.num(why && why.agent) > 0 ? Math.round((g - G.num(why.agent)) * 100) / 100 : 0;
             var net2 = pct > 0 && pct < 100 ? Math.round(g * (1 - pct / 100) * 100) / 100 : 0;
-            if (near(r.amount, g) || (net1 > 0 && near(r.amount, net1)) || (net2 > 0 && near(r.amount, net2)) ||
-                (G.num(s.guaranteeDeposit) > 0 && near(r.amount, G.num(s.guaranteeDeposit)))) {
-              hits.push({ kind: 'guarantee', tourId: tid, show: s, received: s.guaranteeReceived === true && !(G.guaranteeOwed(s) > 0), what: 'the guarantee for' });
+            var typed = G.num(s.guaranteeDeposit);
+            if (near(r.amount, g) || (net1 > 0 && near(r.amount, net1)) || (net2 > 0 && near(r.amount, net2)) || (typed > 0 && near(r.amount, typed))) {
+              hits.push({ kind: 'guarantee', tourId: tid, show: s, waiting: owedBit({ kind: 'guarantee' }, s), received: s.guaranteeReceived === true && !(G.guaranteeOwed(s) > 0), what: 'the guarantee for' });
             }
           }
         });
       });
-      hits.sort(function (a, b) { return Math.abs(G.daysBetween(a.show.date, r.date)) - Math.abs(G.daysBetween(b.show.date, r.date)); });
+      // A night still waiting on its money beats one already paid; then the nearest night.
+      hits.sort(function (a, b) {
+        if (a.waiting !== b.waiting) return a.waiting ? -1 : 1;
+        return Math.abs(G.daysBetween(a.show.date, r.date)) - Math.abs(G.daysBetween(b.show.date, r.date));
+      });
       return hits[0] || null;
     }
     // The book a deposit lands on (null = the Off Tour book, made if needed).
     function landsOn(r) {
+      if (r.dest === 'pin' && r.pinTour) return r.pinTour;
       if (r.dest === 'off') return null;
       if (r.dest === 'up' && r.upTo) return r.upTo;
       return curTour ? curTour.id : tourId;
@@ -16369,10 +16527,15 @@
         onchange: function (e) { r.upTo = e.target.value; r.showTouched = false; r.show = ''; redraw(); } },
         ups.map(function (u) { return h('option', { value: u.id }, u.name + ' · starts ' + dayMD(u.start)); })) : null;
       if (upSel) { upSel.value = r.upTo || ''; upSel.hidden = r.dest !== 'up'; }
+      // The night the deposit was matched to may sit on a tour that isn't
+      // today's: that tour gets a pill of its own, so the money lands where
+      // the night is and nowhere else.
+      var pinT = r.pinTour ? getTour(r.pinTour) : null;
+      var ds = pinT ? dests.concat([['pin', pinT.name || 'That tour', '']]) : dests;
       return h('div', { class: 'rv-dwrap' },
         h('div', { class: 'rv-dest', role: 'group', 'aria-label': 'Log this deposit to' },
           h('span', { class: 'rv-dlabel' }, 'Log to'),
-          dests.map(function (d) {
+          ds.map(function (d) {
             return h('button', { class: 'rv-dpill' + (r.dest === d[0] ? ' on' : '') + (d[2] ? ' na' : ''), type: 'button',
               title: d[2] || (d[0] === 'cur' && curTour ? curTour.name : null), 'aria-disabled': d[2] ? 'true' : null,
               onclick: function () {
@@ -16420,18 +16583,22 @@
         aside.onclick = function () { skipOne(r, row); };
         var acct = accountOf(r);
         var hit = r.hitDone ? null : suggest(r);
+        var hitTour = hit && hit.tourId ? getTour(hit.tourId) : null;
         var hitLine = !hit ? null : h('div', { class: 'iv-hit' },
           h('p', { class: 'iv-hit-t' }, 'Same size as ' + hit.what + ' ' + dayMD(hit.show.date) + (hit.show.city ? ' \u00b7 ' + String(hit.show.city).split(',')[0] : '') +
-            (hit.received ? ' \u2014 already logged and ticked Received' : ' \u2014 logged, not yet marked Received')),
+            (hitTour && hitTour.name && !(curTour && hit.tourId === curTour.id) ? ' (' + hitTour.name + ')' : '') +
+            (hit.waiting ? ' \u2014 logged, still waiting on this money' : hit.received ? ' \u2014 already logged and ticked Received' : ' \u2014 logged, not yet marked Received')),
           h('div', { class: 'pt-two' },
             h('button', { class: 'btn sm ghost', type: 'button', disabled: r.busy || null, onclick: function () {
-              // It's the money already on the books: set the deposit aside for good, nothing doubles.
-              r.armed = true; skipOne(r, row);
-            } }, 'Already logged'),
+              // It's the money already on the books: set the deposit aside for good, nothing doubles. Two taps, since it's final.
+              skipOne(r, row);
+            } }, r.armed ? 'Set it aside for good?' : 'Already logged'),
             h('button', { class: 'btn sm primary', type: 'button', disabled: r.busy || null, onclick: function () {
-              // Not yet: log it as that night's money (the night's own line marks it received).
+              // Not yet: log it as that night's money, on the night's own tour (the night's line marks it received).
               r.kind = hit.kind; r.show = hit.show.id; r.showTouched = true; r.hitDone = true;
               if (hit.tourId && curTour && hit.tourId === curTour.id) r.dest = 'cur';
+              else if (hit.tourId && ups.some(function (u) { return u.id === hit.tourId; })) { r.dest = 'up'; r.upTo = hit.tourId; }
+              else if (hit.tourId) { r.dest = 'pin'; r.pinTour = hit.tourId; }
               redraw();
             } }, 'Not logged yet')));
         fillEl(wrap,

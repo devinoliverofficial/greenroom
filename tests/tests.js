@@ -1752,6 +1752,15 @@
       eq(oln.sources.join(','), 'https://a.example/1,https://a.example/2', 'https sources add up');
       eq(oln.lineup, 'Our Last Night, The Word Alive', 'the fuller lineup stays');
     });
+    test('etaText says the finder’s time left the way a person would', function () {
+      eq(G.etaText(0), '', 'nothing left, nothing said');
+      eq(G.etaText(45), 'Almost done.');
+      eq(G.etaText(400), 'Come back in ~7 min.', 'to the minute under ten');
+      eq(G.etaText(951), 'Come back in ~20 min.', 'to five minutes under an hour');
+      eq(G.etaText(3500), 'Come back in ~60 min.', 'just under an hour is still minutes');
+      eq(G.etaText(3700), 'Come back in ~an hour.');
+      eq(G.etaText(8000), 'Come back in ~2 hours.');
+    });
     test('tourKnown matches a found tour against the page by loose name; paragraphsAbout keeps the right paragraphs', function () {
       eq(G.tourKnown('The Treehouse Tour', [{ name: 'Treehouse Tour' }]), true);
       eq(G.tourKnown('Spin the Wheel Tour', [{ name: 'Spin The Wheel' }]), true);
