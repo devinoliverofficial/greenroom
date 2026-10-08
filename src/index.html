@@ -2813,6 +2813,25 @@ button.fl-row { cursor: pointer; }
 .fw-mine { padding: 12px 12px 10px; }
 .hist-tier.sm { flex: none; font-size: 10px; padding: 1px 6px; }
 /* The sign-in page's one line about the door. */
+/* Profile header, third reading (Devin, 2026-10-07 night): the name directly
+   above the photo, the photo in the centre, tours and shows stacked to its
+   left, countries and cities stacked to its right, followers and following
+   under the photo, flowers under that. */
+.pf-top.pf-center { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.pc-name { text-align: center; }
+.pc-name .vp-name { display: inline-flex; align-items: center; gap: 6px; }
+.pc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; column-gap: 20px; width: 100%; }
+.pf-stats.pc-side, .page.profile .pf-stats.pc-side { display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 0; flex: none; min-width: 0; }
+.pf-stats.pc-left { align-items: flex-end; }
+.pf-stats.pc-right { align-items: flex-start; }
+.pc-left .pf-stat { align-items: flex-end; text-align: right; }
+.pc-right .pf-stat { align-items: flex-start; text-align: left; }
+.pc-under .hist-fans { margin: 0; text-align: center; }
+.pc-fl { display: flex; justify-content: center; }
+.page.profile .pf-top.pf-center { gap: 8px; }
+.page.profile .pc-row { column-gap: 18px; }
+/* The small Give button at the right edge of a crew member's stats. */
+.fw-main .fw-give.sm { flex: none; align-self: center; height: 26px; margin: 0; padding: 0 10px; font-size: 12.5px; }
 /* Profile header, Devin's 2026-10-07 reading: the name beside the photo
    where it always was, the four counts centred on the photo, followers and
    following under the photo. The side column's children become grid items
@@ -2862,6 +2881,7 @@ button.fl-row { cursor: pointer; }
 .pay-sum-k { font-size: 11.5px; font-weight: 800; letter-spacing: .08em; }
 .pay-sum-v { font-size: 20px; font-weight: 700; letter-spacing: -.01em; line-height: 1.15; color: inherit; }
 .pay-page .xs-card { margin-top: 0; overflow: hidden; }
+.pay-page .pay-chart { margin: 4px 2px 10px; }
 .pay-sum .neg { color: var(--neg); }
 .pay-head { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 2px 16px; }
 .pay-fig { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

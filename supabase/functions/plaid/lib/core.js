@@ -800,6 +800,27 @@
     lines.forEach(function (l) { l.total = round(l.total * 100) / 100; });
     return { lines: lines, gross: round(lines.reduce(function (t, l) { return t + l.total; }, 0) * 100) / 100 };
   }
+  // The crew member's own climbing graph: money in (the tour's payments and
+  // what they logged) against what they spent, day by day up to today.
+  function payBalanceSeries(book, payments, until) {
+    var b = isObj(book) ? book : {};
+    var inc = {}, out = {};
+    var add = function (map, d, a) { if (parseDay(d) && a > 0) map[d] = (map[d] || 0) + a; };
+    (Array.isArray(payments) ? payments : rows(payments)).forEach(function (p) { add(inc, p && p.date, num(p && p.amount)); });
+    rows(b.income).forEach(function (e) { add(inc, e.date, num(e.amount)); });
+    rows(b.entries).forEach(function (e) { add(out, e.date, num(e.amount)); });
+    var days = Object.keys(inc).concat(Object.keys(out)).filter(function (d, i, a) { return a.indexOf(d) === i; }).sort();
+    if (!days.length) return [];
+    var end = parseDay(until) && until > days[days.length - 1] ? until : days[days.length - 1];
+    if (days.indexOf(end) < 0) days.push(end);
+    // A quiet day before the first entry, so the lines rise from zero.
+    days.unshift(addDays(days[0], -1));
+    var ci = 0, co = 0;
+    return days.map(function (d) {
+      ci += inc[d] || 0; co += out[d] || 0;
+      return { date: d, income: round(ci * 100) / 100, spent: round(co * 100) / 100 };
+    });
+  }
   // Where one crew member stands: their pay for the tour (the plan on their
   // crew row, run over the tour's dates), what's been logged as paid to
   // them, and what's still owed.
@@ -1873,7 +1894,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

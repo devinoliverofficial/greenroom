@@ -822,6 +822,9 @@
 
   function afterRender() {
     if (S.route.name === 'tour') mountHero();
+    // MY PAY's own climbing graph (the Income side).
+    var payChart = $('.pay-chart');
+    if (payChart) drawChart(payChart);
     else teardownMinibar();
     if (S.focusOnRender) {
       S.focusOnRender = false;
@@ -1208,6 +1211,8 @@
     redrawTimer = setTimeout(function () {
       var wrap = $('#hero .chart-wrap');
       if (wrap) drawChart(wrap);
+      var pay = $('.pay-chart');
+      if (pay) drawChart(pay);
     }, 180);
   });
 
@@ -1929,39 +1934,28 @@
     var checked = !!(uid && cardOf(uid).card && cardOf(uid).card.verified);
     syncSocial();
     return h('section', { class: 'pf', 'aria-label': 'Your profile' },
-      h('div', { class: 'pf-top pf-grid' },
-        h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
-          card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
-        h('div', { class: 'vp-side' },
-          (card.handle && profileName()) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, profileName()),
+      (function () {
+        var own = uid ? cardOf(uid).card : null;
+        var rs = own && G.isObj(own.roadStats) ? own.roadStats : null;
+        var B2 = window.GR_BACKEND, mine = flowersOn() && B2.myFlowers ? B2.myFlowers() : null;
+        var fans = h('p', { class: 'hist-fans' },
+          h('button', { class: 'hf-btn', type: 'button', onclick: function () { if (uid) openFollowList(uid, 'followers'); } },
+            plural(G.num(counts.followers), 'follower')),
+          ' · ',
+          h('button', { class: 'hf-btn', type: 'button', onclick: function () { if (uid) openFollowList(uid, 'following'); } },
+            G.num(counts.following) + ' following'));
+        return roadHead({
+          name: (card.handle && profileName()) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, profileName()),
             checked ? verifiedBadge() : null) : null,
-          // The road story leads on your own page too, once the server
-          // knows it; followers move to the line underneath.
-          (function () {
-            var own = uid ? cardOf(uid).card : null;
-            var rs = own && G.isObj(own.roadStats) ? own.roadStats : null;
-            return [h('div', { class: 'pf-stats' + (rs ? ' four' : '') },
-              rs ? [
-                stat(G.num(rs.tours), G.num(rs.tours) === 1 ? 'tour' : 'tours'),
-                stat(G.num(rs.shows), G.num(rs.shows) === 1 ? 'show' : 'shows'),
-                stat(G.num(rs.countries), G.num(rs.countries) === 1 ? 'country' : 'countries'),
-                stat(G.num(rs.cities), G.num(rs.cities) === 1 ? 'city' : 'cities')
-              ] : [
-                stat(tourCount, tourCount === 1 ? 'tour' : 'tours'),
-                stat(counts.followers, counts.followers === 1 ? 'follower' : 'followers', uid ? function () { openFollowList(uid, 'followers'); } : null),
-                stat(counts.following, 'following', uid ? function () { openFollowList(uid, 'following'); } : null)
-              ]),
-              rs ? h('p', { class: 'hist-fans' },
-                h('button', { class: 'hf-btn', type: 'button', onclick: function () { openFollowList(uid, 'followers'); } },
-                  plural(G.num(counts.followers), 'follower')),
-                ' · ',
-                h('button', { class: 'hf-btn', type: 'button', onclick: function () { openFollowList(uid, 'following'); } },
-                  G.num(counts.following) + ' following')) : null];
-          })(),
-          (function () {
-            var B = window.GR_BACKEND, mine = flowersOn() && B.myFlowers ? B.myFlowers() : null;
-            return mine && !mine.error && mine.counts ? flowerLine(mine.counts.flowers, mine.counts.endorsements) : null;
-          })())),
+          photo: h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
+            card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
+          left: rs ? [stat(G.num(rs.tours), G.num(rs.tours) === 1 ? 'tour' : 'tours'), stat(G.num(rs.shows), G.num(rs.shows) === 1 ? 'show' : 'shows')]
+            : [stat(tourCount, tourCount === 1 ? 'tour' : 'tours')],
+          right: rs ? [stat(G.num(rs.countries), G.num(rs.countries) === 1 ? 'country' : 'countries'), stat(G.num(rs.cities), G.num(rs.cities) === 1 ? 'city' : 'cities')] : [],
+          under: fans,
+          flowers: mine && !mine.error && mine.counts ? flowerLine(mine.counts.flowers, mine.counts.endorsements) : null
+        });
+      })(),
       roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 '))
         : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
       card.bio ? h('p', { class: 'pf-bio' }, card.bio)
@@ -2168,6 +2162,20 @@
   function socialOn() {
     var B = window.GR_BACKEND;
     return !!(S.mode === 'db' && B && B.profileCard && B.uid && B.uid());
+  }
+  // Devin's layout (2026-10-07, third reading): the name directly above the
+  // photo, the photo in the centre, tours and shows stacked on its left,
+  // countries and cities stacked on its right, followers and following
+  // under the photo, flowers under that.
+  function roadHead(o) {
+    return h('div', { class: 'pf-top pf-center' },
+      o.name ? h('div', { class: 'pc-name' }, o.name) : null,
+      h('div', { class: 'pc-row' },
+        h('div', { class: 'pf-stats pc-side pc-left' }, o.left),
+        o.photo,
+        h('div', { class: 'pf-stats pc-side pc-right' }, o.right)),
+      o.under ? h('div', { class: 'pc-under' }, o.under) : null,
+      o.flowers ? h('div', { class: 'pc-fl' }, o.flowers) : null);
   }
   function pfStat(n, label, onTap) {
     var inner = [h('strong', { class: 'pf-n num' }, String(n)), h('span', { class: 'pf-l' }, label)];
@@ -2376,35 +2384,26 @@
     return h('div', { class: 'page home profile has-tabs' },
       head(card.handle || card.name || 'Profile', card.verified),
       h('section', { class: 'pf vp', 'aria-label': (card.name || 'Their') + ' profile' },
-        h('div', { class: 'pf-top pf-grid' },
-          h('div', { class: 'pf-photo-wrap' }, personPhoto(card)),
-          h('div', { class: 'vp-side' },
-            (card.handle && card.name) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, card.name),
+        (function () {
+          var rs = G.isObj(card.roadStats) ? card.roadStats : null;
+          return roadHead({
+            name: (card.handle && card.name) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, card.name),
               card.verified ? verifiedBadge() : null) : null,
-            // Their road story leads — tours, shows, countries, cities from
-            // the Greenroom tours they're on — with followers underneath.
-            h('div', { class: 'pf-stats' + (G.isObj(card.roadStats) ? ' four' : '') },
-              G.isObj(card.roadStats) ? [
-                pfStat(G.num(card.roadStats.tours), G.num(card.roadStats.tours) === 1 ? 'tour' : 'tours',
-                  function () { pickTab('tours'); }),
-                pfStat(G.num(card.roadStats.shows), G.num(card.roadStats.shows) === 1 ? 'show' : 'shows'),
-                pfStat(G.num(card.roadStats.countries), G.num(card.roadStats.countries) === 1 ? 'country' : 'countries'),
-                pfStat(G.num(card.roadStats.cities), G.num(card.roadStats.cities) === 1 ? 'city' : 'cities')
-              ] : [
-                pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
-                pfStat(G.num(card.followers), G.num(card.followers) === 1 ? 'follower' : 'followers',
-                  function () { openFollowList(uid, 'followers', card.name); }),
-                pfStat(G.num(card.following), 'following', function () { openFollowList(uid, 'following', card.name); })
-              ]),
-            G.isObj(card.roadStats) ? h('p', { class: 'hist-fans' },
-              h('button', { class: 'hf-btn', type: 'button',
-                onclick: function () { openFollowList(uid, 'followers', card.name); } },
+            photo: h('div', { class: 'pf-photo-wrap' }, personPhoto(card)),
+            left: rs ? [pfStat(G.num(rs.tours), G.num(rs.tours) === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
+                        pfStat(G.num(rs.shows), G.num(rs.shows) === 1 ? 'show' : 'shows')]
+              : [pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); })],
+            right: rs ? [pfStat(G.num(rs.countries), G.num(rs.countries) === 1 ? 'country' : 'countries'),
+                         pfStat(G.num(rs.cities), G.num(rs.cities) === 1 ? 'city' : 'cities')] : [],
+            under: h('p', { class: 'hist-fans' },
+              h('button', { class: 'hf-btn', type: 'button', onclick: function () { openFollowList(uid, 'followers', card.name); } },
                 plural(G.num(card.followers), 'follower')),
               ' · ',
-              h('button', { class: 'hf-btn', type: 'button',
-                onclick: function () { openFollowList(uid, 'following', card.name); } },
-                G.num(card.following) + ' following')) : null,
-            flowerLine(card.flowers, card.endorsements))),
+              h('button', { class: 'hf-btn', type: 'button', onclick: function () { openFollowList(uid, 'following', card.name); } },
+                G.num(card.following) + ' following')),
+            flowers: flowerLine(card.flowers, card.endorsements)
+          });
+        })(),
         roles.length ? h('p', { class: 'pf-roles' }, roles.join(' \u00b7 ')) : null,
         card.bio ? h('p', { class: 'pf-bio' }, card.bio) : null,
         roadLine(card.roadStats),
@@ -3282,26 +3281,24 @@
       // A page nobody runs has only a machine's username: its name leads instead.
       head(unclaimed || machineHandle(card.handle) ? card.name : card.handle),
       h('section', { class: 'pf vp', 'aria-label': card.name + ' profile' },
-        h('div', { class: 'pf-top pf-grid' },
-          h('div', { class: 'pf-photo-wrap' }, photo,
-            (manage && !card.avatar) ? h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14)) : null),
-          h('div', { class: 'vp-side' },
-            h('strong', { class: 'vp-name' }, card.name),
-            // The road story is the headline: tours, shows, countries (of
-            // the world's 195), cities. Until it's synced, the page counts
-            // what Greenroom knows. Fans sit underneath.
-            h('div', { class: 'pf-stats' + (hsum && G.num(hsum.shows) > 0 ? ' four' : '') },
-              hsum && G.num(hsum.shows) > 0 ? [
-                pfStat(G.num(hsum.tours), G.num(hsum.tours) === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
-                pfStat(G.num(hsum.shows), G.num(hsum.shows) === 1 ? 'show' : 'shows'),
-                pfStat(G.num(hsum.countries) + '/195', 'countries'),
-                pfStat(G.num(hsum.cities), G.num(hsum.cities) === 1 ? 'city' : 'cities')
-              ] : [
-                pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
-                pfStat(bandList.length, 'band', function () { pickTab('band'); }),
-                pfStat(crewList.length, 'crew', function () { pickTab('crew'); })
-              ]),
-            h('p', { class: 'hist-fans' }, h('span', { class: 'hf-txt' }, plural(G.num(card.followers), 'fan'))))),
+        (function () {
+          var synced = hsum && G.num(hsum.shows) > 0;
+          return roadHead({
+            name: h('strong', { class: 'vp-name' }, card.name),
+            photo: h('div', { class: 'pf-photo-wrap' }, photo,
+              (manage && !card.avatar) ? h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14)) : null),
+            // The road story is the headline: tours, shows, countries (of the
+            // world's 195), cities. Until it's synced, the page counts what Greenroom knows.
+            left: synced ? [pfStat(G.num(hsum.tours), G.num(hsum.tours) === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
+                            pfStat(G.num(hsum.shows), G.num(hsum.shows) === 1 ? 'show' : 'shows')]
+              : [pfStat(tours.length, tours.length === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
+                 pfStat(bandList.length, 'band', function () { pickTab('band'); })],
+            right: synced ? [pfStat(G.num(hsum.countries) + '/195', 'countries'),
+                             pfStat(G.num(hsum.cities), G.num(hsum.cities) === 1 ? 'city' : 'cities')]
+              : [pfStat(crewList.length, 'crew', function () { pickTab('crew'); })],
+            under: h('p', { class: 'hist-fans' }, h('span', { class: 'hf-txt' }, plural(G.num(card.followers), 'fan')))
+          });
+        })(),
         h('p', { class: 'pf-roles' }, 'Artist', unclaimed ? h('span', { class: 'act-tag' }, 'Unclaimed') : null),
         card.bio ? h('p', { class: 'pf-bio' }, card.bio)
           : aboutLine ? h('p', { class: 'pf-bio act-about' }, aboutLine)
@@ -8479,6 +8476,13 @@
       ' \u00b7 net ', h('strong', { class: 'num' + (net < 0 ? ' neg' : '') }, money(net)));
     var pays = Array.isArray(c.info.payments) ? c.info.payments : [];
     if (tab === 'income') {
+      // Devin: the Income side carries the tour's climbing graph — money in
+      // against what's spent, day by day — drawn once it's on the page.
+      var series = G.payBalanceSeries(c.book, c.info.payments, G.tourToday());
+      var climb = series.length > 1 ? h('div', { class: 'chart-wrap pay-chart', role: 'img',
+        'aria-label': 'Money in against what you spent, from ' + dayLong(series[0].date) + ' to ' + dayLong(series[series.length - 1].date) + '. Now ' +
+          money(series[series.length - 1].income) + ' in and ' + money(series[series.length - 1].spent) + ' spent.' }) : null;
+      if (climb) climb.__data = { series: series, nights: [], tourId: null };
       var incRows = inc.lines.map(function (l) {
         var tourLine = l.key === 'tour';
         return h('button', { class: 'row rowbtn ex-row', type: 'button', onclick: function () { if (tourLine) openMyPayments(c.info); else openMyPayIncome(id, l.key); } },
@@ -8486,7 +8490,7 @@
             : (l.n ? plural(l.n, 'entry') : ''))),
           h('span', { class: 'amt num' + (l.total > 0 ? ' glow' : '') }, l.total > 0 ? money(l.total) : '\u2014'), icon('chevron', 18));
       });
-      return [head, chart, netLine,
+      return [head, climb || h('p', { class: 'note pay-note' }, 'The graph draws itself once there\u2019s a payment or an entry to show.'), netLine,
         st.onCrew ? h('p', { class: 'note pay-note' }, 'Pay plan: ' + money(st.total) + ' for the tour \u00b7 ' + money(st.paid) + ' logged as paid \u00b7 ' + money(st.owed) + ' still owed')
           : h('p', { class: 'note pay-note' }, 'You\u2019re not on this tour\u2019s crew list yet, so there is no pay plan here. The tour manager adds you under Crew with your email.'),
         h('h3', { class: 'mn-h mn-over' }, 'My income'),
@@ -10542,10 +10546,12 @@
             mine ? h('span', { class: 'fw-you' }, 'You') : null,
             h('span', { class: 'fw-chev', 'aria-hidden': 'true' }, icon('chevron', 14))),
           p.tourRole ? h('p', { class: 'fw-role' }, p.tourRole) : null,
-          fwStats(p.here, p.counts),
-          mine || !data.canGive ? null : h('button', { class: 'fw-give', type: 'button', disabled: data.left <= 0,
-            onclick: function () { openGiveFlowers(id, p, data.left); } },
-            data.left > 0 ? ['Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All ' + FLOWERS_EACH + ' given'))),
+          fwStats(p.here, p.counts)),
+        // Small, at the right edge of the stats (Devin, 2026-10-07).
+        mine || !data.canGive ? null : h('button', { class: 'fw-give sm', type: 'button', disabled: data.left <= 0,
+          'aria-label': data.left > 0 ? 'Give flowers to ' + fwName(p) : 'All ' + FLOWERS_EACH + ' flowers given',
+          onclick: function () { openGiveFlowers(id, p, data.left); } },
+          data.left > 0 ? ['Give ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All given')),
       open ? fwGiven(p, me, data) : null);
   }
   // The flowers one person was given on this tour, newest first: the giver, how many, the note, when.
@@ -10712,7 +10718,10 @@
       ? emptyState('Flowers are for a signed-in tour', 'Once everyone’s signed in, each of you gets ' + FLOWERS_EACH + ' to give.')
       : !data ? fwLoading('Picking the flowers…')
       : data.error ? fwFailed(function () { B.flowersFor(id, true); })
-      : [h('ul', { class: 'fw-list' }, data.people.map(function (p) { return flowerCard(id, p, me, data); })),
+      : [h('ul', { class: 'fw-list' }, data.people.slice()
+           // Whoever is signed in leads the list (Devin, 2026-10-07).
+           .sort(function (a, b) { return (b.userId === me ? 1 : 0) - (a.userId === me ? 1 : 0); })
+           .map(function (p) { return flowerCard(id, p, me, data); })),
          fwMine(id, data, me)];
     return h('div', { class: 'page tour has-tabs fw-page' },
       tourBand(t, id, 'stats'),

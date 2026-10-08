@@ -1699,6 +1699,13 @@
       eq(by.bonus.n, 0); near(inc.gross, 1090);
       near(G.payIncome(null, []).gross, 0);
     });
+    test('payBalanceSeries climbs day by day from a quiet start to today', function () {
+      var ser = G.payBalanceSeries({ income: { a: { date: '2026-10-03', amount: 100 } }, entries: { e: { date: '2026-10-02', amount: 20 }, f: { date: '2026-10-03', amount: 5 } } },
+        [{ date: '2026-10-01', amount: 500 }], '2026-10-05');
+      eq(ser.map(function (p) { return p.date; }).join(','), '2026-09-30,2026-10-01,2026-10-02,2026-10-03,2026-10-05');
+      near(ser[0].income, 0); near(ser[1].income, 500); near(ser[2].spent, 20); near(ser[3].income, 600); near(ser[3].spent, 25);
+      near(ser[4].income, 600, 'today carries the running totals'); eq(G.payBalanceSeries({}, [], '2026-10-05').length, 0);
+    });
     test('payStanding runs the pay plan over the tour dates and nets off what was paid', function () {
       var st = G.payStanding({ crew: { rate: 500, per: 'week', payTyped: false }, payments: [{ amount: 500 }, { amount: 250 }],
         tour: { first: '2026-09-27', last: '2026-10-04' } });
