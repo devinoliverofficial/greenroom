@@ -1,0 +1,28 @@
+# Greenroom — to do
+
+Devin's list. Big rocks first. Each one gets built one step at a time, with mercy.
+
+## 1. Reading costs — make it sustainable before the App Store
+Today every flyer, statement, venue lookup and tour search spends from one prepaid Anthropic
+meter. Capped now ($50/month on the Anthropic side, ~$60/month of searching on the app side,
+small model for the finder), but a cap is a brake, not a plan.
+- [ ] Per-person allowance for flyer/statement reads (needs the `read` server function redeployed from the Supabase dashboard — Devin pastes, one step at a time)
+- [ ] Smaller model for flyers/statements where it's good enough (same redeploy)
+- [ ] Decide the business shape: free tier with a monthly allowance of reads, paid tier above it
+- [ ] Concert Archives license (below) — if it lands, most of the tour searching goes away
+- [ ] Show the month's meter somewhere Devin can see it in the app
+
+## 2. Concert Archives — every artist, zero steps
+- [ ] Email sent 2026-10-08 to support@concertarchives.org (all bands, licensing terms asked). Waiting on reply
+- [ ] When they answer: agree terms, get the export/API, build the import so every claimed page fills itself
+- [ ] Until then: verified-band export + "Add from a saved page" (built) as the per-band fallback
+
+## 3. MERCHROOM
+- [ ] Square: real-money connection (OAuth, read-only scopes; never a production personal access token)
+- [ ] Merch nights from Square sales → income, matched to settlements and deposits
+- [ ] Devin's open notes on the Merchroom tab (pinned, not abandoned)
+
+## Smaller
+- [ ] Artist photo for search-made pages (MusicBrainz → Wikidata → Wikimedia Commons; Concert Archives photos are not available to us)
+- [ ] App Store next step: password minimum 8 + leaked-password check
+- [ ] Square Merchroom step 4 walkthrough
