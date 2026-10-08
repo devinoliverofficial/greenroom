@@ -4793,7 +4793,8 @@
   // Today follows).
   function socialBar(current) {
     var search = socialOn() ? tabButton(current === 'search', 'Search', 'search', function () {
-      if (current !== 'search') go({ name: 'search', back: S.route, focus: true });
+      // The magnifying glass opens Search without the keyboard (Devin, 2026-10-08): tap the box to type.
+      if (current !== 'search') go({ name: 'search', back: S.route });
     }) : null;
     var tid = profileTourId();
     var overview = tid ? tabButton(false, 'Overview', 'tabmap', function () { openTour(tid, 'details', S.route, 'Back'); }) : null;
