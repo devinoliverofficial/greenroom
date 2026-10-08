@@ -351,7 +351,9 @@ shim = r"""<script>
         { url: 'https://lambgoat.com/news/2/x/', source: 'lambgoat', title: 'DGD tour', published: '2018-03-01', body: 'Dance Gavin Dance ... 5/26 San Antonio, TX' }]);
     },
     tourFindPropose: function (artistId, cands, readUrls) {
-      var H = window.__harness; var st = H.tf[artistId];
+      var H = window.__harness; H.tf = H.tf || {};
+      // A poster or pasted page can come before any search: the entry is made on the spot.
+      var st = H.tf[artistId] || (H.tf[artistId] = { status: 'idle', detail: '', pages: 0, waiting: 0, sources: {}, candidates: [], runs: [], brain: false, eta: 0, batches: { total: 0, done: 0 } });
       H.proposed = (H.proposed || []).concat(cands);
       H.readUrls = (H.readUrls || []).concat(readUrls || []);
       // The first find adds dates, so the server fills it in by itself; the second is left to look at.
@@ -373,7 +375,7 @@ shim = r"""<script>
     },
     tourCandidateDecide: function (candId, add, name) {
       var H = window.__harness; var st = null, c = null;
-      Object.keys(H.tf).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; c = x; } }); });
+      Object.keys(H.tf || {}).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; c = x; } }); });
       c.status = add ? 'added' : 'no'; if (add && name) c.name = name;
       // What the real server reports back: how many nights took the name, how many dates were added.
       return Promise.resolve(Object.assign(JSON.parse(JSON.stringify(st)), add ? { renamed: c.matched, inserted: Math.max(0, c.n - c.have) } : {}));
@@ -394,7 +396,7 @@ shim = r"""<script>
     tourFindNote: function (artistId, note) { var H = window.__harness; H.tfNotes = (H.tfNotes || []).concat([note]); return Promise.resolve(); },
     tourCandidateUndo: function (candId) {
       var H = window.__harness; var st = null;
-      Object.keys(H.tf).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; x.status = 'new'; } }); });
+      Object.keys(H.tf || {}).forEach(function (k) { H.tf[k].candidates.forEach(function (x) { if (x.id === candId) { st = H.tf[k]; x.status = x.auto ? 'no' : 'new'; } }); });
       return Promise.resolve(JSON.parse(JSON.stringify(st)));
     },
     // MY PAY's own cards: two pretend charges and a deposit wait in the inbox.

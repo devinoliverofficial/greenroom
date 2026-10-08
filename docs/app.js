@@ -4144,6 +4144,23 @@
     return out;
   }
   function tfWait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  // One ask of the reader with the same patience as the article batches: told
+  // to slow down, it waits and asks again; any other failure is a null.
+  async function tfAsk(prompt, opts) {
+    for (var tries = 0; ; tries++) {
+      try { return await S.sample.json(prompt, opts); }
+      catch (e) {
+        if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e;
+        if (e && e.code === 'rate_limited' && tries < 3) { await tfWait(15000 * (tries + 1)); continue; }
+        return null;
+      }
+    }
+  }
+  // An image the reader won't take (too big) is named, not silently dropped.
+  function tfImageOk(f) {
+    if (S.imageMax && f.size > S.imageMax) { toast((f.name || 'One image') + ' is too big to read'); return false; }
+    return true;
+  }
   // One batch through the reader: what it found, which articles it answered
   // for, and which it couldn't. Told to slow down, it waits and asks again;
   // an answer that doesn't parse (the reader ran out of room) is asked again
@@ -4210,19 +4227,25 @@
       var all2 = G.mergeTourCandidates(found);
       var merged = all2.filter(function (x) { return !G.tourKnown(x.name, sum.toursList); })
         .map(function (x) { return { name: x.name, role: x.role, start: x.start, end: x.end, region: x.region, lineup: x.lineup, dates: x.dates, sources: x.sources }; });
-      // Only the articles actually read are marked read: the rest are asked again next time.
-      var readOnly = read.filter(function (u) { return failed.indexOf(u) < 0 && !/^https:\/\/en\.wikipedia\.org\//.test(u); });
+      // Only the server's articles actually read are marked read: the rest are asked again next time.
+      var pageUrls = {}; pages.forEach(function (p) { pageUrls[p.url] = true; });
+      var readOnly = read.filter(function (u) { return pageUrls[u] && failed.indexOf(u) < 0; });
       c.state = await B.tourFindPropose(id, merged, readOnly);
       c.since = c.since || Date.now();
       if (B.tourFindNote) { try { await B.tourFindNote(id, 'Phone read ' + (all.length - failed.length) + ' of ' + all.length + ' articles in ' + batches.length + ' batches: ' + found.length + ' mentions, ' + all2.length + ' tours, ' + (all2.length - merged.length) + ' already on the page, ' + G.num(c.state && c.state.added) + ' new, ' + G.num(c.state && c.state.filled) + ' added to the page' + (failed.length ? ', ' + failed.length + ' unread' : '')); } catch (e) { /* a note, nothing more */ } }
       if (failed.length) c.error = plural(failed.length, 'article') + ' couldn’t be read this time (the reader was busy); they’re kept for the next look.';
       c.at = Date.now(); c.found = null; c.doneBatches = null; c.readUrls = null;
     } catch (e) {
-      if (!(e && e.code === 'busy')) c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn’t sort the tours just now.';
+      if (e && e.code === 'busy') {
+        // Another phone holds the read: look again in a few seconds, not at once.
+        c.state = Object.assign({}, c.state || {}, { status: 'extracting' }); c.at = 0;
+        clearTimeout(c.timer); c.timer = setTimeout(function () { c.timer = null; tfOf(id, true); }, 5000);
+      } else {
+        c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn’t sort the tours just now.';
+      }
       if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
     }
     c.busy = false; c.phase = ''; c.progress = ''; render(true);
-    if (c.state && c.state.status === 'extracting') tfAfter(id);
   }
   async function tfDecide(id, x, add, name) {
     var B = window.GR_BACKEND, c = tfOf(id);
@@ -4341,19 +4364,17 @@
     if (c.busy) return;
     var name = (actOf(id).card || {}).name || '';
     c.busy = true; c.phase = 'Reading the posters…'; c.progress = ''; c.error = ''; render(true);
-    var found = [];
+    var found = [], missed = 0;
     try {
+      files = files.filter(tfImageOk);
       for (var i = 0; i < files.length; i++) {
         c.progress = (i + 1) + ' of ' + files.length; render(true);
-        try {
-          var out = await S.sample.json(tfPosterPrompt(name), { images: [files[i]], cache: false });
-          if (Array.isArray(out)) out.forEach(function (x) { if (G.isObj(x)) { x.sources = ['https://devinoliverofficial.github.io/greenroom/#poster']; found.push(x); } });
-        } catch (e) {
-          if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e;
-          // One poster the reader couldn't make out is skipped.
-        }
+        var out = await tfAsk(tfPosterPrompt(name), { images: [files[i]], cache: false });
+        if (Array.isArray(out)) out.forEach(function (x) { if (G.isObj(x)) { x.sources = ['https://devinoliverofficial.github.io/greenroom/#poster']; found.push(x); } });
+        else missed += 1;
       }
-      await tfHandOver(id, found, files.length === 1 ? 'that poster' : 'those posters');
+      if (missed) c.error = plural(missed, 'poster') + ' couldn\u2019t be read this time.';
+      if (files.length) await tfHandOver(id, found, files.length === 1 ? 'that poster' : 'those posters');
     } catch (e) {
       c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn’t read the posters just now.';
       if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
@@ -4383,14 +4404,15 @@
     if (c.busy) return;
     var name = (actOf(id).card || {}).name || '';
     c.busy = true; c.phase = 'Reading the page…'; c.progress = ''; c.error = ''; render(true);
-    var found = [], parts = [], images = [];
+    var found = [], parts = [], images = [], missed = 0;
     try {
-      (files || []).forEach(function (f) { if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '')) parts.push(f); else images.push(f); });
+      (files || []).forEach(function (f) { if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name || '')) parts.push(f); else if (tfImageOk(f)) images.push(f); });
       var body = String(text || '');
       for (var i = 0; i < parts.length; i++) {
-        try { var got = await pdfToText(parts[i]); body += '\n' + String(got && got.text || ''); } catch (e) { /* a PDF with no text layer: nothing to add */ }
+        try { var got = await pdfToText(parts[i], 200); body += '\n' + String(got && got.text || ''); } catch (e) { /* a PDF with no text layer: nothing to add */ }
       }
       body = body.replace(/[ \t]+\n/g, '\n').trim();
+      if (body.length > 300000) { toast('That\u2019s a lot of text \u2014 reading the first 300,000 characters'); body = body.slice(0, 300000); }
       // Long lists go in slices (the reader answers a few hundred shows at a time).
       var slices = [];
       for (var at = 0; at < body.length; at += 30000) slices.push(body.slice(at, at + 30000));
@@ -4398,15 +4420,16 @@
       var take = function (out, src) { if (Array.isArray(out)) out.forEach(function (x) { if (G.isObj(x)) { x.sources = [src]; found.push(x); } }); };
       for (var s = 0; s < slices.length; s++) {
         k += 1; c.progress = k + ' of ' + total; render(true);
-        try { take(await S.sample.json(tfPagePrompt(name, slices[s], false), { cache: false }), 'https://devinoliverofficial.github.io/greenroom/#page'); }
-        catch (e) { if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e; }
+        var o1 = await tfAsk(tfPagePrompt(name, slices[s], false), { cache: false });
+        if (Array.isArray(o1)) take(o1, 'https://devinoliverofficial.github.io/greenroom/#page'); else missed += 1;
       }
       for (var m = 0; m < images.length; m++) {
         k += 1; c.progress = k + ' of ' + total; render(true);
-        try { take(await S.sample.json(tfPagePrompt(name, '', true), { images: [images[m]], cache: false }), 'https://devinoliverofficial.github.io/greenroom/#page'); }
-        catch (e) { if (e && (e.code === 'session_expired' || SAMPLE_GONE.indexOf(e.code) >= 0)) throw e; }
+        var o2 = await tfAsk(tfPagePrompt(name, '', true), { images: [images[m]], cache: false });
+        if (Array.isArray(o2)) take(o2, 'https://devinoliverofficial.github.io/greenroom/#page'); else missed += 1;
       }
-      await tfHandOver(id, found, 'that page');
+      if (missed) c.error = missed + ' of ' + total + ' parts couldn\u2019t be read this time.';
+      if (total) await tfHandOver(id, found, 'that page');
     } catch (e) {
       c.error = e && e.code === 'session_expired' ? 'Sign in again to finish.' : 'Couldn’t read the page just now.';
       if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
@@ -4516,7 +4539,7 @@
       body = [status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn’t finish.') : null,
         findBtn(status === 'error' ? 'Try again' : 'Find missing tours'),
         pageBtn, tfPosterButton(id, c.busy),
-        ties.length ? [h('h4', { class: 'tf-h2' }, 'Which is it?'), ties.map(function (x) { return tfCandCard(id, x, c.busy); })] : null,
+        ties.length ? [h('h4', { class: 'tf-h2' }, 'Your call'), ties.map(function (x) { return tfCandCard(id, x, c.busy); })] : null,
         runsBlock, addedBlock];
     } else if (status === 'reading' || status === 'thinking' || (status === 'ready' && st.brain)) {
       // Without the key in Vault the archives are still read by the server, but the
@@ -15398,11 +15421,11 @@
     return mod;
   }
 
-  async function pdfToText(file) {
+  async function pdfToText(file, maxPages) {
     var lib = await loadPdfJs();
     var buf = await file.arrayBuffer();
     var doc = await lib.getDocument({ data: new Uint8Array(buf) }).promise;
-    var pages = Math.min(doc.numPages, 24);
+    var pages = Math.min(doc.numPages, maxPages || 24);
     var out = [];
     for (var i = 1; i <= pages; i++) {
       var page = await doc.getPage(i);
@@ -16349,44 +16372,54 @@
     // any of the merch numbers or guarantees it should say something".
     function suggest(r) {
       var hits = [];
-      var near = function (a, b) { return Math.abs(a - b) <= Math.max(1, b * 0.01); };
       // What the account is watched for says what the money can be: a merch
       // account's deposit is never a guarantee (the same rule the automatic
       // matchers follow). An account watched for both, or unknown, can be either.
       var mayMerch = r.watch === 'merch' || r.watch === 'both' || !r.watch;
       var mayGuar = r.watch === 'guarantees' || r.watch === 'both' || !r.watch;
-      var books = band ? allTourEntries(false).filter(function (e) { return artistOf(e[1]) === band; }) : [[tourId, base]];
+      // Only the tours you run: the books a deposit can be logged to.
+      var books = band ? allTourEntries(false).filter(function (e) { return artistOf(e[1]) === band && createdTour(e[0]); }) : [[tourId, base]];
       books.forEach(function (e) {
         var tid = e[0], t2 = e[1];
         G.rows(t2 && t2.shows).forEach(function (s) {
           if (!G.parseDay(s.date) || !s.loggedAt) return;
-          if (Math.abs(G.daysBetween(s.date, r.date)) > 21) return;
+          // Days from the night to the deposit: positive when the night came first.
+          var gap = G.daysBetween(s.date, r.date);
           var inc = G.isObj(s.income) ? s.income : {};
-          // Merch: the night's take (or its card-deposit figure). A night whose
+          // Merch is paid after the night (atVenu within about a week, a settlement
+          // within the month): a night still to come is never it, and a night whose
           // merch deposit the bank already showed can't be this deposit too.
           var merch = G.merchDue(s);
-          if (mayMerch && merch > 0 && !s.merchReceivedAt && near(r.amount, merch)) {
-            hits.push({ kind: 'merch', tourId: tid, show: s, waiting: owedBit({ kind: 'merch' }, s), received: s.merchReceived === true, what: 'the merch for' });
+          if (mayMerch && merch > 0 && !s.merchReceivedAt && gap >= 0 && gap <= (r.av ? 10 : 30)) {
+            var offM = Math.abs(r.amount - merch);
+            if (offM <= Math.max(1, r.av ? merch * 0.01 : 1)) {
+              hits.push({ kind: 'merch', tourId: tid, show: s, off: offM, gap: gap, waiting: owedBit({ kind: 'merch' }, s), received: s.merchReceived === true, what: 'the merch for' });
+            }
           }
+          // A guarantee can be wired a month ahead of the night or weeks after it.
           var g = G.num(inc.guarantee);
-          if (mayGuar && g > 0 && !(s.guaranteeReceivedAt && unseen(s) <= 1)) {
-            // Less the booking agent's cut: the dollars logged on the night, else the deal's percentage.
+          if (mayGuar && g > 0 && Math.abs(gap) <= 30 && !(s.guaranteeReceivedAt && unseen(s) <= 1)) {
+            // In full, less the booking agent's cut (the dollars logged on the night,
+            // else the deal's percentage), or the amount typed on the night.
             var why = G.guaranteeWhy ? G.guaranteeWhy(s) : {};
             var comm = G.normCommission ? G.normCommission(t2 && t2.commission) : {};
             var pct = G.num(comm && comm.agent && comm.agent.value);
-            var net1 = G.num(why && why.agent) > 0 ? Math.round((g - G.num(why.agent)) * 100) / 100 : 0;
-            var net2 = pct > 0 && pct < 100 ? Math.round(g * (1 - pct / 100) * 100) / 100 : 0;
-            var typed = G.num(s.guaranteeDeposit);
-            if (near(r.amount, g) || (net1 > 0 && near(r.amount, net1)) || (net2 > 0 && near(r.amount, net2)) || (typed > 0 && near(r.amount, typed))) {
-              hits.push({ kind: 'guarantee', tourId: tid, show: s, waiting: owedBit({ kind: 'guarantee' }, s), received: s.guaranteeReceived === true && !(G.guaranteeOwed(s) > 0), what: 'the guarantee for' });
+            var wants = [g, G.num(why && why.agent) > 0 ? Math.round((g - G.num(why.agent)) * 100) / 100 : 0,
+              pct > 0 && pct < 100 ? Math.round(g * (1 - pct / 100) * 100) / 100 : 0, G.num(s.guaranteeDeposit)];
+            var offG = Infinity;
+            wants.forEach(function (w) { if (w > 0 && Math.abs(r.amount - w) <= Math.max(1, w * 0.01)) offG = Math.min(offG, Math.abs(r.amount - w)); });
+            if (offG < Infinity) {
+              hits.push({ kind: 'guarantee', tourId: tid, show: s, off: offG, gap: Math.abs(gap), waiting: owedBit({ kind: 'guarantee' }, s), received: s.guaranteeReceived === true && !(G.guaranteeOwed(s) > 0), what: 'the guarantee for' });
             }
           }
         });
       });
-      // A night still waiting on its money beats one already paid; then the nearest night.
+      // To the dollar first; then a night still waiting on its money; then the nearest night.
       hits.sort(function (a, b) {
+        var ea = a.off <= 1, eb = b.off <= 1;
+        if (ea !== eb) return ea ? -1 : 1;
         if (a.waiting !== b.waiting) return a.waiting ? -1 : 1;
-        return Math.abs(G.daysBetween(a.show.date, r.date)) - Math.abs(G.daysBetween(b.show.date, r.date));
+        return a.gap - b.gap;
       });
       return hits[0] || null;
     }
@@ -16459,14 +16492,26 @@
     function defaultShow(r, choices) {
       var best = '', bd = Infinity, bk = -1;
       choices.forEach(function (s) {
-        var waiting = owedBit(r, s);
-        var m = r.kind === 'guarantee' && !!s.loggedAt && G.num(s.income && s.income.guarantee) > 0 &&
-          (waiting || handTicked(s)) && fits(r, s);
-        if (!waiting && !m) return;
-        var unpaid = r.kind !== 'guarantee' || s.guaranteeReceived === false || G.guaranteeOwed(s) > 0;
+        var gap = G.daysBetween(s.date, r.date), m, unpaid;
+        if (r.kind === 'merch') {
+          // Merch lands after the night, and the amount decides: a night still to
+          // come is never it, and when no night's take fits, nothing is guessed
+          // (the dropdown says Whole tour).
+          if (gap < 0 || gap > 30) return;
+          var due = G.merchDue(s);
+          m = due > 0 && Math.abs(due - G.num(r.amount)) <= 1;
+          if (!m) return;
+          unpaid = true;
+        } else {
+          var waiting = owedBit(r, s);
+          m = r.kind === 'guarantee' && !!s.loggedAt && G.num(s.income && s.income.guarantee) > 0 &&
+            (waiting || handTicked(s)) && fits(r, s);
+          if (!waiting && !m) return;
+          unpaid = r.kind !== 'guarantee' || s.guaranteeReceived === false || G.guaranteeOwed(s) > 0;
+        }
         var rank = m ? 2 : unpaid ? 1 : 0;
-        var gap = Math.abs(G.daysBetween(s.date, r.date));
-        if (rank > bk || (rank === bk && gap < bd)) { bd = gap; best = s.id; bk = rank; }
+        var d = Math.abs(gap);
+        if (rank > bk || (rank === bk && d < bd)) { bd = d; best = s.id; bk = rank; }
       });
       return best;
     }
