@@ -3980,10 +3980,11 @@
               h('div', { class: 'tc-when' }, h('strong', null, dayMD(n.date) + ', ' + String(n.date).slice(0, 4)),
                 h('span', { class: 'hint' }, [n.city, n.venue].filter(Boolean).join(' · ') || '—')),
               h('div', { class: 'tc-picks' },
-                [n.a, n.b].map(function (nm) {
+                [n.a, n.b].filter(Boolean).map(function (nm) {
                   return h('button', { class: 'pf-btn' + (n.holder === nm ? ' on' : ''), type: 'button', onclick: function (e) { pick(nm, e.currentTarget); } }, nm);
                 }),
-                h('button', { class: 'linkbtn tc-none', type: 'button', onclick: function (e) { pick('', e.currentTarget); } }, 'Wasn’t there')));
+                // Two tours: "Wasn't there" takes the night off. One tour (a check): the night stays, just not in a tour.
+                h('button', { class: 'linkbtn tc-none' + (!n.b && !n.holder ? ' on' : ''), type: 'button', onclick: function (e) { pick('', e.currentTarget); } }, n.b ? 'Wasn’t there' : 'Not part of a tour')));
           }));
       host.replaceChildren(rows);
     }
@@ -3991,7 +3992,9 @@
     openSheet(function () {
       draw();
       return [h('h2', { class: 'sh-title' }, 'Tour conflict'),
-        h('p', { class: 'sh-sub' }, 'Two tours claim some of the same nights. For each night, tap the tour you were on — or Wasn’t there. The one lit up is where the night sits now.'),
+        h('p', { class: 'sh-sub' }, list && list.length && list.every(function (n) { return !n.b; })
+          ? 'These nights sit near this tour — at its edge, or far from the rest of it. For each, tap the tour if you were on it, or Not part of a tour. The one lit up is how the night sits now.'
+          : 'Two tours claim some of the same nights. For each night, tap the tour you were on — or Wasn’t there. The one lit up is where the night sits now.'),
         host,
         h('button', { class: 'btn ghost block', type: 'button', style: 'margin-top:14px', onclick: function () { closeSheet(); } }, 'Done')];
     }, { label: 'Tour conflict' });
