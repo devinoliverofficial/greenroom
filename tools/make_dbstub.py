@@ -631,6 +631,13 @@ shim = r"""<script>
     },
     /* Artist profiles, in memory. Searchable accounts: Brent, plus two people
        you don't tour with (found by @username only). */
+    allowSignup: function (addr) { var H = window.__harness; H.allowed = (H.allowed || []).concat([String(addr).toLowerCase()]); return Promise.resolve({ ok: true }); },
+    deleteAccount: function () { var H = window.__harness; H.deleted = true; return Promise.resolve(H.deleteWhy ? { ok: false, why: H.deleteWhy, n: 1 } : { ok: true }); },
+    // Each crew member's road story: Devin a lifer, Brent a few years in.
+    roadTiers: function () {
+      return Promise.resolve([{ userId: 'u-devin', shows: 736, tours: 33, countries: 33, cities: 266 },
+        { userId: 'u-brent', shows: 120, tours: 6, countries: 2, cities: 80 }]);
+    },
     myArtists: function () {
       var H = window.__harness; H.acts = H.acts || [];
       return Promise.resolve(H.acts.map(function (a) { return { id: a.id, handle: a.handle, name: a.name, avatar: a.avatar, mine: true, kind: null }; }));

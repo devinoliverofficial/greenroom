@@ -11,6 +11,31 @@ docs/  — the real site (GitHub Pages): the full document as written, plus the
          with the build time so each deploy replaces the last cleanly.
 """
 import re
+
+def add_csp(html):
+    """The real site's Content-Security-Policy: GitHub Pages can't send
+    headers, so it rides in the page. Scripts may come only from this folder
+    and the one pinned library host (each inline script by its hash);
+    connections only to Supabase, MusicBrainz and that host; no frames."""
+    import re, hashlib, base64
+    cfg = (ROOT / 'site' / 'config.js').read_text(encoding='utf-8') if (ROOT / 'site' / 'config.js').exists() else ''
+    m = re.search(r"url\s*:\s*['\"]([^'\"]+)['\"]", cfg)
+    host = m.group(1).rstrip('/') if m else ''
+    hashes = ["'sha256-" + base64.b64encode(hashlib.sha256(body.encode('utf-8')).digest()).decode() + "'"
+              for body in re.findall(r'<script>(.*?)</script>', html, flags=re.S)]
+    connect = ["'self'", 'https://cdn.jsdelivr.net', 'https://musicbrainz.org']
+    if host.startswith('https://'):
+        connect += [host, 'wss://' + host[len('https://'):]]
+    policy = '; '.join([
+        "default-src 'self'",
+        "script-src 'self' https://cdn.jsdelivr.net " + ' '.join(hashes),
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com data:",
+        "img-src 'self' data: blob: https:",
+        'connect-src ' + ' '.join(connect),
+        "frame-src 'none'", "object-src 'none'", "base-uri 'self'", "form-action 'self'",
+        "worker-src 'self'", "manifest-src 'self'"])
+    return re.sub(r'<title>', '<meta http-equiv="Content-Security-Policy" content="' + policy.replace('\\', '\\\\') + '">\n<title>', html, count=1)
 import time
 import shutil
 import pathlib
@@ -85,6 +110,7 @@ def build_web():
                         '<script src="backend.js"></script>\n'
                         '<script src="core.js"></script>')
     html = html.replace('</body>', sw)
+    html = add_csp(html)
     (web / 'index.html').write_text(html, encoding='utf-8')
     # The same page under a second name: Safari keeps a per-URL icon database
     # that re-adding does not flush, so a fresh URL is the reliable way to get
@@ -166,6 +192,7 @@ def build_web():
                     '<script src="backend.js"></script>\n'
                     '<script src="core.js"></script>')
     ch = ch.replace('</body>', sw)
+    ch = add_csp(ch)
     (web / 'classic.html').write_text(ch, encoding='utf-8')
     # virgin add-from URL for Classic too, same reasoning as the main skin
     (web / ('add-classic-' + stamp + '.html')).write_text(ch, encoding='utf-8')

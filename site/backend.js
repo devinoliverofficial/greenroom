@@ -1040,6 +1040,10 @@
         });
       } catch (e) { /* the list can catch up next time */ }
       // The row alone is enough — an account made with this address claims it.
+      // The door: the database only makes an account this address was sent
+      // for, so the allowance goes first (24 hours, spent by the sign-up).
+      var al = await sb.rpc('allow_signup', { addr: addr, note: tourRole });
+      if (al.error) throw mapError(al.error);
       // The edge function adds the nicety: the account and the invite email.
       try {
         var r = await callFn('invite', {
@@ -1068,6 +1072,32 @@
         .eq('tour_id', tourId).eq('invited_email', email).select('invited_email');
       if (q.error) throw mapError(q.error);
       if (!q.data || !q.data.length) throw err('permission');
+    },
+    // Letting an address in without a tour invite (a Greenroom admin, or a
+    // tour manager sending a code ahead of the tour).
+    allowSignup: async function (addr, note) {
+      var q = await sb.rpc('allow_signup', { addr: String(addr || ''), note: String(note || '') });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    // Deleting your own account and what is yours alone. The database says
+    // no while you still run a tour or an artist page. Once it's gone the
+    // sign-in here is void, so the page starts over at the door.
+    deleteAccount: async function () {
+      var q = await sb.rpc('delete_my_account');
+      if (q.error) throw mapError(q.error);
+      var out = isObj(q.data) ? q.data : { ok: false };
+      if (out.ok) {
+        try { Object.keys(localStorage).forEach(function (k) { if (/^sb-.*-auth-token/.test(k)) localStorage.removeItem(k); }); } catch (e) { /* reload clears what it can */ }
+        setTimeout(function () { location.reload(); }, 900);
+      }
+      return out;
+    },
+    // Every crew member's road story on a tour, for their badges on Crew Stats.
+    roadTiers: async function (tourId) {
+      var q = await sb.rpc('road_tiers', { t_id: tourId });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
     },
     uid: function () { return session && session.user ? session.user.id : null; },
     /* The calendar. Everyone on the tour sees every poll, vote and request;
@@ -1622,11 +1652,11 @@
         '<button class="btn primary block" type="submit">' +
           (signin ? 'Sign in' : 'Create account') + '</button>' +
         '</form>' +
-        (signin ? '<button class="linkbtn quiet" id="gr-gate-forgot" type="button">Forgot password?</button>' +
-          '<button class="linkbtn quiet" id="gr-gate-code-link" type="button">I have a code</button>' : '') +
-        '<button class="linkbtn" id="gr-gate-flip" type="button">' +
-          (signin ? 'New here? Create an account' : 'Already have an account? Sign in') + '</button>' +
-        '<button class="linkbtn quiet" id="gr-gate-skip" type="button">Use it on this phone only</button>' +
+        '<button class="linkbtn quiet" id="gr-gate-forgot" type="button">Forgot password?</button>' +
+        '<button class="linkbtn quiet" id="gr-gate-code-link" type="button">I have a code</button>' +
+        // Invite-only: there is no sign-up here. The database refuses any
+        // account that nobody who runs a tour has sent for (signup_gate).
+        '<p class="gate-note">Greenroom is invite-only. Your tour manager sends the invite; the code in it gets you in.</p>' +
         '</div>';
 
       var form = wrap.querySelector('#gr-gate-form');
@@ -1714,15 +1744,6 @@
           }
         }
       });
-      wrap.querySelector('#gr-gate-flip').addEventListener('click', function () {
-        mode = signin ? 'signup' : 'signin';
-        render();
-        wrap.querySelector('#gr-gate-email').focus();
-      });
-      wrap.querySelector('#gr-gate-skip').addEventListener('click', function () {
-        wrap.remove();
-        resolvers.db(null); resolvers.user(null); resolvers.sample(null);
-      });
     }
     render();
     return wrap;
@@ -1757,7 +1778,8 @@
   }
 
   async function boot() {
-    var mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+    // Pinned to one exact version: a library that could change under the app is not one to trust.
+    var mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm');
     sbMod = mod;
     var link = readEmailLink();
     sb = mod.createClient(cfg.url, cfg.anonKey, {

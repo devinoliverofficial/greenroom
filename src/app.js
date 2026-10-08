@@ -55,6 +55,28 @@
     var a = document.activeElement;
     if (a && a !== document.body && typeof a.blur === 'function') a.blur();
   }
+  /* A button that fires when the finger lifts, not on the click that would
+     follow. On an iPhone, tapping a button while the keyboard is up closes
+     the keyboard first; the page shifts under the finger and the click lands
+     on nothing, so the button seems to need two taps. A tap (the finger
+     didn't travel) fires once, at once; a mouse click still works. */
+  function pressable(btn, fn) {
+    var x0 = 0, y0 = 0, firedAt = 0;
+    btn.addEventListener('touchstart', function (e) { var t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; }, { passive: true });
+    btn.addEventListener('touchend', function (e) {
+      var t = e.changedTouches && e.changedTouches[0];
+      if (!t || btn.disabled || Math.abs(t.clientX - x0) > 12 || Math.abs(t.clientY - y0) > 12) return;
+      if (e.cancelable) e.preventDefault();
+      firedAt = Date.now();
+      fn(e);
+    });
+    btn.addEventListener('click', function (e) {
+      if (Date.now() - firedAt < 800) { e.preventDefault(); return; }
+      if (btn.disabled) return;
+      fn(e);
+    });
+    return btn;
+  }
   function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { window.localStorage.setItem(k, v); return true; } catch (e) { return false; } }
 
@@ -5334,9 +5356,31 @@
                 // Say so at once: the sign-in page follows in a moment.
                 onConfirm: function () { toast('Signing out\u2026'); B.signOut(); return false; }
               });
-            } }, icon('back', 18), 'Sign out') : null)
+            } }, icon('back', 18), 'Sign out') : null,
+          signedIn && B.deleteAccount ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { openDeleteAccount(); } }, icon('trash', 18), 'Delete my account') : null)
       ];
     }, { label: 'Settings' });
+  }
+  /* Deleting your account: everything that is yours alone goes for good. A
+     tour or an artist page you run is the band's — hand it off first. */
+  function openDeleteAccount() {
+    var B = window.GR_BACKEND;
+    if (!B || !B.deleteAccount) return;
+    confirmSheet({
+      title: 'Delete your account?',
+      body: 'Your profile, messages, flowers, follows and settings are deleted for good. Tours and artist pages you run have to be handed off or deleted first.',
+      action: 'Delete my account', danger: true,
+      onConfirm: async function () {
+        var r = null;
+        try { r = await B.deleteAccount(); } catch (e) { saveFailed('account', e); return false; }
+        if (r && r.ok) { toast('Your account is deleted.'); return false; }
+        toast(r && r.why === 'tours' ? 'You still run ' + plural(G.num(r.n), 'tour') + '. Hand them off or delete them first.'
+          : r && r.why === 'artists' ? 'You still run ' + plural(G.num(r.n), 'artist page') + '. Hand them off or delete them first.'
+          : 'Couldn\u2019t delete the account. Try again.');
+        return false;
+      }
+    });
   }
 
   /* One artist: just the name. The numbers wait behind the doors. */
@@ -6001,7 +6045,8 @@
       if (!G.isObj(c) || !c.name) return;
       var debt = debts.filter(function (d) { return used.indexOf(d) < 0 && (d.id === 'feed-' + k || d.feed.name === c.name); })[0] || null;
       if (debt) used.push(debt);
-      out.push({ id: k, name: String(c.name), bank: String(c.bank || ''), kind: c.kind === 'debit' ? 'debit' : 'credit', debt: debt });
+      out.push({ id: k, name: String(c.name), bank: String(c.bank || ''), kind: c.kind === 'debit' ? 'debit' : 'credit', debt: debt,
+        income: Array.isArray(c.income) ? c.income : [] });
     });
     debts.forEach(function (d) {
       if (used.indexOf(d) >= 0) return;
@@ -6071,11 +6116,14 @@
         // Cards that log expenses (answered, and not switched off).
         if (!a || !a.id || !a.asked || a.mode === 'off') return;
         logging[a.id] = true;
-        var want = { name: String(a.name || 'Card'), bank: banks[a.bank] || '', kind: a.card === 'debit' ? 'debit' : 'credit' };
+        // (income: which deposits a bank account is watched for — merch, guarantees — so the Cards tab can say.)
+        var want = { name: String(a.name || 'Card'), bank: banks[a.bank] || '', kind: a.card === 'debit' ? 'debit' : 'credit',
+          income: a.card === 'debit' && Array.isArray(a.income) ? a.income.map(String).sort() : [] };
         var have = reg[a.id];
         // A finished tour only lists cards that have something on it.
         if (!G.isObj(have) && ended && !onTour(want.name)) return;
-        if (!G.isObj(have) || have.name !== want.name || have.bank !== want.bank || have.kind !== want.kind) { patch[a.id] = want; changed += 1; }
+        if (!G.isObj(have) || have.name !== want.name || have.bank !== want.bank || have.kind !== want.kind ||
+            JSON.stringify(Array.isArray(have.income) ? have.income : []) !== JSON.stringify(want.income)) { patch[a.id] = want; changed += 1; }
         if (want.kind === 'credit' && !G.cardDebts(t).some(function (d) {
           return d.id === 'feed-' + a.id || (G.isObj(d.feed) && d.feed.name === want.name);
         })) missing.push(String(a.id));
@@ -9722,10 +9770,24 @@
     var total = h('span', { class: 'amt num inc-total' + (s.loggedAt ? '' : ' quiet'),
       'aria-label': s.loggedAt ? 'Income ' + money(G.showIncomeTotal(s)) : 'Not logged yet' },
       s.loggedAt ? money(G.showIncomeTotal(s)) : '\u2014');
+    // Under the venue, the night's money in three parts; Total on the right.
+    var where = whereBlock(s);
+    if (s.loggedAt) where.append(incSplit(s));
+    var totalCell = h('span', { class: 'inc-tot' }, s.loggedAt ? h('span', { class: 'inc-k' }, 'Total') : null, total);
     return h('li', null, h('div', {
       class: 'show-row inc-row' + (isToday ? ' is-today' : '') + (money_ ? ' ' + money_ : ''), role: 'group',
       'aria-label': owedWhat.length ? (s.city || 'Show') + ': waiting on the ' + owedWhat.join(' and ') : (s.city || 'Show')
-    }, dateBlock(s.date), whereBlock(s), log, total));
+    }, dateBlock(s.date), where, log, totalCell));
+  }
+  // Guarantee, merch, and everything else (back end, VIPs, buyouts, catering, misc) as one.
+  function incSplit(s) {
+    var g = G.incomeOf(s, 'guarantee'), m = G.incomeOf(s, 'merch');
+    var other = Math.max(0, Math.round((G.showIncomeTotal(s) - g - m) * 100) / 100);
+    var part = function (label, v) {
+      return h('span', { class: 'inc-part' + (v > 0 ? '' : ' none') }, h('span', { class: 'inc-k' }, label), ' ', v > 0 ? money(v) : '\u2014');
+    };
+    return h('div', { class: 'inc-split', 'aria-label': 'Guarantee ' + money(g) + ', merch ' + money(m) + ', other ' + money(other) },
+      part('Guarantee', g), part('Merch', m), part('Other', other));
   }
 
   /* ============================== Crew Stats: Flowers ==============================
@@ -9795,14 +9857,36 @@
       fwStat([h('span', { class: 'fw-emo', 'aria-hidden': 'true' }, TROPHY), String(e)], e === 1 ? 'endorsement' : 'endorsements'),
       fwStat(String(n), n === 1 ? 'tour' : 'tours'));
   }
-  // One person on the tour: photo, name, the three numbers, and Give flowers.
+  /* Each crew member's road badge (Bronze to Legacy, the same ladder as an
+     artist's), read for the whole tour in one go and kept a few minutes. */
+  function roadTiers(tourId) {
+    var B = window.GR_BACKEND;
+    S.roadTiers = S.roadTiers || {};
+    var c = S.roadTiers[tourId] || (S.roadTiers[tourId] = { by: null, at: 0, asking: false });
+    if (S.mode !== 'db' || !B || !B.roadTiers) return c;
+    if (!c.asking && (!c.by || Date.now() - c.at > 300e3)) {
+      c.asking = true;
+      B.roadTiers(tourId).then(function (list) {
+        var by = {};
+        (list || []).forEach(function (x) { if (x && x.userId) by[x.userId] = x; });
+        c.by = by; c.at = Date.now(); c.asking = false; render();
+      }).catch(function () { c.asking = false; c.at = Date.now(); });
+    }
+    return c;
+  }
+  function roadPill(tourId, uid) {
+    var c = roadTiers(tourId), st = c.by && c.by[uid];
+    var tier = st ? G.historyTier(st) : null;
+    return tier ? h('span', { class: 'hist-tier sm tier-' + tier.key, title: plural(G.num(st.shows), 'show') + ' on the road' }, tier.label) : null;
+  }
+  // One person on the tour: photo, name (with their road badge), the three numbers, and Give flowers.
   function flowerCard(id, p, me, data) {
     var mine = p.userId === me;
     return h('li', { class: 'fw-card' + (mine ? ' me' : '') },
       h('button', { class: 'fw-face', type: 'button', 'aria-label': mine ? 'Your profile' : 'Open ' + fwName(p) + '’s profile',
         onclick: function () { openProfile(p.userId); } }, personPhoto(p, 'fw-photo')),
       h('div', { class: 'fw-side' },
-        h('p', { class: 'fw-name' }, h('span', { class: 'fw-name-t' }, fwName(p)), p.verified ? verifiedBadge('sm') : null,
+        h('p', { class: 'fw-name' }, h('span', { class: 'fw-name-t' }, fwName(p)), roadPill(id, p.userId), p.verified ? verifiedBadge('sm') : null,
           mine ? h('span', { class: 'fw-you' }, 'You') : null),
         p.tourRole ? h('p', { class: 'fw-role' }, p.tourRole) : null,
         fwStats(p.here, p.counts),
@@ -11868,7 +11952,9 @@
         afterEl.textContent = money(c2.net, true);
         afterEl.className = 'num ' + (G.round(c2.net) < 0 ? 'neg' : 'pos');
       }
-      var save = async function (e) {
+      var saveBtn = h('button', { class: 'btn primary block', type: 'button' }, 'Save income');
+      pressable(saveBtn, function (e) { save(e); });
+      var saveNow = async function (e) {
         e.preventDefault();
         blurActive();
         var total = G.showIncomeTotal({ income: draft, buyoutTrack: track });
@@ -11920,6 +12006,14 @@
         else if (r < 0) toast('Income saved. ' + money(-r) + ' to break even.');
         else toast('Income saved. ' + money(r) + ' in the green.');
         render(true);
+      };
+      // One save at a time: a second tap while the first is on its way does nothing.
+      var saving = false;
+      var save = async function (e) {
+        if (saving) { if (e && e.preventDefault) e.preventDefault(); return; }
+        saving = true; saveBtn.disabled = true; saveBtn.textContent = 'Saving\u2026';
+        try { await saveNow(e); }
+        finally { saving = false; saveBtn.disabled = false; saveBtn.textContent = 'Save income'; }
       };
       var fields = G.INCOME_FIELDS;
       var notesHost = h('div', null);
@@ -12422,7 +12516,7 @@
           h('div', null, h('span', null, 'This show'), showEl),
           h('div', null, h('span', null, 'Tour after this show'), afterEl)),
         h('div', { class: 'stack' },
-          h('button', { class: 'btn primary block', type: 'submit' }, 'Save income'),
+          saveBtn,
           h('button', {
             class: 'btn ghost block', type: 'button',
             onclick: function () { openShowSheet(id, showId); }
@@ -14619,7 +14713,7 @@
     var busy = false;
 
     // Add these charges to the tour (keep), or set them aside (feed only).
-    async function file(list, keep) {
+    async function file(list, keep, btn) {
       if (busy || !list.length) return;
       if (keep) {
         var missing = list.filter(function (r) { return !r.category; });
@@ -14629,6 +14723,8 @@
         }
       }
       busy = true;
+      var was = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = keep ? 'Adding\u2026' : 'Moving\u2026'; }
       var said = '', addedN = 0;
       try {
         if (feed) {
@@ -14695,7 +14791,7 @@
             (offs.length && !baseOff ? ' \u00b7 ' + offs.length + ' to Off Tour' : '') +
             (away.length ? ' \u00b7 ' + away.map(function (x) { return byTour[x].length + ' to ' + nameOf(x); }).join(', ') : '');
         }
-      } finally { busy = false; }
+      } finally { busy = false; if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = was; } }
       live = live.filter(function (x) { return list.indexOf(x) < 0; });
       // Everything the search found is sorted: the search clears, the rest comes back.
       if (query && !live.some(shown)) { query = ''; search.value = ''; }
@@ -14729,8 +14825,8 @@
     var found = h('p', { class: 'rv-found', 'aria-live': 'polite' });
     var allBox = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check all',
       onchange: function (e) { live.filter(shown).forEach(function (r) { r.pick = e.target.checked; }); draw(); } });
-    var addTop = h('button', { class: 'btn primary sm rv-addall', type: 'button',
-      onclick: function () { file(live.filter(function (r) { return r.pick; }), true); } }, 'ADD');
+    var addTop = pressable(h('button', { class: 'btn primary sm rv-addall', type: 'button' }, 'ADD'),
+      function () { file(live.filter(function (r) { return r.pick; }), true, addTop); });
     var topCat = null;
     var chips = h('div', { class: 'rv-chips', role: 'group', 'aria-label': 'Sort the checked charges' });
     var markChips = function () {
@@ -14859,7 +14955,10 @@
           (r.source === 'learned' && !r.why) ? h('span', { class: 'rv-flag learned' }, 'Learned') : null,
           r.source === 'suggested' ? h('span', { class: 'rv-flag' }, 'Suggested') : null),
         h('div', { class: 'rv-act' }, sel,
-          h('button', { class: 'btn sm primary rv-add1', type: 'button', onclick: function () { file([r], true); } }, 'Add')),
+          (function () {
+            var b = h('button', { class: 'btn sm primary rv-add1', type: 'button' }, 'Add');
+            return pressable(b, function () { file([r], true, b); });
+          })()),
         destRow(r),
         feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false); } },
           'Not a tour charge — set it aside') : null));
@@ -15087,17 +15186,30 @@
     if (!row.switched_on) return addCard(function () { openFeedSheet(id); });
     // Set up: one button does the rest. The choices are in the tour menu.
     var n = feedWaiting(id).length;
-    var label = h('span', null, 'Refresh Card Expenses');
+    var label = h('span', null, 'Refresh Card');
     // A tour without logging dates yet gets asked for them first.
     var refreshBtn = h('button', { class: 'btn quiet glow feed-refresh', type: 'button',
       onclick: function () { if (feedLogs(id)) refreshCards(id, refreshBtn, label); else openFeedSheet(id); } },
       icon('refresh', 18), label);
+    // Under the button: what's waiting out of the bank, both ways. Charges
+    // to sort, and (on the Cards tab) deposits no matcher could place.
+    var depBtn = null;
+    if (incomeReady(id)) {
+      ensureIncomeNew(id);
+      var nInc = ((S.incomeNew && S.incomeNew.items) || []).length;
+      depBtn = h('button', { class: 'btn ' + (nInc ? 'primary' : 'quiet') + ' feed-new', type: 'button',
+        onclick: function () {
+          if (nInc) openIncomeReview(id);
+          else toast(S.incomeBusy || !S.incomeNew ? 'Checking the bank\u2026' : 'No new deposits. Deposits on the accounts you watch land here.');
+        } }, icon('cash', 18), plural(nInc, 'new deposit'));
+    }
     return h('div', { class: 'feed-entry' },
       h('div', { class: 'feed-bar' }, refreshBtn),
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)),
-      n ? h('button', { class: 'btn primary feed-new', type: 'button',
-        onclick: function () { openFeedReview(id); } },
-        icon('card', 18), plural(n, 'new charge')) : null);
+      h('button', { class: 'btn ' + (n ? 'primary' : 'quiet') + ' feed-new', type: 'button',
+        onclick: function () { if (n) openFeedReview(id); else toast('No new charges. Tap Refresh Card to check again.'); } },
+        icon('card', 18), plural(n, 'new charge')),
+      depBtn);
   }
 
   /* CARDS, the middle tab of Budget: Refresh Card Expenses on top, then each
@@ -15386,7 +15498,14 @@
           else openCardCharges(id, c);
         } },
         h('div', { class: 'row-label' }, c.label,
-          c.kind ? h('span', { class: 'hint' }, c.kind === 'debit' ? 'Debit card' : 'Credit card') : null),
+          // A debit card says which deposits it's watched for; the bank feed
+          // files deposits without saying which account they landed in, so
+          // the count of new deposits is one number for all of them (above).
+          c.kind ? h('span', { class: 'hint' }, c.kind === 'debit'
+            ? 'Debit card \u00b7 ' + (c.income && c.income.length
+                ? 'deposits watched: ' + c.income.map(function (k) { return k === 'guarantees' ? 'guarantees' : 'merch'; }).join(', ')
+                : 'deposits not watched')
+            : 'Credit card') : null),
         h('span', { class: 'card-new' + (n ? ' on' : '') }, plural(n, 'new charge')),
         icon('chevron', 18));
     });
@@ -15413,10 +15532,10 @@
           toast(S.incomeBusy || !S.incomeNew ? 'Checking the bank…'
             : 'No new income. Deposits on your watched accounts land here.');
         } },
-        h('div', { class: 'row-label' }, 'Income',
-          h('span', { class: 'hint' }, 'Bank deposits')),
+        h('div', { class: 'row-label' }, 'Deposits',
+          h('span', { class: 'hint' }, 'Money into the bank, to sort')),
         h('span', { class: 'card-new' + (nInc ? ' on' : '') },
-          incFailed ? 'couldn’t check' : nInc + ' new income'),
+          incFailed ? 'couldn’t check' : plural(nInc, 'new deposit')),
         icon('chevron', 18)));
     }
     var entry = feedEntry(id);
@@ -15461,7 +15580,7 @@
     var P = S.pile && S.pile[id];
     if (!P || !P.lead) return null;
     var n = (P.items || []).length;
-    var label = h('span', null, 'Refresh Card Expenses');
+    var label = h('span', null, 'Refresh Card');
     var refreshBtn = h('button', { class: 'btn quiet glow feed-refresh', type: 'button',
       onclick: function () { tmRefresh(id, refreshBtn, label); } }, icon('refresh', 18), label);
     return h('div', { class: 'feed-entry' },
