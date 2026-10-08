@@ -519,20 +519,20 @@
     var inc = show && isObj(show.income) ? show.income : {};
     return Math.max(0, round((num(inc.merch) - num(show && show.merchCash)) * 100) / 100);
   }
-  // Whether each half of a night's money is in. A guarantee with money
-  // logged is in once it's received in full (nothing still owed); merch is
-  // in once its deposit has landed (all-cash merch has none to wait for).
-  // A half with nothing logged under it only counts as in when its Received
-  // box was ticked by hand, so a night can't read as paid just because one
-  // of the two was never entered. That tick ("nothing to wait for here") has
-  // keys of its own, guaranteeNone / merchNone: guaranteeReceived and
-  // merchReceived keep meaning "this money has landed", which is what the
-  // bank matchers and the atVenu readers go by.
+  // Whether each half of a night's money is in. Devin's rule, exactly: a
+  // half with money logged is in only when its Received box is ticked (and,
+  // for a guarantee, nothing is still owed) — no exceptions for an agency
+  // deposit, for all-cash merch, or for a night logged before the boxes
+  // existed. A half with NOTHING logged under it counts as in only through
+  // its own hand tick ("nothing to wait for here"), kept in guaranteeNone /
+  // merchNone so that guaranteeReceived / merchReceived keep meaning "this
+  // money has landed", which is what the bank matchers and the atVenu
+  // readers go by. (The budget's own counting, guaranteeIn, is unchanged.)
   function showReceived(show) {
     var inc = show && isObj(show.income) ? show.income : {};
     return {
-      guarantee: num(inc.guarantee) > 0 ? guaranteeIn(show) && !(guaranteeOwed(show) > 0) : !!show && show.guaranteeNone === true,
-      merch: num(inc.merch) > 0 ? !(merchDue(show) > 0) || show.merchReceived !== false : !!show && show.merchNone === true
+      guarantee: num(inc.guarantee) > 0 ? !!show && show.guaranteeReceived === true && !(guaranteeOwed(show) > 0) : !!show && show.guaranteeNone === true,
+      merch: num(inc.merch) > 0 ? !!show && show.merchReceived === true : !!show && show.merchNone === true
     };
   }
   // A logged night's money, two ways only: 'settled' when BOTH the guarantee

@@ -2398,6 +2398,13 @@ button.acct-row:active { background: var(--surface-2); }
 .page.profile .pf-top { gap: 23px; }
 .page.profile .vp-name { font-size: 15px; }
 .page.profile .pf-stats { justify-content: flex-start; gap: clamp(22px, 12.5vw, 56px); padding-right: 0; }
+/* The road story is four counts, and four in a row ran off the right edge
+   of a phone: they sit two over two instead — tours and shows, then
+   countries and cities — in columns that line up. */
+.pf-stats.four, .page.profile .pf-stats.four {
+  display: grid; grid-template-columns: repeat(2, minmax(0, max-content)); justify-content: start;
+  column-gap: clamp(28px, 13vw, 60px); row-gap: 8px; padding-right: 0;
+}
 .page.profile .pf-btn { height: 32px; border-radius: 8px; }
 /* MODEL7: the menu. Sized against Instagram's "Settings and activity" on
    Devin's iPhone (measured off his screenshot): title 16 bold in the middle

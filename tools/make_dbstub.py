@@ -493,7 +493,7 @@ shim = r"""<script>
           var m = x.members.filter(function (y) { return y.userId === 'u-devin'; })[0];
           return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: m.kind, role: m.role || '', endorsed: !!m.endorsed, mine: true, declined: false }; }).concat(devinActs()),
         flowers: 2, endorsements: devinActs().length + (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-devin' && m.endorsed; }); }).length,
-        roadStats: (function () { var c = creditSums('u-devin'); return { tours: 1 + c.tours, shows: 15 + c.shows, countries: 1 + (c.shows ? 3 : 0), cities: 15 + c.shows, firstYear: c.first || 2026 }; })(),
+        roadStats: H.roadStats || (function () { try { return JSON.parse(localStorage.getItem('gr_h_road') || 'null'); } catch (e) { return null; } })() || (function () { var c = creditSums('u-devin'); return { tours: 1 + c.tours, shows: 15 + c.shows, countries: 1 + (c.shows ? 3 : 0), cities: 15 + c.shows, firstYear: c.first || 2026 }; })(),
         credits: creditSums('u-devin').credits, creditTours: creditSums('u-devin').list,
         tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }], logos: {} }, base));
       if (uid === 'u-brent') return Promise.resolve(Object.assign({ userId: uid, name: 'Brent Allen', handle: 'brent', bio: 'Guitars, backline, bad jokes.',

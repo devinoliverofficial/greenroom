@@ -1940,7 +1940,7 @@
           (function () {
             var own = uid ? cardOf(uid).card : null;
             var rs = own && G.isObj(own.roadStats) ? own.roadStats : null;
-            return [h('div', { class: 'pf-stats' },
+            return [h('div', { class: 'pf-stats' + (rs ? ' four' : '') },
               rs ? [
                 stat(G.num(rs.tours), G.num(rs.tours) === 1 ? 'tour' : 'tours'),
                 stat(G.num(rs.shows), G.num(rs.shows) === 1 ? 'show' : 'shows'),
@@ -2383,7 +2383,7 @@
               card.verified ? verifiedBadge() : null) : null,
             // Their road story leads — tours, shows, countries, cities from
             // the Greenroom tours they're on — with followers underneath.
-            h('div', { class: 'pf-stats' },
+            h('div', { class: 'pf-stats' + (G.isObj(card.roadStats) ? ' four' : '') },
               G.isObj(card.roadStats) ? [
                 pfStat(G.num(card.roadStats.tours), G.num(card.roadStats.tours) === 1 ? 'tour' : 'tours',
                   function () { pickTab('tours'); }),
@@ -3288,7 +3288,7 @@
             // The road story is the headline: tours, shows, countries (of
             // the world's 195), cities. Until it's synced, the page counts
             // what Greenroom knows. Fans sit underneath.
-            h('div', { class: 'pf-stats' },
+            h('div', { class: 'pf-stats' + (hsum && G.num(hsum.shows) > 0 ? ' four' : '') },
               hsum && G.num(hsum.shows) > 0 ? [
                 pfStat(G.num(hsum.tours), G.num(hsum.tours) === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
                 pfStat(G.num(hsum.shows), G.num(hsum.shows) === 1 ? 'show' : 'shows'),
