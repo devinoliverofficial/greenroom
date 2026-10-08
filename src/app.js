@@ -3283,7 +3283,8 @@
         : h('button', { class: 'pf-btn', type: 'button', onclick: function () { openClaimPage(id); } },
             card.myClaim === 'declined' ? 'Claim again' : 'Claim this page');
     var aboutLine = unclaimed ? [card.about, regionName(card.country)].filter(Boolean).join(' \u00b7 ') : '';
-    return h('div', { class: 'page home profile has-tabs' },
+    // The page you run gets the same compact green band as your own page (pf-home).
+    return h('div', { class: 'page home profile has-tabs' + (S.route.manage && card.mine ? ' pf-home' : '') },
       // A page nobody runs has only a machine's username: its name leads instead.
       head(unclaimed || machineHandle(card.handle) ? card.name : card.handle),
       h('section', { class: 'pf vp', 'aria-label': card.name + ' profile' },
