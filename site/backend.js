@@ -636,8 +636,9 @@
     },
     /* ---- Add missing tours: the server reads the news archives; the app
        reads the articles with the reading brain and hands back the tours. */
-    tourFindStart: async function (artistId) {
-      var q = await sb.rpc('tour_find_start', { a_id: artistId });
+    // force: a rescan any time (not once a day); a search already running is handed back as it is.
+    tourFindStart: async function (artistId, force) {
+      var q = await sb.rpc('tour_find_start', { a_id: artistId, force: !!force });
       if (q.error) throw mapError(q.error);
       return q.data;
     },

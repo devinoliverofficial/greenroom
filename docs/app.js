@@ -3336,7 +3336,8 @@
             : emptyState('No tours yet', manage ? 'Tours you file under ' + card.name + ' show up here.'
                 : histBusy(hc0.row) ? (histWaiting(hc0.row) ? 'The rest of ' + card.name + '\u2019s road history comes in tomorrow.' : 'Reading ' + card.name + '\u2019s road history\u2026')
                 : card.name + ' has no tours on Greenroom yet.'),
-           // Under the tours, for whoever runs the page: the ones setlist.fm never named.
+           // Under the tours, for whoever runs the page: a rescan any time, and the search's own status.
+           manage && card.verified && hc0.row ? rescanButton(id) : null,
            tourFinderBlock(id, card, manage, unclaimed)],
       historyCredit(id),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
@@ -4141,15 +4142,15 @@
       tfExtract(id);
     }
   }
-  async function tfStart(id) {
+  async function tfStart(id, force) {
     var B = window.GR_BACKEND, c = tfOf(id);
     if (c.busy) return;
     var before = c.state || {};
     c.busy = true; c.phase = 'Starting…'; c.error = ''; render(true);
     try {
-      c.state = await B.tourFindStart(id); c.failed = false; c.at = Date.now(); c.since = Date.now();
-      // The server reads once a day; asked twice, it hands the same read back.
-      if (before.day && c.state && c.state.day === before.day && before.status === c.state.status) toast('Already read today — look again tomorrow');
+      c.state = await B.tourFindStart(id, !!force); c.failed = false; c.at = Date.now(); c.since = Date.now();
+      // Asked while a search is running, the server hands that search back.
+      if (before.status && c.state && before.status === c.state.status && c.state.status !== 'reading') toast(force ? 'A search is already running' : 'Already read today — look again tomorrow');
     } catch (e) { saveFailed('tours', e); }
     c.busy = false; c.phase = '';
     tfAfter(id); render(true);
@@ -4566,6 +4567,14 @@
   }
   // A find with no name is one-off shows: nights, no tour.
   function tfName(x) { return String(x && x.name || '').trim() || 'One-off shows'; }
+  // Rescan, at the bottom of the tour list (Devin): asks the archives for what's
+  // new and reads what's unread, any time — never while a search is running.
+  function rescanButton(id) {
+    var c = tfOf(id), st = c.state || {};
+    var running = c.busy || ['reading', 'thinking', 'ready', 'extracting'].indexOf(st.status) >= 0;
+    return h('button', { class: 'btn ghost block tf-rescan', type: 'button', disabled: running || null,
+      onclick: function () { tfStart(id, true); } }, icon('search', 18), running ? 'Searching…' : 'Rescan for tours');
+  }
   // Does a find add anything to the page? (Ties are asked about; the rest
   // of what's left over is only listed.)
   function tfUseful(x) { return G.num(x.matched) > 0 || G.num(x.toAdd) > 0 || !!x.fill; }

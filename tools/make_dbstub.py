@@ -320,7 +320,8 @@ shim = r"""<script>
     },
     setlistDisconnect: function () { window.__harness.setlist = null; return Promise.resolve(); },
     // Add missing tours: the pretend archives come in over a few polls, then two candidates.
-    tourFindStart: function (artistId) {
+    tourFindStart: function (artistId, force) {
+      window.__harness.rescans = (window.__harness.rescans || 0) + (force ? 1 : 0);
       var H = window.__harness; H.tf = H.tf || {};
       H.tf[artistId] = { status: 'reading', detail: '', day: new Date().toISOString().slice(0, 10), pages: 0, waiting: 6, brain: !!H.tfBrain, eta: 540, unread: 0, batches: { total: 0, done: 0 },
         startedAt: new Date().toISOString(),
