@@ -40,7 +40,12 @@ In order. Nothing here waits on the artist.
      cities keeps only the day the act played.
    - *The band's last word.* A show the band took off its own list before the day is
      removed; one that moved city is moved; one printed on two neighbouring days is one
-     show. Each change is logged.
+     show. Each change is logged. A run the page knew only by its bill takes the name the
+     band's own page printed for it.
+   - *Listed is not played.* An old list still showing (no year printed, and the same day
+     in the same city already on the page a year or two earlier) is not taken. Announced
+     nights from mid-March 2020 to mid-June 2021 do not land at all unless the band hands
+     them over: almost none of them were played.
    - *Festivals.* setlist.fm's API has no festival field, so a night is named a festival
      from its tour label, from an announcement, or from a table of 298 festival grounds
      (grounds and stage names, city, months, years).
