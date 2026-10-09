@@ -39,7 +39,7 @@ Years with no shows on the page: 2020, 2021, 2022.
 | Red I Flight, I See Stars tour | 19 | 2008-06-21 | 2008-07-10 | Red I Flight |
 | Sea Of Treachery, Agraceful, I See Stars tour | 16 | 2008-09-12 | 2008-09-28 | Sea Of Treachery, Agraceful |
 | The One Moment Tour | 32 | 2008-10-08 | 2008-11-23 | LoveHateHero, Eyes Set To Kill (tour package per Lambgoat: Before Their Eyes, Ice Nine Kil |
-| The Number Twelve Looks Like You tour | 33 | 2009-02-22 | 2009-03-29 | The Number Twelve Looks Like You, We Came As Romans, Our Last Night |
+| The Number Twelve Looks Like You tour | 32 | 2009-02-22 | 2009-03-29 | The Number Twelve Looks Like You, We Came As Romans, Our Last Night |
 | A Skylit Drive, Dance Gavin Dance, etc. tour | 35 | 2009-04-06 | 2009-05-16 | A Skylit Drive, Dance Gavin Dance, Attack Attack!, In Fear and Faith, Lower Definition |
 | Artery Foundation Across the Nation 2009 | 41 | 2009-06-19 | 2009-08-01 | Emarosa, Our Last Night, In Fear and Faith, Burden Of A Day, Broadway |
 | The Pulling Your Pud Tour | 21 | 2009-09-26 | 2009-10-17 | A Day To Remember, Parkway Drive, In Fear And Faith |
@@ -85,10 +85,10 @@ Years with no shows on the page: 2020, 2021, 2022.
 | 3-D 10th Anniversary Acoustic Tour (first leg) | 5 | 2019-08-15 | 2019-08-25 |  |
 | Let Light Overcome The Darkness Tour | 25 | 2019-11-05 | 2019-12-08 | Our Last Night, The Word Alive, Ashland |
 | Concrete Forever tour 2023 | 25 | 2023-09-01 | 2023-10-10 | Bad Omens, ERRA |
-| The Godmode | 18 | 2024-04-28 | 2024-05-25 | In This Moment (headliner), Kim Dracula, Mike's Dead, Motionless In White (select dates) |
-| 20 Years of Tears | 22 | 2024-06-22 | 2024-07-19 | Hawthorne Heights, Thursday, Saosin, Anberlin, Cartel, Armor For Sleep, Emery, Stick To Yo |
+| The Godmode | 17 | 2024-04-28 | 2024-05-25 | In This Moment (headliner), Kim Dracula, Mike's Dead, Motionless In White (select dates) |
+| 20 Years of Tears | 21 | 2024-06-22 | 2024-07-19 | Hawthorne Heights, Thursday, Saosin, Anberlin, Cartel, Armor For Sleep, Emery, Stick To Yo |
 | Death Or Glory North American Tour | 27 | 2024-09-16 | 2024-10-27 | Palaye Royale |
-| I See Stars Asia Tour 2025 | 9 | 2025-10-26 | 2025-11-04 |  |
+| I See Stars Asia Tour 2025 | 7 | 2025-10-26 | 2025-11-04 |  |
 | Spin the Wheel | 32 | 2026-02-26 | 2026-05-09 | Mothica, Until I Wake, Diamante |
 | Taste of Chaos 2026 | 13 | 2026-09-22 | 2026-10-10 | In This Moment, Hollywood Undead, Vana, Melrose Avenue |
 
@@ -158,17 +158,10 @@ By the band's-last-list rule: 2007-11-03 moved (undone: a respelling, not a move
 
 Questions waiting under Tour conflict on the page:
 
-- 2009-02-20: part of The Number Twelve Looks Like You tour, or not?
-- 2009-09-26: part of A Day To Remember, Parkway Drive, etc. tour, or not?
-- 2009-10-17: part of A Day To Remember, Parkway Drive, etc. tour, or not?
 - 2012-06-23: part of The Word Alive, I See Stars, Make Me Famous, Crown The Empire Summer Run, or not?
 - 2012-07-04: part of The Word Alive, I See Stars, Make Me Famous, Crown The Empire Summer Run, or not?
 - 2017-06-09: part of Treehouse Tour, or not?
-- 2024-04-25: part of The Godmode, or not?
-- 2024-07-20: part of 20 Years of Tears, or not?
 - 2024-07-21: part of 20 Years of Tears, or not?
-- 2025-10-23: part of I See Stars Asia Tour 2025, or not?
-- 2025-10-24: part of I See Stars Asia Tour 2025, or not?
 
 Only you can settle these:
 
@@ -179,6 +172,8 @@ Only you can settle these:
 - **May 15 and 16, 2009, The Boardwalk, Orangevale**: two nights, or one?
 - **Jul 9, 2008, Stage 1 Live (the Cleveland stop of the Red I Flight tour)**: a fan wrote you "didn't make it to Cleveland". Played or not?
 - **Jul 30, 2007, Gorefest**: the fest ran Jul 29 and 30; which day were you on?
+- **Oct 17 to 24, 2025, Australia** (Brisbane, Newcastle, Sydney, Melbourne, Adelaide, Perth): the rescheduled headline run. What was it called? It sits under no tour name until you say.
+- **33 shows in 2024 and 13 in 2018 sit under no tour name.** Most of 2024's are the spring dates with Bad Omens; September 2018 is the run your site listed (Buffalo to Chicago). Names welcome.
 
 Leads with a date but no room, not on the page yet:
 
