@@ -4726,7 +4726,8 @@
     return setlistCredit(row.mb_url, row.credits);
   }
   // setlist.fm, and the sites the band handed pages over from (Concert Archives asks to be cited).
-  var TF_CREDIT = { 'concertarchives.org': ['Concert Archives', 'https://www.concertarchives.org/'], 'songkick.com': ['Songkick', 'https://www.songkick.com/'], 'bandsintown.com': ['Bandsintown', 'https://www.bandsintown.com/'] };
+  var TF_CREDIT = { 'concertarchives.org': ['Concert Archives', 'https://www.concertarchives.org/'], 'songkick.com': ['Songkick', 'https://www.songkick.com/'], 'bandsintown.com': ['Bandsintown', 'https://www.bandsintown.com/'],
+    'web.archive.org': ['the band’s own pages (Wayback Machine)', 'https://web.archive.org/'] };
   function setlistCredit(url, credits) {
     var more = (Array.isArray(credits) ? credits : []).map(function (k) { return TF_CREDIT[k]; }).filter(Boolean);
     return h('p', { class: 'hist-credit' }, 'Tour data: ',

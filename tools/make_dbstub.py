@@ -466,7 +466,7 @@ shim = r"""<script>
         H.histSeeded = true;
         H.histories[artistId] = { artist_id: artistId, status: 'ok', detail: '', total: 735, pages: 37, next_page: 0,
           synced_at: new Date(Date.now() - 36e5).toISOString(),
-          mb_url: 'https://www.setlist.fm/setlists/i-see-stars-3bd2d464.html', credits: ['concertarchives.org'],
+          mb_url: 'https://www.setlist.fm/setlists/i-see-stars-3bd2d464.html', credits: ['concertarchives.org', 'web.archive.org'],
           summary: { shows: 735, tours: 34, countries: 33, cities: 212, firstYear: 2007, lastYear: 2026,
             years: { 2026: 44, 2025: 21, 2024: 86 },
             toursList: [ { name: '10 Years In The Black', n: 33, first: '2016-11-01', last: '2017-02-18', lineup: 'Asking Alexandria, Born Of Osiris, After The Burial, Upon A Burning Body' },
