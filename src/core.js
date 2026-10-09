@@ -159,7 +159,9 @@
     });
     (past || []).filter(isObj).forEach(function (p) {
       var a = String(p.first || ''), b = String(p.last || p.first || '');
-      var dup = !!a && mine.some(function (t) {
+      // A festival, or a year's shows outside any tour, is its own entry even when it falls inside
+      // one of the artist's Greenroom tours (Aftershock in the middle of Taste of Chaos).
+      var dup = p.kind !== 'festival' && p.kind !== 'shows' && !!a && mine.some(function (t) {
         var ta = String(t.first || ''), tb = String(t.last || t.first || '');
         if (!ta) return false;
         if (p.artist && low(p.artist) !== low(t.artist)) return false;

@@ -3930,11 +3930,14 @@
   }
   function historyTourRow(artistId, r) {
     S.tnOpen = S.tnOpen || {};
-    var k = artistId + '|' + r.name, open = !!S.tnOpen[k];
+    // The page's own tour object rides in r.tour; a year's loose shows are asked for by key ("year:2009").
+    var src0 = r.tour && typeof r.tour === 'object' ? r.tour : r;
+    var nkey = src0.kind === 'shows' && src0.key ? src0.key : r.name;
+    var k = artistId + '|' + nkey, open = !!S.tnOpen[k];
     var span = r.first ? tourSpan(r.first, r.last) + (r.n ? ' \u00b7 ' + plural(r.n, 'show') : '') : (r.n ? plural(r.n, 'show') : 'No dates yet');
     var body = null;
     if (open) {
-      var c = tourNightsOf(artistId, r.name);
+      var c = tourNightsOf(artistId, nkey);
       body = c.none ? null
         : c.failed && !c.list ? h('p', { class: 'pt-next pt-nodates' }, 'Couldn\u2019t load the dates just now.')
         : !c.list ? h('p', { class: 'pt-next pt-nodates' }, 'Loading\u2026')
@@ -3943,9 +3946,15 @@
             var where = [n.city, n.state && n.country === 'US' ? n.state : (n.country && n.country !== 'US' ? n.country : '')].filter(Boolean).join(', ');
             // A festival night says which festival (setlist.fm shows it on the site but its API never did).
             var fest = n.festival && n.festival !== r.name ? h('span', { class: 'tn-fest' }, ' \u00b7 ' + n.festival) : null;
+            // Where the night comes from, one tap away (the receipt): setlist.fm, an announcement, the band's own page.
+            var host = (/^https:\/\/(?:www\.)?([^\/]+)/.exec(String(n.url || '')) || [])[1] || '';
+            var srcLink = host ? h('a', { class: 'tn-src', href: n.url, target: '_blank', rel: 'noopener',
+              'aria-label': 'Source: ' + (host === 'web.archive.org' ? 'the band\u2019s own page, Wayback Machine' : host),
+              title: host === 'web.archive.org' ? 'the band\u2019s own page (Wayback Machine)' : host,
+              onclick: function (e) { e.stopPropagation(); } }, '\u2197') : null;
             return h('li', { class: 'tn-row' + (n.announced ? ' announced' : '') + (n.contested ? ' contested' : '') },
               h('span', { class: 'tn-date' }, dayMD(n.date) + ', ' + String(n.date).slice(0, 4)),
-              h('span', { class: 'tn-where' }, where || '\u2014', n.venue ? h('span', { class: 'tn-venue' }, ' \u00b7 ' + n.venue) : null, fest),
+              h('span', { class: 'tn-where' }, where || '\u2014', n.venue ? h('span', { class: 'tn-venue' }, ' \u00b7 ' + n.venue) : null, fest, srcLink),
               n.contested ? h('span', { class: 'tn-tag warn' }, 'conflict') : n.announced ? h('span', { class: 'tn-tag' }, 'announced') : null);
           }));
     }
@@ -3969,7 +3978,8 @@
         icon('chevron', 16)),
       withLine, body);
     // Devin: "slide a tour to the left and it will say 'edit'" — the page's owner only.
-    if (!manage) return h('li', { class: 'tn-li' }, inner);
+    // A year's loose shows are not a tour: nothing to rename or take off.
+    if (!manage || src.kind === 'shows') return h('li', { class: 'tn-li' }, inner);
     return h('li', { class: 'tn-li' }, swipeRow(inner, [
       h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit ' + r.name, onclick: function () { openTourEdit(artistId, r); } }, icon('edit', 16), 'Edit')
     ], { noTapOpen: true }));

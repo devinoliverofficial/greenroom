@@ -1491,6 +1491,13 @@
       eq(tl[tl.length - 1].name, 'Treehouse Tour', 'oldest last');
       eq(G.tourTimeline(own, past, '2026-12-25')[0].now, false, 'no tour today, nothing glows');
       eq(G.tourTimeline([], past, '2026-10-07').length, 3, 'a page with only history lists it all');
+      var inside = [{ name: 'Aftershock 2026', kind: 'festival', n: 1, first: own[0].first, last: own[0].first },
+                    { name: 'Shows outside a tour \u00b7 2026', key: 'year:2026', kind: 'shows', n: 4, first: own[0].first, last: own[0].last },
+                    { name: 'Same Run On Setlist', n: 9, first: own[0].first, last: own[0].last }];
+      var tli = G.tourTimeline(own, inside, '2026-10-07');
+      eq(tli.filter(function (r) { return r.name === 'Aftershock 2026'; }).length, 1, 'a festival inside a Greenroom tour keeps its own entry');
+      eq(tli.filter(function (r) { return r.tour && r.tour.kind === 'shows'; }).length, 1, 'a year of loose shows keeps its entry too');
+      eq(tli.filter(function (r) { return r.name === 'Same Run On Setlist'; }).length, 0, 'the history\u2019s copy of the Greenroom tour itself is still folded away');
       // An own tour with no artist filed never hides someone's credited tour...
       var loose = [{ name: 'Loose', artist: '', first: '2017-03-01', last: '2017-07-01', shows: 9 }];
       eq(G.tourTimeline(loose, past, '2026-10-07').filter(function (r) { return r.name === 'Treehouse Tour'; }).length, 1,
