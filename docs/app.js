@@ -3254,7 +3254,7 @@
     var pastTours = hsum && Array.isArray(hsum.toursList) ? hsum.toursList : [];
     var tourRows = G.tourTimeline(tours, pastTours, G.tourToday()).map(function (r) {
       var t = r.tour;
-      if (!r.own) return manage ? swipeEditRow(historyTourRow(id, r), function () { openTourEdit(id, r); }) : historyTourRow(id, r);
+      if (!r.own) return historyTourRow(id, r);
       return timelineRow(r, function () {
         if ((manage || !card.mine) && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, id);
       }, false);
@@ -3952,12 +3952,48 @@
     var manage = !!(S.route && S.route.manage && S.route.name === 'act' && S.route.id === artistId);
     var tag = r.conflict ? h('button', { class: 'tn-conflict', type: 'button', 'aria-label': 'Tour conflict: settle the dates',
       onclick: function (e) { e.stopPropagation(); if (manage) openTourConflicts(artistId, r); else toast('Two tours claim some of these nights; the page\u2019s owner can settle them.'); } }, 'Tour conflict') : null;
-    return h('li', { class: 'pt-run tn-run' + (open ? ' open' : '') + (r.conflict ? ' has-conflict' : '') },
+    var inner = h('div', { class: 'pt-run tn-run' + (open ? ' open' : '') + (r.conflict ? ' has-conflict' : '') },
       h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
         onclick: function () { S.tnOpen[k] = !open; render(true); } },
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name, tag), h('span', { class: 'lr-sub' }, span)),
         icon('chevron', 16)),
       body);
+    // Devin: "slide a tour to the left and it will say 'edit'" — the page's owner only.
+    if (!manage) return h('li', { class: 'tn-li' }, inner);
+    return h('li', { class: 'tn-li' }, swipeRow(inner, [
+      h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit ' + r.name, onclick: function () { openTourEdit(artistId, r); } }, icon('edit', 16), 'Edit')
+    ], { noTapOpen: true }));
+  }
+  // Fixing a tour the page shows: a new name, or take it off the page. The
+  // correction sticks through every re-sync.
+  function openTourEdit(id, r) {
+    var st = { name: r.name };
+    openSheet(function () {
+      var input = h('input', { class: 'input', type: 'text', maxlength: 120, value: st.name, 'aria-label': 'Tour name',
+        oninput: function (e) { st.name = e.target.value; } });
+      return [h('h2', { class: 'sh-title' }, 'Edit this tour'),
+        h('p', { class: 'sh-sub' }, (r.first ? tourSpan(r.first, r.last) + ' \u00b7 ' : '') + plural(G.num(r.n), 'show')),
+        input,
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+            var nm = String(st.name || '').replace(/\s+/g, ' ').trim();
+            if (nm.length < 2) { toast('Give it a name'); return; }
+            if (nm === r.name) { closeSheet(); return; }
+            var b = e.currentTarget; b.disabled = true;
+            try { await window.GR_BACKEND.artistTourEdit(id, r.name, nm); closeSheet(); toast('Renamed ' + nm); histOf(id, true); render(true); }
+            catch (x) { b.disabled = false; saveFailed('tours', x); }
+          } }, 'Save name'),
+          r.conflict ? h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); openTourConflicts(id, r); } }, 'Settle the contested nights') : null,
+          h('button', { class: 'btn ghost block danger', type: 'button', onclick: function () {
+            confirmSheet({ title: 'Remove ' + r.name + '?', body: 'It comes off the Tours list. Nights setlist.fm knows about stay as shows; nights the search added for this tour go.',
+              action: 'Remove tour', danger: true,
+              onConfirm: async function () {
+                try { await window.GR_BACKEND.artistTourRemove(id, r.name); toast('Removed ' + r.name); histOf(id, true); render(true); return true; }
+                catch (x) { saveFailed('tours', x); return false; }
+              } });
+          } }, 'Remove this tour'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
+    }, { label: 'Edit this tour' });
   }
   // The contested nights of a tour: this tour, the other, or wasn't there — one tap each, saved at once.
   function openTourConflicts(id, r) {
@@ -7435,7 +7471,7 @@
 
   /* A row that slides left to show its actions (Edit, Undo). A tap opens
      it too, and tapping again closes it. */
-  function swipeRow(inner, acts) {
+  function swipeRow(inner, acts, opts) {
     var tray = h('div', { class: 'sw-acts' }, acts);
     var face = h('div', { class: 'sw-face' }, inner);
     var row = h('div', { class: 'sw-row' }, tray, face);
@@ -7464,10 +7500,11 @@
       set(open ? -W : 0, true);
       row.dataset.swiped = String(Date.now());
     });
-    face.addEventListener('click', function () {
-      if (Date.now() - Number(row.dataset.swiped || 0) < 400) return;   // the end of a swipe, not a tap
+    face.addEventListener('click', function (e) {
+      if (Date.now() - Number(row.dataset.swiped || 0) < 400) { e.stopPropagation(); e.preventDefault(); return; }   // the end of a swipe, not a tap
+      if (opts && opts.noTapOpen) { if (open) { open = false; set(0, true); } return; }   // the row's own tap stands; a tap only closes the tray
       W = tray.offsetWidth; open = !open; set(open ? -W : 0, true);
-    });
+    }, true);
     return row;
   }
 
@@ -11215,12 +11252,19 @@
     var asks = !!(B && B.requestsFor); // requests live with a signed-in tour
     var reqs = asks ? B.requestsFor(id, s.date) : [];
     var open = reqs.filter(function (r) { return r.status === 'pending'; }).length;
-    return h('li', null, h('div', { class: 'show-row cal-row' + (s.date === today ? ' is-today' : '') },
+    var line = h('div', { class: 'show-row cal-row' + (s.date === today ? ' is-today' : '') },
       dateBlock(s.date), whereBlock(s), daySheetBtn(id, s.date, from, fromLabel),
       !asks ? h('span', { 'aria-hidden': 'true' }) : h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
         'aria-label': 'Special requests for ' + (s.city || 'this show') + (open ? ', ' + open + ' waiting for an answer' : ''),
         onclick: function () { openRequests(id, s); } },
-        'Special requests')));
+        'Special requests'));
+    // Devin: "slide left on a date and edit/delete show". It's the tour's own
+    // show that changes, so every tab that reads the tour follows.
+    if (!(canEditTour(id) && s.id)) return h('li', null, line);
+    return h('li', null, swipeRow(line, [
+      h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit this show', onclick: function () { openShowSheet(id, s.id); } }, icon('edit', 16), 'Edit'),
+      h('button', { class: 'sw-undo', type: 'button', 'aria-label': 'Delete this show', onclick: function () { confirmDeleteShow(id, s.id, s); } }, icon('trash', 16), 'Delete')
+    ], { noTapOpen: true }));
   }
   /* A day off's poll button, the same on the Calendar and the day sheet:
      Create poll for the tour manager only (the creator, or whoever's tour

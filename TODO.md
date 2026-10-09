@@ -19,6 +19,8 @@ small model for the finder), but a cap is a brake, not a plan.
 - [x] Rescan button under the Tours list; the list no longer stops at 60 tours
 - [x] Fact check after every scan/sync: nights inside a run filed; edge and far-away nights asked about with the same picker
 - [x] Every night under its tour: same-tour spellings fold (alias, survives re-sync); a scan's listed dates take over setlist.fm's album labels
+- [x] A tiny tour inside another's run folds into it; a real name beats a list of bands
+- [x] Calendar: slide a date left → Edit / Delete show (the tour itself changes, so every tab follows)
 - [x] Reading meter: small model, monthly ceiling; Anthropic: $20 credit, auto-reload, $50/month limit
 
 ## 2. Concert Archives — every artist, zero steps
