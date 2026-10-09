@@ -30,11 +30,16 @@
     // which is why it sits here as a cost rather than against merch income.
     { key: 'merch', label: 'Merch bill', note: 'Printing, plus any merch advance you have to pay back.' },
     { key: 'commission', label: 'Commission' },
+    // Tips from the merch table still to pay out: deposited with the merch, or cash not handed over yet.
+    { key: 'merchTips', label: 'Merch tips', note: 'Tips from the merch table still to pay out: deposited with the merch, or cash not handed over yet.' },
     { key: 'misc', label: 'Misc' },
     // Monthly-type costs sit at the end, by request.
     { key: 'utilities', label: 'Monthly utilities' }
   ];
-  var TYPED_CATEGORIES = CATEGORIES.filter(function (c) { return c.key !== 'commission'; });
+  // Two categories are figured, not typed: commission from the deal, merch tips from the nights.
+  var DERIVED = ['commission', 'merchTips'];
+  function isDerived(key) { return DERIVED.indexOf(key) >= 0; }
+  var TYPED_CATEGORIES = CATEGORIES.filter(function (c) { return !isDerived(c.key); });
 
   var COMMISSION_LINES = [
     { key: 'management', label: 'Management', basis: 'income' },
@@ -405,10 +410,34 @@
     if (key === 'buyouts') return buyoutIncome(show);
     var inc = show && isObj(show.income) ? show.income : {};
     if (key === 'guarantee') return Math.max(0, num(inc.guarantee) - guaranteeLost(show));
+    if (key === 'merch') return Math.max(0, round((num(inc.merch) - merchTipsPaidCash(show)) * 100) / 100);
     return num(inc[key]);
   }
   function showIncomeTotal(show) {
     return INCOME_FIELDS.reduce(function (t, f) { return t + incomeOf(show, f.key); }, 0);
+  }
+  /* Tips at the merch table (Devin, 2026-10-08): part of the merch total, but
+     the merch person's money, not the band's. How they came in says where
+     they go: deposited with the card sales, they sit in the band's bank until
+     paid out, so they count under Merch tips in the expenses; cash and
+     already handed over, they were never the band's — they come off the
+     night's merch income and nothing is owed; cash and not yet handed over,
+     the band holds them and owes them: under Merch tips until paid. */
+  function merchTips(show) {
+    var t = show && isObj(show.merchTips) ? show.merchTips : null;
+    var amount = t ? Math.max(0, round(num(t.amount) * 100) / 100) : 0;
+    return { amount: amount, how: t && t.how === 'deposited' ? 'deposited' : 'cash', paid: !!(t && t.paid) };
+  }
+  // Cash tips already handed over: not the band's income.
+  function merchTipsPaidCash(show) {
+    var t = merchTips(show);
+    return t.how === 'cash' && t.paid ? t.amount : 0;
+  }
+  // Tips the band holds and still has to pay out.
+  function merchTipsOwed(show) {
+    var t = merchTips(show);
+    if (!(t.amount > 0)) return 0;
+    return t.how === 'deposited' || !t.paid ? t.amount : 0;
   }
 
   /* Money in hand, show by show. A guarantee only counts toward the budget
@@ -1288,7 +1317,8 @@
         // ...and neither is the part of one the promoter still owes, or
         // the part a venue or a bank kept.
         incomeBy[f.key] += f.key === 'buyouts' ? buyoutIncome(s)
-          : f.key === 'guarantee' ? Math.max(0, num(inc.guarantee) - guaranteeOwed(s) - guaranteeLost(s)) : num(inc[f.key]);
+          : f.key === 'guarantee' ? Math.max(0, num(inc.guarantee) - guaranteeOwed(s) - guaranteeLost(s))
+          : f.key === 'merch' ? incomeOf(s, 'merch') : num(inc[f.key]);
       });
     });
     var showIncome = INCOME_FIELDS.reduce(function (t, f) { return t + incomeBy[f.key]; }, 0);
@@ -1373,6 +1403,13 @@
       over: Math.max(0, commissionPaid - commissionCommitted)
     });
 
+    // Merch tips the band holds and owes the merch person: deposited with the
+    // card sales, or cash not handed over yet.
+    var merchTipsDue = round(shows.reduce(function (t, s) { return t + merchTipsOwed(s); }, 0) * 100) / 100;
+    if (merchTipsDue > 0) {
+      lines.push({ key: 'merchTips', label: 'Merch tips', projected: merchTipsDue, paid: merchTipsDue, effective: merchTipsDue, left: 0, over: 0 });
+    }
+
     // Only loans and gear payments live here: a card's balance already counts
     // once through the categories above.
     var debt = otherDebts(tour).reduce(function (t, d) { return t + num(d.amount); }, 0);
@@ -1383,13 +1420,13 @@
     var dayByDay = extras.reduce(function (t, x) { return t + num(x.amount); }, 0) +
       (chargedTo[DAY_BY_DAY] || 0);
 
-    var out = fixed + commissionEffective + debt + dayByDay;
+    var out = fixed + commissionEffective + merchTipsDue + debt + dayByDay;
 
     return {
       shows: shows, allShows: allShows, income: income, guarantees: guarantees, incomeBy: incomeBy,
       showIncome: showIncome, otherIncome: other, otherRows: otherRows,
       lines: lines, fixed: fixed,
-      commission: commissionEffective, commissionProjected: commissionProjected,
+      commission: commissionEffective, commissionProjected: commissionProjected, merchTips: merchTipsDue,
       agencyShows: agencyShows, agencyAdvance: advance, agentOwed: agentOwed, commissionKept: kept,
       debt: debt, dayByDay: dayByDay, out: out, net: income - out,
       coverage: out > 0 ? income / out : (income > 0 ? 1 : 0)
@@ -1414,8 +1451,8 @@
      every category (card balances going in included), the commission on what
      has come in, loans, and the day-by-day costs. Never projections. */
   function spentOf(c) {
-    var paid = c.lines.reduce(function (t, l) { return l.key === 'commission' ? t : t + num(l.paid); }, 0);
-    return round((paid + num(c.commission) + num(c.debt) + num(c.dayByDay)) * 100) / 100;
+    var paid = c.lines.reduce(function (t, l) { return isDerived(l.key) ? t : t + num(l.paid); }, 0);
+    return round((paid + num(c.commission) + num(c.merchTips) + num(c.debt) + num(c.dayByDay)) * 100) / 100;
   }
 
   /* The chart, day by day: money in (it only climbs) against what's spent
@@ -2030,7 +2067,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, merchTips: merchTips, merchTipsOwed: merchTipsOwed, merchTipsPaidCash: merchTipsPaidCash, isDerived: isDerived, DERIVED: DERIVED, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

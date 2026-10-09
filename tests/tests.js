@@ -1787,6 +1787,26 @@
       eq(cut.indexOf('Denver') >= 0 && cut.indexOf('Summit Music Hall') >= 0, true);
       eq(G.wikiCut('nothing about them', 'I See Stars'), '');
     });
+    test('merch tips: cash paid comes off the night\u2019s income; deposited or unpaid cash is owed under Merch tips', function () {
+      var base = { date: '2026-10-07', loggedAt: 1, income: { merch: 2000 } };
+      var paid = Object.assign({}, base, { merchTips: { amount: 150, how: 'cash', paid: true } });
+      var unpaid = Object.assign({}, base, { merchTips: { amount: 150, how: 'cash', paid: false } });
+      var dep = Object.assign({}, base, { merchTips: { amount: 150, how: 'deposited' } });
+      eq(G.showIncomeTotal(paid), 1850, 'cash tips handed over were never the band\u2019s');
+      eq(G.showIncomeTotal(unpaid), 2000, 'cash tips still held count until paid out');
+      eq(G.showIncomeTotal(dep), 2000, 'deposited tips are in the bank');
+      eq(G.merchTipsOwed(paid), 0); eq(G.merchTipsOwed(unpaid), 150); eq(G.merchTipsOwed(dep), 150);
+      eq(G.merchTips({}).amount, 0, 'no tips: nothing');
+      var tour = { name: 'T', shows: { a: dep, b: paid }, expenses: {} };
+      var c = G.calc(tour);
+      var line = c.lines.filter(function (l) { return l.key === 'merchTips'; })[0];
+      eq(!!line, true, 'a Merch tips line when something is owed'); eq(line.paid, 150); eq(c.merchTips, 150);
+      eq(c.income, 3850, 'income: 2000 + 1850'); eq(c.out, 150, 'the tips owed are the only cost'); eq(c.net, 3700);
+      eq(G.spentOf(c), 150);
+      var none = G.calc({ name: 'T', shows: { b: paid }, expenses: {} });
+      eq(none.lines.some(function (l) { return l.key === 'merchTips'; }), false, 'no line when nothing is owed');
+      eq(G.isDerived('merchTips') && G.isDerived('commission') && !G.isDerived('crew'), true);
+    });
     test('etaText says the finder’s time left the way a person would', function () {
       eq(G.etaText(0), '', 'nothing left, nothing said');
       eq(G.etaText(45), 'Almost done.');

@@ -6219,7 +6219,7 @@
   }
   // Log by hand on the Off Tour book: pick a category, then the same sheet a tour uses.
   function openOffLog(id) {
-    var cats = G.typedCategoriesFor(getTour(id)).filter(function (c) { return c.key !== 'offdebt' && c.key !== 'commission'; });
+    var cats = G.typedCategoriesFor(getTour(id)).filter(function (c) { return c.key !== 'offdebt' && !G.isDerived(c.key); });
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'Log an expense'),
@@ -6691,7 +6691,7 @@
   // The two numbers sit in their own columns; this line says how they compare.
   function lineHint(l) {
     if (l.over > 0) return { text: 'Over by ' + money(l.over) + cardBit(l), cls: ' over' };
-    if (l.key === 'commission') return { text: '', cls: '' };
+    if (G.isDerived(l.key)) return { text: l.key === 'merchTips' ? 'Owed to the merch person' : '', cls: '' };
     if (l.projected == null) return { text: cardBit(l).replace(/^ · /, ''), cls: '' };
     if (l.left === 0) return { text: 'All spent' + cardBit(l), cls: ' done' };
     return { text: money(l.left) + ' left to pay' + cardBit(l), cls: '' };
@@ -7103,7 +7103,7 @@
     var off = !!(o && o.off);
     if (!off) syncCrew(id);
     // The Off Tour book leaves out what only a tour has.
-    if (off) c = Object.assign({}, c, { lines: c.lines.filter(function (l) { return l.key !== 'offdebt' && l.key !== 'commission'; }) });
+    if (off) c = Object.assign({}, c, { lines: c.lines.filter(function (l) { return l.key !== 'offdebt' && !G.isDerived(l.key); }) });
     var edit = canEditTour(id);
     var chev = edit ? h('span', { class: 'ex-chev', 'aria-hidden': 'true' }) : null;
     var head = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
@@ -7149,10 +7149,10 @@
         h('span', { class: 'amt num glow ex-proj', 'aria-label': 'Projected ' + (unset ? 'not set' : money(l.projected)) },
           unset ? '\u2014' : money(l.projected)),
         // Commission is paid from the bank, so it reads as debit.
-        creditCell(l.key === 'commission' ? 0 : l.creditOut != null ? l.creditOut : l.paid - paidPart(t, l.key), l.over > 0),
-        paidCell(l.paidOut != null ? l.paidOut : l.key === 'commission' ? l.paid : debitPart(t, l.key) +
+        creditCell(G.isDerived(l.key) ? 0 : l.creditOut != null ? l.creditOut : l.paid - paidPart(t, l.key), l.over > 0),
+        paidCell(l.paidOut != null ? l.paidOut : G.isDerived(l.key) ? l.paid : debitPart(t, l.key) +
           (l.key === 'card' ? G.cardDebts(t).reduce(function (n, d) { return n + G.cardSummary(d, t).paidOff; }, 0) : 0)),
-        cashCell(l.key === 'commission' ? 0 : l.cashOut != null ? l.cashOut : cashPart(t, l.key))
+        cashCell(G.isDerived(l.key) ? 0 : l.cashOut != null ? l.cashOut : cashPart(t, l.key))
       ];
       if (!edit) return h('div', { class: 'row ex-row' }, inner);
       return h('button', {
@@ -7168,7 +7168,7 @@
     // what's owed on credit, the most first; then by what's been spent; then
     // by what's projected. Untouched ones keep their usual order at the end.
     var owedOn = function (l) {
-      return l.key === 'commission' ? 0 : Math.max(0, l.creditOut != null ? l.creditOut : l.paid - paidPart(t, l.key));
+      return G.isDerived(l.key) ? 0 : Math.max(0, l.creditOut != null ? l.creditOut : l.paid - paidPart(t, l.key));
     };
     var entries = [];
     c.lines.forEach(function (l, i) {
@@ -7297,6 +7297,17 @@
         amount: r.amount, detail: r.feed ? 'Still under Credit card' : 'Card balance going into the tour',
         source: r.feed ? 'PLAID' : 'MANUAL', counts: true });
     });
+    // Merch tips: the nights still holding tips for the merch person.
+    if (key === 'merchTips') {
+      G.rows(t && t.shows).forEach(function (sh) {
+        var owed = G.merchTipsOwed(sh);
+        if (!(owed > 0)) return;
+        var tp = G.merchTips(sh);
+        out.push({ date: sh.date, label: 'Merch tips \u00b7 ' + String(sh.city || 'Show').split(',')[0], amount: owed,
+          detail: tp.how === 'deposited' ? 'Deposited with the merch; pay out to the merch person' : 'Cash, not handed over yet',
+          source: 'SHOW', counts: true });
+      });
+    }
     // Each guarantee the booking agent holds as an advance (agency deposit).
     if (key === 'commission') {
       G.calc(t).agencyShows.forEach(function (x) {
@@ -7546,7 +7557,7 @@
     var ch = r.chargeId ? (t.charges || {})[r.chargeId] : null;
     var cl = r.cashId ? (t.cashLog || {})[r.cashId] : null;
     if (!r.typed && !ch && !cl) { toast('That entry isn\u2019t there anymore.'); return; }
-    var cats = G.chargeCategoriesFor(t).filter(function (c) { return c.key !== 'commission' && c.key !== 'offdebt'; });
+    var cats = G.chargeCategoriesFor(t).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; });
     var f = {
       amount: r.typed ? r.amount : G.num((ch || cl).amount),
       what: r.typed ? '' : String(ch ? ch.merchant || '' : cl.label || cl.note || ''),
@@ -9138,7 +9149,7 @@
      which opens Expenses; Expenses and Income are two tabs above the chart
      there. GA never sees the Budget tab. */
   var BOOK_TABS = ['costs', 'cards', 'money', 'mypay'];
-  var BOOK_STRIP = [{ view: 'costs', label: 'Expenses', icon: 'tabcost' }, { view: 'cards', label: 'Cards', icon: 'card' },
+  var BOOK_STRIP = [{ view: 'costs', label: 'Expenses', icon: 'tabcost' }, { view: 'cards', label: 'Cards/Links', icon: 'card' },
     { view: 'money', label: 'Income', icon: 'tabmoney' }];
   var BUDGET_TAB = { view: 'costs', label: 'Budget', icon: 'tabmoney', book: true };
   function tourTabs(id, current) {
@@ -13017,6 +13028,10 @@
     // atVenu's card payout for the night (card sales less fees), when the
     // Settlement showed it. That is the deposit to watch for.
     var merchCardDeposit = s.merchCardDeposit != null ? G.num(s.merchCardDeposit) : null;
+    // Tips at the merch table: how much of the merch total, cash or deposited, and (cash) handed over yet.
+    var tips = G.merchTips(s);
+    // atVenu switched off for this tour (Cards/Links): no bubble, no per head, nothing read by itself.
+    var avOff = t.atvenuSync === false;
     var legacy = !!s.loggedAt;
     /* A Received box ticked beside an EMPTY line means "nothing to wait for
        here" (no merch table, no guarantee): the night can still read as
@@ -13056,7 +13071,9 @@
                   f.key === 'guarantee' && dep != null && Math.abs(gross - dep) >= 0.005 ? h('span', { class: 'hint' },
                     money(dep) + ' deposited of ' + money(gross) + guaranteeWhyText(why)) : null,
                   f.key === 'guarantee' && paidBy ? h('span', { class: 'hint' }, 'Paid by ' +
-                    PAID_BY.filter(function (x) { return x[0] === paidBy; })[0][1].toLowerCase()) : null),
+                    PAID_BY.filter(function (x) { return x[0] === paidBy; })[0][1].toLowerCase()) : null,
+                  f.key === 'merch' && tips.amount > 0 ? h('span', { class: 'hint' }, 'incl. ' + money(tips.amount) + ' tips, ' +
+                    (tips.how === 'deposited' ? 'deposited' : tips.paid ? 'cash, paid out' : 'cash, not paid out yet')) : null),
                 h('span', { class: 'amt num' }, money(draft[f.key])));
             }),
             h('div', { class: 'row total' },
@@ -13102,6 +13119,7 @@
           buyoutTrack: draft.buyouts > 0 && track ? track : null,
           settlementNotes: settNotes.length ? settNotes : null,
           merchCash: draft.merch > 0 && merchCash > 0 ? merchCash : null,
+          merchTips: draft.merch > 0 && tips.amount > 0 ? { amount: Math.min(tips.amount, draft.merch), how: tips.how, paid: tips.how === 'cash' ? !!tips.paid : null } : null,
           merchCardDeposit: draft.merch > 0 && merchCardDeposit != null ? merchCardDeposit : null,
           guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
           // A tick made by hand beside an empty line ("nothing to wait for
@@ -13567,14 +13585,33 @@
             h('div', { class: 'row-label' },
               h('label', { for: 'inc-merch' }, 'Merch'),
               receivedBox('merch', 'Merch deposit')),
-            // atVenu where Buyouts has Track; the amount lines up with the rest.
-            avReader, avBtn, mkInput));
-          rows.push(avMenu);
+            // atVenu where Buyouts has Track; the amount lines up with the rest. Switched off in Cards/Links: nothing of atVenu here.
+            avOff ? null : avReader, avOff ? null : avBtn, mkInput));
+          if (!avOff) rows.push(avMenu);
           rows.push(h('div', { class: 'row mx-row' },
             h('label', { class: 'row-label', for: 'inc-merch-cash' }, 'Cash',
               h('span', { class: 'hint' }, 'Cash from the show, on hand')),
             cashInput));
+          // Tips (Devin): how much of the merch total was tips, and where they stand.
+          var tipsHint = h('span', { class: 'hint' }, '');
+          var tipsWhere = h('div', { class: 'tips-where' });
+          var sayTips = function () {
+            tipsHint.textContent = !(tips.amount > 0) ? 'Part of the merch total that was tips'
+              : tips.how === 'deposited' ? 'Deposited with the merch \u2014 under Merch tips in Expenses until paid out'
+              : tips.paid ? 'Cash, handed over \u2014 comes off tonight\u2019s merch income' : 'Cash, not handed over yet \u2014 under Merch tips in Expenses';
+            tipsWhere.hidden = !(tips.amount > 0);
+            tipsWhere.replaceChildren(
+              segmented(['Cash', 'Deposited'], tips.how === 'deposited' ? 1 : 0, function (i) { tips.how = i === 1 ? 'deposited' : 'cash'; sayTips(); refresh(); }, 'How the tips came in'),
+              tips.how === 'cash' ? segmented(['Paid', 'Unpaid'], tips.paid ? 0 : 1, function (i) { tips.paid = i === 0; sayTips(); refresh(); }, 'Handed over to the merch person') : h('span'));
+          };
+          var tipsInput = moneyInput({ id: 'inc-merch-tips', value: tips.amount, label: 'Merch tips',
+            onValue: function (v) { tips.amount = Math.max(0, v); sayTips(); refresh(); } });
           rows.push(h('div', { class: 'row mx-row' },
+            h('label', { class: 'row-label', for: 'inc-merch-tips' }, 'Tips', tipsHint),
+            tipsInput));
+          rows.push(tipsWhere);
+          sayTips();
+          if (!avOff) rows.push(h('div', { class: 'row mx-row' },
             h('span', { class: 'row-label' }, '$ per head'),
             perHeadEl));
           rows.push(depositRow);
@@ -13862,7 +13899,7 @@
   // Where merch cash can go: the Expenses categories (so it lands in their
   // Cash column), plus a deposit or a hand-off, which just move the cash.
   function cashCats(t) {
-    return G.chargeCategoriesFor(t).filter(function (c) { return c.key !== 'commission' && c.key !== 'offdebt'; });
+    return G.chargeCategoriesFor(t).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; });
   }
   function cashCatLabels(t) {
     var out = {};
@@ -15980,7 +16017,7 @@
     };
     // "+" first, then every category the tour has (its own included).
     function buildChips() {
-      var list = G.chargeCategoriesFor(getTour(tourId) || base).filter(function (c) { return c.key !== 'commission' && c.key !== 'offdebt'; });
+      var list = G.chargeCategoriesFor(getTour(tourId) || base).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; });
       chips.replaceChildren.apply(chips, [h('button', { class: 'rv-chip rv-plus', type: 'button', 'aria-label': 'Add a category',
         onclick: growChip }, '+')].concat(list.map(function (c) {
         return h('button', { class: 'rv-chip', type: 'button', 'data-key': c.key, 'aria-pressed': 'false',
@@ -16817,6 +16854,24 @@
         h('span', { class: 'card-new' + (n ? ' on' : '') }, plural(n, 'new charge')),
         icon('chevron', 18));
     });
+    // Links (Devin): atVenu, with a switch. On, the mailbox's atVenu reports log
+    // merch by themselves; off, nothing of atVenu's lands on this tour and the
+    // nights lose the bubble and the $ per head.
+    var avOn = t.atvenuSync !== false;
+    var avBox = h('input', { type: 'checkbox', class: 'av-switch', id: 'av-sync-' + id, 'aria-label': 'Sync atVenu merch for this tour',
+      disabled: canEditTour(id) ? null : true,
+      onchange: async function (e) {
+        var on = e.target.checked;
+        var ok = await api.update(id, { atvenuSync: on ? true : false });
+        if (!ok) { e.target.checked = !on; return; }
+        toast(on ? 'atVenu is on: merch logs itself from the reports' : 'atVenu is off for this tour');
+      } });
+    avBox.checked = avOn;
+    rows.unshift(h('label', { class: 'row card-line av-link', for: 'av-sync-' + id },
+      h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }),
+      h('div', { class: 'row-label' }, 'atVenu',
+        h('span', { class: 'hint' }, avOn ? 'Merch logs itself from the atVenu reports' : 'Off \u2014 merch is typed by hand on this tour')),
+      avBox));
     // Connected, but never told what it's for: one tap answers it, and then it's listed.
     var unasked = createdTour(id) && S.cardUnasked && S.cardUnasked[id] ? S.cardUnasked[id] : [];
     if (unasked.length) rows.push(h('button', { class: 'row rowbtn card-line ask', type: 'button',
