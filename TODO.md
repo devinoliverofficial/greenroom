@@ -23,7 +23,7 @@ small model for the finder), but a cap is a brake, not a plan.
 - [x] Calendar: slide a date left → Edit / Delete show (the tour itself changes, so every tab follows)
 - [x] Merch tips under Merch (cash/deposited, paid/unpaid) → Merch tips line in Expenses
 - [x] Cards → Cards/Links with the atVenu switch (off = nothing of atVenu's lands; no bubble, no $ per head)
-- [ ] Edit day sheet → Upload Day Sheet (photo → reader → fields filled)
+- [x] Edit day sheet → Upload Day Sheet (photo → reader → fields filled, you check and post)
 - [x] Reading meter: small model, monthly ceiling; Anthropic: $20 credit, auto-reload, $50/month limit
 
 ## 2. Concert Archives — every artist, zero steps

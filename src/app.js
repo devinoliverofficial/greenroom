@@ -12591,11 +12591,12 @@
     return res;
   }
 
-  function openDaySheetEditor(tourId, showId) {
+  function openDaySheetEditor(tourId, showId, prefill) {
     var t = getTour(tourId);
     var s = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : null;
     if (!s) return;
-    var d0 = G.isObj(s.daySheet) ? s.daySheet : {};
+    // prefill: the sheet as a photo read it (Upload Day Sheet), over what was saved.
+    var d0 = G.isObj(prefill) ? prefill : (G.isObj(s.daySheet) ? s.daySheet : {});
     var f = {
       venueAddress: d0.venueAddress || '', venuePhone: d0.venuePhone || '',
       loadIn: d0.loadIn || '', vip: d0.vip || '', doors: d0.doors || '',
@@ -12740,6 +12741,11 @@
       return [
         h('h2', { class: 'sh-title clean' }, 'Day sheet \u2014 ' + (s.city || 'Show')),
         h('p', { class: 'sh-sub clean' }, 'Everything the bus needs for the day. Leave anything blank and it just doesn\u2019t show.'),
+        // Devin: "Upload Day Sheet" at the top — a photo of the promoter's sheet, read and filled in.
+        S.sample && canWrite() ? h('div', { class: 'ds-upload' }, fileControl({ accept: imageAccept(), cls: 'btn quiet glow block', icon: 'plus',
+          label: 'Upload Day Sheet', ariaLabel: 'Upload a photo of the day sheet and fill the form from it',
+          onFiles: function (files) { readDaySheetPhoto(tourId, showId, files[0], f); } }),
+          h('p', { class: 'hint ds-upload-hint' }, 'A photo of the venue\u2019s day sheet: times, wifi, parking, the lot \u2014 filled in for you to check.')) : null,
         h('form', { class: 'sh-form ds-editor', onsubmit: submit, novalidate: true },
           h('h3', { class: 'ds-sec-h' }, 'Venue'),
           h('div', { class: 'field' },
@@ -14988,6 +14994,56 @@
   }
 
   /* ---------------- Flyers ---------------- */
+
+  /* A photo of the day sheet (Devin, 2026-10-08: "upload a photo of the day
+     sheet and it scans it and fills everything out for you"). The reader
+     returns the form's own fields; what it couldn't find stays as it was. */
+  function daySheetPrompt(bands, s) {
+    return [
+      'The attached image is a concert day sheet (the venue or promoter\u2019s schedule for one show day) for ' + (s.city || 'a show') + (s.venue ? ' at ' + s.venue : '') + (s.date ? ' on ' + s.date : '') + '.',
+      bands.length ? 'The bands on this tour: ' + bands.join(', ') + '.' : '',
+      'Read it and reply with ONLY a JSON object with these fields (use "" for anything not on the sheet, never guess):',
+      '"venueAddress" (street address), "venuePhone", "wifi" (network name), "wifiPass", "parking" (where the bus and trailer go, load-in notes),',
+      '"lobbyCall", "loadIn", "doors", "loadOut", "busCall" (each a time like "6:30PM" or "11:00AM"; "TBA" if the sheet says so),',
+      '"vip" (meet & greet / VIP time and note), "driveNext" (drive time or miles to the next city),',
+      '"soundchecks": [{"band": "...", "time": "4:30PM"}] and "setTimes": [{"band": "...", "time": "9:15PM"}] in running order, using the sheet\u2019s band names,',
+      '"greenrooms", "showers", "productionOffice", "laundry" (each "yes", "no" or ""), and "notes" (anything else the crew should know, one or two lines).',
+      'Times are in the venue\u2019s local time as printed.'
+    ].filter(Boolean).join('\n');
+  }
+  async function readDaySheetPhoto(tourId, showId, file, cur) {
+    if (!S.sample || !file) return;
+    var t = getTour(tourId), s = t && G.isObj(t.shows) ? t.shows[showId] : null;
+    if (!s) return;
+    if (S.imageMax && file.size > S.imageMax) { toast('That photo is too big to read \u2014 try a screenshot of it'); return; }
+    var ctl = new AbortController();
+    busySheet('Reading the day sheet', 'Times, wifi, parking, set times \u2014 this can take up to a minute.', function () { ctl.abort(); openDaySheetEditor(tourId, showId, cur); });
+    var out = null;
+    try { out = await S.sample.json(daySheetPrompt(tourBands(t), s), { images: file, signal: ctl.signal, cache: false }); }
+    catch (e) {
+      if (e && e.code === 'cancelled') return;
+      if (e && SAMPLE_GONE.indexOf(e.code) >= 0) S.sample = null;
+      openDaySheetEditor(tourId, showId, cur);
+      toast(e && e.code === 'rate_limited' ? 'The reader is busy \u2014 try again in a minute' : 'Couldn\u2019t read that photo');
+      return;
+    }
+    if (!G.isObj(out)) { openDaySheetEditor(tourId, showId, cur); toast('No day sheet found in that photo'); return; }
+    // What the photo had goes over the form; what it didn't have stays.
+    var merged = Object.assign({}, cur || {});
+    var str = function (v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 120); };
+    ['venueAddress', 'venuePhone', 'wifi', 'wifiPass', 'parking', 'lobbyCall', 'loadIn', 'doors', 'loadOut', 'busCall', 'vip', 'driveNext', 'notes'].forEach(function (k) {
+      if (str(out[k])) merged[k] = k === 'notes' ? String(out[k]).trim().slice(0, 600) : str(out[k]);
+    });
+    ['soundchecks', 'setTimes'].forEach(function (k) {
+      var rows = Array.isArray(out[k]) ? out[k].map(function (r) { return G.isObj(r) ? { band: str(r.band), time: str(r.time) } : null; })
+        .filter(function (r) { return r && (r.band || r.time); }) : [];
+      if (rows.length) merged[k] = rows.slice(0, 12);
+    });
+    G.DS_AMENITIES.forEach(function (a) { var v = str(out[a[0]]).toLowerCase(); if (v === 'yes' || v === 'no') merged[a[0]] = v; });
+    var got = Object.keys(merged).filter(function (k) { return merged[k] && (!cur || JSON.stringify(cur[k]) !== JSON.stringify(merged[k])); }).length;
+    openDaySheetEditor(tourId, showId, merged);
+    toast(got ? 'Filled from the photo \u2014 give the times a look, then post' : 'Nothing new on that photo');
+  }
 
   function flyerPrompt() {
     var now = new Date();
