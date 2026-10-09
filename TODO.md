@@ -21,6 +21,9 @@ small model for the finder), but a cap is a brake, not a plan.
 - [x] Every night under its tour: same-tour spellings fold (alias, survives re-sync); a scan's listed dates take over setlist.fm's album labels
 - [x] A tiny tour inside another's run folds into it; a real name beats a list of bands
 - [x] Calendar: slide a date left → Edit / Delete show (the tour itself changes, so every tab follows)
+- [x] Merch tips under Merch (cash/deposited, paid/unpaid) → Merch tips line in Expenses
+- [x] Cards → Cards/Links with the atVenu switch (off = nothing of atVenu's lands; no bubble, no $ per head)
+- [ ] Edit day sheet → Upload Day Sheet (photo → reader → fields filled)
 - [x] Reading meter: small model, monthly ceiling; Anthropic: $20 credit, auto-reload, $50/month limit
 
 ## 2. Concert Archives — every artist, zero steps
