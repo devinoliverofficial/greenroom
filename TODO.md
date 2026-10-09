@@ -55,21 +55,21 @@ what is left to automate in PIPELINE.md, every platform checked in SOURCES.md.
 - [ ] Merch nights from Square sales → income, matched to settlements and deposits
 - [ ] Devin's open notes on the Merchroom tab (pinned, not abandoned)
 
-## 4. Tasks → "Today" first (Devin, 2026-10-09; to work out separately, not built yet)
-His words, clause by clause:
-- [ ] The Tasks button should "first and foremost" open on **today's to-do list**.
-- [ ] Today's list is a window you can swipe "the same way all the tasks" swipe.
-- [ ] Swipe **right** on today's tasks → a pull-up page. On it, these, in his order:
-      "Import Day Sheet" · "Log in buyouts" · "Who received?" · "Log in Guarantees" · "Log In Merch".
-- [ ] "When logging this stuff in it immediately logs it in everywhere [it] needs to be logged in the app."
-- [ ] "This ideally should be all on one tab that gets pulled up."
-- [ ] Follow-up (same night): the questions are asked **one at a time**; you can still swipe right or
-      left on a question "if you don't have that info" (skip it).
-- [ ] When you log one, you get the **splash effect with the "sign of the horns" emoji** (🤘).
-- [ ] His first message ended mid-sentence ("… that gets pulled up. I") — ask him what came next.
-Open questions to settle with him before building: is "Who received?" the person who was handed
-the buyout cash; does "today" mean the show whose date is today on the current tour; what a skipped
-question does (stays on today's list, or carries to tomorrow).
+## 4. Tasks: "Today" first (Devin, 2026-10-09) — BUILT the same day
+His words, clause by clause, and what was built for each:
+- [x] The Tasks button should "first and foremost" open on **today's to-do list**: on a show day a Today card leads the Tasks deck and stays first until everything on it is logged.
+- [x] A window you can swipe "the same way all the tasks" swipe: it is a card in the same deck, right to start, left for later.
+- [x] Swipe **right** → a pull-up with, in his order, "Import Day Sheet" · "Log in buyouts" · "Who received?" · "Log in Guarantees" · "Log In Merch".
+- [x] "When logging this stuff in it immediately logs it in everywhere": each answer is saved to the show in the same fields Log income, the buyout tracker and the day sheet use (a merch total logged there shows up at once as "Merch deposit not received yet" in Tasks, in Income, in the Budget).
+- [x] "All on one tab that gets pulled up": one sheet. (The day sheet form and the who-got-their-buyout list open over it and come back to it.)
+- [x] The questions are asked **one at a time**; swipe a question right or left, or tap Skip, "if you don't have that info".
+- [x] Logging one gives the **splash with the 🤘**.
+- [ ] His first message ended mid-sentence ("… that gets pulled up. I"): ask what came next.
+Choices made while building, for him to confirm or change:
+- "Today" is the show dated today on the tour your profile follows; no show today, no Today card.
+- "Who received?" is who has been handed their buyout (the tick list that already existed); it is passed over until a buyouts total is logged.
+- A skipped question stays on today's list (the card says how many are left); tomorrow the card is tomorrow's show.
+- A guarantee or merch total already logged is shown with a tick and a way into Log income, not overwritten from here (its deposit, taxes and reasons live there).
 
 ## Smaller
 - [ ] Artist photo for search-made pages (MusicBrainz → Wikidata → Wikimedia Commons; Concert Archives photos are not available to us)

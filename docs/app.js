@@ -10292,7 +10292,21 @@
     var laterAt = function (c) { return Math.max.apply(null, c.keys.map(function (k) { return G.num(rec.later[k]); })); };
     var undecided = tasks.filter(function (c) { return !(laterAt(c) > 0); });
     var put = tasks.filter(function (c) { return laterAt(c) > 0; }).sort(function (a, b) { return laterAt(a) - laterAt(b); });
-    return undecided.concat(put);
+    var out = undecided.concat(put);
+    // Devin: "the tasks button should first and foremost prompt you with today's to do list". On a
+    // show day it leads the deck, and stays there (swiped either way) until all of it is logged.
+    var tx = canEditTour(tourId) ? todayShow(tourId) : null;
+    if (tx) {
+      var tst = todayState(tx);
+      var left = TODAY_ITEMS.filter(function (it) { return tst[it[0]] === false; }).length;
+      if (left) out.unshift({ key: 'today:' + tx.date, keys: ['today:' + tx.date], keep: true, standing: true, fresh: false, at: 0,
+        emoji: '\ud83d\udccb', title: 'Today',
+        main: (String(tx.city || '').split(',')[0] || 'Show') + (tx.venue ? ' \u00b7 ' + tx.venue : ''),
+        sub: plural(left, 'thing') + ' to log \u00b7 swipe right to start',
+        lines: TODAY_ITEMS.map(function (it) { return (tst[it[0]] === true ? '\u2713 ' : '\u25cb ') + it[1]; }),
+        open: function () { openToday(tourId, tx.id); } });
+    }
+    return out;
   }
   function taskState(tourId) {
     var rec = seenRec(tourId), tasks = tourTasks(tourId, rec);
@@ -10394,11 +10408,11 @@
         top.style.opacity = '0';
       }
       if (dir > 0) {
-        // Handled: gone from the deck for good, and off to it.
-        decided(c, 'done');
+        // Handled: gone from the deck for good, and off to it (today's list stays until it's all logged).
+        if (!c.keep) decided(c, 'done');
         setTimeout(function () { close(); setTimeout(c.open, 280); }, 240);
       } else {
-        decided(c, 'later');
+        if (!c.keep) decided(c, 'later');
         deferred += 1; i += 1;
         setTimeout(show, 260);
       }
@@ -10458,7 +10472,7 @@
             h('div', { class: 'ledger' }, g.list.map(function (c) {
               return h('button', { class: 'row wn-row', type: 'button', onclick: function () {
                 var r2 = seenRec(tourId), now = Date.now();
-                c.keys.forEach(function (k) { delete r2.held[k]; delete r2.later[k]; r2.done[k] = now; });
+                if (!c.keep) c.keys.forEach(function (k) { delete r2.held[k]; delete r2.later[k]; r2.done[k] = now; });
                 saveSeen(tourId, r2);
                 closeSheet(); setTimeout(c.open, 320);
               } },
@@ -10470,6 +10484,237 @@
         tasks.length ? null : h('p', { class: 'note wn-clear' }, 'Nothing waiting on you 🤘')
       ];
     }, { label: 'New tour tasks', onClose: function () { render(true); } });
+  }
+
+  /* TODAY (Devin, 2026-10-09). On a show day the Tasks deck opens on today's
+     to-do list, a card swiped like any other. Right pulls up ONE sheet that
+     asks five things, one at a time, in his order: "Import Day Sheet",
+     "Log in buyouts", "Who received?", "Log in Guarantees", "Log In Merch".
+     Each answer is saved to the show the moment it's logged, in the very
+     fields Log income, the buyout tracker and the day sheet use, so every
+     tab follows; and each one gets the horns. No answer? Swipe the question
+     right or left, or tap Skip. */
+  var TODAY_ITEMS = [['sheet', 'Import Day Sheet'], ['buyouts', 'Log in buyouts'], ['who', 'Who received?'],
+    ['guarantee', 'Log in Guarantees'], ['merch', 'Log In Merch']];
+  function todayShow(tourId) {
+    var t = getTour(tourId), today = G.tourToday();
+    return G.rows(t && t.shows).filter(function (x) { return x.date === today; })[0] || null;
+  }
+  // Which of the five are in for this show. "who" is null while there are no buyouts to hand out.
+  function todayState(x) {
+    var inc = G.isObj(x.income) ? x.income : {};
+    var total = G.num(inc.buyouts), tr = G.isObj(x.buyoutTrack) ? x.buyoutTrack : null;
+    var per = tr ? G.num(tr.perHead) : 0, paid = buyoutPaidCount(tr);
+    return {
+      sheet: !!(G.isObj(x.daySheet) && x.daySheet.postedAt),
+      buyouts: total > 0,
+      who: total > 0 ? (paid > 0 && (!(per > 0) || paid >= Math.round(total / per))) : null,
+      guarantee: G.num(inc.guarantee) > 0 || x.guaranteeNone === true,
+      merch: G.num(inc.merch) > 0 || x.merchNone === true
+    };
+  }
+  // Back from the day sheet (posted, or put down) to the question it was opened from.
+  function todayBack(tourId, showId, posted) {
+    var r = S.todayResume;
+    if (!r || r.tourId !== tourId || r.showId !== showId) return;
+    setTimeout(function () {
+      if (sheet) return;   // the reader's busy sheet, or the editor again: still out
+      S.todayResume = null;
+      if (posted) hornSplash('Logged', 'Day sheet posted');
+      openToday(tourId, showId, posted ? r.step + 1 : r.step);
+    }, 360);
+  }
+  function openToday(tourId, showId, startAt) {
+    var i = Math.max(0, G.num(startAt)), busy = false;
+    var cur = function () {
+      var t = getTour(tourId);
+      return t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? Object.assign({}, t.shows[showId], { id: showId }) : null;
+    };
+    var s0 = cur();
+    if (!s0) return;
+    S.todayResume = null;
+    var where = (String(s0.city || '').split(',')[0] || 'Show') + (s0.venue ? ' · ' + s0.venue : '');
+    openSheet(function () {
+      var count = h('span', { class: 'td-count' });
+      var dots = h('div', { class: 'td-dots', 'aria-hidden': 'true' });
+      var host = h('div', { class: 'td-stage' });
+      var hint = h('p', { class: 'td-hint' }, 'Don’t have it yet? Swipe the question right or left, or tap Skip.');
+      // The show's income as it stands, with one line changed: what Log income would send.
+      function incomeWith(s, key, v) {
+        var inc = {};
+        G.INCOME_FIELDS.forEach(function (f) { inc[f.key] = G.num(G.isObj(s.income) ? s.income[f.key] : 0); });
+        inc.miscLabel = String((G.isObj(s.income) && s.income.miscLabel) || '');
+        inc[key] = v;
+        return inc;
+      }
+      // Logged: saved to the show (every tab reads it from there), the horns, the next question.
+      async function save(patch, sub) {
+        if (busy) return;
+        busy = true;
+        var p = {}, ok = false;
+        p[showId] = patch;
+        try { ok = await api.update(tourId, { shows: p }); } finally { busy = false; }
+        if (!ok) return;
+        hornSplash('Logged', sub);
+        render(true);
+        i += 1; draw();
+      }
+      function acts(skipLabel, go, goLabel) {
+        return h('div', { class: 'td-acts' + (go ? '' : ' one') },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { i += 1; draw(); } }, skipLabel || 'Skip'),
+          go ? h('button', { class: 'btn primary block', type: 'button', onclick: go }, goLabel || 'Log it') : null);
+      }
+      // Out to the day sheet, and back to this question when it's posted or put down.
+      function leave(fn) { S.todayResume = { tourId: tourId, showId: showId, step: i }; fn(); }
+      function body(kind, s, st) {
+        if (kind === 'sheet') {
+          var curSheet = G.isObj(s.daySheet) ? s.daySheet : {};
+          return [
+            st.sheet ? h('p', { class: 'td-done' }, '✓ Day sheet posted')
+              : h('p', { class: 'td-note' }, 'A photo of the venue’s day sheet is read and filled in for you to check, then posted to everyone on the tour.'),
+            S.sample && canWrite() ? h('div', { class: 'td-file' }, fileControl({ accept: imageAccept(), cls: 'btn primary block', icon: 'plus',
+              label: st.sheet ? 'Import a new photo' : 'Take or choose a photo', ariaLabel: 'Import a photo of the day sheet',
+              onFiles: function (files) { leave(function () { readDaySheetPhoto(tourId, showId, files[0], curSheet); }); } })) : null,
+            h('button', { class: 'btn quiet block', type: 'button',
+              onclick: function () { leave(function () { openDaySheetEditor(tourId, showId); }); } },
+              st.sheet ? 'Open the day sheet' : 'Fill it in by hand'),
+            acts(st.sheet ? 'Next' : 'Skip')
+          ];
+        }
+        if (kind === 'buyouts') {
+          var v = G.num(G.isObj(s.income) ? s.income.buyouts : 0);
+          return [
+            h('p', { class: 'td-note' }, st.buyouts ? '✓ Logged. Change the total here if it’s different.' : 'The total the venue paid in buyouts tonight.'),
+            moneyInput({ id: 'td-buyouts', value: v, label: 'Buyouts from the venue', last: true, big: true, onValue: function (n) { v = n; } }),
+            acts(st.buyouts ? 'Next' : 'Skip', function () {
+              if (!(v > 0)) { toast('Type the buyouts total first'); return; }
+              save({ income: incomeWith(s, 'buyouts', v), loggedAt: Date.now() }, 'Buyouts · ' + money(v));
+            })
+          ];
+        }
+        if (kind === 'who') {
+          var total = G.num(G.isObj(s.income) ? s.income.buyouts : 0), paid = buyoutPaidCount(s.buyoutTrack);
+          return [
+            h('p', { class: 'td-note' }, money(total) + ' from the venue. Tick each person as they get theirs.' +
+              (paid ? ' ' + (paid === 1 ? '1 person' : paid + ' people') + ' ticked so far.' : '')),
+            h('button', { class: 'btn primary block', type: 'button', onclick: function () {
+              openBuyoutTracker(tourId, s, total, s.buyoutTrack, function (next) {
+                var n = buyoutPaidCount(next);
+                save({ buyoutTrack: next }, 'Buyouts handed out · ' + (n === 1 ? '1 person' : n + ' people'));
+              });
+            } }, paid ? 'Change who received' : 'Tick who received'),
+            acts(st.who ? 'Next' : 'Skip')
+          ];
+        }
+        var isG = kind === 'guarantee';
+        var have = G.num(G.isObj(s.income) ? s.income[kind] : 0);
+        if (have > 0 || st[kind]) {
+          // Already on the books, with its deposit, taxes and reasons if any: changed in Log income, where all of that lives.
+          return [
+            h('p', { class: 'td-done' }, have > 0 ? '✓ ' + money(have) + ' logged' : '✓ Nothing to wait for tonight'),
+            h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
+              S.todayAfter = null; closeSheet(); setTimeout(function () { openIncome(tourId, showId); }, 320);
+            } }, 'Open Log income'),
+            acts('Next')
+          ];
+        }
+        var amt = 0, recv = false;
+        var box = h('input', { type: 'checkbox', class: 'rcv-check', id: 'td-recv', onchange: function (e) { recv = e.target.checked; } });
+        return [
+          h('p', { class: 'td-note' }, isG ? 'Tonight’s guarantee.' : 'Tonight’s merch total.'),
+          moneyInput({ id: 'td-' + kind, value: 0, label: isG ? 'Guarantee' : 'Merch total', last: true, big: true, onValue: function (n) { amt = n; } }),
+          isG ? h('label', { class: 'td-recv', for: 'td-recv' }, box, h('span', null, 'Received tonight')) : null,
+          acts('Skip', function () {
+            if (!(amt > 0)) { toast(isG ? 'Type the guarantee first' : 'Type the merch total first'); return; }
+            var inc = incomeWith(s, kind, amt), patch = { income: inc, loggedAt: Date.now() };
+            if (isG) { patch.guaranteeReceived = !!recv; patch.guaranteeNone = null; }
+            else {
+              // All-cash merch has no deposit to wait for; otherwise the deposit is still to come.
+              var due = G.merchDue({ income: inc, merchCash: G.num(s.merchCash), merchCardDeposit: s.merchCardDeposit != null ? G.num(s.merchCardDeposit) : null });
+              patch.merchReceived = !(due > 0); patch.merchNone = null;
+            }
+            save(patch, (isG ? 'Guarantee' : 'Merch') + ' · ' + money(amt));
+          })
+        ];
+      }
+      function endCard(st) {
+        var open = TODAY_ITEMS.filter(function (it) { return st[it[0]] === false; });
+        return h('div', { class: 'td-card td-end' },
+          h('div', { class: 'td-emoji', 'aria-hidden': 'true' }, '🤘'),
+          h('div', { class: 'td-q' }, open.length ? 'That’s it for now' : 'Today is logged'),
+          h('p', { class: 'td-note' }, open.length
+            ? 'Still open: ' + open.map(function (it) { return it[1]; }).join(', ') + '. They stay on today’s list in Tasks.'
+            : 'Everything for ' + where + ' is in.'),
+          h('button', { class: 'btn primary block', type: 'button', onclick: function () { closeSheet(); } }, 'Done'));
+      }
+      // "You can still swipe right or left if you don't have that info": either way moves on.
+      function swipeSkip(el) {
+        var x0 = null, y0 = 0, dx = 0, on = false;
+        el.addEventListener('pointerdown', function (e) {
+          if (e.target.closest('input, button, label, a')) return;
+          x0 = e.clientX; y0 = e.clientY; dx = 0; on = false;
+        });
+        el.addEventListener('pointermove', function (e) {
+          if (x0 == null) return;
+          dx = e.clientX - x0;
+          if (!on && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(e.clientY - y0) * 1.5) {
+            on = true;
+            try { el.setPointerCapture(e.pointerId); } catch (x) { /* fine */ }
+            el.style.transition = 'none';
+          }
+          if (on) {
+            el.style.transform = 'translateX(' + dx + 'px) rotate(' + (dx / 28) + 'deg)';
+            el.style.opacity = String(Math.max(0.35, 1 - Math.abs(dx) / 320));
+          }
+        });
+        var up = function () {
+          if (x0 == null) return;
+          x0 = null;
+          if (on && Math.abs(dx) > 80) {
+            var dir = dx > 0 ? 1 : -1;
+            el.style.transition = 'transform .22s ease, opacity .22s ease';
+            el.style.transform = 'translateX(' + (dir * 120) + '%) rotate(' + (dir * 10) + 'deg)';
+            el.style.opacity = '0';
+            setTimeout(function () { i += 1; draw(); }, 200);
+          } else {
+            el.style.transition = 'transform .2s ease, opacity .2s ease';
+            el.style.transform = ''; el.style.opacity = '';
+          }
+          on = false;
+        };
+        el.addEventListener('pointerup', up);
+        el.addEventListener('pointercancel', up);
+      }
+      function draw() {
+        var s = cur();
+        if (!s) { closeSheet(); return; }
+        var st = todayState(s);
+        // Nothing to hand out until the buyouts are logged: "Who received?" is passed over.
+        if (i < TODAY_ITEMS.length && TODAY_ITEMS[i][0] === 'who' && st.who === null) i += 1;
+        dots.replaceChildren.apply(dots, TODAY_ITEMS.map(function (it, k) {
+          return h('span', { class: 'td-dot' + (k === i ? ' on' : '') + (st[it[0]] === true ? ' done' : '') });
+        }));
+        if (i >= TODAY_ITEMS.length) { count.textContent = ''; hint.hidden = true; host.replaceChildren(endCard(st)); return; }
+        hint.hidden = false;
+        count.textContent = (i + 1) + ' of ' + TODAY_ITEMS.length;
+        var card = h('div', { class: 'td-card' }, h('div', { class: 'td-q' }, TODAY_ITEMS[i][1]), body(TODAY_ITEMS[i][0], s, st));
+        host.replaceChildren(card);
+        swipeSkip(card);
+      }
+      draw();
+      return [
+        h('div', { class: 'td-top' }, h('span', { class: 'td-kicker' }, 'Today'), count),
+        h('h2', { class: 'sh-title' }, where),
+        h('p', { class: 'sh-sub' }, dayLong(s0.date)),
+        dots, host, hint
+      ];
+    }, { label: 'Today’s to-do list', cls: 'today-sheet', onClose: function () {
+      if (S.todayResume) return;   // only stepping out to the day sheet
+      var after = S.todayAfter;
+      S.todayAfter = null;
+      render(true);
+      if (after) after();
+    } });
   }
 
   // What was logged: every new charge, how it was paid and who sorted it.
@@ -12618,6 +12863,8 @@
     if (!s) return;
     // prefill: the sheet as a photo read it (Upload Day Sheet), over what was saved.
     var d0 = G.isObj(prefill) ? prefill : (G.isObj(s.daySheet) ? s.daySheet : {});
+    // Posted from this sitting: Today's list (if this was opened from it) moves on to its next question.
+    var posted = false;
     var f = {
       venueAddress: d0.venueAddress || '', venuePhone: d0.venuePhone || '',
       loadIn: d0.loadIn || '', vip: d0.vip || '', doors: d0.doors || '',
@@ -12753,10 +13000,16 @@
         var patch = {};
         patch[showId] = { daySheet: sheet };
         if (await api.update(tourId, { shows: patch })) {
+          posted = true;
+          // Opened from Today's list: the set-times offer waits until that list is put down.
+          var fromToday = !!S.todayResume;
           closeSheet(); toast('Day sheet posted'); render(true);
           if (window.GR_BACKEND && window.GR_BACKEND.ariKick) window.GR_BACKEND.ariKick(tourId);
           // Most runs keep the same set times every night — offer to carry them.
-          if (sheet.setTimes.length) askSetTimesEverywhere(tourId, showId, sheet.setTimes);
+          if (sheet.setTimes.length) {
+            if (fromToday) S.todayAfter = function () { askSetTimesEverywhere(tourId, showId, sheet.setTimes); };
+            else askSetTimesEverywhere(tourId, showId, sheet.setTimes);
+          }
         }
       };
       return [
@@ -12798,7 +13051,7 @@
             h('button', { class: 'btn ghost block', type: 'button',
               onclick: function () { closeSheet(); } }, 'Cancel')))
       ];
-    }, { label: 'Day sheet' });
+    }, { label: 'Day sheet', onClose: function () { todayBack(tourId, showId, posted); } });
 
     if (!lookUp) return;
     lookupVenue(s.venue, s.city).then(function (got) {
