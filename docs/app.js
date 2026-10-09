@@ -3941,9 +3941,11 @@
         : !c.list.length ? h('p', { class: 'pt-next pt-nodates' }, 'No dates yet')
         : h('ul', { class: 'shows cal-list tn-list' }, c.list.map(function (n) {
             var where = [n.city, n.state && n.country === 'US' ? n.state : (n.country && n.country !== 'US' ? n.country : '')].filter(Boolean).join(', ');
+            // A festival night says which festival (setlist.fm shows it on the site but its API never did).
+            var fest = n.festival && n.festival !== r.name ? h('span', { class: 'tn-fest' }, ' \u00b7 ' + n.festival) : null;
             return h('li', { class: 'tn-row' + (n.announced ? ' announced' : '') + (n.contested ? ' contested' : '') },
               h('span', { class: 'tn-date' }, dayMD(n.date) + ', ' + String(n.date).slice(0, 4)),
-              h('span', { class: 'tn-where' }, where || '\u2014', n.venue ? h('span', { class: 'tn-venue' }, ' \u00b7 ' + n.venue) : null),
+              h('span', { class: 'tn-where' }, where || '\u2014', n.venue ? h('span', { class: 'tn-venue' }, ' \u00b7 ' + n.venue) : null, fest),
               n.contested ? h('span', { class: 'tn-tag warn' }, 'conflict') : n.announced ? h('span', { class: 'tn-tag' }, 'announced') : null);
           }));
     }
@@ -3955,13 +3957,15 @@
     var conflict = !!(r.conflict || src.conflict);
     var tag = conflict ? h('button', { class: 'tn-conflict', type: 'button', 'aria-label': 'Tour conflict: settle the dates',
       onclick: function (e) { e.stopPropagation(); if (manage) openTourConflicts(artistId, r); else toast('Two tours claim some of these nights; the page\u2019s owner can settle them.'); } }, 'Tour conflict') : null;
+    // Devin: festivals are their own entries, "<Festival> <year>", listed with the tours.
+    var festTag = src.kind === 'festival' ? h('span', { class: 'tn-tag tn-kind' }, 'festival') : null;
     // Devin: "When you click it it shows the dates and the bands it was with."
     var lineup = String(src.lineup || r.lineup || '').trim();
     var withLine = open && lineup ? h('p', { class: 'tn-with' }, 'With ' + lineup) : null;
     var inner = h('div', { class: 'pt-run tn-run' + (open ? ' open' : '') + (conflict ? ' has-conflict' : '') },
       h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
         onclick: function () { S.tnOpen[k] = !open; render(true); } },
-        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name, tag), h('span', { class: 'lr-sub' }, span)),
+        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name, festTag, tag), h('span', { class: 'lr-sub' }, span)),
         icon('chevron', 16)),
       withLine, body);
     // Devin: "slide a tour to the left and it will say 'edit'" — the page's owner only.

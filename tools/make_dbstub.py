@@ -387,7 +387,7 @@ shim = r"""<script>
       // Three pretend nights for any named tour.
       return Promise.resolve([{ date: '2025-03-01', city: 'Dallas', state: 'TX', country: 'US', venue: 'House of Blues', url: '', announced: false },
         { date: '2025-03-02', city: 'Austin', state: 'TX', country: 'US', venue: 'Emo\u2019s', url: '', announced: false },
-        { date: '2025-03-04', city: 'Houston', state: 'TX', country: 'US', venue: 'Warehouse Live', url: '', announced: true }]);
+        { date: '2025-03-04', city: 'Houston', state: 'TX', country: 'US', venue: 'Warehouse Live', url: '', announced: true, festival: 'South By So What?! 2025' }]);
     },
     tourRunName: function (artistId, first, last, name) {
       var H = window.__harness; H.tf = H.tf || {}; var st = H.tf[artistId] || (H.tf[artistId] = { status: 'idle', detail: '', pages: 0, waiting: 0, sources: {}, candidates: [], runs: [] });
@@ -470,6 +470,7 @@ shim = r"""<script>
           summary: { shows: 735, tours: 34, countries: 33, cities: 212, firstYear: 2007, lastYear: 2026,
             years: { 2026: 44, 2025: 21, 2024: 86 },
             toursList: [ { name: '10 Years In The Black', n: 33, first: '2016-11-01', last: '2017-02-18', lineup: 'Asking Alexandria, Born Of Osiris, After The Burial, Upon A Burning Body' },
+              { name: 'Aftershock 2025', n: 1, first: '2025-10-04', last: '2025-10-04', lineup: '', kind: 'festival' },
               { name: 'Treehouse Tour', conflict: true, n: 39, first: '2016-06-01', last: '2016-08-12' } ],
             countriesList: [ { name: 'United States', n: 595 }, { name: 'United Kingdom', n: 27 } ] } };
       }
