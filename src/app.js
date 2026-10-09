@@ -16242,7 +16242,7 @@
         listHost,
         h('div', { class: 'stack', style: 'margin-top:14px' },
           opts && opts.next ? h('button', { class: 'btn quiet block', type: 'button',
-            onclick: function () { closeSheet(); setTimeout(opts.next, 380); } }, 'Next card →') : null,
+            onclick: function () { closeSheet(); setTimeout(opts.next, 380); } }, opts.nextLabel || 'Next card \u2192') : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } },
             feed ? 'Not now' : 'Done'))
       ];
@@ -16480,25 +16480,13 @@
     var refreshBtn = h('button', { class: 'btn quiet glow feed-refresh', type: 'button',
       onclick: function () { if (feedLogs(id)) refreshCards(id, refreshBtn, label); else openFeedSheet(id); } },
       icon('refresh', 18), label);
-    // Under the button: what's waiting out of the bank, both ways. Charges
-    // to sort, and (on the Cards tab) deposits no matcher could place.
-    var depBtn = null;
-    if (incomeReady(id)) {
-      ensureIncomeNew(id);
-      var nInc = ((S.incomeNew && S.incomeNew.items) || []).length;
-      depBtn = h('button', { class: 'btn ' + (nInc ? 'primary' : 'quiet') + ' feed-new', type: 'button',
-        onclick: function () {
-          if (nInc) openIncomeReview(id);
-          else toast(S.incomeBusy || !S.incomeNew ? 'Checking the bank\u2026' : 'No new deposits. Deposits on the accounts you watch land here.');
-        } }, icon('cash', 18), plural(nInc, 'new deposit'));
-    }
+    // Under the button: everything waiting out of the bank, charges and
+    // deposits, behind one button (Devin: "All New Card Activity").
+    if (incomeReady(id)) ensureIncomeNew(id);
     return h('div', { class: 'feed-entry' },
       h('div', { class: 'feed-bar' }, refreshBtn),
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)),
-      h('button', { class: 'btn ' + (n ? 'primary' : 'quiet') + ' feed-new', type: 'button',
-        onclick: function () { if (n) openFeedReview(id); else toast('No new charges. Tap Refresh Card to check again.'); } },
-        icon('card', 18), plural(n, 'new charge')),
-      depBtn);
+      cardActivityButton(id));
   }
 
   /* CARDS, the middle tab of Budget: Refresh Card Expenses on top, then each
@@ -16935,28 +16923,6 @@
       h('div', { class: 'row-label' }, plural(unasked.length, 'new account'),
         h('span', { class: 'hint' }, 'Needs your answers')),
       icon('chevron', 18)));
-    // Under the cards: the money coming IN. Deposits no matcher claimed
-    // wait here to be catalogued, the same way charges are sorted.
-    if (incomeReady(id)) {
-      ensureIncomeNew(id);
-      var incs = (S.incomeNew && S.incomeNew.items) || [];
-      var nInc = incs.length;
-      // A failed read says so; it never passes as a quiet zero.
-      var incFailed = !!(S.incomeNew && S.incomeNew.failed);
-      rows.push(h('button', { class: 'row rowbtn card-line', type: 'button',
-        'aria-label': 'Income, ' + (incFailed ? 'couldn’t check' : nInc + ' new'),
-        onclick: function () {
-          if (nInc) { openIncomeReview(id); return; }
-          if (incFailed) { S.incomeNew = null; ensureIncomeNew(id); toast('Trying the bank again…'); return; }
-          toast(S.incomeBusy || !S.incomeNew ? 'Checking the bank…'
-            : 'No new income. Deposits on your watched accounts land here.');
-        } },
-        h('div', { class: 'row-label' }, 'Deposits',
-          h('span', { class: 'hint' }, 'Money into the bank, to sort')),
-        h('span', { class: 'card-new' + (nInc ? ' on' : '') },
-          incFailed ? 'couldn’t check' : plural(nInc, 'new deposit')),
-        icon('chevron', 18)));
-    }
     var entry = feedEntry(id);
     // Nothing to show, and nothing still on its way: say so rather than a blank page.
     var loading = !!(S.pileBusy && S.pileBusy[id]) || (S.mode === 'db' && createdTour(id) && S.feed === undefined);
@@ -17002,12 +16968,11 @@
     var label = h('span', null, 'Refresh Card');
     var refreshBtn = h('button', { class: 'btn quiet glow feed-refresh', type: 'button',
       onclick: function () { tmRefresh(id, refreshBtn, label); } }, icon('refresh', 18), label);
+    if (incomeReady(id)) ensureIncomeNew(id);
     return h('div', { class: 'feed-entry' },
       h('div', { class: 'feed-bar' }, refreshBtn),
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(P.lastRun)),
-      n ? h('button', { class: 'btn primary feed-new', type: 'button',
-        onclick: function () { openFeedReview(id); } },
-        icon('card', 18), plural(n, 'new charge')) : null);
+      cardActivityButton(id));
   }
   async function tmRefresh(id, btn, label) {
     var B = window.GR_BACKEND;
@@ -17051,23 +17016,46 @@
     else toast(feedResult(r));
   }
 
-  function openFeedReview(tourId, done, only) {
+  function openFeedReview(tourId, done, only, after) {
     autoAsideTwins(tourId);
     var cards = [];
     feedWaiting(tourId).slice().sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); })
       .forEach(function (it) { var k = it.account || ''; if (cards.indexOf(k) < 0 && (only == null || k === only)) cards.push(k); });
-    if (!cards.length) { toast('Nothing waiting'); return; }
+    if (!cards.length) { if (after) after(); else toast('Nothing waiting'); return; }
     var i = done || 0;
     var next = function () {
-      if (i >= cards.length) return;
+      if (i >= cards.length) { if (after) after(); return; }
       var card = cards[i];
       var here = feedRows(tourId).filter(function (r) { return (r.account || '') === card; });
       i += 1;
       if (!here.length) { next(); return; }
+      // after: the deposits, once the last card is sorted (All New Card Activity).
       openImportReview(tourId, here, 'Card feed', { feed: true, card: card || 'Card',
-        step: i, steps: cards.length, next: i < cards.length ? next : null });
+        step: i, steps: cards.length + (after ? 1 : 0), next: i < cards.length ? next : (after || null),
+        nextLabel: i < cards.length ? null : (after ? 'Next: deposits \u2192' : null) });
     };
     next();
+  }
+  // One button under Refresh Card (Devin): everything new out of the bank,
+  // charges first, then the deposits.
+  function cardActivityCounts(id) {
+    var charges = feedWaiting(id).length;
+    var deposits = incomeReady(id) ? ((S.incomeNew && S.incomeNew.items) || []).length : 0;
+    return { charges: charges, deposits: deposits };
+  }
+  function openCardActivity(id) {
+    var c = cardActivityCounts(id);
+    if (c.charges) { openFeedReview(id, 0, null, c.deposits ? function () { openIncomeReview(id); } : null); return; }
+    if (c.deposits) { openIncomeReview(id); return; }
+    toast(S.incomeBusy || (incomeReady(id) && !S.incomeNew) ? 'Checking the bank\u2026' : 'No new card activity. Tap Refresh Card to check again.');
+  }
+  function cardActivityButton(id) {
+    var c = cardActivityCounts(id), any = c.charges + c.deposits;
+    var bits = [c.charges ? plural(c.charges, 'charge') : null, c.deposits ? plural(c.deposits, 'deposit') : null].filter(Boolean);
+    return h('button', { class: 'btn ' + (any ? 'primary' : 'quiet') + ' feed-new', type: 'button',
+      'aria-label': 'All new card activity' + (bits.length ? ': ' + bits.join(', ') : ', nothing new'),
+      onclick: function () { openCardActivity(id); } },
+      icon('card', 18), h('span', { class: 'feed-new-t' }, 'All New Card Activity', bits.length ? h('span', { class: 'feed-new-n' }, bits.join(' \u00b7 ')) : null));
   }
   function feedRows(tourId) {
     var valid = {};

@@ -24,6 +24,7 @@ small model for the finder), but a cap is a brake, not a plan.
 - [x] Merch tips under Merch (cash/deposited, paid/unpaid) → Merch tips line in Expenses
 - [x] Cards → Cards/Links with the atVenu switch (off = nothing of atVenu's lands; no bubble, no $ per head)
 - [x] Edit day sheet → Upload Day Sheet (photo → reader → fields filled, you check and post)
+- [x] Cards/Links: one "All New Card Activity" button under Refresh Card (charges, then deposits)
 - [x] Reading meter: small model, monthly ceiling; Anthropic: $20 credit, auto-reload, $50/month limit
 
 ## 2. Concert Archives — every artist, zero steps
