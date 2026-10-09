@@ -3950,14 +3950,20 @@
     // Two tours want some of the same nights: both are listed, both tagged; the
     // owner settles the nights one by one (Devin: "Tour Conflict … get more granular").
     var manage = !!(S.route && S.route.manage && S.route.name === 'act' && S.route.id === artistId);
-    var tag = r.conflict ? h('button', { class: 'tn-conflict', type: 'button', 'aria-label': 'Tour conflict: settle the dates',
+    // The timeline row wraps the page's tour (r.tour); the tour's own fields live there.
+    var src = r.tour && typeof r.tour === 'object' ? r.tour : r;
+    var conflict = !!(r.conflict || src.conflict);
+    var tag = conflict ? h('button', { class: 'tn-conflict', type: 'button', 'aria-label': 'Tour conflict: settle the dates',
       onclick: function (e) { e.stopPropagation(); if (manage) openTourConflicts(artistId, r); else toast('Two tours claim some of these nights; the page\u2019s owner can settle them.'); } }, 'Tour conflict') : null;
-    var inner = h('div', { class: 'pt-run tn-run' + (open ? ' open' : '') + (r.conflict ? ' has-conflict' : '') },
+    // Devin: "When you click it it shows the dates and the bands it was with."
+    var lineup = String(src.lineup || r.lineup || '').trim();
+    var withLine = open && lineup ? h('p', { class: 'tn-with' }, 'With ' + lineup) : null;
+    var inner = h('div', { class: 'pt-run tn-run' + (open ? ' open' : '') + (conflict ? ' has-conflict' : '') },
       h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
         onclick: function () { S.tnOpen[k] = !open; render(true); } },
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name, tag), h('span', { class: 'lr-sub' }, span)),
         icon('chevron', 16)),
-      body);
+      withLine, body);
     // Devin: "slide a tour to the left and it will say 'edit'" — the page's owner only.
     if (!manage) return h('li', { class: 'tn-li' }, inner);
     return h('li', { class: 'tn-li' }, swipeRow(inner, [

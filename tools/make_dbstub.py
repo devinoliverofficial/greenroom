@@ -143,7 +143,7 @@ shim = r"""<script>
       H.histories.pub1 = { artist_id: 'pub1', status: 'ok', detail: '', total: 58, pages: 3, next_page: 0, synced_at: new Date(Date.now() - 864e5).toISOString(),
         mb_url: 'https://www.setlist.fm/setlists/example.html', auto: true,
         summary: { shows: 58, tours: 3, countries: 4, cities: 41, firstYear: 2010, lastYear: 2026,
-          toursList: [{ name: 'Feel Tour', n: 30, first: '2025-03-01', last: '2025-04-12' }] } };
+          toursList: [{ name: 'Feel Tour', n: 30, first: '2025-03-01', last: '2025-04-12', lineup: 'Our Last Night, The Word Alive, Ashland' }] } };
     }
     return H.ghosts;
   }
@@ -469,7 +469,7 @@ shim = r"""<script>
           mb_url: 'https://www.setlist.fm/setlists/i-see-stars-3bd2d464.html', credits: ['concertarchives.org'],
           summary: { shows: 735, tours: 34, countries: 33, cities: 212, firstYear: 2007, lastYear: 2026,
             years: { 2026: 44, 2025: 21, 2024: 86 },
-            toursList: [ { name: '10 Years In The Black', n: 33, first: '2016-11-01', last: '2017-02-18' },
+            toursList: [ { name: '10 Years In The Black', n: 33, first: '2016-11-01', last: '2017-02-18', lineup: 'Asking Alexandria, Born Of Osiris, After The Burial, Upon A Burning Body' },
               { name: 'Treehouse Tour', conflict: true, n: 39, first: '2016-06-01', last: '2016-08-12' } ],
             countriesList: [ { name: 'United States', n: 595 }, { name: 'United Kingdom', n: 27 } ] } };
       }
@@ -714,7 +714,7 @@ shim = r"""<script>
         else if (row.status === 'syncing') {
           row.next_page += 1;
           row.summary = { shows: Math.min(58, (row.next_page - 1) * 20), tours: row.next_page - 1, countries: Math.min(4, row.next_page), cities: Math.min(41, (row.next_page - 1) * 15),
-            firstYear: 2010, lastYear: 2026, toursList: [{ name: 'Feel Tour', n: 20, first: '2025-03-01', last: '2025-04-12' }].slice(0, row.next_page - 1) };
+            firstYear: 2010, lastYear: 2026, toursList: [{ name: 'Feel Tour', n: 20, first: '2025-03-01', last: '2025-04-12', lineup: 'Our Last Night, The Word Alive, Ashland' }].slice(0, row.next_page - 1) };
           if (row.next_page > 3) { row.status = 'ok'; row.next_page = 0; row.synced_at = new Date().toISOString();
             row.mb_url = 'https://www.setlist.fm/setlists/example.html'; }
         }
