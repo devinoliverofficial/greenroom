@@ -46,6 +46,9 @@ what is left to automate in PIPELINE.md, every platform checked in SOURCES.md.
 - [x] Settled nights are written down and survive every sync; each year's shows outside a tour open like a tour; each night links to its source
 - [x] A band member's numbers are the band's, live; a person's page and the artist's count the same way
 - [x] The app opens from the phone's cache; the artist page's server calls are 10× faster
+- [x] Counting made right: cities were double-counted wherever one source wrote "Michigan" and another "MI" (513 → 400 real); an unknown place name had become a country (35 → 34); one-day festivals no longer count as tours
+- [x] Listed is not played: old lists still showing, the 2020–21 shutdown months, and shows the band marked cancelled are kept off
+- [x] I See Stars accounted for in ISS-ROAD-STORY.md: 1,347 shows · 57 tours · 49 festivals · 400 cities · 34 countries
 
 ## 3. MERCHROOM
 - [ ] Square: real-money connection (OAuth, read-only scopes; never a production personal access token)

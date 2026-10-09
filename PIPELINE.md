@@ -55,7 +55,8 @@ In order. Nothing here waits on the artist.
    - *Settled nights.* Anything the owner or an editor has settled about one night (this
      tour, this room, this date never happened) is written down and re-applied last, after
      every sync and scan.
-8. **The page.** Shows are counted once per date and venue, played nights only. The Tours
+8. **The page.** Shows are counted once per date and venue, played nights only; a city once however its
+   state or name was spelled; a touring festival as a tour, a one-off festival as a festival. The Tours
    list holds tours, festivals (tagged), and each year's shows outside any tour; every entry
    opens to its nights, each night linking to where it came from; a tour shows the bands it
    was with. A band member listed on the page carries the band's numbers, live.
@@ -116,7 +117,8 @@ have meant (a month or more before the capture, its year printed nowhere) is not
 
 ## 5. The scorecard for a page
 
-What to look at to know whether a page is done:
+What to look at to know whether a page is done. One server call returns all of it for any page
+(`artist_history_scorecard`); the worked example is [ISS-ROAD-STORY.md](ISS-ROAD-STORY.md).
 
 - setlist.fm's own total against the rows read; the age of the last sync.
 - Nights by source (setlist.fm, each press site, the band's pages, hand-read).
