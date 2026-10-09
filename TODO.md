@@ -27,10 +27,25 @@ small model for the finder), but a cap is a brake, not a plan.
 - [x] Cards/Links: one "All New Card Activity" button under Refresh Card (charges, then deposits)
 - [x] Reading meter: small model, monthly ceiling; Anthropic: $20 credit, auto-reload, $50/month limit
 
-## 2. Concert Archives — every artist, zero steps
-- [ ] Email sent 2026-10-08 to support@concertarchives.org (all bands, licensing terms asked). Waiting on reply
-- [ ] When they answer: agree terms, get the export/API, build the import so every claimed page fills itself
-- [ ] Until then: verified-band export + "Add from a saved page" (built) as the per-band fallback
+## 2. The archive — every artist, without Concert Archives
+Concert Archives answered 2026-10-08 (Alexander Fred): an API is planned, no date, Verified Bands
+first. So Greenroom builds its own. The plan is in ARCHIVE.md, the search as it runs today and
+what is left to automate in PIPELINE.md, every platform checked in SOURCES.md.
+- [ ] Devin: submit the Concert Archives Verification Request for I See Stars; when verified, export the concert list and drop it in the dev folder (the yardstick)
+- [ ] Devin: claim I See Stars on Bandsintown for Artists; Events → Export; drop the file in the dev folder
+- [ ] Devin: the setlist.fm letter (ARCHIVE.md step 3; Claude drafts, Devin sends) — before the App Store
+- [ ] Devin: yes or no on a public, read-only artist page
+- [ ] Devin: two nights only you can settle: Aug 4 2017 (Hard Rock Las Vegas or Lake Tahoe?) and Jul 30 2017 Lubbock (did I See Stars play?)
+- [ ] Build next (PIPELINE.md §4): verify-before-adding, a door for checked lists of nights, the yardstick, the other bands' pages, more press, the server-side hunt
+- [ ] Ask Andy Baio about the Upcoming.org archive (435 I See Stars results, 2003–2013); ask The Concert Database (Michigan)
+
+## Done 2026-10-09
+- [x] I See Stars: 221 verified nights added from the band's own MySpace lists (Wayback Machine), old event pages and press; 15 stale or cancelled dates taken off; 7 re-venued
+- [x] Festivals: every night can carry a festival name (setlist.fm's API has none); 298 festival grounds; 35 I See Stars festival nights named with sources; festivals are their own entries
+- [x] The finder reads the band's own pages out of the Wayback Machine for every artist, retries through its outages, and settles drops and moves by the band's last list before the show
+- [x] Settled nights are written down and survive every sync; each year's shows outside a tour open like a tour; each night links to its source
+- [x] A band member's numbers are the band's, live; a person's page and the artist's count the same way
+- [x] The app opens from the phone's cache; the artist page's server calls are 10× faster
 
 ## 3. MERCHROOM
 - [ ] Square: real-money connection (OAuth, read-only scopes; never a production personal access token)
