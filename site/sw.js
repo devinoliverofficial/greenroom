@@ -24,20 +24,32 @@ self.addEventListener('activate', function (e) {
   );
 });
 
+/* The app shell opens from the cache at once and refreshes itself behind the
+   scenes (Devin, 2026-10-08: "a HUGE lag when opening the app" — every open
+   was pulling the whole app over the air before it would draw). A new build
+   installs on the next open, through the browser's own check of this file;
+   what isn't in the cache is fetched, and kept for next time. */
+function isShell(url) {
+  var p = url.pathname.replace(/^.*\//, '') || 'index.html';
+  return SHELL.indexOf(p) >= 0 || p === 'index.html' || /\.(js|png|webmanifest|css)$/.test(p);
+}
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
-  e.respondWith(
-    fetch(e.request, { cache: 'no-store' }).then(function (res) {
-      var copy = res.clone();
-      caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
-      return res;
-    }).catch(function () {
-      return caches.match(e.request, { ignoreSearch: true }).then(function (hit) {
-        return hit || caches.match('index.html');
-      });
-    })
-  );
+  var fresh = fetch(e.request, { cache: 'no-store' }).then(function (res) {
+    if (res && res.ok) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(e.request, copy); }); }
+    return res;
+  });
+  if (isShell(url)) {
+    e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(function (hit) {
+      if (hit) { fresh.catch(function () { /* offline: the cached copy stands */ }); return hit; }
+      return fresh.catch(function () { return caches.match('index.html'); });
+    }));
+    return;
+  }
+  e.respondWith(fresh.catch(function () {
+    return caches.match(e.request, { ignoreSearch: true }).then(function (hit) { return hit || caches.match('index.html'); });
+  }));
 });
 
 self.addEventListener('push', function (e) {
