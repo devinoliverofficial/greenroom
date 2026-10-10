@@ -221,8 +221,15 @@
       .sort(function (a, b) { return String(src[a]).localeCompare(String(src[b])); })
       .map(function (k) { return { key: k, label: String(src[k]).trim().slice(0, 30) }; });
   }
-  function typedCategoriesFor(tour) { return TYPED_CATEGORIES.concat(extraCategories(tour)); }
-  function chargeCategoriesFor(tour) { return CHARGE_CATEGORIES.concat(extraCategories(tour)); }
+  // On a tour with a band, the one category everyone's pay is filed under is
+  // named for both groups wherever a category is picked or printed ("Band &
+  // Crew"). The two LINES it becomes on the Expenses tab are named in calc.
+  function withBandLabel(tour, list) {
+    if (!rows(tour && tour.crew).some(isBand)) return list;
+    return list.map(function (c) { return c.key === 'crew' ? { key: 'crew', label: 'Band & Crew' } : c; });
+  }
+  function typedCategoriesFor(tour) { return withBandLabel(tour, TYPED_CATEGORIES).concat(extraCategories(tour)); }
+  function chargeCategoriesFor(tour) { return withBandLabel(tour, CHARGE_CATEGORIES).concat(extraCategories(tour)); }
   function slugCategory(label) {
     var s = String(label == null ? '' : label).toLowerCase()
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
@@ -765,9 +772,9 @@
   }
   /* Band or crew. Everyone on a tour sits in doc.crew; a band member is a row
      that says so (band: true). Until someone has said either way, the title
-     decides: Artist or Band, the roles an invite offers for the band. The
-     money is counted the same for both (one line); this only says which group
-     a person is listed under, and whose payments are the band's. */
+     decides: Artist or Band, the roles an invite offers for the band. It says
+     which group a person is listed under and, since 2026-10-10, which of the
+     two lines (Band, Crew) their pay and their payments count on. */
   function isBand(p) {
     if (!p) return false;
     if (p.band === true) return true;
@@ -776,6 +783,34 @@
   }
   function crewProjection(tour) {
     return rows(tour && tour.crew).reduce(function (t, p) { return t + crewPay(tour, p); }, 0);
+  }
+  /* Band and crew are two lines of money (Devin, 2026-10-10: "band and crew
+     should be a separate line in the expense tab"). Nothing about how it is
+     stored changes: everyone is still in doc.crew, and every payment is still
+     filed under the one category 'crew', with who it paid (crewId). The split
+     is made here, when the tour is added up. */
+  // What each group is owed for the tour, and whether the tour has a band at all.
+  function crewSplit(tour) {
+    var out = { band: 0, crew: 0, hasBand: false };
+    rows(tour && tour.crew).forEach(function (p) {
+      if (isBand(p)) { out.hasBand = true; out.band += crewPay(tour, p); } else out.crew += crewPay(tour, p);
+    });
+    return out;
+  }
+  // The line a charge (or a merch-cash entry) counts on: its category, except
+  // that money filed under Crew for a band member is the band's. With no
+  // person on it, or a person no longer on the list, it stays the crew's.
+  function chargeLine(tour, x) {
+    var k = x && x.category ? x.category : null;
+    if (k !== 'crew') return k;
+    var p = crewOf(tour, x);
+    return p && isBand(p) ? 'band' : 'crew';
+  }
+  // Who a Crew-category charge paid: the person on this tour's list, or null
+  // (no name on it, or a name that is no longer on the list).
+  function crewOf(tour, x) {
+    var p = x && x.crewId && tour && isObj(tour.crew) ? tour.crew[x.crewId] : null;
+    return isObj(p) ? p : null;
   }
 
   /* ---------------- My Pay (a crew member's own book) ---------------- */
@@ -1353,16 +1388,23 @@
       return !upTo || (ch.date && ch.date <= upTo);
     });
     var chargedTo = {};
+    // Pay with nobody's name on it (filed under Crew before a person could be
+    // picked, by a learned merchant, from the merch cash log, or for someone
+    // since taken off the list). Kept apart: see the two lines below.
+    var crewLoose = 0;
     charges.forEach(function (ch) {
-      var k = ch.category || null;
+      // (A payment to a band member counts on the band's line: chargeLine.)
+      var k = chargeLine(tour, ch);
       if (!k) return;
+      if (k === 'crew' && !crewOf(tour, ch)) { crewLoose += num(ch.amount); return; }
       chargedTo[k] = (chargedTo[k] || 0) + num(ch.amount);
     });
     // Merch cash spent on the tour counts where it was spent.
     rows(tour && tour.cashLog).forEach(function (x) {
-      var k = x.category || null;
+      var k = chargeLine(tour, x);
       if (!k || CASH_MOVES[k]) return;
       if (upTo && !(x.date && x.date <= upTo)) return;
+      if (k === 'crew' && !crewOf(tour, x)) { crewLoose += num(x.amount); return; }
       chargedTo[k] = (chargedTo[k] || 0) + num(x.amount);
     });
 
@@ -1377,10 +1419,57 @@
     var lines = [];
     var fixed = 0;
 
+    var split = crewSplit(tour);
     typedCategoriesFor(tour).forEach(function (c) {
       var rec = expenses[c.key] || { projected: null, paid: 0 };
-      // Crew's projection is the sum of what the crew is owed, not a typed number.
-      var projected = c.key === 'crew' ? crewProjection(tour) || null : rec.projected;
+      if (c.key === 'crew') {
+        /* Band and crew: two lines from one list of people. A payment with a
+           name on it counts on that person's line. Money with NO name on it
+           (the pay above, a total typed in on an older tour, a card balance
+           carried in) is shown on the Crew line, because that is where it was
+           filed; but it is counted against whatever either plan still has
+           left to pay, the crew's first, and only what is left after both
+           plans counts as extra. So pay that was filed before people could be
+           picked never makes a tour cost more than it did as one line, and
+           the two lines only pull apart on payments that say who they paid
+           (the catch Devin was shown: planned $1,000 each, paid the band
+           $1,200 and the crew $700, counts $2,200). */
+        var hasBand = split.hasBand || (chargedTo.band || 0) > 0;
+        var loose = num(rec.paid) + crewLoose + (cardTo.crew || 0);
+        var cProj = split.crew || null, cNamed = chargedTo.crew || 0, cPaid = cNamed + loose;
+        if (!hasBand) {
+          // No band on this tour: one Crew line, exactly as it always was.
+          var cEff0 = cProj == null ? cPaid : Math.max(cProj, cPaid);
+          fixed += cEff0;
+          lines.push({
+            key: 'crew', label: 'Crew', projected: cProj, paid: cPaid, effective: cEff0, cards: cardDetail.crew || [],
+            left: cProj == null ? null : Math.max(0, cProj - cPaid),
+            over: cProj == null ? 0 : Math.max(0, cPaid - cProj)
+          });
+          return;
+        }
+        var bProj = split.band || null, bPaid = chargedTo.band || 0;
+        var bEff = Math.max(num(bProj), bPaid), cBase = Math.max(num(cProj), cNamed);
+        // What both plans still have left to pay, and what of the no-name money is past it.
+        var room = (bEff - bPaid) + (cBase - cNamed);
+        var cEff = cBase + Math.max(0, loose - room);
+        fixed += bEff + cEff;
+        lines.push({
+          key: 'band', label: 'Band', projected: bProj, paid: bPaid, effective: bEff, cards: [],
+          left: bProj == null ? null : Math.max(0, bProj - bPaid),
+          over: bProj == null ? 0 : Math.max(0, bPaid - bProj)
+        });
+        lines.push({
+          key: 'crew', label: 'Crew', projected: cProj, paid: cPaid, effective: cEff, cards: cardDetail.crew || [],
+          left: cProj == null ? null : Math.max(0, cProj - cPaid),
+          // (Over only by what is counted as over: no-name money that fits the band's plan is not.)
+          over: cProj == null ? 0 : Math.max(0, cEff - cProj),
+          // What on this line has no name on it yet (the app asks for one: "Who").
+          loose: round(loose * 100) / 100
+        });
+        return;
+      }
+      var projected = rec.projected;
       var paid = num(rec.paid) + (chargedTo[c.key] || 0) + (cardTo[c.key] || 0);
       var effective = projected == null ? paid : Math.max(projected, paid);
       fixed += effective;
@@ -1977,7 +2066,7 @@
     var chargeRows = [['Date', 'Merchant', 'Amount', 'Category']];
     rows(tour && tour.charges).sort(byDate).forEach(function (ch) {
       chargeRows.push([ch.date || '', ch.merchant || '', num(ch.amount),
-        catLabel[ch.category] || ch.category || '']);
+        chargeLine(tour, ch) === 'band' ? 'Band' : catLabel[ch.category] || ch.category || '']);
     });
 
     var dayRows = [['Date', 'Label', 'Amount', 'Source', 'Meals flag']];
@@ -2080,7 +2169,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, merchTips: merchTips, merchTipsOwed: merchTipsOwed, merchTipsPaidCash: merchTipsPaidCash, isDerived: isDerived, DERIVED: DERIVED, crewProjection: crewProjection, isBand: isBand, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, merchTips: merchTips, merchTipsOwed: merchTipsOwed, merchTipsPaidCash: merchTipsPaidCash, isDerived: isDerived, DERIVED: DERIVED, crewProjection: crewProjection, isBand: isBand, crewSplit: crewSplit, chargeLine: chargeLine, crewOf: crewOf, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

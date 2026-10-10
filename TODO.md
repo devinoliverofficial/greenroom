@@ -78,7 +78,9 @@ Choices made while building, for him to confirm or change:
 - A guarantee or merch total already logged is shown with a tick and a way into Log income, not overwritten from here (its deposit, taxes and reasons live there).
 
 ## Band and crew: left open after 2026-10-09
-- [ ] Band and Crew are two groups inside one Crew line. A separate "Band" line on the Expenses tab itself is not built: each Expenses line counts the larger of projected and paid, so two lines can move the tour's net. Devin to say whether band pay is its own budget line or part of crew
+- [x] Band and Crew are two lines on the Expenses tab (2026-10-10; Devin: "band and crew should be a separate line in the expense tab", knowing each line counts the bigger of planned and paid). Nothing stored changes: pay is still filed under the one category (named "Band & Crew" in the pickers on a tour with a band) with who it paid; the split is made when the tour is added up (G.crewSplit, G.chargeLine)
+- [ ] Money under Crew with no person on it counts on the Crew line until someone taps Who (Devin's current tour had 2 such card charges on 2026-10-10)
+- [ ] Changing someone between Band and Crew, or retitling them to or from Artist / Band, moves their pay and payments to the other line and can change the tour's total. Said nowhere in the app yet
 - [ ] One card charge that paid several people (one Venmo run, a payroll batch) can only be given to one person. Splitting a charge across people is not built
 - [ ] A learned merchant filed under Crew by itself has no person: it shows as "not anyone's yet" under Crew, Logged Card Transactions
 - [ ] The merch cash log's own Crew entry does not ask who (the Payments sheet's cash payment does)
@@ -95,10 +97,13 @@ Choices made while building, for him to confirm or change:
 - [ ] Deposits matched automatically before 2026-10-09 (by the bank feed) were never approved by hand: list them for Devin if he wants to confirm them
 
 ## Cities and countries: left open after 2026-10-10
-- [ ] Devin to say whether a district counts as its own city: Hollywood (3 nights) beside Los Angeles, Brooklyn (3) and Queens (1) beside New York, Ancol (1) beside Jakarta. Today each counts. Folding them would be 4 fewer cities for I See Stars
-- [ ] 2012-03-21 (Asking Alexandria / Trivium tour) is on the I See Stars page as "South Carolina, TBA": it no longer counts as a city, but the real city and room are unknown. Ask Devin
+- [x] A district counts as its city (2026-10-10; Devin: "What do most people consider? whatever that answer is should be the way it reflects on the page"): Hollywood is Los Angeles, Brooklyn and Queens are New York, Ancol is Jakarta; a town with its own city hall stays its own city (West Hollywood, Pontiac). The list is the table `place_aliases` (migration 0130): a district that turns up later is one more row. I See Stars 392 → 388
+- [x] 2012-03-21 (Asking Alexandria / Trivium tour), "South Carolina, TBA": Devin does not remember the city. It stays a show with no city
 - [ ] Crew (not band) still see only the tours an artist confirmed for them, counted from their claim; festivals and loose shows are a band-member thing for now
 - [ ] `countriesList` on the artist page (not shown anywhere yet) still groups by the raw country name
+
+## Flyers on tour history (Devin's idea, 2026-10-10) — sized up, not built
+- [ ] "When you click the tour ... a view flyer tab": keep the announcement's lead picture when the finder reads a ThePRP / Lambgoat article (36 of I See Stars' 57 tours have one behind them), show it from the opened tour row with a credit and a link; let the page's owner upload one for the rest. Open: show the picture from its source or keep our own copy (rights), and pictures that have since gone
 
 ## Smaller
 - [ ] Artist photo for search-made pages (MusicBrainz → Wikidata → Wikimedia Commons; Concert Archives photos are not available to us)

@@ -6715,11 +6715,11 @@
   function crewRow(id, t) {
     var crew = G.rows(t && t.crew);
     var total = G.crewProjection(t);
-    var paid = linePaid(G.calc(t), 'crew');
+    var cc = G.calc(t), paid = linePaid(cc, 'crew') + linePaid(cc, 'band');
     return h('button', {
       class: 'row rowbtn', type: 'button', onclick: function () { openCrewSheet(id, true); }
     },
-      h('div', { class: 'row-label' }, 'Crew',
+      h('div', { class: 'row-label' }, crew.some(G.isBand) ? 'Band & Crew' : 'Crew',
         h('span', { class: 'hint' }, crew.length
           ? plural(crew.length, 'person').replace('persons', 'people') +
             (paid > 0 ? ' · ' + money(paid) + ' spent' : '')
@@ -6757,6 +6757,13 @@
   }
   // The two numbers sit in their own columns; this line says how they compare.
   function lineHint(l) {
+    // Pay on the Crew line that says nobody's name (a tour with a band): it is
+    // counted against whatever the band's plan and the crew's still have left,
+    // and the line asks for the names (Band & Crew, Logged Card Transactions, Who).
+    if (l.loose > 0.004) {
+      var base = lineHint(Object.assign({}, l, { loose: 0 }));
+      return { text: [base.text, money(l.loose) + ' with no name on it'].filter(Boolean).join(' \u00b7 '), cls: base.cls };
+    }
     if (l.over > 0) return { text: 'Over by ' + money(l.over) + cardBit(l), cls: ' over' };
     if (G.isDerived(l.key)) return { text: l.key === 'merchTips' ? 'Owed to the merch person' : '', cls: '' };
     if (l.projected == null) return { text: cardBit(l).replace(/^ · /, ''), cls: '' };
@@ -7228,7 +7235,7 @@
       return h('button', {
         class: 'row rowbtn ex-row', type: 'button',
         onclick: function () {
-          if (l.key === 'crew') openCrewSheet(id, true);
+          if (l.key === 'crew' || l.key === 'band') openCrewSheet(id, true);
           else if (l.key === 'commission') openCommissionSheet(id);
           else openCategorySheet(id, l.key);
         }
@@ -7273,9 +7280,9 @@
       // Monthly utilities opens out into the vendors behind it.
       if (VENDOR_CATS[e.l.key]) vendorRows(id, t, e.l.key, edit).forEach(function (r) { rows.push(r); });
     });
-    // The bars' Expenses segments: crew, bus, each linked card by its name,
-    // commission, the merch bill, and everything else together.
-    var named = [['Crew', 'crew', 'crew'], ['Bus', 'bus', 'bus']]
+    // The bars' Expenses segments: band, crew, bus, each linked card by its
+    // name, commission, the merch bill, and everything else together.
+    var named = (c.lines.some(function (l) { return l.key === 'band'; }) ? [['Band', 'band', 'band']] : []).concat([['Crew', 'crew', 'crew'], ['Bus', 'bus', 'bus']])
       .concat(feedCards.map(function (card) { return [cardShort(card.feed.name || card.label, cardBank(card)), 'feed:' + card.id, 'lcard']; }))
       .concat([['Commission', 'commission', 'comm'], ['Merch bill', 'merch', 'mbill']]);
     var spentAll = Object.keys(byRow).reduce(function (n, k) { return n + Math.max(0, byRow[k]); }, 0);
@@ -7327,19 +7334,21 @@
   // Debit: paid by debit card or check. Cash: what the merch cash log spent
   // in this category, plus cash logged by hand that didn't come out of it.
   // Both are money already gone (paidPart is the two).
+  // (By the line a charge counts on: a payment to a band member is filed under
+  // Crew like everyone's, and counts on the Band line. G.chargeLine.)
   function debitPart(t, key) {
     var n = 0;
     G.rows(t && t.charges).forEach(function (ch) {
-      if (ch.category === key && ch.paid && !ch.cash && !ch.accounted) n += G.num(ch.amount);
+      if (G.chargeLine(t, ch) === key && ch.paid && !ch.cash && !ch.accounted) n += G.num(ch.amount);
     });
     return Math.round(n * 100) / 100;
   }
   function cashPart(t, key) {
     var n = 0;
     G.rows(t && t.charges).forEach(function (ch) {
-      if (ch.category === key && ch.cash && !ch.accounted) n += G.num(ch.amount);
+      if (G.chargeLine(t, ch) === key && ch.cash && !ch.accounted) n += G.num(ch.amount);
     });
-    G.rows(t && t.cashLog).forEach(function (x) { if (x.category === key) n += G.num(x.amount); });
+    G.rows(t && t.cashLog).forEach(function (x) { if (G.chargeLine(t, x) === key) n += G.num(x.amount); });
     return Math.round(n * 100) / 100;
   }
   function paidPart(t, key) { return Math.round((debitPart(t, key) + cashPart(t, key)) * 100) / 100; }
@@ -8148,8 +8157,15 @@
   // What's been logged as paid to one crew member (their Pay button).
   /* Band and crew (Devin, 2026-10-09: "people that are in the band should be
      separate from crew and we should be able to log payments paid to band
-     members"). Everyone is still one list on the tour and one line of money;
-     G.isBand says which group a person is shown under. */
+     members"). Everyone is still one list on the tour; G.isBand says which
+     group a person is shown under, and (2026-10-10: "band and crew should be
+     a separate line in the expense tab") which of the two lines their pay and
+     their payments count on (G.crewSplit, G.chargeLine). */
+  // A name someone might type for the category everyone's pay is filed under
+  // (it reads "Crew", or "Band & Crew" on a tour with a band): never a new category.
+  function payName(label) {
+    return /^(crew|band|band\s*(&|and)\s*crew|crew\s*(&|and)\s*band)$/i.test(String(label || '').trim());
+  }
   function crewGroups(t) {
     var all = G.rows(t && t.crew).sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
     return { all: all, band: all.filter(G.isBand), crew: all.filter(function (p) { return !G.isBand(p); }) };
@@ -8223,7 +8239,8 @@
       var total = G.crewProjection(t);
       var exp = G.normExpenses(t && t.expenses);
       var paid = G.num(exp.crew.paid);
-      var paidCrew = linePaid(G.calc(t), 'crew');
+      var cNow = G.calc(t), paidBand = linePaid(cNow, 'band');
+      var paidCrew = linePaid(cNow, 'crew') + paidBand;
 
       var rowOf = function (p) {
         var got = crewPaidTo(t, p), pay = G.crewPay(t, p);
@@ -8238,8 +8255,10 @@
       // The band under its own heading, then the crew, each with what it adds up to.
       var grp = crewGroups(t);
       var sumOf = function (xs) { return xs.reduce(function (n, p) { return n + G.crewPay(t, p); }, 0); };
+      // (Each is a line of its own on the Expenses tab: its heading says what that line has paid.)
       var headOf = function (label, xs) {
-        return h('div', { class: 'row head cw-head' }, h('span', { class: 'lg-name' }, label + ' \u00b7 ' + xs.length),
+        var got = label === 'Band' ? paidBand : paidCrew - paidBand;
+        return h('div', { class: 'row head cw-head' }, h('span', { class: 'lg-name' }, label + ' \u00b7 ' + xs.length + (got > 0 ? ' \u00b7 ' + money(got) + ' paid' : '')),
           h('span', { class: 'amt num' }, money(sumOf(xs))));
       };
       var list = crew.length
@@ -8247,7 +8266,7 @@
             grp.band.length ? [headOf('Band', grp.band)].concat(grp.band.map(rowOf)) : null,
             grp.crew.length ? [grp.band.length ? headOf('Crew', grp.crew) : null].concat(grp.crew.map(rowOf)) : null,
             h('div', { class: 'row total' },
-              h('span', null, grp.band.length ? 'Band & crew projection' : 'Crew projection'), h('strong', { class: 'amt num' }, money(total))))
+              h('span', null, grp.band.length ? 'Band and crew together' : 'Crew projection'), h('strong', { class: 'amt num' }, money(total))))
         : emptyState('No crew yet', canWrite()
             ? 'Add everyone out with you. What each one is paid adds up to your crew projection.'
             : 'No crew has been added.');
@@ -8361,9 +8380,13 @@
         bandSeg.replaceChildren(segmented(['Crew', 'Band'], f.band ? 1 : 0, function (k) { f.band = k === 1; f.bandSaid = true; drawBand(); }, 'Band or crew'));
         submitBtn.textContent = person ? 'Save' : f.band ? 'Add to the band' : 'Add to crew';
       };
-      // While nobody has said, the title decides (Artist or Band), as it does for people invited.
+      // For someone being ADDED, while nobody has said, the title decides (Artist
+      // or Band), as it does for people invited. Someone already on the list
+      // stays in their group whatever their title is changed to: Band and Crew
+      // are two lines of money now, and retyping a title must not move pay
+      // from one to the other.
       var followTitle = function () {
-        if (f.bandSaid || (person && (person.band === true || person.band === false))) return;
+        if (f.bandSaid || person) return;
         var by = G.isBand({ title: f.title });
         if (by !== f.band) { f.band = by; drawBand(); }
       };
@@ -8374,9 +8397,9 @@
         var name = f.name.trim();
         if (!name) { toast('Add a name so you know who this is'); nameInput.focus(); return; }
         blurActive();
-        var row = { name: name, title: f.title.trim() };
-        // Stored only when it is a choice someone made (now, or before).
-        if (f.bandSaid || (person && (person.band === true || person.band === false))) row.band = !!f.band;
+        // The group is written down with the person (the one they were in when the
+        // sheet opened, unless the switch was touched), so it no longer depends on the title.
+        var row = { name: name, title: f.title.trim(), band: !!f.band };
         if (!person) row.pay = 0;
         var patch = {};
         if (person) patch[person.id] = row;
@@ -8416,7 +8439,7 @@
           chips,
           h('div', { class: 'field' },
             h('span', { class: 'field-label' }, 'Listed under'), bandSeg,
-            h('span', { class: 'hint' }, 'Band members are listed apart from the crew. Their pay and payments work the same way.')),
+            h('span', { class: 'hint' }, 'Band members have their own line on the Expenses tab, apart from the crew. Their pay and payments work the same way.')),
           h('div', { class: 'stack' },
             submitBtn,
             h('button', { class: 'btn ghost block', type: 'button', onclick: backTo }, 'Back'),
@@ -8425,7 +8448,8 @@
               onclick: function () {
                 confirmSheet({
                   title: 'Remove ' + (person.name || 'this person') + '?',
-                  body: money(G.crewPay(getTour(id), person)) + ' comes off the crew projection.',
+                  body: money(G.crewPay(getTour(id), person)) + ' comes off the ' + (G.isBand(person) ? 'band' : 'crew') + ' projection.' +
+                    (crewPaidTo(getTour(id), person) > 0 ? ' What they were paid (' + money(crewPaidTo(getTour(id), person)) + ') stays on the books under Crew, with no name on it.' : ''),
                   action: 'Remove', danger: true,
                   onConfirm: async function () {
                     var patch = {}; patch[person.id] = null;
@@ -8809,6 +8833,7 @@
         var kids = [];
         Object.keys(f.bd).forEach(function (k) {
           var cat = G.typedCategoriesFor(getTour(tourId)).filter(function (c) { return c.key === k; })[0];
+          if (cat && cat.key === 'crew') cat = { key: 'crew', label: 'Crew' };
           kids.push(h('div', { class: 'row' },
             h('span', { class: 'row-label' }, cat ? cat.label : k),
             moneyInput({
@@ -8831,7 +8856,7 @@
               if (el) { var inp = el.querySelector ? el.querySelector('input') : null; (inp || el).focus(); }
             } });
           sel.append(h('option', { value: '' }, '+ Where did it go?'));
-          unused.forEach(function (c) { sel.append(h('option', { value: c.key }, c.label)); });
+          unused.forEach(function (c) { sel.append(h('option', { value: c.key }, c.key === 'crew' ? 'Crew' : c.label)); });
           kids.push(h('div', { class: 'row' }, sel));
         }
         rowsHost.replaceChildren.apply(rowsHost, kids);
@@ -14769,7 +14794,7 @@
             if (deposit && !G.parseDay(f.date)) { toast('Pick the day it was deposited'); return; }
             var patch = {};
             patch[newId()] = { date: deposit ? f.date : G.tourToday(), amount: f.amount, showId: sh.id,
-              label: deposit ? G.CASH_MOVES.deposit : (f.what.trim() || catLabel[f.category] || 'Cash'),
+              label: deposit ? G.CASH_MOVES.deposit : (f.what.trim() || (f.category === 'crew' ? 'Crew' : catLabel[f.category]) || 'Cash'),
               category: deposit ? 'deposit' : f.category, createdAt: Date.now() };
             if (await api.update(id, { cashLog: patch })) {
               var leftNow = Math.round((left - f.amount) * 100) / 100;
@@ -16645,7 +16670,7 @@
         if (!label || !key) { build(); return; }
         var t = getTour(tourId);
         var clash = G.chargeCategoriesFor(t).filter(function (c) {
-          return c.key === key || c.label.toLowerCase() === label.toLowerCase();
+          return c.key === key || c.label.toLowerCase() === label.toLowerCase() || (c.key === 'crew' && payName(label));
         })[0];
         if (clash) key = clash.key;
         else {
@@ -16883,7 +16908,7 @@
         var key = G.slugCategory(label);
         if (!label || !key) { buildChips(); return; }
         var clash = G.chargeCategoriesFor(getTour(tourId)).filter(function (c) {
-          return c.key === key || c.label.toLowerCase() === label.toLowerCase();
+          return c.key === key || c.label.toLowerCase() === label.toLowerCase() || (c.key === 'crew' && payName(label));
         })[0];
         if (clash) { key = clash.key; label = clash.label; }
         else {
