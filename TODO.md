@@ -50,7 +50,7 @@ what is left to automate in PIPELINE.md, every platform checked in SOURCES.md.
 - [x] Listed is not played: old lists still showing, the 2020–21 shutdown months, and shows the band marked cancelled are kept off
 - [x] I See Stars accounted for in ISS-ROAD-STORY.md: 1,347 shows · 57 tours · 49 festivals · 400 cities · 34 countries
 - [x] One deposit, several guarantees (a lump sum from the agency): under Guarantee the New income sheet is a tick list of nights; every ticked night is marked received; the sheet shows what's logged for the ticked nights against what the card says, and says when they don't add up (migration 0121)
-- [x] Merch deposits the size of what was logged are caught: a night ticked Received by hand is no longer skipped, a deposit is compared to the merch typed on the night (not only to the old card estimate), and the match is made when the Cards tab reads the bank and every hour (migration 0122). Ten of Devin's waiting deposits were caught at once, Milwaukee among them
+- [x] Deposits say what they match and wait for approval (Devin: "it should say this number matches whatever city it is. For now we should have to still see and approve and log"). In New income a number that matches a merch number or a guarantee deposit amount names the city; Approve fills it in, Log puts it on the books; two nights with the same number are both named; matches are listed first with a count. Nothing is logged from a deposit by itself any more: the bank feed's two matchers, the hourly matcher and the to-the-dollar pass are all stopped in the database (migration 0123). The six merch deposits the app had logged by itself earlier the same day went back to the list for him to approve
 
 ## 3. MERCHROOM
 - [ ] Square: real-money connection (OAuth, read-only scopes; never a production personal access token)
@@ -72,6 +72,12 @@ Choices made while building, for him to confirm or change:
 - "Who received?" is who has been handed their buyout (the tick list that already existed); it is passed over until a buyouts total is logged.
 - A skipped question stays on today's list (the card says how many are left); tomorrow the card is tomorrow's show.
 - A guarantee or merch total already logged is shown with a tick and a way into Log income, not overwritten from here (its deposit, taxes and reasons live there).
+
+## Deposits: left open after 2026-10-09
+- [ ] No undo for a logged deposit: a wrong city has to be fixed by hand in Log income and the deposit never returns to the list. Build an "Undo" (the deposit remembers what the night looked like before)
+- [ ] One merch deposit that paid for several nights cannot be split (guarantees can). The bank feed's matcher used to do this by itself; say if it ever happens
+- [ ] When the bank feed function is next redeployed from the Supabase dashboard, take settleMerch and settleGuarantees out of it: today they still try on every Refresh and are refused by the database (harmless, but noisy in the logs)
+- [ ] Deposits matched automatically before 2026-10-09 (by the bank feed) were never approved by hand: list them for Devin if he wants to confirm them
 
 ## Smaller
 - [ ] Artist photo for search-made pages (MusicBrainz → Wikidata → Wikimedia Commons; Concert Archives photos are not available to us)

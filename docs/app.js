@@ -16780,16 +16780,12 @@
   async function loadIncomeNew() {
     var B = window.GR_BACKEND;
     S.incomeBusy = true;
-    var items = null, caught = null;
-    // First the sure ones: a merch deposit that is, to the dollar, what a night
-    // has logged is marked on that night by the database (hand-ticked nights
-    // included), so only what truly needs a person is left to ask about.
-    if (B.matchMerch) { try { caught = await B.matchMerch(); } catch (e) { caught = null; } }
+    var items = null;
+    // Nothing is logged here by itself (Devin: "we should have to still see and
+    // approve and log"). The sheet says which city a number matches; he approves.
     try { items = await B.incomeNew(); } catch (e) { items = null; }
     S.incomeBusy = false;
     S.incomeNew = { items: items || [], at: Date.now(), failed: !items };
-    var nCaught = caught ? G.num(caught.exact) : 0;
-    if (nCaught > 0) toast('Caught ' + plural(nCaught, 'merch deposit') + ': marked on ' + (nCaught === 1 ? 'its night' : 'their nights'));
     return S.incomeNew;
   }
   // Fetched when stale, like the Tour Manager's pile.
@@ -16817,7 +16813,8 @@
     var live = ((S.incomeNew && S.incomeNew.items) || []).map(function (d) {
       return { id: String(d.id), date: String(d.date || ''), amount: G.num(d.amount), av: !!d.atvenu, watch: String(d.watch || ''),
         dest: curTour ? 'cur' : 'off', upTo: ups.length ? ups[0].id : null,
-        kind: d.atvenu ? 'merch' : '', show: '', showTouched: false, armed: false };
+        // Nothing is chosen for him: not what it was, not which night ("see and approve and log").
+        kind: '', show: '', showTouched: false, whole: false, armed: false };
     });
     if (!live.length) { toast('No new income'); return; }
     // Which account it landed in: the bank feed files a deposit by what the
@@ -16847,17 +16844,23 @@
       var out = [G.merchDue(s), m, cash > 0 ? Math.round((m - cash) * 100) / 100 : 0];
       return out.filter(function (v, i) { return v > 0 && out.indexOf(v) === i; });
     }
-    // How far a deposit is from the nearest of them (Infinity when none is within a dollar,
-    // or within 1% of the expected card deposit for a deposit that reads as atVenu's).
+    // How far a deposit is from the nearest of them, and which one: 'merch' (the
+    // total typed), 'net' (that less the cash kept), 'card' (the card deposit
+    // expected). Null when none is within a dollar (or within 1% of the
+    // expected card deposit, for a deposit that reads as atVenu's).
     function merchOff(r, s) {
-      var best = Infinity, due = G.merchDue(s);
-      merchFigures(s).forEach(function (w) {
-        var off = Math.abs(G.num(r.amount) - w);
-        if (off <= Math.max(1, r.av && w === due ? w * 0.01 : 1)) best = Math.min(best, off);
+      var inc = G.isObj(s.income) ? s.income : {}, m = G.num(inc.merch), cash = G.num(s.merchCash), due = G.merchDue(s);
+      var figs = [['merch', m], ['net', cash > 0 ? Math.round((m - cash) * 100) / 100 : 0],
+        ['card', s.merchCardDeposit != null ? due : 0]];
+      var best = null;
+      figs.forEach(function (f) {
+        if (!(f[1] > 0)) return;
+        var off = Math.abs(G.num(r.amount) - f[1]);
+        if (off <= Math.max(1, r.av && f[0] === 'card' ? f[1] * 0.01 : 1) && (!best || off < best.off)) best = { off: off, via: f[0] };
       });
       return best;
     }
-    function suggest(r) {
+    function suggestAll(r) {
       var hits = [];
       // What the account is watched for says what the money can be: a merch
       // account's deposit is never a guarantee (the same rule the automatic
@@ -16877,38 +16880,76 @@
           // within the month): a night still to come is never it, and a night whose
           // merch deposit the bank already showed can't be this deposit too.
           // Against the expected card deposit and against what was typed on the night.
-          if (mayMerch && G.num(inc.merch) > 0 && !s.merchReceivedAt && gap >= 0 && gap <= (r.av ? 10 : 30)) {
-            var offM = merchOff(r, s);
-            if (offM < Infinity) {
-              hits.push({ kind: 'merch', tourId: tid, show: s, off: offM, gap: gap, waiting: owedBit({ kind: 'merch' }, s), received: s.merchReceived === true, what: 'the merch for' });
+          // (What the account is watched for only rules out a near match: a
+          // number that is to the dollar is said whichever account it landed in.)
+          if (G.num(inc.merch) > 0 && !s.merchReceivedAt && gap >= 0 && gap <= (r.av ? 10 : 30)) {
+            var mo = merchOff(r, s), dueM = G.merchDue(s);
+            if (mo && (mayMerch || mo.off <= 1)) {
+              hits.push({ kind: 'merch', via: mo.via, tourId: tid, show: s, off: mo.off, gap: gap, waiting: owedBit({ kind: 'merch' }, s), received: s.merchReceived === true,
+                state: s.merchReceived === true ? 'hand' : s.merchReceived === false ? 'waiting' : 'unmarked' });
+            } else if (!mo && r.av && mayMerch && gap >= 1 && gap <= 8 && dueM > 0 && owedBit({ kind: 'merch' }, s) &&
+                r.amount >= dueM * 0.85 - 5 && r.amount <= dueM * 1.35 + 5) {
+              // An atVenu payout near a night still waiting (tips and fees move it a
+              // few per cent): the hourly matcher used to log these by itself. Now
+              // it is only said, as a weaker line, and he decides.
+              hits.push({ kind: 'merch', via: 'card', loose: true, pct: (r.amount - dueM) / dueM, tourId: tid, show: s,
+                off: Math.abs(r.amount - dueM), gap: gap, waiting: true, received: false, state: 'waiting' });
             }
           }
           // A guarantee can be wired a month ahead of the night or weeks after it.
           var g = G.num(inc.guarantee);
-          if (mayGuar && g > 0 && Math.abs(gap) <= 30 && !(s.guaranteeReceivedAt && unseen(s) <= 1)) {
+          // (Up to 45 days after the night: as far as the bank feed's own matcher
+          // looked before deposits needed approving.)
+          // A night the bank has already shown in full is only tried for what the
+          // promoter still owes on it (that is where a second payment comes off
+          // what is owed when logged).
+          var seenAll = !!s.guaranteeReceivedAt && unseen(s) <= 1, owedNow = G.guaranteeOwed(s);
+          if (g > 0 && gap >= -30 && gap <= 45 && (!seenAll || owedNow > 0)) {
             // In full, less the booking agent's cut (the dollars logged on the night,
             // else the deal's percentage), or the amount typed on the night.
             var why = G.guaranteeWhy ? G.guaranteeWhy(s) : {};
             var comm = G.normCommission ? G.normCommission(t2 && t2.commission) : {};
-            var pct = G.num(comm && comm.agent && comm.agent.value);
-            var wants = [g, G.num(why && why.agent) > 0 ? Math.round((g - G.num(why.agent)) * 100) / 100 : 0,
-              pct > 0 && pct < 100 ? Math.round(g * (1 - pct / 100) * 100) / 100 : 0, G.num(s.guaranteeDeposit)];
-            var offG = Infinity;
-            wants.forEach(function (w) { if (w > 0 && Math.abs(r.amount - w) <= Math.max(1, w * 0.01)) offG = Math.min(offG, Math.abs(r.amount - w)); });
-            if (offG < Infinity) {
-              hits.push({ kind: 'guarantee', tourId: tid, show: s, off: offG, gap: Math.abs(gap), waiting: owedBit({ kind: 'guarantee' }, s), received: s.guaranteeReceived === true && !(G.guaranteeOwed(s) > 0), what: 'the guarantee for' });
+            // (Only a percentage deal: a flat fee is not a share of one night.)
+            var pct = comm && comm.agent && comm.agent.mode === 'pct' ? G.num(comm.agent.value) : 0;
+            // Which figure it is: the Deposit Amount typed on the night, the
+            // guarantee in full, or the guarantee less the agent's cut.
+            var wants = seenAll ? [['owed', owedNow]]
+              : [['deposit', G.num(s.guaranteeDeposit)], ['full', g],
+                ['agent', G.num(why && why.agent) > 0 ? Math.round((g - G.num(why.agent)) * 100) / 100 : 0],
+                ['agent', pct > 0 && pct < 100 ? Math.round(g * (1 - pct / 100) * 100) / 100 : 0]];
+            var bg = null;
+            wants.forEach(function (w) {
+              var off = Math.abs(r.amount - w[1]);
+              if (w[1] > 0 && off <= Math.max(1, w[1] * 0.01) && (!bg || off < bg.off)) bg = { off: off, via: w[0] };
+            });
+            if (bg && (mayGuar || bg.off <= 1)) {
+              hits.push({ kind: 'guarantee', via: bg.via, tourId: tid, show: s, off: bg.off, gap: Math.abs(gap), waiting: owedBit({ kind: 'guarantee' }, s), received: s.guaranteeReceived === true && !(G.guaranteeOwed(s) > 0),
+                // What the night itself says, for the line under the match.
+                state: s.guaranteeReceived === false ? 'waiting' : owedNow > 0 ? 'owed' : s.guaranteeReceived === true ? 'hand' : 'unmarked' });
             }
           }
         });
       });
       // To the dollar first; then a night still waiting on its money; then the nearest night.
+      // To the dollar first, then within 1%, then the loose atVenu guess. Among
+      // equals: a night still waiting on its money, then the nearest night (the
+      // closest amount, for a guess).
+      hits.forEach(function (x) { x.rank = x.off <= 1 ? 0 : x.loose ? 2 : 1; });
       hits.sort(function (a, b) {
-        var ea = a.off <= 1, eb = b.off <= 1;
-        if (ea !== eb) return ea ? -1 : 1;
+        if (a.rank !== b.rank) return a.rank - b.rank;
         if (a.waiting !== b.waiting) return a.waiting ? -1 : 1;
-        return a.gap - b.gap;
+        return a.rank === 2 ? a.off - b.off : a.gap - b.gap;
       });
-      return hits[0] || null;
+      return hits;
+    }
+    function suggest(r) { return suggestAll(r)[0] || null; }
+    // The nights a number matches as well as the first one does (to the dollar
+    // with to the dollar, close with close): two nights with the same guarantee
+    // both get named, and he says which.
+    function suggestTies(r) {
+      var hits = suggestAll(r);
+      if (!hits.length) return [];
+      return hits.filter(function (x) { return x.rank === hits[0].rank; }).slice(0, 5);
     }
     // The book a deposit lands on (null = the Off Tour book, made if needed).
     function landsOn(r) {
@@ -17085,6 +17126,33 @@
       if (found.length === 1) return found[0].map(function (s) { return s.id; });
       return one ? [one] : [];
     }
+    // Does this deposit match something logged: one night's merch or guarantee
+    // (3), several nights' guarantees together (2), or only a guess (1)?
+    function matchRank(r) {
+      var best = r.hitDone ? null : suggest(r);
+      if (best && best.rank < 2) return 3;
+      if (r.hitDone && r.kind) return 0;
+      if (best) return 1;   // the loose atVenu guess: near the top, not counted as a match
+      if (r.lumpDone || r.whole || r.av || !(!r.kind || (r.kind === 'guarantee' && !(r.shows || []).length)) ||
+          !(r.watch === 'guarantees' || r.watch === 'both' || !r.watch)) return 0;
+      var probe = { kind: 'guarantee', dest: r.dest, upTo: r.upTo, pinTour: r.pinTour, amount: r.amount, date: r.date };
+      var pc = showChoices(probe);
+      return pc && defaultNights(probe, pc).length > 1 ? 2 : 0;
+    }
+    // The ones that match come first, so they are seen before anything else.
+    live.forEach(function (r, i) { r.rank0 = matchRank(r); r.i0 = i; });
+    live.sort(function (a, b) { return (b.rank0 - a.rank0) || (a.i0 - b.i0); });
+    // How many still say they match (one he approved, or said "Not this" to, no longer counts).
+    var countHost = h('p', { class: 'iv-nmatch' });
+    function sayCount() {
+      // Worked out afresh each time: a night logged from one deposit stops matching another.
+      var n = live.filter(function (r) { return matchRank(r) >= 2; }).length;
+      countHost.hidden = !n;
+      // "First" only while it is true (one answered at the top stays where it is).
+      var top = n < live.length && live.slice(0, n).every(function (r) { return matchRank(r) >= 2; });
+      countHost.textContent = !n ? '' : (n === 1 ? '1 number matches' : n + ' numbers match') + ' something you logged.' +
+        (!top ? '' : n === 1 ? ' It\u2019s first.' : ' They\u2019re first.');
+    }
     var listHost = h('div', { class: 'iv-list' });
     function drop(r) {
       live = live.filter(function (x) { return x !== r; });
@@ -17098,6 +17166,12 @@
     async function logOne(r, row) {
       if (r.busy) return;
       if (!r.kind) { toast('Pick what it was'); return; }
+      // Merch and guarantees belong to a night when the tour has one with that
+      // money logged: he says which, or says Whole tour. Never assumed.
+      if ((r.kind === 'merch' || r.kind === 'guarantee') && showChoices(r) && !r.whole &&
+          !(r.kind === 'guarantee' ? (r.shows || []).length : r.show)) {
+        toast('Pick the show it was for, or Whole tour'); return;
+      }
       // Everything this call needs, read before any waiting; the row is
       // frozen (busy) so nothing can change under it either way.
       var pick = { showId: r.show || null, kind: r.kind };
@@ -17155,7 +17229,7 @@
       if (!dests.length) return null;
       var upSel = ups.length ? h('select', { class: 'input sm rv-upsel', 'aria-label': 'Which upcoming tour',
         disabled: r.busy || null,
-        onchange: function (e) { r.upTo = e.target.value; r.showTouched = false; r.show = ''; r.shows = []; r.allNights = false; redraw(); } },
+        onchange: function (e) { r.upTo = e.target.value; r.showTouched = false; r.show = ''; r.shows = []; r.whole = false; r.allNights = false; redraw(); } },
         ups.map(function (u) { return h('option', { value: u.id }, u.name + ' · starts ' + dayMD(u.start)); })) : null;
       if (upSel) { upSel.value = r.upTo || ''; upSel.hidden = r.dest !== 'up'; }
       // The night the deposit was matched to may sit on a tour that isn't
@@ -17172,7 +17246,7 @@
               onclick: function () {
                 if (r.busy) return;
                 if (d[2]) { toast(d[2]); return; }
-                r.dest = d[0]; r.showTouched = false; r.show = ''; r.shows = []; r.allNights = false;
+                r.dest = d[0]; r.showTouched = false; r.show = ''; r.shows = []; r.whole = false; r.allNights = false;
                 redraw();
               } }, d[1]);
           })),
@@ -17184,7 +17258,7 @@
       function redraw() {
         var kindSel = h('select', { class: 'input sm', 'aria-label': 'What this deposit was',
           disabled: r.busy || null,
-          onchange: function (e) { r.kind = e.target.value; r.showTouched = false; r.show = ''; r.shows = []; r.allNights = false; redraw(); } },
+          onchange: function (e) { r.kind = e.target.value; r.showTouched = false; r.show = ''; r.shows = []; r.whole = false; r.allNights = false; redraw(); } },
           h('option', { value: '' }, 'What was it?'),
           G.OTHER_INCOME_KINDS.map(function (k) { return h('option', { value: k.key }, k.label); }));
         kindSel.value = r.kind;
@@ -17192,7 +17266,8 @@
         var showSel = null;
         if (choices && r.kind === 'guarantee') {
           // Guarantees: a tick list, because one deposit can pay for several nights.
-          if (!r.showTouched) r.shows = defaultNights(r, choices);
+          // Nothing is ticked for him: a night gets ticked by Approve, by "Tick
+          // those shows", or by his own tap.
           r.shows = (r.shows || []).filter(function (id) { return choices.some(function (s) { return s.id === id; }); });
           r.show = r.shows.length === 1 ? r.shows[0] : '';
           var on = function (s) { return r.shows.indexOf(s.id) >= 0; };
@@ -17223,7 +17298,8 @@
           };
           var totals;
           if (!plan) {
-            totals = h('p', { class: 'iv-none' }, 'No night ticked: it goes on the books for the whole tour.');
+            totals = h('p', { class: 'iv-none' }, r.whole ? 'It goes on the books for the whole tour, not on a night.'
+              : 'Nothing ticked yet. Tick every night it paid for, or Whole tour.');
           } else {
             var d = Math.round(plan.diff * 100) / 100, even = Math.abs(d) < 0.005;
             var pctTxt = String(Math.round(plan.cut * 1000) / 10);
@@ -17245,7 +17321,7 @@
                 h('input', { type: 'checkbox', class: 'rv-check', checked: on(s) || null, disabled: r.busy || null,
                   onchange: function (e) {
                     r.shows = (r.shows || []).filter(function (id) { return id !== s.id; });
-                    if (e.target.checked) r.shows.push(s.id);
+                    if (e.target.checked) { r.shows.push(s.id); r.whole = false; }
                     r.showTouched = true;
                     redraw();
                   } }),
@@ -17255,20 +17331,31 @@
             }),
             restN.length && waitingN.length ? h('button', { class: 'linkbtn iv-more', type: 'button', onclick: function () { r.allNights = !r.allNights; redraw(); } },
               r.allNights ? 'Only the nights still waiting' : 'Show every night (' + choices.length + ')') : null,
+            // Whole tour is a choice he makes, never what an empty list means.
+            h('label', { class: 'iv-night iv-whole' + (r.whole ? ' on' : '') },
+              h('input', { type: 'checkbox', class: 'rv-check', checked: r.whole || null, disabled: r.busy || null,
+                onchange: function (e) { r.whole = e.target.checked; if (r.whole) r.shows = []; r.showTouched = true; redraw(); } }),
+              h('span', { class: 'iv-nwhere' }, 'Whole tour', h('span', { class: 'iv-ntag' }, 'not for one night'))),
             totals);
         } else if (choices) {
-          if (!r.showTouched) r.show = defaultShow(r, choices);
+          // No night is picked for him. (Redrawn on change, so an approval for
+          // one night is taken back the moment another is chosen.)
           showSel = h('select', { class: 'input sm', 'aria-label': 'Which show',
             disabled: r.busy || null,
-            onchange: function (e) { r.show = e.target.value; r.showTouched = true; } },
-            h('option', { value: '' }, 'Whole tour'),
+            onchange: function (e) {
+              var v = e.target.value;
+              r.whole = v === '*'; r.show = v === '*' ? '' : v; r.showTouched = true;
+              redraw();
+            } },
+            h('option', { value: '' }, 'Which show?'),
+            h('option', { value: '*' }, 'Whole tour'),
             choices.map(function (s) {
               return h('option', { value: s.id },
                 [dayMD(s.date), s.city || s.venue || 'Show'].filter(Boolean).join(' · ') +
                 (!owedBit(r, s) ? '' : r.kind === 'guarantee' && s.guaranteeReceived !== false && !(G.guaranteeOwed(s) > 0)
                   ? ' · not seen in the bank yet' : ' · owed'));
             }));
-          showSel.value = r.show || '';
+          showSel.value = r.whole ? '*' : (r.show || '');
         } else {
           r.show = ''; r.shows = [];
         }
@@ -17279,33 +17366,104 @@
         logBtn.onclick = function () { logOne(r, row); };
         aside.onclick = function () { skipOne(r, row); };
         var acct = accountOf(r);
-        var hit = r.hitDone ? null : suggest(r);
-        var hitTour = hit && hit.tourId ? getTour(hit.tourId) : null;
-        var hitLine = !hit ? null : h('div', { class: 'iv-hit' },
-          h('p', { class: 'iv-hit-t' }, 'Same size as ' + hit.what + ' ' + dayMD(hit.show.date) + (hit.show.city ? ' \u00b7 ' + String(hit.show.city).split(',')[0] : '') +
-            (hitTour && hitTour.name && !(curTour && hit.tourId === curTour.id) ? ' (' + hitTour.name + ')' : '') +
-            // A merch night ticked Received by hand: this deposit is the bank showing it.
-            (hit.waiting ? ' \u2014 logged, still waiting on this money'
-              : hit.received && hit.kind === 'merch' ? ' \u2014 ticked Received by hand; this looks like its deposit'
-              : hit.received ? ' \u2014 already logged and ticked Received' : ' \u2014 logged, not yet marked Received')),
-          h('div', { class: 'pt-two' },
-            h('button', { class: 'btn sm ghost', type: 'button', disabled: r.busy || null, onclick: function () {
-              // It's the money already on the books: set the deposit aside for good, nothing doubles. Two taps, since it's final.
-              skipOne(r, row);
-            } }, r.armed ? 'Set it aside for good?' : 'Already logged'),
-            h('button', { class: 'btn sm primary', type: 'button', disabled: r.busy || null, onclick: function () {
-              // Not yet: log it as that night's money, on the night's own tour (the night's line marks it received).
-              r.kind = hit.kind; r.show = hit.show.id; r.shows = [hit.show.id]; r.showTouched = true; r.hitDone = true;
-              if (hit.tourId && curTour && hit.tourId === curTour.id) r.dest = 'cur';
-              else if (hit.tourId && ups.some(function (u) { return u.id === hit.tourId; })) { r.dest = 'up'; r.upTo = hit.tourId; }
-              else if (hit.tourId) { r.dest = 'pin'; r.pinTour = hit.tourId; }
-              redraw();
-            } }, hit.received && hit.kind === 'merch' ? 'Yes, that night' : 'Not logged yet')));
+        var ties = r.hitDone ? [] : suggestTies(r);
+        var hit = ties[0] || null;
+        // Devin: "if there are any numbers that match a guarantee deposit amount
+        // that was logged or a merch number it should say this number matches
+        // whatever city it is. For now we should have to still see and approve
+        // and log." The line names the city; nothing is written until he taps.
+        var hitWhere = function (x) { return String(x.show.city || x.show.venue || 'the show').split(',')[0] + ' \u00b7 ' + dayMD(x.show.date); };
+        var hitWhat = function (x) {
+          var w = hitWhere(x), t3 = x.tourId ? getTour(x.tourId) : null;
+          var tourBit = t3 && t3.name && !(curTour && x.tourId === curTour.id) ? ' (' + t3.name + ')' : '';
+          return (x.kind === 'merch'
+            ? (x.loose ? 'the merch for ' + w : x.via === 'card' ? 'the card deposit expected for ' + w : 'the merch logged for ' + w + (x.via === 'net' ? ', less the cash kept' : ''))
+            : (x.via === 'deposit' ? 'the deposit amount logged for ' + w
+              : x.via === 'owed' ? 'what is still owed on the guarantee for ' + w
+              : 'the guarantee logged for ' + w + (x.via === 'agent' ? ', less the booking agent\u2019s cut' : ''))) + tourBit;
+        };
+        // How a line opens: a number that matches says so; a near one says how near.
+        var hitLead = function (x) {
+          return x.rank === 0 ? 'This number matches ' : x.rank === 1 ? 'This number is within 1% of ' : 'This could be ';
+        };
+        var hitTail = function (x) {
+          if (x.rank !== 2) return '';
+          var pc = Math.round(Math.abs(x.pct) * 1000) / 10;
+          return ': ' + (pc < 0.1 ? 'about the size of' : pc + '% ' + (x.pct > 0 ? 'more' : 'less') + ' than') + ' the card deposit expected';
+        };
+        // Approve is the first tap: it fills in what the deposit was and where it
+        // goes, so he sees it written out. Log is the second. (Nothing is
+        // written by Approve. There is no undo for a logged deposit, so a
+        // mis-tap on the wrong city must not be enough to log it.)
+        var approve = function (x) {
+          if (r.busy) return;
+          // Where the row pointed before, for Back.
+          var was = { kind: r.kind, dest: r.dest, upTo: r.upTo, pinTour: r.pinTour || null };
+          r.kind = x.kind; r.show = x.show.id; r.shows = [x.show.id]; r.whole = false; r.showTouched = true; r.hitDone = true;
+          if (x.tourId && curTour && x.tourId === curTour.id) r.dest = 'cur';
+          else if (x.tourId && ups.some(function (u) { return u.id === x.tourId; })) { r.dest = 'up'; r.upTo = x.tourId; }
+          else if (x.tourId) { r.dest = 'pin'; r.pinTour = x.tourId; }
+          r.approved = { kind: x.kind, showId: x.show.id, tourId: x.tourId || null, text: hitWhat(x), was: was };
+          redraw(); sayCount();
+        };
+        var notThis = function () { r.hitDone = true; r.approved = null; redraw(); sayCount(); };
+        // Still what he approved? (Changing the kind, the night or the tour by hand takes the approval back.)
+        var ap = r.approved;
+        if (ap && !(r.kind === ap.kind && r.show === ap.showId && (!ap.tourId || landsOn(r) === ap.tourId))) { ap = r.approved = null; }
+        // ...and still true on the books? Another deposit logged to that night
+        // since (two deposits the same size, say) takes the approval back and
+        // unpicks the night, so this one is not stacked on top of it.
+        if (ap && !r.busy && !suggestAll(r).some(function (x) { return x.kind === ap.kind && x.show.id === ap.showId; })) {
+          ap = r.approved = null; r.show = ''; r.shows = []; r.kind = ''; r.showTouched = false; r.hitDone = false;
+          r.note = 'That night has been paid by another deposit since. Nothing is picked now.';
+          redraw(); return;
+        }
+        var hitLine = null;
+        if (ap) {
+          hitLine = h('div', { class: 'iv-hit ok' },
+            h('p', { class: 'iv-hit-t' }, 'Approved: ' + ap.text + '.'),
+            h('p', { class: 'iv-hit-s' }, 'Nothing is on the books yet. Tap Log to put it there.'),
+            h('div', { class: 'pt-two' },
+              h('button', { class: 'btn sm ghost', type: 'button', disabled: r.busy || null, onclick: function () {
+                // Back to the question, the row as it was before Approve.
+                var w0 = ap.was || {};
+                r.approved = null; r.hitDone = false; r.kind = w0.kind || ''; r.show = ''; r.shows = []; r.whole = false; r.showTouched = false;
+                r.dest = w0.dest || (curTour ? 'cur' : 'off'); r.upTo = w0.upTo || r.upTo; r.pinTour = w0.pinTour || null;
+                redraw(); sayCount();
+              } }, 'Back'),
+              h('button', { class: 'btn sm primary', type: 'button', disabled: r.busy || null, onclick: function () { logOne(r, row); } },
+                r.busy ? 'Logging\u2026' : 'Log')));
+        } else if (hit && ties.length > 1) {
+          // More than one night it could be (two nights with the same guarantee, say): he picks.
+          hitLine = h('div', { class: 'iv-hit' },
+            h('p', { class: 'iv-hit-t' }, (hit.rank === 2 ? 'This could be ' : hitLead(hit)) + 'more than one night you logged. Which one is it?'),
+            h('div', { class: 'iv-hit-pick' },
+              ties.map(function (x) {
+                return h('button', { class: 'btn sm primary', type: 'button', disabled: r.busy || null, onclick: function () { approve(x); } },
+                  hitWhere(x) + ' \u00b7 ' + (x.kind === 'merch' ? 'merch' : 'guarantee') +
+                  (x.rank === 2 ? ' (' + (Math.round(Math.abs(x.pct) * 1000) / 10) + '% ' + (x.pct > 0 ? 'more' : 'less') + ')' : '') +
+                  (x.state === 'hand' ? ' (ticked Received)' : ''));
+              }),
+              h('button', { class: 'btn sm ghost', type: 'button', disabled: r.busy || null, onclick: notThis }, 'None of these')),
+            h('p', { class: 'iv-hit-s iv-hit-foot' }, 'Tap the night to approve it. Then Log.'));
+        } else if (hit) {
+          var hState = hit.state === 'waiting' ? 'Still waiting on this money.'
+            : hit.state === 'owed' ? 'Part of this guarantee is still owed.'
+            : hit.state === 'hand' ? 'Ticked Received by hand; the bank had not shown it yet.' : 'Not marked Received yet.';
+          hitLine = h('div', { class: 'iv-hit' },
+            h('p', { class: 'iv-hit-t' }, hitLead(hit) + hitWhat(hit) + hitTail(hit) + '.'),
+            h('p', { class: 'iv-hit-s' }, hState),
+            h('div', { class: 'pt-two' },
+              // Not that night: the line goes, and he says what it was himself.
+              h('button', { class: 'btn sm ghost', type: 'button', disabled: r.busy || null, onclick: notThis }, 'Not this'),
+              h('button', { class: 'btn sm primary', type: 'button', disabled: r.busy || null, onclick: function () { approve(hit); } }, 'Approve')));
+        }
         // A lump sum: before anything is picked, a deposit the size of several
         // guarantees still waiting on this tour (in full, or less the booking
         // agent's cut) says so, and one tap ticks those nights.
         var lumpLine = null;
-        if (!hit && !r.kind && !r.av && !r.lumpDone && (r.watch === 'guarantees' || r.watch === 'both' || !r.watch)) {
+        if (!hit && !r.approved && !r.av && !r.lumpDone && !r.whole && (!r.kind || (r.kind === 'guarantee' && !(r.shows || []).length)) &&
+            (r.watch === 'guarantees' || r.watch === 'both' || !r.watch)) {
           var probe = { kind: 'guarantee', dest: r.dest, upTo: r.upTo, pinTour: r.pinTour, amount: r.amount, date: r.date };
           var pc = showChoices(probe);
           var lumpIds = pc ? defaultNights(probe, pc) : [];
@@ -17313,14 +17471,15 @@
             var lumpNights = pc.filter(function (s) { return lumpIds.indexOf(s.id) >= 0; }).sort(G.byDate);
             var lp = nightPlan(probe, lumpNights);
             lumpLine = h('div', { class: 'iv-hit' },
-              h('p', { class: 'iv-hit-t' }, 'Same size as the guarantees for ' + lumpNights.length + ' shows still waiting: ' +
-                lumpNights.map(function (s) { return dayMD(s.date); }).join(', ') +
-                (lp.agentFits ? ', less the booking agent\u2019s ' + String(Math.round(lp.cut * 1000) / 10) + '%' : '')),
+              h('p', { class: 'iv-hit-t' }, 'This number matches the guarantees logged for ' + lumpNights.length + ' shows: ' +
+                lumpNights.map(function (s) { return String(s.city || s.venue || 'Show').split(',')[0] + ' ' + dayMD(s.date); }).join(', ') +
+                (lp.agentFits ? ', less the booking agent\u2019s ' + String(Math.round(lp.cut * 1000) / 10) + '%' : '') + '.'),
+              h('p', { class: 'iv-hit-s' }, 'Tick them to see the totals, then log.'),
               h('div', { class: 'pt-two' },
-                h('button', { class: 'btn sm ghost', type: 'button', disabled: r.busy || null, onclick: function () { r.lumpDone = true; redraw(); } }, 'Something else'),
+                h('button', { class: 'btn sm ghost', type: 'button', disabled: r.busy || null, onclick: function () { r.lumpDone = true; redraw(); sayCount(); } }, 'Not this'),
                 h('button', { class: 'btn sm primary', type: 'button', disabled: r.busy || null, onclick: function () {
-                  r.kind = 'guarantee'; r.shows = lumpIds.slice(); r.showTouched = true; r.lumpDone = true;
-                  redraw();
+                  r.kind = 'guarantee'; r.shows = lumpIds.slice(); r.whole = false; r.showTouched = true; r.lumpDone = true;
+                  redraw(); sayCount();
                 } }, 'Tick those shows')));
           }
         }
@@ -17332,24 +17491,35 @@
             h('div', { class: 'rv-sub' }, dayMD(r.date),
               r.av ? h('span', { class: 'rv-flag' }, 'Looks like atVenu') : null,
               r.watch ? h('span', { class: 'hint' }, ' \u00b7 watched for ' + (r.watch === 'both' ? 'merch and guarantees' : r.watch)) : null),
+            // Said once (an approval the books no longer bear out); gone at the next touch.
+            r.note ? h('p', { class: 'iv-note' }, r.note) : null,
             hitLine,
             lumpLine,
             destPills(r, redraw),
             h('div', { class: 'iv-sels' }, kindSel, showSel),
             h('div', { class: 'rv-act iv-act' }, logBtn, aside)));
+        r.note = null;
+        // The header's count follows every change (what a row is, where it goes).
+        if (!drawing) sayCount();
       }
       redraw();
       return wrap;
     }
+    // (While the whole list is being built the count waits, and is said once.)
+    var drawing = false;
     function draw() {
+      drawing = true;
       fillEl(listHost, live.map(rowEl));
+      drawing = false;
+      sayCount();
     }
     draw();
     openSheet(function (panel) {
       panel.classList.add('rv-sheet');
       return [
         h('h2', { class: 'sh-title' }, 'New income'),
-        h('p', { class: 'sh-sub' }, 'Deposits into your watched accounts. Say what each one was and it’s on the books.'),
+        h('p', { class: 'sh-sub' }, 'Deposits into your watched accounts. Say what each one was and it’s on the books. Nothing is logged until you approve it.'),
+        countHost,
         listHost,
         h('div', { class: 'stack' },
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
@@ -17640,7 +17810,7 @@
         // Devin (2026-10-07): every deposit on an income account shows up to be
         // logged; the merch/guarantee matching is a suggestion, not a filter.
         ans.income = ['merch', 'guarantees'];
-        kids.push(h('p', { class: 'note' }, 'Every deposit into this account shows up under New deposits. One that matches a show\u2019s merch or guarantee marks that show received; the rest wait for you to log.'));
+        kids.push(h('p', { class: 'note' }, 'Every deposit into this account shows up under New deposits. One that matches a show\u2019s merch or guarantee says which city it matches. Nothing is logged until you approve it.'));
       }
       box.replaceChildren.apply(box, kids);
     }

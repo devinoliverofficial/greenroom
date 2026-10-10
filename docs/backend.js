@@ -920,15 +920,6 @@
       if (out.ok && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
       return out;
     },
-    // The sure merch matches, made by the database before anything is asked: a
-    // deposit that is, to the dollar, what one night has logged for merch.
-    matchMerch: async function () {
-      var q = await sb.rpc('match_my_merch');
-      if (q.error) throw mapError(q.error);
-      var out = isObj(q.data) ? q.data : {};
-      if (Number(out.exact) > 0) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
-      return out;
-    },
     // One guarantee deposit that paid for several nights: parts is
     // [{ show, amount, agent? }], the shares adding up to the deposit. Every
     // night is marked received with its share, or nothing is written.

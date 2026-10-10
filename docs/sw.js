@@ -3,7 +3,7 @@
    deploy is picked up on the next open, and a tour bus with no signal still
    gets the app shell. The cache name carries the build stamp; installing a new
    version clears the old cache. */
-var CACHE = 'greenroom-20261009-204213';
+var CACHE = 'greenroom-20261009-213618';
 var SHELL = ['./', 'index.html', 'core.js', 'statements.js', 'app.js',
   'manifest.webmanifest', 'icon-180.png', 'icon-512.png', 'logo-full.png'];
 
