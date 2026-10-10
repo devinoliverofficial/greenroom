@@ -920,6 +920,18 @@
       if (out.ok && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
       return out;
     },
+    // One guarantee deposit that paid for several nights: parts is
+    // [{ show, amount, agent? }], the shares adding up to the deposit. Every
+    // night is marked received with its share, or nothing is written.
+    catalogIncomeSplit: async function (depId, opts) {
+      var o = opts || {};
+      var q = await sb.rpc('catalog_income_split', {
+        dep_id: String(depId), t_id: o.tourId || null, parts: Array.isArray(o.parts) ? o.parts : [] });
+      if (q.error) throw mapError(q.error);
+      var out = isObj(q.data) ? q.data : { ok: false };
+      if (out.ok && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
+      return out;
+    },
     // Following an artist's page.
     followArtist: async function (artistId) {
       var q = await sb.from('artist_follows').upsert({ user_id: session.user.id, artist_id: artistId },

@@ -49,6 +49,7 @@ what is left to automate in PIPELINE.md, every platform checked in SOURCES.md.
 - [x] Counting made right: cities were double-counted wherever one source wrote "Michigan" and another "MI" (513 → 400 real); an unknown place name had become a country (35 → 34); one-day festivals no longer count as tours
 - [x] Listed is not played: old lists still showing, the 2020–21 shutdown months, and shows the band marked cancelled are kept off
 - [x] I See Stars accounted for in ISS-ROAD-STORY.md: 1,347 shows · 57 tours · 49 festivals · 400 cities · 34 countries
+- [x] One deposit, several guarantees (a lump sum from the agency): under Guarantee the New income sheet is a tick list of nights; every ticked night is marked received; the sheet shows what's logged for the ticked nights against what the card says, and says when they don't add up (migration 0121)
 
 ## 3. MERCHROOM
 - [ ] Square: real-money connection (OAuth, read-only scopes; never a production personal access token)
