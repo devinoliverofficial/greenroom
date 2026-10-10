@@ -79,8 +79,38 @@ Choices made while building, for him to confirm or change:
 
 ## Roles, pages, sign-up, NDAs, fans (Devin's definitions, 2026-10-10): see ROLES.md
 - [x] The words on tours: a Members line and a Crew line on the Expenses tab; a hired player (Band, Touring Musician) is crew; his 20 crew roles in his order; Member / Crew switch on each person
-- [x] Nothing is erased: no 30-day clear-out, no "Delete forever", no "Delete artist profile"; the database refuses deleting a tour or an artist page (0131). A tour can be taken down and restored
-- [ ] Build order and open decisions are in ROLES.md sections 4 and 6. Next: sign-up with the NDA step and a way for Devin to test every kind of login
+- [x] Nothing is erased: no 30-day clear-out, no "Delete forever", no "Delete artist profile"; the database refuses deleting a tour or an artist page (0131). A tour's private pages can be deleted and restored (Settings, Deleted tours)
+- [x] The three lines: Create a tour and Merchroom for artists and members, Settings for everyone; "Card feed" is "Linked Cards"; crew see MY PAY alone under Budget; on an artist's account Overview opens only that artist's tours (2026-10-10)
+- [x] Leaving keeps your history (0132, 2026-10-10): a listing ends instead of being deleted; crew at once, a member when every other member agrees
+- [ ] Build order and what is decided or still open are in ROLES.md sections 4 and 6. Next: sign-up with the NDA step (waiting on the NDA text), account kinds, and a way for Devin to test every kind of login
+
+## Who sees what: left open after 2026-10-10 (from the map of every tab by role)
+- [ ] **The notification function sends the band's money to crew phones.** "MERCH NUMBERS! city: $X" and "You're in the green" went to every phone that had them on, whatever the role. The app no longer sends "in the green" and no longer offers MERCH NUMBERS to crew, but the server function (supabase/functions/notify, and ari for merch) still would if asked: it should send both only to people who can see the tour's money. Needs a function deploy; then turn "in the green" back on
+- [ ] **A settlement email with no tour tag is matched across every account's tours** by date and venue (supabase/functions/inbox). Two artists in the same room on the same night could get each other's merch number. Harmless while one artist uses the app; fix before a second one does: match only inside one account's tours, or require the tag
+- [ ] Only Managers edit: today anyone invited ALL ACCESS can edit the whole tour. Make editing ask for Manager, in the app and in the database (ROLES.md section 3)
+- [ ] A Member's access to a tour should come from the artist page, not from how they were invited; tours should belong to the artist (the roles build)
+- [ ] Invites still offer ALL ACCESS / GA and the titles Artist and Band; they should offer Member / Manager / Crew
+- [ ] Anyone can ask "is this email invited to this tour" (tour_person_ok has no check of its own)
+- [ ] The + on a profile lets any account add an artist, and from there a tour: it is the only way a new artist starts today. Close it once accounts have a kind
+- [ ] Search lists every tour you are on, whichever artist's account you are switched to
+- [ ] A deleted tour comes off the public tour lists until it is restored; the public record should stand on its own once a tour is announced (ROLES.md section 6)
+- [ ] The Off Tour book has no delete, and counts as a tour "you still run" when deleting an account
+
+## Leaving an artist: left open after 2026-10-10 (migration 0132)
+- [ ] One stretch per person per artist: someone listed again later is treated as if they never left, and someone who left as a member cannot be listed again as crew yet (the app says so). Real from / until stretches come with the dates build (crew pick exact calendar days)
+- [ ] Someone taken off the artist page but still on a tour's crew list keeps gaining that tour's nights until taken off the tour, and a tour they left half-way can count twice in their tours number once most of it has been played without them (road_stats, the second term). The sheets say "they stay on any tour they are on"
+- [ ] Nobody is told: the person let go gets no notice (their page just stops growing); the one who asked is not told of a "no" (the pill turns back into the x); the other members only see the ask at the top of their profile. No reminder, no time limit: a member who never opens the app holds it up for good
+- [ ] Only the account that runs the page can take someone off or start letting a member go. "When firing a crew member anyone can do it" (any member), a button to leave on your own, and the other members letting go of the one who runs the page all come with the roles build
+- [ ] A crew person who left can still send a "confirm your tours" claim naming later tours: approved, never counted past the leave day. The claim sheet should stop at that day; the artist's approve card and detail sheet still count the claim as sent
+- [ ] A member added less than a week ago and not endorsed is simply taken off (a slip of the finger). Devin to confirm the week
+- [ ] "Remove endorsement" on your own page still takes a crew person's confirmed tours with it, for good once they have left (the sheet now says so)
+
+## Fans, venues, promoters (Devin, 2026-10-10): later builds, see ROLES.md
+- [ ] **Fans**: "does not have any access to the overview page at all. Just the user profile experience and searching for artist pages". Needs an invite code for now. Today there is no fan account: someone on no tour and no artist page gets no Overview, no Create a tour, no Linked Cards, by a stand-in rule, not a real account kind. A fan cannot open a person's page or follow a person yet
+- [ ] **Venue pages**: "almost the same as artist pages", auto-created when searched (the app already finds a venue's address and details), claimed by the venue's promoters, rated by artists, members and crew "almost the same as like AIRBNB"
+- [ ] **Promoter pages**: "This is how many shows i've ran and these are the exact shows I've worked"
+- [ ] Fan, venue and promoter as choices in the login process (with the sign-up build)
+- [ ] Devin wants a rundown of this whole list at some point
 
 ## Members and crew on a tour: left open after 2026-10-09
 - [x] Band and Crew are two lines on the Expenses tab (2026-10-10; Devin: "band and crew should be a separate line in the expense tab", knowing each line counts the bigger of planned and paid). Nothing stored changes: pay is still filed under the one category (named "Band & Crew" in the pickers on a tour with a band) with who it paid; the split is made when the tour is added up (G.crewSplit, G.chargeLine)
@@ -95,7 +125,7 @@ Choices made while building, for him to confirm or change:
 - [ ] A phone still on the old build (until the app is reopened) can wipe a Deposit Amount typed on a show that is not received, or hand-tick Received on a "through card" tour, if it saves Log income on that show. Small window; a "new version, reload" gate before saving would close it
 - [ ] No undo for a logged deposit: a wrong city has to be fixed by hand in Log income and the deposit never returns to the list. Build an "Undo" (the deposit remembers what the night looked like before)
 - [x] One merch deposit over several nights (2026-10-10, migration 0127): Merch has the same show list as Guarantees, with "Not sure which show yet" (it waits in "Merch to sort" and does not count as income: merch counts on its night). "Whole tour" is gone from the list
-- [ ] Merch money that belongs to no show at all (an online store payout) has no home on a tour now that "Whole tour" is gone: today it goes on the Off Tour book, or waits in Merch to sort. Ask Devin if he gets any
+- [ ] Merch money that belongs to no show at all (an online store payout) has no home on a tour now that "Whole tour" is gone: today it goes on the Off Tour book, or waits in Merch to sort. Ask Devin if he gets any (the Off Tour book is the third tab under a tour's Budget since 2026-10-10)
 - [ ] A parked guarantee can still be dropped by "Take it off the book" on a phone running a build from before 2026-10-09 (its entry sits in Other income there). The merch list is guarded in the database (tours_merch_to_sort_gate); the guarantee one is not
 - [ ] The rest of a part-placed deposit that turns out to belong to no show has no exit (put-back is refused once part is placed): it waits in the list. Rare; add "this part is not for a show" if it ever happens
 - [ ] When the bank feed function is next redeployed from the Supabase dashboard, take settleMerch and settleGuarantees out of it: today they still try on every Refresh and are refused by the database (harmless, but noisy in the logs)

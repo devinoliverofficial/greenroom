@@ -39,6 +39,11 @@
   var refetchTimer = 0;
 
   function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+  // Today on this phone, YYYY-MM-DD (the server's clock can be a day ahead of a show night in America).
+  function localDay() {
+    var d = new Date();
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
   function clone(v) { return JSON.parse(JSON.stringify(v)); }
   // Mirrors the app's merge-write: nested objects merge, anything else replaces.
   function deepMerge(target, patch) {
@@ -1055,11 +1060,33 @@
     addArtistMember: async function (id, userId, kind) {
       var q = await sb.from('artist_members').upsert({ artist_id: id, user_id: userId, kind: kind === 'crew' ? 'crew' : 'band' },
         { onConflict: 'artist_id,user_id' });
+      // Someone who left as a member cannot be listed again as crew yet (0132).
+      if (q.error && /former_member/.test(String(q.error.message || ''))) throw err('former_member');
       if (q.error) throw mapError(q.error);
     },
+    /* Taking someone off an artist page ends their listing; it does not erase
+       it (0132). Everything up to today stays on their own page. Never
+       endorsed: simply taken off ({kept: false}). A member let go by someone
+       else waits on every other member's yes ({pending: true, waiting: n}). */
     removeArtistMember: async function (id, userId) {
-      var q = await sb.from('artist_members').delete().eq('artist_id', id).eq('user_id', userId);
+      var q = await sb.rpc('end_artist_member', { a_id: id, u_id: userId, on_day: localDay() });
       if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: true };
+    },
+    memberRemovalAsks: async function () {
+      var q = await sb.rpc('member_removal_asks');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    answerMemberRemoval: async function (id, userId, agree) {
+      var q = await sb.rpc('answer_member_removal', { a_id: id, u_id: userId, agree: !!agree, on_day: localDay() });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    cancelMemberRemoval: async function (id, userId) {
+      var q = await sb.rpc('cancel_member_removal', { a_id: id, u_id: userId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
     },
     findPeople: async function (text) {
       var q = await sb.rpc('find_people', { q: String(text || '') });

@@ -2804,7 +2804,7 @@
      lists the profiles you run (and the ones that list you), with Create
      Greenroom Artist at the bottom. Making one is three short steps: a name
      and username, then the band members, then the crew, each found by
-     searching their account. The artist's page shows its photo, bio, band,
+     searching their account. The artist's page shows its photo, bio, members,
      crew and tours; only whoever made it can change it. */
   function accountTitle(who) {
     var card = myCard(), uid = socialOn() ? window.GR_BACKEND.uid() : null;
@@ -3086,14 +3086,15 @@
       ];
     }, { label: 'Create a Greenroom Artist', cls: 'ca-sheet' });
   }
-  /* Add band members, or crew: search for an account, tap Add. In the
+  /* Add members, or crew: search for an account, tap Add. In the
      set-up it's a step with Next; from the artist's page it's just Done. */
   function openAddMembers(artistId, kind, o) {
     o = o || {};
     var B = window.GR_BACKEND, band = kind === 'band';
     var known = S.actCards && S.actCards[artistId] && S.actCards[artistId].card;
-    var on = {};
-    ((known && known.members) || []).forEach(function (m) { on[m.userId] = m.kind; });
+    // (vouched: taking them off keeps their history, and for a member takes the other members)
+    var on = {}, vouched = {};
+    ((known && known.members) || []).forEach(function (m) { on[m.userId] = m.kind; if (m.endorsed || (m.kind === 'band' && m.settled)) vouched[m.userId] = true; });
     var results = h('div', { class: 'am-results' });
     var timer = 0, seq = 0, last = [];
     var row = function (p) {
@@ -3101,14 +3102,25 @@
       var has = on[p.userId];
       var btn = h('button', { class: 'am-add' + (has ? ' on' : ''), type: 'button' }, has === kind ? 'Added' : has ? (has === 'band' ? 'A member' : 'On the crew') : 'Add');
       btn.onclick = async function () {
+        // Someone the artist has endorsed is not taken off, or moved from Members to Crew, by a tap
+        // in a search list: that is letting them go, and it is done from the page's own list.
+        if (vouched[p.userId] && on[p.userId] === kind) { toast('To take them off, go to their name in the list on the page.'); return; }
+        if (vouched[p.userId] && on[p.userId] === 'band' && kind === 'crew') { toast('They are a member. Letting a member go is done from the Members list.'); return; }
         btn.disabled = true;
         try {
-          if (on[p.userId] === kind) { await B.removeArtistMember(artistId, p.userId); delete on[p.userId]; }
+          if (on[p.userId] === kind) {
+            var r = await B.removeArtistMember(artistId, p.userId);
+            if (r && r.pending) toast('Asked. Waiting on the other members.'); else delete on[p.userId];
+          }
           else { await B.addArtistMember(artistId, p.userId, kind); on[p.userId] = kind; }
           // (In or out of the band changes what that person's own page is built from.)
           actOf(artistId, true); staleCards();
           paint();
-        } catch (x) { btn.disabled = false; saveFailed('member', x); }
+        } catch (x) {
+          btn.disabled = false;
+          if (x && x.code === 'former_member') toast('They were a member here. Add them under Members: listing a former member as crew isn\u2019t built yet.');
+          else saveFailed('member', x);
+        }
       };
       return h('div', { class: 'fl-row am-row' }, personPhoto(p, 'xs'),
         h('span', { class: 'lr-text' },
@@ -3140,7 +3152,7 @@
     };
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title ca-title' }, band ? 'Add band members' : 'Add crew members'),
+        h('h2', { class: 'sh-title ca-title' }, band ? 'Add members' : 'Add crew members'),
         h('p', { class: 'sh-sub' }, (band ? 'Who are the members? The people actually in the band; a hired player goes under Crew.' : 'Who\u2019s on the crew? Hired players on stage too.') + ' Search for their Greenroom account.'),
         h('div', { class: 'rv-find am-find' }, icon('search', 17),
           h('input', { class: 'input rv-search', type: 'search', placeholder: 'Search name or @username', autocomplete: 'off',
@@ -3150,7 +3162,7 @@
         h('div', { class: 'stack' },
           h('button', { class: 'btn primary block', type: 'button', onclick: done }, o.wizard ? (band ? 'Next' : 'Done') : 'Done'))
       ];
-    }, { label: band ? 'Add band members' : 'Add crew members', cls: 'ca-sheet am-sheet' });
+    }, { label: band ? 'Add members' : 'Add crew members', cls: 'ca-sheet am-sheet' });
     paint('Type a name or an @username.');
   }
   function viewAct() {
@@ -3183,7 +3195,7 @@
     };
     if (!card) {
       return h('div', { class: 'page home profile has-tabs' }, head('Artist'),
-        c.gone ? emptyState('This artist isn\u2019t on Greenroom', 'The profile may have been removed.')
+        c.gone ? emptyState('This artist isn\u2019t on Greenroom', 'The link may be wrong.')
           : c.failed ? h('div', { class: 'fw-fail' }, emptyState('Couldn\u2019t load this artist', 'Check your signal and try again.'),
               h('button', { class: 'btn ghost', type: 'button', onclick: function () { actOf(id, true); render(true); } }, 'Try again'))
           : h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading\u2026'),
@@ -3239,15 +3251,11 @@
         m.canOpen ? h('button', { class: 'fl-row', type: 'button', onclick: function () { openProfile(m.userId); } }, inner)
           : h('div', { class: 'fl-row' }, inner),
         trophy,
-        manage ? h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Remove ' + (m.name || 'them'),
-          onclick: function () {
-            confirmSheet({ title: 'Remove ' + (m.name || 'them') + ' from ' + card.name + '?', body: 'You can add them again any time.',
-              action: 'Remove', danger: true,
-              onConfirm: async function () {
-                try { await B.removeArtistMember(id, m.userId); actOf(id, true); staleCards(); return true; }
-                catch (x) { saveFailed('member', x); return false; }
-              } });
-          } }, icon('close', 14)) : null);
+        manage && m.leaving ? h('button', { class: 'am-endorse am-leaving', type: 'button',
+          'aria-label': (m.name || 'They') + ': waiting on the other members',
+          onclick: function () { openLeaving(id, card.name, m); } }, 'Waiting on ' + G.num(m.leaving.waiting)) : null,
+        manage && !m.leaving ? h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Take ' + (m.name || 'them') + ' off',
+          onclick: function () { openLetGo(id, card, m); } }, icon('close', 14)) : null);
     };
     var people = function (list, kind) {
       return [
@@ -3257,7 +3265,7 @@
               manage ? 'Search for their Greenroom account to add them.' : card.name + ' hasn\u2019t added anyone here yet.'),
         manage ? h('div', { class: 'am-more' },
           h('button', { class: 'add-pill', type: 'button', onclick: function () { openAddMembers(id, kind); } },
-            icon('plus', 16), kind === 'band' ? 'Add band members' : 'Add crew members')) : null
+            icon('plus', 16), kind === 'band' ? 'Add members' : 'Add crew members')) : null
       ];
     };
     // Every tour there is: the ones on Greenroom (they open) and the ones the
@@ -3331,7 +3339,7 @@
           : aboutLine ? h('p', { class: 'pf-bio act-about' }, aboutLine)
           : (manage ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
         historyBlock(id, manage, tours),
-        unclaimed ? h('p', { class: 'hist-note act-note' }, 'Nobody runs this page yet. If this is your band, claim it.') : null,
+        unclaimed ? h('p', { class: 'hist-note act-note' }, 'Nobody runs this page yet. If you are a member, claim it.') : null,
         manage ? h('div', { class: 'pf-actions' },
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openHistorySheet(id, card.name); } }, 'Tour history'))
@@ -3621,13 +3629,139 @@
         h('div', { class: 'stack' },
           h('button', { class: 'btn primary block', type: 'button', onclick: function () {
             confirmSheet({ title: 'Give ' + x.artist + ' to ' + (x.name || 'them') + '?',
-              body: 'They\u2019ll run the page: its photo, bio, band, crew and tour history. It gets marked verified.',
+              body: 'They\u2019ll run the page: its photo, bio, members, crew and tour history. It gets marked verified.',
               action: 'Approve', onConfirm: function () { return answer(true); } });
           } }, 'Approve'),
           h('button', { class: 'btn danger block', type: 'button', onclick: function () { answer(false); } }, 'Decline'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); if (back) setTimeout(back, 300); } }, back ? 'Back' : 'Close'))
       ];
     }, { label: 'Claim: ' + x.artist, cls: 'ca-sheet' });
+  }
+  /* Taking someone off an artist page (Devin, 2026-10-10): "Just because you
+     were fired doesn't mean your history is erased. It just means from the
+     moment you were fired you are no longer listed on that artist page and
+     getting analytics added to your page for future tours. This should be the
+     same for crew as well." And who decides: "when firing a crew member
+     anyone can do it. But when firing a member you need to get the other
+     members to endorse the decision." The server holds the rules (0132);
+     these sheets say what will happen before it does. */
+  function openLetGo(artistId, card, m) {
+    var B = window.GR_BACKEND, name = m.name || 'This person', artist = card.name || 'the artist';
+    var me = B && B.uid ? B.uid() : null, mine = !!me && m.userId === me;
+    // Nothing to keep (the server's rule): crew the artist has not endorsed, or a member added this week and not endorsed.
+    var nothing = !m.endorsed && (m.kind !== 'band' || !m.settled);
+    // The other members whose yes it takes (yours counts if you are one). Leaving yourself asks nobody.
+    var others = (card.members || []).filter(function (x) { return x.kind === 'band' && x.userId !== m.userId && x.userId !== me; }).length;
+    var asks = !nothing && !mine && m.kind === 'band' && others > 0;
+    var stays = ' They stay on any tour they are on until they are taken off that tour.';
+    confirmSheet({
+      title: mine ? 'Leave ' + artist + '?' : (asks ? 'Let ' + name + ' go from ' : 'Take ' + name + ' off ') + artist + '?',
+      body: nothing
+        ? (m.kind === 'band'
+            ? name + ' was added less than a week ago and is not endorsed, so this simply takes them off: nothing from ' + artist + ' is kept on their page.'
+            : name + ' is not endorsed by ' + artist + ', so there is nothing from ' + artist + ' on their page to keep.') + ' You can add them again any time.'
+        : mine
+          ? 'From today you are not listed on ' + artist + ', and nothing new from ' + artist + ' is added to your page. Everything up to today stays on it.'
+        : asks
+          ? 'Letting a member go takes every other member\u2019s yes: ' + plural(others, 'member') + ' to ask, and one no stops it. When they have all agreed, ' +
+            name + ' comes off ' + artist + '\u2019s page. Everything up to that day stays on their own page; nothing after it is added.' + stays
+          : 'From today they are not listed on ' + artist + ', and nothing new from ' + artist + ' is added to their page. ' +
+            'Everything up to today stays on it: their history is not erased.' + stays + ' You can add them again any time.',
+      action: mine ? 'Leave' : asks ? 'Ask the other members' : 'Take off', danger: true,
+      onConfirm: async function () {
+        try {
+          var r = await B.removeArtistMember(artistId, m.userId);
+          actOf(artistId, true); staleCards(); if (mine) myActs(true);
+          toast(r && r.pending ? 'Asked. ' + plural(G.num(r.waiting), 'member') + ' will see it at the top of their profile.'
+            : mine ? 'You are off ' + artist + '\u2019s page. Your history stays on yours.'
+            : r && r.kept ? name + ' is off the page. Their history stays on their own page.'
+            : name + ' is off the page.');
+          return true;
+        } catch (x) { saveFailed('member', x); return false; }
+      } });
+  }
+  function openLeaving(artistId, artist, m) {
+    var B = window.GR_BACKEND, name = m.name || 'This person', left = G.num(m.leaving && m.leaving.waiting);
+    var settled = function () { actOf(artistId, true); staleCards(); };
+    // Everyone still on the page has said yes (the last one to answer has since left): finish it.
+    if (left <= 0) {
+      confirmSheet({
+        title: 'Take ' + name + ' off ' + artist + '?',
+        body: 'Every other member has agreed. From today ' + name + ' is not listed on ' + artist + '; everything up to today stays on their own page.',
+        action: 'Take off now', danger: true,
+        onConfirm: async function () {
+          try { await B.removeArtistMember(artistId, m.userId); settled(); toast(name + ' is off the page. Their history stays on their own page.'); return true; }
+          catch (x) { saveFailed('member', x); return false; }
+        } });
+      return;
+    }
+    confirmSheet({
+      title: 'Waiting on the other members',
+      body: plural(left, 'member') + ' still to say yes before ' + name + ' comes off ' + artist + '\u2019s page. One no stops it.',
+      action: 'Call it off', cancel: 'Keep waiting',
+      onConfirm: async function () {
+        try {
+          var r = await B.cancelMemberRemoval(artistId, m.userId);
+          settled();
+          toast(r && r.ok === false ? 'That was already settled.' : 'Called off. ' + name + ' stays.');
+          return true;
+        } catch (x) { saveFailed('member', x); return false; }
+      } });
+  }
+  // Waiting on you: a member of one of your artists that someone asked to let go.
+  function memberAsks(fresh) {
+    var c = S.memberAsks || (S.memberAsks = { list: [], at: 0, asking: false });
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B || !B.memberRemovalAsks) return c;
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      B.memberRemovalAsks().then(function (l) {
+        var had = c.list.length;
+        c.list = Array.isArray(l) ? l : []; c.at = Date.now(); c.asking = false;
+        if (c.list.length || had) render();
+      }).catch(function () { c.asking = false; c.at = Date.now(); });
+    }
+    return c;
+  }
+  function memberAskCards() {
+    var list = memberAsks().list || [];
+    if (!list.length) return null;
+    return h('div', { class: 'tc-asks' }, list.map(function (a) {
+      return h('button', { class: 'tc-ask on', type: 'button', onclick: function () { openMemberAsk(a); } },
+        h('span', { class: 'tc-ask-t' }, (a.askedBy || 'Someone') + ' asked to let ' + (a.name || 'a member') + ' go from ' + a.artist), icon('chevron', 16));
+    }));
+  }
+  function openMemberAsk(a) {
+    var B = window.GR_BACKEND, name = a.name || 'this member', busy = false;
+    var answer = async function (yes) {
+      if (busy) return; busy = true;
+      try {
+        var r = await B.answerMemberRemoval(a.artistId, a.userId, yes);
+        S.memberAsks = null; staleCards(); if (S.actCards) delete S.actCards[a.artistId];
+        closeSheet();
+        toast(!r || r.ok === false ? 'That was already settled.'
+          : !yes ? 'Stopped. ' + name + ' stays with ' + a.artist + '.'
+          : r.ended ? name + ' is off ' + a.artist + '\u2019s page. Their history stays on their own page.'
+          : 'Your yes is in. Waiting on ' + plural(G.num(r.waiting), 'more member') + '.');
+        render(true);
+      } catch (x) {
+        busy = false;
+        // Not yours to answer any more (it was settled, or you are no longer a member): put the card away.
+        if (x && x.code === 'permission') { S.memberAsks = null; closeSheet(); toast('That was already settled.'); render(true); return; }
+        saveFailed('member', x);
+      }
+    };
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Let ' + name + ' go from ' + a.artist + '?'),
+        h('p', { class: 'sh-sub' }, (a.askedBy || 'Someone') + ' asked. Letting a member go takes every other member\u2019s yes, and one no stops it. ' +
+          'If it goes ahead, ' + name + ' comes off ' + a.artist + '\u2019s page that day. Everything up to then stays on their own page; nothing after it is added from ' + a.artist + '.'),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn danger block', type: 'button', onclick: function () { answer(true); } }, 'Agree'),
+          h('button', { class: 'btn primary block', type: 'button', onclick: function () { answer(false); } }, 'Don\u2019t agree: ' + name + ' stays'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
+      ];
+    }, { label: 'Let ' + name + ' go?' });
   }
   // On your own Artists tab: one line per artist that endorsed you.
   function creditAskCards() {
@@ -5812,7 +5946,8 @@
       return h('button', { class: 'vp-endorsed pa-endorsed', type: 'button', 'aria-label': 'Endorsed by ' + x.name,
         onclick: function () {
           confirmSheet({ title: 'Endorsed by ' + x.name,
-            body: x.name + ' endorsed you: their word that you really worked for them. Everyone who can see your page sees it. Remove it only if it isn\u2019t right.',
+            body: x.name + ' endorsed you: their word that you really worked for them. Everyone who can see your page sees it. Remove it only if it isn\u2019t right.' +
+              (x.kind === 'crew' ? ' The tours ' + x.name + ' confirmed for you come off your page with it' + (x.past ? ', and it cannot be given again.' : '.') : ''),
             action: 'Remove endorsement', danger: true,
             onConfirm: async function () {
               try {
@@ -5831,11 +5966,14 @@
         } }, face);
     };
     var row = function (name, page, logo, endorsed, sub) {
+      // An artist you were with and are not listed on any more: it stays, and says so.
+      var former = endorsed && endorsed.past && endorsed.id ? (endorsed.kind === 'band' ? 'Former member' : 'Former crew') : '';
+      var under = sub || [page && page.handle, former].filter(Boolean).join(' \u00b7 ');
       var inner = [
         h('span', { class: 'avatar' + (logo ? ' has' : ' letter') + (page && page.avatar ? ' photo' : ''), 'aria-hidden': 'true' },
           logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(name).trim().charAt(0).toUpperCase()),
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, name),
-          (sub || (page && page.handle)) ? h('span', { class: 'lr-sub' }, sub || page.handle) : null)];
+          under ? h('span', { class: 'lr-sub' }, under) : null)];
       var main = page && page.id
         ? h('button', { class: 'list-row art-row', type: 'button', onclick: function () { openAct(page.id); } }, inner, endorsed ? null : icon('chevron', 18))
         : h('div', { class: 'list-row art-row still' }, inner);
@@ -5946,7 +6084,8 @@
           'aria-selected': on ? 'true' : 'false', onclick: function () { pick(x.key); } },
           icon(x.icon, 20), h('span', null, x.label));
       })),
-      h('div', { class: 'pt-body', role: 'tabpanel', style: S.pfMinH > 0 ? 'min-height:' + S.pfMinH + 'px' : null }, body)
+      // A member of one of your artists that someone asked to let go: it waits on your answer, on every tab.
+      h('div', { class: 'pt-body', role: 'tabpanel', style: S.pfMinH > 0 ? 'min-height:' + S.pfMinH + 'px' : null }, memberAskCards(), body)
     ];
   }
   // Back at the top of the profile: the room kept for a tab switch is given up,

@@ -2003,6 +2003,8 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .pa-endorsed { padding: 6px 4px 6px 10px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .am-endorse { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 28px; margin-left: 6px; padding: 0 10px; border: 0; border-radius: 999px;
   background: var(--surface-2); color: var(--ink); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; white-space: nowrap; }
+/* A member asked to leave, waiting on the others: the same pill, quiet. */
+.am-endorse.am-leaving { background: transparent; border: 1px solid var(--line); color: var(--ink-2); font-size: 12px; }
 /* Give flowers on Crew Stats and your profile's Stats: pinned at the bottom of
    the screen, just above the bottom bar, on a fade so the list slips under it. */
 .fw-me-give.pinned { position: fixed; left: 0; right: 0; bottom: calc(55px + env(safe-area-inset-bottom, 0px)); z-index: 39;
