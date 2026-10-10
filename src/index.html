@@ -2506,11 +2506,6 @@ button.acct-row:active { background: var(--surface-2); }
 /* A row that drops more rows down: its arrow turns, and what it holds sits one step in. */
 .mn-row .mn-chev { transition: transform .18s ease; }
 .mn-row.open > .mn-chev { transform: rotate(90deg); }
-.mn-drop { margin-left: 17px; padding-left: 16px; border-left: 1px solid var(--line); }
-.mn-drop .mn-row { min-height: 44px; }
-.mn-drop .mn-label { font-size: 15px; }
-.mn-ic .mn-face { width: 24px; height: 24px; font-size: 12px; }
-.mn-ic .mn-face .brand-logo { padding: 2px; }
 .mn-over { margin: 10px 0 2px; }
 .mn-head.mn-tour { margin-top: 14px; }
 /* The menu and the pages under it: no band, the GR mark alone in green, centred. */
@@ -2525,7 +2520,6 @@ button.acct-row:active { background: var(--surface-2); }
 .mr-p.bad { color: var(--neg); font-weight: 600; }
 .mr-card .pt-two { margin-top: 4px; }
 .mn-page-t { position: relative; z-index: 1; margin: 2px 0 10px; font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
-.mn-none { margin: 4px 0 8px; font-size: 14px; line-height: 1.4; color: var(--ink-2); }
 .mn-list { position: relative; z-index: 1; }
 /* The menu slides in from the right the first time it draws, like a page being pushed. */
 @keyframes mn-in { from { transform: translateX(22px); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -2940,8 +2934,8 @@ button.fl-row { cursor: pointer; }
 .pay-tabs .vp-tab { flex: 1 1 0; min-width: 0; padding-left: 8px; padding-right: 8px; font-size: 15px; }
 .pay-tab-t { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; letter-spacing: .01em; }
 .pay-tabs + .bk-tabs { margin-top: -4px; }
-.pay-locked { margin: 36px 2px 0; text-align: center; }
-.pay-locked-t { margin: 0 0 8px; font-size: 15px; font-weight: 800; letter-spacing: .08em; color: var(--ink-2); }
+/* Crew see MY PAY alone: one tab, so it reads as the page's name. */
+.pay-tabs.one .vp-tab { cursor: default; }
 .pay-top { display: flex; align-items: center; gap: 14px; margin: 10px 2px 12px; }
 .pay-photo { flex: none; }
 .pay-sum-tabs { flex: 1; min-width: 0; display: flex; gap: 8px; }

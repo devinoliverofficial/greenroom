@@ -710,11 +710,7 @@
         !(route.name === 'artist' && S.route && S.route.name === 'tour')) delete S.fromMap[key];
     }
     // The menu slides in when you open it (the three lines), not when you step back to it.
-    // Opened from your profile, its Budget drop-down starts closed; from a page under it, it stays as you left it.
-    if (route.name === 'mainmenu' && route.fresh) {
-      S.menuIn = true;
-      if (S.route && S.route.name === 'home') { S.mnBudget = false; S.mnArtist = null; }
-    }
+    if (route.name === 'mainmenu' && route.fresh) S.menuIn = true;
     // Leaving your profile: how far down its tabs you were, for the way back.
     if (S.route && S.route.name === 'home' && route.name !== 'home') S.homeY = window.scrollY;
     var backToTabs = route === PF_HOME && S.homeY;
@@ -744,6 +740,7 @@
   // view: which tab to land on; from / fromLabel: where its back button returns.
   function openTour(id, view, from, fromLabel, book) {
     var t = getTour(id);
+    if (t && t.deletedAt) { toast('That tour was deleted. Its creator can restore it from Settings.'); return; }
     // Coming in from the menu or its lists is a fresh visit: today, not the day you last flipped to.
     if (from) { S.dsIndex = null; S.glTour = null; S.glShow = null; }
     // Its money pages open without its shows, so the book skips the setup detour.
@@ -790,6 +787,8 @@
       if (!actingAs() || S.route.id !== actingAs()) S.route = PF_HOME;
     }
     if (S.loaded && S.route.name === 'home' && actingAs()) S.route = actHome();
+    // The pages the old menu led to (every tour, every artist, Budget by artist) are gone: your own page instead.
+    if (S.loaded && ['tours', 'artists', 'book'].indexOf(S.route.name) >= 0) S.route = PF_HOME;
     if (!S.loaded) node = viewLoading();
     else if (S.route.name === 'wizard') node = viewWizard();
     else if (S.route.name === 'tour') node = viewTour();
@@ -800,9 +799,6 @@
     else if (S.route.name === 'act') node = viewAct();
     else if (S.route.name === 'search') node = viewSearch();
     else if (S.route.name === 'mainmenu') node = viewMenu();
-    else if (S.route.name === 'tours') node = viewAllTours();
-    else if (S.route.name === 'artists') node = viewAllArtists();
-    else if (S.route.name === 'book') node = viewBook();
     else if (S.route.name === 'merchroom') node = viewMerchroom();
     else node = viewHome();
     // The tab bar stays the same element when nothing about it changed, so a
@@ -1585,22 +1581,34 @@
     return entries;
   }
 
-  /* Nothing is ever erased (Devin, 2026-10-10: "The greenroom app is an
-     archive. A history book. There is no deleting tours or deleting artist
-     pages ever."). A tour can still be taken down by its creator, which only
-     moves it out of sight into Recently deleted, where Restore puts it back
-     for as long as the app exists. The 30-day clear-out and "Delete forever"
-     are gone, and the database refuses the delete as well (0131). */
+  /* Two sides of touring (Devin, 2026-10-10). The Touring Logistics pages are
+     a tour in here: its budget, day sheets, guest lists, stats and chat,
+     private to the people on it. "The touring logistics pages I think can be
+     edited and deleted and restored." The Touring Social Media Experience is
+     the public record on artist and people pages: "an archive that forever
+     exists", never deleted. So a tour's creator can delete it, which moves it
+     out of sight into Deleted tours (Settings), and restore it for as long as
+     the app exists. Nothing is erased by this: there is no clear-out and no
+     "delete forever", and the database refuses a real delete (0131). */
+  // Only the creator can delete or restore (the database's rule too), so only theirs are listed.
   function trashedEntries() {
-    return allTourEntries(true).filter(function (e) { return e[1].deletedAt; });
+    return allTourEntries(true).filter(function (e) { return e[1].deletedAt && (S.mode !== 'db' || createdTour(e[0])); });
   }
-  async function softDeleteTour(id) {
-    if (S.mode === 'db' && !createdTour(id)) { toast('Only the tour\u2019s creator can take it down.'); return false; }
-    if (await api.update(id, { deletedAt: Date.now() })) {
-      toast('Taken down. It waits in Recently deleted; Restore brings it back.');
-      return true;
-    }
-    return false;
+  function confirmDeleteTour(id, after) {
+    var t = getTour(id) || {};
+    if (S.mode === 'db' && !createdTour(id)) { toast('Only the tour\u2019s creator can delete it.'); return; }
+    confirmSheet({
+      title: 'Delete ' + (t.name || 'this tour') + '?',
+      body: 'Its budget, day sheets, guest lists and chat go out of sight' +
+        (S.mode === 'db' ? ' for everyone on it' : '') + ', and it comes off the tour lists on your page and the artist\u2019s until you restore it. ' +
+        'It is kept, not erased: restore it any time from Settings, under Deleted tours.',
+      action: 'Delete tour', danger: true,
+      onConfirm: async function () {
+        var ok = await api.update(id, { deletedAt: Date.now() });
+        if (ok) { delete S.lastNet[id]; delete S.lastState[id]; toast('Deleted. Restore it from Settings.'); if (after) after(); }
+        return ok;
+      }
+    });
   }
   async function restoreTour(id) {
     return api.update(id, { deletedAt: null });
@@ -2857,8 +2865,11 @@
       B.myArtists().then(function (rows) {
         a.asking = false;
         if (a.again) { a.again = false; myActs(true); return; }
+        var first = !a.list;
         a.list = rows; a.at = Date.now();
         if (a.onLoad) { var f = a.onLoad; a.onLoad = null; f(); }
+        // The three-lines menu is drawn from this list (Create a tour, Merchroom): draw it again once it lands.
+        if (first && S.route && S.route.name === 'mainmenu') render(true);
         // The artist you're on isn't yours any more: redraw, which puts you back on your own account.
         if (S.actAs && !rows.some(function (x) { return x.id === S.actAs && x.mine; })) render();
       })
@@ -5392,29 +5403,6 @@
     registeredArtists().forEach(function (a) { if (!byArtist.has(a)) byArtist.set(a, []); });
     return { byArtist: byArtist, loose: loose };
   }
-  // An artist's row; swipe it away if every tour under it is yours to delete.
-  function artistRow(name, entries, from, fromLabel) {
-    var cardEl = artistCard(name, entries, from, fromLabel);
-    if (!canWrite() || (S.mode === 'db' && !entries.every(function (e) { return createdTour(e[0]); }))) return cardEl;
-    return swipeable(cardEl, function () {
-      confirmSheet({
-        title: 'Take down every tour for ' + name + '?',
-        body: entries.length
-          ? plural(entries.length, 'tour') + ' move to Recently deleted. Nothing is erased: each can be restored.'
-          : 'They have no runs yet, so nothing else goes with them.',
-        action: entries.length ? 'Take down ' + plural(entries.length, 'tour') : 'Remove ' + name,
-        danger: true,
-        onConfirm: async function () {
-          for (var i = 0; i < entries.length; i++) {
-            await api.update(entries[i][0], { deletedAt: Date.now() });
-          }
-          await forgetArtist(name);
-          toast(name + ' moved to Recently deleted');
-          return true;
-        }
-      });
-    }, name);
-  }
   // The tour the menu's tour rows open: the one you were last in, else the
   // one on the road now, else the newest.
   function currentTourId() {
@@ -5458,130 +5446,74 @@
       h('span', { class: 'mn-text' }, h('span', { class: 'mn-label' }, label), sub ? h('span', { class: 'mn-sub' }, sub) : null),
       h('span', { class: 'mn-chev', 'aria-hidden': 'true' }, icon('chevron', 18)));
   }
-  /* BUDGET in the menu. The row drops down your artists; an artist drops
-     down Off Tour (what the band spends between tours) and Tours (a page of
-     that artist's tours; a tour opens as two tabs, Expenses and Income).
-     Money only: an artist is listed when you can see its Off Tour book or
-     the money of one of its tours, so GA never gets the row at all. */
-  function bookTours(name) {
-    return toursByNow().filter(function (e) { return artistOf(e[1]) === name && canSeeMoney(e[0]); });
+  /* The three lines (Devin, 2026-10-10): "We don't need budget, overview,
+     daysheets, crew stats, or chat here. We can put for Artists and members
+     pages this tab will show 'Create a tour.' Merchroom. For everyone it will
+     show 'settings.'" A tour's own pages are behind Overview in the bottom bar. */
+  // The artists that are yours to make a tour for: the page you're switched
+  // to, the pages you run or are listed on as a member, and (until members
+  // are set on every artist page) any artist you made tours for.
+  function myArtistNames() {
+    var out = [];
+    var add = function (n) {
+      n = String(n || '').trim();
+      if (n && !out.some(function (x) { return x.toLowerCase() === n.toLowerCase(); })) out.push(n);
+    };
+    var acting = actingAs() ? actingCard() : null;
+    if (acting && acting.name) add(acting.name);
+    ((myActs().list) || []).forEach(function (x) { if (x.mine || x.kind === 'band') add(x.name); });
+    // an artist you added yourself, and one you already made a tour for
+    registeredArtists().forEach(add);
+    Array.from(tourGroups().byArtist.keys()).forEach(function (name) { if (ownsBand(name)) add(name); });
+    return out;
   }
-  function budgetArtists() {
-    return Array.from(tourGroups().byArtist.keys()).filter(function (name) {
-      return bookTours(name).length || canSeeOffTour(name);
-    });
+  // May you start a tour under this artist's name? (Crew on someone's tour may not file one under theirs.)
+  function mayStartTourFor(name) {
+    var key = String(name || '').trim().toLowerCase();
+    return canWrite() && myArtistNames().some(function (n) { return n.toLowerCase() === key; });
   }
-  function budgetRows(here) {
-    var artists = budgetArtists();
-    var loose = bookTours(''); // tours not filed under an artist yet
-    if (!artists.length && !loose.length) return null;
-    var open = !!S.mnBudget;
-    return [
-      menuRow('tabmoney', 'Budget', function () { S.mnBudget = !open; render(true); }, null, { open: open }),
-      !open ? null : h('div', { class: 'mn-drop' }, artists.map(function (name) {
-        var on = S.mnArtist === name, logo = artistLogo(name), tours = bookTours(name);
-        var face = h('span', { class: 'avatar mn-face' + (logo ? ' has' : ' letter') },
-          logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(name).trim().charAt(0).toUpperCase());
-        return [
-          menuRow(null, name, function () { S.mnArtist = on ? null : name; render(true); }, null, { open: on, face: face }),
-          !on ? null : h('div', { class: 'mn-drop' },
-            canSeeOffTour(name) ? menuRow('tabcost', 'Off Tour', function () {
-              go({ name: 'artist', artist: name, view: 'off', from: here, fromLabel: 'Menu' });
-            }) : null,
-            tours.length ? menuRow('calendar', 'Tours', function () {
-              go({ name: 'book', artist: name, back: here });
-            }) : null)
-        ];
-      }), loose.length ? menuRow('calendar', 'Tours with no artist', function () {
-        go({ name: 'book', artist: '', back: here });
-      }) : null)
-    ];
+  // An artist's or a member's account. Crew, and later fans, get Settings only.
+  // (Someone starting their first artist does it from the + on their profile.)
+  function artistSide() {
+    return canWrite() && myArtistNames().length > 0;
+  }
+  /* Members, artists and crew, as against fans (Devin, 2026-10-10: Linked
+     Cards "should only be shown to members, artists, and crew members").
+     Until an account says what it is at sign-up, someone who is on a tour,
+     runs an artist or is listed on one is in music; someone who is on
+     nothing is, for now, a fan. */
+  function inMusic() {
+    return allTourEntries().length > 0 || myArtistNames().length > 0 || ((myActs().list) || []).length > 0;
+  }
+  function createTourFromMenu() {
+    var acting = actingAs() ? actingCard() : null;
+    if (acting && acting.name) { startTour(acting.name); return; }
+    var names = myArtistNames();
+    if (!names.length) { go({ name: 'newartist' }); return; }
+    if (names.length === 1) { startTour(names[0]); return; }
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Create a tour'),
+        h('p', { class: 'sh-sub' }, 'Which artist is it for?'),
+        h('div', { class: 'stack' }, names.map(function (n) {
+          return h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(true); startTour(n); } }, n);
+        }))
+      ];
+    }, { label: 'Create a tour' });
   }
   function viewMenu() {
     var backTo = S.route.back || { name: 'home' };
     var here = { name: 'mainmenu', back: backTo };
-    var entries = allTourEntries();
-    var id = currentTourId(), t = id ? getTour(id) : null;
-    // Expenses and Income live under Budget, and the guest list under your profile, so the tour's own rows leave them out.
-    var tabs = !t ? [] : TOUR_TABS.filter(function (x) { return ['money', 'costs', 'guests'].indexOf(x.view) < 0; });
     var first = S.menuIn; S.menuIn = false;
-    // One list, no rules between: the money first, then the tour you're in, then Settings.
+    var mine = artistSide();
     return h('div', { class: 'page home menu-page has-tabs' + (first ? ' mn-in' : '') },
       menuHead(null),
       dbBanner(),
       h('section', { class: 'mn-group' },
-        budgetRows(here),
-        menuRow('tag', 'Merchroom', function () { go({ name: 'merchroom', back: here }); }),
-        (t && !t.setupDone && canEditTour(id))
-          ? menuRow('edit', 'Finish setting up', function () { openTour(id, 'details', here, 'Menu'); }, 'Add its shows to open the rest')
-        : t ? tabs.map(function (x) {
-          return menuRow(x.icon, x.label, function () { openTour(id, x.view, here, 'Menu'); });
-        }) : h('p', { class: 'mn-none' }, canWrite()
-          ? 'No tours yet. Tap + on your profile to add an artist, then their first tour.'
-          : 'No tours have been shared with you yet.'),
+        mine ? menuRow('plus', 'Create a tour', createTourFromMenu) : null,
+        mine ? menuRow('tag', 'Merchroom', function () { go({ name: 'merchroom', back: here }); }) : null,
         menuRow('gear', 'Settings', function () { openSettingsSheet(); })),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
-      socialBar(''));
-  }
-  /* Every tour you're on, all artists together: on the road first, then the
-     newest. A tour opened from here comes back here. */
-  function viewAllTours() {
-    var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
-    var here = { name: 'tours', back: backTo };
-    var entries = toursByNow();
-    return h('div', { class: 'page home profile menu-page has-tabs' },
-      menuHead('Tours', { menu: true }),
-      dbBanner(),
-      entries.length ? h('ul', { class: 'tour-list rows mn-list' }, entries.map(function (e) {
-        return h('li', null, tourListRow(e, function () { openTour(e[0], 'details', here, 'Tours'); }));
-      })) : emptyState('No tours yet', canWrite()
-        ? 'Tap + on your profile to add an artist, then their first tour.'
-        : 'Nothing has been shared with you yet.'),
-      socialBar(''));
-  }
-  // A tour as a row in a list: its artist's picture, its name, and where it stands (on the road, or its dates).
-  function tourListRow(e, onTap) {
-    var t = e[1], artist = artistOf(t), logo = artist ? artistLogo(artist) : null;
-    var dates = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
-    var live = tourIsLive(t);
-    var span = dates.length ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') + ', ' + String(dates[dates.length - 1]).slice(0, 4) : 'No shows yet';
-    return h('button', { class: 'list-row tour-row', type: 'button', onclick: onTap },
-      h('span', { class: 'avatar' + (logo ? ' has' : ' letter'), 'aria-hidden': 'true' },
-        logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(artist || t.name || '?').trim().charAt(0).toUpperCase()),
-      h('span', { class: 'lr-text' },
-        h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
-        h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artist, live ? 'On the road' : span].filter(Boolean).join(' \u00b7 '))),
-      icon('chevron', 18));
-  }
-  /* Budget, then an artist, then Tours: that artist's tours whose money you
-     can see. A tour opens as its money book: two tabs, Expenses and Income. */
-  function viewBook() {
-    var name = S.route.artist || '';
-    var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
-    var here = { name: 'book', artist: name, back: backTo };
-    var entries = bookTours(name);
-    return h('div', { class: 'page home profile menu-page has-tabs' },
-      menuHead(name || 'Budget', { menu: true }),
-      dbBanner(),
-      h('h2', { class: 'mn-h mn-over' }, 'Budget \u00b7 Tours'),
-      entries.length ? h('ul', { class: 'tour-list rows mn-list' }, entries.map(function (e) {
-        return h('li', null, tourListRow(e, function () { openTour(e[0], 'costs', here, 'Tours', true); }));
-      })) : emptyState('No tours here', 'Tours whose budget you can see show up here.'),
-      socialBar(''));
-  }
-  // Your artists, each opening its own page of tours (and Off Tour). An artist opened from here comes back here.
-  function viewAllArtists() {
-    var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
-    var here = { name: 'artists', back: backTo };
-    var groups = tourGroups();
-    return h('div', { class: 'page home profile menu-page has-tabs' },
-      menuHead('Artists', { menu: true }),
-      dbBanner(),
-      groups.byArtist.size ? h('ul', { class: 'tour-list rows mn-list' }, Array.from(groups.byArtist, function (pair) {
-        return h('li', null, artistRow(pair[0], pair[1], here, 'Artists'));
-      })) : emptyState('No artists yet', canWrite()
-        ? 'Tap + on your profile to add your artist, then their first tour.'
-        : 'Nothing has been shared with you yet.'),
       socialBar(''));
   }
 
@@ -5616,21 +5548,33 @@
   /* The tour the profile's Today, Stats and Guest list read: the one you
      picked, else the one on the road, else the one you were last in. Opening
      an old tour to look something up doesn't move Today off the road. */
+  /* On an artist's account only that artist's tours count (Devin, 2026-10-10:
+     "Each artist should have a clean slate when they open this page ... Every
+     overview tab ... should literally be unique to the situation"): the
+     Overview button opens one of theirs, or isn't there at all. */
+  function scopedTours() {
+    var card = actingAs() ? actingCard() : null, key = card && card.name ? String(card.name).trim().toLowerCase() : '';
+    var all = toursByNow();
+    if (!actingAs()) return all;
+    return key ? all.filter(function (e) { return artistOf(e[1]).toLowerCase() === key; }) : [];
+  }
   function profileTourId() {
-    var entries = allTourEntries();
-    if (S.pfTour && entries.some(function (e) { return e[0] === S.pfTour; })) return S.pfTour;
+    var entries = scopedTours();
+    var has = function (x) { return !!x && entries.some(function (e) { return e[0] === x; }); };
+    if (has(S.pfTour)) return S.pfTour;
     var last = currentTourId();
+    if (!has(last)) last = null;
     if (last && tourIsLive(getTour(last))) return last;
-    var live = toursByNow().filter(function (e) { return tourIsLive(e[1]); })[0];
-    return live ? live[0] : last;
+    var live = entries.filter(function (e) { return tourIsLive(e[1]); })[0];
+    return live ? live[0] : (last || (actingAs() && entries[0] ? entries[0][0] : null));
   }
   // Pick the tour the menu's rows and the profile's Today, Stats and Guest list read.
   function openTourPicker(cur) {
-    var entries = toursByNow(), id = cur || currentTourId();
+    var entries = scopedTours(), id = cur || profileTourId();
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'Which tour?'),
-        h('p', { class: 'sh-sub' }, 'Today, Stats, Guest list and the menu follow this tour.'),
+        h('p', { class: 'sh-sub' }, 'Today, Stats, Guest list and Overview follow this tour.'),
         h('div', { class: 'fl-list' }, entries.map(function (e) {
           var on = e[0] === id, live = tourIsLive(e[1]);
           return h('button', { class: 'fl-row', type: 'button', 'aria-pressed': on ? 'true' : 'false',
@@ -5897,9 +5841,22 @@
         : h('div', { class: 'list-row art-row still' }, inner);
       return endorsed ? h('li', { class: 'pa-li' }, main, trophy(endorsed)) : h('li', null, main);
     };
+    // A name typed by mistake (no tours under it, no page, no endorsement) can be swiped away. Tours and pages never are.
+    var stray = function (n, page) {
+      return canWrite() && !page && !n.endorsed && registeredArtists().indexOf(n.name) >= 0 && !(byArtist.get(n.name) || []).length;
+    };
     return [asks, h('ul', { class: 'tour-list rows' },
       named.map(function (n) {
         var page = pages[String(n.name).trim().toLowerCase()];
+        if (stray(n, page)) {
+          return h('li', null, swipeable(h('div', { class: 'list-row art-row still' },
+            h('span', { class: 'avatar letter', 'aria-hidden': 'true' }, String(n.name).trim().charAt(0).toUpperCase()),
+            h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, n.name))), function () {
+            confirmSheet({ title: 'Remove ' + n.name + '?', body: 'They have no tours yet, so nothing else goes with them.',
+              action: 'Remove ' + n.name, danger: true,
+              onConfirm: async function () { await forgetArtist(n.name); toast(n.name + ' removed'); render(true); return true; } });
+          }, n.name));
+        }
         return row(n.name, page, (page && page.avatar) || artistLogo(n.name), n.endorsed);
       }).concat(extra.map(function (x) {
         return row(x.name, x.id ? { id: x.id, handle: x.handle, avatar: x.avatar } : null, x.avatar || artistLogo(x.name), x,
@@ -6059,22 +6016,43 @@
       null);
   }
 
-  /* Settings, behind the gear: the trash, who you are to the tour, the way out. */
+  /* Settings (Devin, 2026-10-10): "Everyone sees contact card, Sign out,
+     delete my account (this applies to any account but not artist accounts.
+     Those just exist). 'Card feed' should be changed to 'Linked Cards' which
+     is where you can edit card information. This should only be shown to
+     members, artists, and crew members." He first dropped Recently deleted
+     ("we are not allowing tours to be deleted"), then settled it the same
+     day: the Touring Logistics pages "can be edited and deleted and
+     restored", so the tours you deleted are listed here as Deleted tours,
+     and only when there are any. */
   function openSettingsSheet() {
     var B = window.GR_BACKEND;
     var signedIn = S.mode === 'db' && B && B.signOut;
     var who = signedIn && B.email ? B.email() : null;
+    var asArtist = !!actingAs();
     var trashed = trashedEntries().length;
+    // Linked Cards: the tour's cards for whoever linked them, else your own cards (MY PAY's). Never shown to a fan.
+    var payTour = currentTourId();
+    // The page the menu was opened from: on an artist's Off Tour book, its card settings are here too.
+    var behind = S.route && S.route.name === 'mainmenu' ? S.route.back : S.route;
+    var offId = behind && behind.name === 'artist' && behind.view === 'off' ? offTourOf(behind.artist || '') : null;
+    var cardsDoor = function () {
+      var hasFeed = !!(S.feed && S.feed.row);
+      return !signedIn ? null
+        : (hasFeed && runsATour()) ? function () { openFeedSheet(null); }
+        : !inMusic() ? (hasFeed ? function () { openFeedSheet(null); } : null)
+        : (S.feed && S.feed.connectOnly && runsATour()) ? function () { closeSheet(); connectCards(null); }
+        : (payTour && B.myPayAccounts) ? function () { openMyPayCards(payTour, false, 'Linked Cards'); }
+        : hasFeed ? function () { openFeedSheet(null); }
+        : null;
+    };
+    var cards = cardsDoor() ? function () { var f = cardsDoor(); if (f) f(); } : null;
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'Settings'),
         who ? h('p', { class: 'sh-sub' }, 'Signed in as ' + who) : null,
         h('div', { class: 'stack' },
-          // On the Off Tour page, its card settings are here too.
-          S.route && S.route.view === 'off' && offTourOf(S.route.artist || '') ? cardMenuItem(offTourOf(S.route.artist || '')) : null,
-          h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { closeSheet(); openTrash(); } },
-            icon('trash', 18), 'Recently deleted' + (trashed ? ' (' + trashed + ')' : '')),
+          offId ? cardMenuItem(offId) : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openUsernameSheet(false); } },
             icon('people', 18),
@@ -6082,12 +6060,11 @@
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openNotifications(null); } },
             icon('bell', 18), 'Notifications') : null,
-          (signedIn && S.feed && S.feed.row) ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { openFeedSheet(null); } },
-            icon('card', 18), 'Card feed') : null,
-          (signedIn && S.feed && S.feed.connectOnly && runsATour()) ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { closeSheet(); connectCards(null); } },
-            icon('card', 18), 'Connect the cards') : null,
+          cards ? h('button', { class: 'btn ghost block', type: 'button', onclick: cards }, icon('card', 18), 'Linked Cards') : null,
+          // A tour's Touring Logistics pages can be deleted and restored; the ones you deleted wait here.
+          trashed ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { closeSheet(); openTrash(); } },
+            icon('trash', 18), 'Deleted tours (' + trashed + ')') : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () {
               confirmSheet({
@@ -6099,64 +6076,36 @@
                 onConfirm: function () { toast('Signing out\u2026'); B.signOut(); return false; }
               });
             } }, icon('back', 18), 'Sign out') : null,
-          signedIn && B.deleteAccount ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { openDeleteAccount(); } }, icon('trash', 18), 'Delete my account') : null)
+          // (An artist's account is never deleted: "Those just exist". Yours can be, from your own account.)
+          signedIn && B.deleteAccount && !asArtist ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { openDeleteAccount(); } }, icon('trash', 18), 'Delete my account') : null),
+        h('p', { class: 'hint', style: 'margin:14px 0 0;opacity:.7;text-align:center' }, 'Version ' + (window.GREENROOM_BUILD || 'dev'))
       ];
     }, { label: 'Settings' });
   }
-  /* Deleting your account: everything that is yours alone goes for good. A
-     tour or an artist page you run is the band's — hand it off first. */
+  /* Deleting your account: everything that is yours alone goes for good,
+     tours you had deleted included. A tour you still run has to be deleted
+     first; an artist page is never deleted, so an account that runs one
+     stays (what should happen to it then is Devin's to decide: ROLES.md). */
   function openDeleteAccount() {
     var B = window.GR_BACKEND;
     if (!B || !B.deleteAccount) return;
     confirmSheet({
       title: 'Delete your account?',
-      body: 'Your profile, messages, flowers, follows and settings are deleted for good. Tours and artist pages you run have to be handed off or deleted first.',
+      body: 'Your profile, messages, flowers, follows and settings are deleted for good, and so is every tour you made and had deleted. A tour you still run has to be deleted first. An artist page is never deleted, so an account that runs one stays.',
       action: 'Delete my account', danger: true,
       onConfirm: async function () {
         var r = null;
         try { r = await B.deleteAccount(); } catch (e) { saveFailed('account', e); return false; }
         if (r && r.ok) { toast('Your account is deleted.'); return false; }
-        toast(r && r.why === 'tours' ? 'You still run ' + plural(G.num(r.n), 'tour') + '. Hand them off or delete them first.'
-          : r && r.why === 'artists' ? 'You still run ' + plural(G.num(r.n), 'artist page') + '. Hand them off or delete them first.'
+        toast(r && r.why === 'tours' ? 'You still run ' + plural(G.num(r.n), 'tour') + '. Delete them first.'
+          : r && r.why === 'artists' ? 'You still run ' + plural(G.num(r.n), 'artist page') + '. Artist pages are never deleted, so this account stays.'
           : 'Couldn\u2019t delete the account. Try again.');
         return false;
       }
     });
   }
 
-  /* One artist: just the name. The numbers wait behind the doors. */
-  function artistCard(name, entries, from, fromLabel) {
-    var logo = artistLogo(name);
-    var open = function () { go({ name: 'artist', artist: name, from: from || null, fromLabel: fromLabel || null }); };
-    // The slot left of the name IS the logo: a + until they bring one in,
-    // the mark itself after — tap it either way to set or swap it.
-    // Round mark on the left: the logo once there is one, the first letter
-    // until then (tap it to bring the logo in).
-    var initial = String(name || '?').trim().charAt(0).toUpperCase() || '?';
-    var slot = canWrite() ? fileControl({
-      label: logo ? null : initial,
-      logo: logo || undefined,
-      cls: 'avatar' + (logo ? ' has' : ' letter'),
-      accept: imageAccept(),
-      ariaLabel: (logo ? 'Change' : 'Import') + ' the logo for ' + name,
-      onFiles: function (files) {
-        readLogoFile(files[0], async function (dataUrl) {
-          if (await saveArtistLogo(name, dataUrl)) { toast('Logo in'); render(true); }
-        });
-      }
-    }) : h('span', { class: 'avatar' + (logo ? ' has' : ' letter') },
-      logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : initial);
-    var live = entries.some(function (e) { return tourIsLive(e[1]); });
-    return h('div', { class: 'list-row art-row' },
-      slot,
-      h('button', { class: 'lr-main', type: 'button', onclick: open },
-        h('span', { class: 'lr-text' },
-          h('span', { class: 'lr-title' }, name),
-          h('span', { class: 'lr-sub' + (live ? ' live' : '') },
-            entries.length ? plural(entries.length, 'tour') + (live ? ' \u00b7 on the road' : '') : 'No tours yet')),
-        icon('chevron', 18)));
-  }
 
   // On the road today: today falls between the tour's first and last show.
   function tourIsLive(t) {
@@ -6225,7 +6174,7 @@
         h('div', null,
           h('h2', { class: 'sec-title hdr' }, 'Tours'),
           entries.length ? h('p', { class: 'sec-sub' }, plural(entries.length, 'run') + ' for ' + name) : null),
-        canWrite()
+        mayStartTourFor(name)
           ? h('button', { class: 'add-pill', type: 'button',
               onclick: function () { startTour(name); } },
               icon('plus', 16), 'Add')
@@ -6235,7 +6184,7 @@
             var cardEl = tourCard(e[0], e[1], i + 1);
             if (!canWrite() || (S.mode === 'db' && !createdTour(e[0]))) return h('li', null, cardEl);
             return h('li', null, swipeable(cardEl, function () {
-              softDeleteTour(e[0]).then(function () { render(true); });
+              confirmDeleteTour(e[0], function () { render(true); });
             }, e[1].name || 'tour'));
           }))
         : emptyState('No tours here yet', 'Add ' + name + '’s first run.'),
@@ -7750,7 +7699,7 @@
       };
       // A category that breaks down lists each group under its own heading
       // (tap one for just that group); one group alone is a plain list.
-      var body = !list.length ? emptyState('Nothing logged yet', 'Charges from the card feed, statements you import and payments you log by hand all show up here.')
+      var body = !list.length ? emptyState('Nothing logged yet', 'Charges from your linked cards, statements you import and payments you log by hand all show up here.')
         : (groups && !only) ? h('div', { class: 'ledger logged' }, groups.map(function (g) {
             return [h('button', { class: 'row head lg-head', type: 'button', 'aria-label': g.label + ', ' + money(g.total) + '. Show only this group.',
                 onclick: function () { reopen(g.key); } },
@@ -8981,19 +8930,26 @@
      the tour, what's been paid to them, and the spending they keep for
      themselves, laid out like Expenses. The server hands each person only
      their own crew row, so GA never sees anyone else's line. */
+  /* Who sees what under Budget (Devin, 2026-10-10): "Crew ... in the budget
+     section they only see MY PAY NOT the band's income/expenses/card
+     information." Whoever can see the tour's money gets its name beside MY
+     PAY; crew get MY PAY alone, with no tab for the tour's book. The
+     artist's Off Tour book (spending between tours) used to be reached from
+     Budget in the three-lines menu; it is the third tab here now, for the
+     people who could already open it. */
   function payTabs(id, t, current) {
-    var tabs = [{ view: 'costs', label: t.name || 'Untitled tour' }, { view: 'mypay', label: 'MY PAY' }];
-    return h('div', { class: 'vp-tabs pt-tabs pay-tabs', role: 'tablist' }, tabs.map(function (x) {
-      var on = x.view === current;
+    var money = canSeeMoney(id), artist = artistOf(t);
+    var tabs = (money ? [{ view: 'costs', label: t.name || 'Untitled tour' }] : []).concat([{ view: 'mypay', label: 'MY PAY' }]);
+    if (money && artist && !isOffTour(t) && canSeeOffTour(artist)) tabs.push({ off: true, label: 'OFF TOUR' });
+    return h('div', { class: 'vp-tabs pt-tabs pay-tabs' + (tabs.length === 1 ? ' one' : tabs.length === 3 ? ' three' : ''), role: 'tablist' }, tabs.map(function (x) {
+      var on = !x.off && x.view === current;
       return h('button', { class: 'vp-tab pt-tab' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false',
-        onclick: function () { if (!on || S.route.view !== x.view) go({ name: 'tour', id: id, view: x.view }); } },
+        onclick: function () {
+          if (x.off) { go({ name: 'artist', artist: artist, view: 'off', from: S.route, fromLabel: 'Budget' }); return; }
+          if (!on || S.route.view !== x.view) go({ name: 'tour', id: id, view: x.view });
+        } },
         h('span', { class: 'pay-tab-t' }, x.label));
     }));
-  }
-  function payLocked() {
-    return h('div', { class: 'pay-locked' },
-      h('p', { class: 'pay-locked-t' }, 'ALL ACCESS MEMBERS ONLY'),
-      h('p', { class: 'note' }, 'The tour\u2019s budget is for the tour manager and ALL ACCESS. Your own pay and spending are under MY PAY.'));
   }
   // Your slice (from the server) and your own book, asked for together and kept a minute.
   function myPayInfo(id, fresh) {
@@ -9220,6 +9176,8 @@
       Promise.all([B.myPayAccounts(), B.myPayInbox()]).then(function (got) {
         c.accounts = Array.isArray(got[0]) ? got[0] : []; c.inbox = Array.isArray(got[1]) ? got[1] : [];
         c.failed = false; c.at = Date.now(); c.asking = false; render(true);
+        // A sheet opened before this landed (Linked Cards, from Settings) draws again with it.
+        if (c.onLoad) { var f = c.onLoad; c.onLoad = null; f(); }
       }, function () { c.failed = true; c.at = Date.now(); c.asking = false; render(true); });
     }
     return c;
@@ -9236,11 +9194,14 @@
       h('div', { class: 'row-label' }, 'Your cards', h('span', { class: 'hint' }, k ? plural(k, 'account') + ' connected' : 'Connect your own card')),
       n ? h('span', { class: 'amt num glow' }, n + ' new') : null, icon('chevron', 18));
   }
-  function openMyPayCards(id, justLinked) {
+  function openMyPayCards(id, justLinked, title) {
     var B = window.GR_BACKEND;
-    var again = function () { if (sheet && sheet.myPayCards) openMyPayCards(id); };
+    title = title || 'Your cards';
+    var again = function () { if (sheet && sheet.myPayCards) openMyPayCards(id, false, title); };
     openSheet(function () {
       var c = myPayCardsInfo();
+      if (c.asking && !c.at) c.onLoad = again;
+      var into = title !== 'Your cards' && id && getTour(id) ? (getTour(id).name || '') : '';
       var release = function (a) {
         return async function () {
           try { await B.myPayReleaseAccount(a.account_id); myPayCardsInfo(true); toast(a.name + ' taken off'); again(); }
@@ -9277,18 +9238,19 @@
             h('button', { class: 'btn ghost', type: 'button', onclick: skip(it) }, 'Skip')));
       };
       return [
-        h('h2', { class: 'sh-title' }, 'Your cards'),
-        h('p', { class: 'sh-sub' }, 'Your own bank or cards, nothing to do with the tour\u2019s. A bank you connect here is yours, every account on it. What lands on them comes to you here, and you file it into your MY PAY book.'),
+        h('h2', { class: 'sh-title' }, title),
+        h('p', { class: 'sh-sub' }, 'Your own bank or cards, nothing to do with the tour\u2019s. A bank you connect here is yours, every account on it. What lands on them comes to you here, and you file it into your MY PAY book' + (into ? ' for ' + into : '') + '.'),
+        c.asking && !c.at ? h('p', { class: 'note' }, 'Loading\u2026') : null,
         justLinked && !c.accounts.length ? h('p', { class: 'note' }, 'Your bank is connected. Its accounts land here as soon as the bank hands them over (a minute or so).') : null,
         c.accounts.length ? h('div', { class: 'ledger' }, c.accounts.map(function (a) {
           return h('div', { class: 'row ex-row' }, h('div', { class: 'row-label' }, a.name, h('span', { class: 'hint' }, a.card === 'credit' ? 'Credit card' : 'Debit card')),
             h('button', { class: 'pf-btn', type: 'button', onclick: release(a) }, 'Remove'));
-        })) : h('p', { class: 'note' }, 'No bank connected here yet.'),
+        })) : (c.asking && !c.at) ? null : h('p', { class: 'note' }, 'No bank connected here yet.'),
         h('button', { class: 'btn primary block', type: 'button', onclick: function () { connectCards(id, null, { myPay: true }); } }, icon('card', 18), 'Connect a bank or card'),
         c.inbox.length ? [h('h3', { class: 'sh-h3' }, plural(c.inbox.length, 'new item') + ' from your cards'), c.inbox.map(inboxCard)] : null,
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
       ];
-    }, { label: 'Your cards' });
+    }, { label: title });
     if (sheet) sheet.myPayCards = true;
   }
   // What the tour manager has logged as paid to you, newest first.
@@ -9388,7 +9350,7 @@
 
   /* A tour's tabs, either side of your photo. The money is one tab, Budget,
      which opens Expenses; Expenses and Income are two tabs above the chart
-     there. GA never sees the Budget tab. */
+     there. Crew get the Budget tab too, and it opens MY PAY alone. */
   var BOOK_TABS = ['costs', 'cards', 'money', 'mypay'];
   var BOOK_STRIP = [{ view: 'costs', label: 'Expenses', icon: 'tabcost' }, { view: 'cards', label: 'Cards/Links', icon: 'card' },
     { view: 'money', label: 'Income', icon: 'tabmoney' }];
@@ -9770,10 +9732,17 @@
       S.rolesAsked[id] = true;
       B.myRole(id).then(function (r) {
         S.roles[id] = r;
-        if (r !== 'viewer') render(true);
-      }).catch(function () { /* stays viewer */ });
+        // (Crew too, when they are waiting on Budget: it opens MY PAY once the answer is in.)
+        if (r !== 'viewer' || (S.route && S.route.name === 'tour' && S.route.id === id)) render(true);
+      }).catch(function () { S.roles[id] = 'viewer'; if (S.route && S.route.name === 'tour' && S.route.id === id) render(true); });
     }
     return 'viewer';
+  }
+  // Has the server said yet what you are on this tour? (Until then tourRole answers 'viewer'.)
+  function roleKnown(id) {
+    if (S.mode !== 'db') return true;
+    var B = window.GR_BACKEND;
+    return !!((B && B.ownsTour && B.ownsTour(id)) || S.roles[id] || !(B && B.myRole));
   }
   // ALL ACCESS edits a tour like its creator does (Devin, 2026-09-30).
   function canEditTour(id) { var r = tourRole(id); return r === 'owner' || r === 'editor'; }
@@ -9926,14 +9895,14 @@
     var view = S.route.view || 'details';
     var tab = S.route.tab || 'shows';
     var t = getTour(id);
-    if (!t) {
+    if (!t || t.deletedAt) {
       return h('div', { class: 'page has-tabs' },
         h('header', { class: 'topbar' }),
         emptyState('This tour isn’t here anymore', 'It may have been deleted.'),
         socialBar(''));
     }
-    if (view === 'addshows') return viewAddShows(id, t);
-    if (view === 'menu') view = 'details';
+    if (view === 'addshows' && canEditTour(id)) return viewAddShows(id, t);
+    if (view === 'menu' || view === 'addshows') view = 'details';
     // GA never sees money: only the screens named here open for them; anything
     // else (Budget, Expenses and their sub-pages, or a name nobody recognises,
     // which would otherwise fall through to Budget) is Overview.
@@ -9946,16 +9915,12 @@
     if (view === 'chat') return viewTourChat(id, t);
     if (view === 'calendar') return viewCalendar(id, t);
     if (view === 'stats') return viewStats(id, t);
-    if (view === 'mypay') return viewMyPay(id, t);
-    // GA on the Budget tab: the tour's book is ALL ACCESS only; MY PAY is theirs.
-    if (view === 'costs' && !canSeeMoney(id)) {
-      return h('div', { class: 'page tour has-tabs exp-page' },
-        tourBand(t, id, 'costs'),
-        payTabs(id, t, 'costs'),
-        dbBanner(),
-        payLocked(),
-        tourTabs(id, 'costs'));
+    // Crew on the Budget tab: MY PAY is theirs, and it is all of Budget they see.
+    if (view === 'costs' && !canSeeMoney(id) && !roleKnown(id)) {
+      return h('div', { class: 'page tour has-tabs exp-page' }, tourBand(t, id, 'costs'), dbBanner(),
+        h('p', { class: 'note pay-note' }, 'Loading\u2026'), tourTabs(id, 'costs'));
     }
+    if (view === 'mypay' || (view === 'costs' && !canSeeMoney(id))) return viewMyPay(id, t);
     var c = G.calc(t);
     if (view === 'costs') {
       return h('div', { class: 'page tour has-tabs exp-page' },
@@ -10413,7 +10378,7 @@
       fresh.sort(function (a, b) { return String(a.ch.date).localeCompare(String(b.ch.date)); });
       var total = fresh.reduce(function (n, x) { return n + G.num(x.ch.amount); }, 0);
       var by = [];
-      fresh.forEach(function (x) { var w = x.ch.by || (x.ch.manual ? '' : 'the card feed'); if (w && by.indexOf(w) < 0) by.push(w); });
+      fresh.forEach(function (x) { var w = x.ch.by || (x.ch.manual ? '' : 'a linked card'); if (w && by.indexOf(w) < 0) by.push(w); });
       tasks.push({ key: 'exp', keys: fresh.map(function (x) { return 'exp:' + x.ch.id; }),
         at: Math.max.apply(null, fresh.map(function (x) { return x.at; })), emoji: '🧾', title: 'New expenses',
         main: plural(fresh.length, 'charge') + ' logged', amount: total,
@@ -13904,7 +13869,9 @@
         closeSheet();
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft, flags: flagsNow } }).net;
         var r = G.round(after);
-        if (G.round(before) < 0 && r >= 0) sendNotify(id, 'green', { net: money(r, true) });
+        // (The "in the green" push went to every phone on ALL, crew included, with the tour's
+        // net in it. Crew do not see the band's money (Devin, 2026-10-10), so it is not sent
+        // until the server sends it only to the people who can see the money: TODO.md.)
         if (G.round(before) < 0 && r >= 0) toast('Income saved. You’re in the green.');
         else if (r < 0) toast('Income saved. ' + money(-r) + ' to break even.');
         else toast('Income saved. ' + money(r) + ' in the green.');
@@ -14614,7 +14581,7 @@
     return [
       canEditTour(id) ? addDailyForm(id) : null,
       (canEditTour(id) && feedOn()) ? h('p', { class: 'note' },
-        'Card and bank spending comes in from the card feed by itself. Log cash and anything off the linked accounts here.') : null,
+        'Card and bank spending comes in from your linked cards by itself. Log cash and anything off the linked accounts here.') : null,
       items.length
         ? h('div', { class: 'section-total' },
             h('span', null, 'Day-to-day costs so far'),
@@ -15215,31 +15182,30 @@
     return String(t.updateSentOn || '') !== G.ymd(now);
   }
 
+  // Deleted tours: every one waits here and can be restored, with no time limit.
   function openTrash() {
     function build() {
       var list = trashedEntries();
       openSheet(function () {
         return [
-          h('h2', { class: 'sh-title' }, 'Recently deleted'),
-          h('p', { class: 'hint', style: 'margin:-4px 0 10px;opacity:.7' }, 'Version ' + (window.GREENROOM_BUILD || 'dev')),
-          h('p', { class: 'sh-sub' }, 'Tours that were taken down wait here. Nothing is ever erased: Restore puts one back.'),
+          h('h2', { class: 'sh-title' }, 'Deleted tours'),
+          h('p', { class: 'sh-sub' }, 'A deleted tour waits here, kept as it was. Restore puts it back.'),
           list.length ? h('div', { class: 'ledger' }, list.map(function (e) {
             var id = e[0], t = e[1];
             return h('div', { class: 'row' },
               h('div', { class: 'row-label' },
                 (t.artist ? t.artist + ' \u2014 ' : '') + (t.name || 'Untitled tour'),
-                h('span', { class: 'hint' }, 'Taken down ' + dayMD(G.ymd(new Date(t.deletedAt))))),
+                h('span', { class: 'hint' }, 'Deleted ' + dayMD(G.ymd(new Date(t.deletedAt))))),
               h('button', { class: 'btn sm quiet', type: 'button',
                 onclick: async function () {
                   if (await restoreTour(id)) { toast('Restored'); build(); render(); }
                 } }, 'Restore'));
-          })) : emptyState('Nothing here', 'A tour that is taken down waits here, and can always be restored.')
+          })) : emptyState('Nothing here', 'A tour you delete waits here, and can always be restored.')
         ];
-      }, { label: 'Recently deleted' });
+      }, { label: 'Deleted tours' });
     }
     build();
   }
-
   function openRename(id) {
     var t = getTour(id);
     if (!t) return;
@@ -15418,11 +15384,14 @@
         soldout: !!saved.soldout,
         merchnums: !!saved.merchnums
       };
+      // Merch numbers are the band's money: only for someone who can see a tour's money.
+      var seesMoney = tourId ? canSeeMoney(tourId) : allTourEntries().some(function (e) { return canSeeMoney(e[0]); });
+      if (!seesMoney) prefs.merchnums = false;
       var GROUPS = ['crew', 'artist', 'all'];
       var SAYS = {
         crew: 'LOAD IN 10 minutes before load in, and DAY SHEET AVAILABLE.',
         artist: 'SHOW TIME 30 minutes before your set, and DAY SHEET AVAILABLE.',
-        all: 'Everything: LOAD IN, SHOW TIME, DAY SHEET AVAILABLE, guest list adds and in-the-green news.'
+        all: 'Everything: LOAD IN, SHOW TIME, DAY SHEET AVAILABLE and guest list adds.'
       };
       openSheet(function () {
         var groupHint = h('span', { class: 'hint' }, SAYS[prefs.group]);
@@ -15464,7 +15433,7 @@
             }, 'Which notifications')),
           h('div', { class: 'ds-yns' },
             toggleRow('soldout', 'SOLD OUT', 'A show gets marked sold out'),
-            toggleRow('merchnums', 'MERCH NUMBERS', 'A night\u2019s merch numbers come in')),
+            seesMoney ? toggleRow('merchnums', 'MERCH NUMBERS', 'A night\u2019s merch numbers come in') : null),
           h('div', { class: 'stack' }, saveBtn,
             on ? h('button', { class: 'btn ghost block', type: 'button',
               onclick: async function () {
@@ -15689,20 +15658,8 @@
             icon('tag', 18), 'Learned labels'),
           createdTour(id) || S.mode === 'local' ? h('button', {
             class: 'btn danger block', type: 'button',
-            onclick: function () {
-              confirmSheet({
-                title: 'Take ' + name + ' down?',
-                body: 'It moves to Recently deleted, out of sight' +
-                  (S.mode === 'db' ? ' for everyone it’s shared with.' : '.') + ' Nothing is erased: Restore brings it back.',
-                action: 'Take tour down', danger: true,
-                onConfirm: async function () {
-                  var ok = await api.update(id, { deletedAt: Date.now() });
-                  if (ok) { delete S.lastNet[id]; delete S.lastState[id]; go({ name: 'home' }); toast('Moved to Recently deleted'); }
-                  return ok;
-                }
-              });
-            }
-          }, icon('trash', 18), 'Take tour down') : null)
+            onclick: function () { confirmDeleteTour(id, function () { go({ name: 'home' }); }); }
+          }, icon('trash', 18), 'Delete tour') : null)
       ];
     }, { label: 'Tour options' });
   }
@@ -17239,9 +17196,9 @@
 
   function feedProblem(code) {
     return ({
-      ITEM_LOGIN_REQUIRED: 'A bank needs you to sign in again. Open Card feed settings and tap Reconnect next to it.',
-      PENDING_EXPIRATION: 'A bank connection is about to expire. Open Card feed settings and tap Reconnect next to it.',
-      not_connected: 'No bank is connected yet. Open Card feed settings to connect one.',
+      ITEM_LOGIN_REQUIRED: 'A bank needs you to sign in again. Open Settings, then Linked Cards, and tap Reconnect next to it.',
+      PENDING_EXPIRATION: 'A bank connection is about to expire. Open Settings, then Linked Cards, and tap Reconnect next to it.',
+      not_connected: 'No bank is connected yet. Open Settings, then Linked Cards, to connect one.',
       not_set_up: 'The Plaid keys aren\u2019t in place yet.',
       not_allowed: 'This account can\u2019t connect cards.',
       lock_changed: 'The lock password in Supabase changed, so Greenroom can\u2019t open the bank connections. Put the old one back, or disconnect and reconnect the banks.',
@@ -19028,7 +18985,7 @@
       } else if (t) {
         parts.push(h('p', { class: 'note' }, 'Add this tour\u2019s shows first, then choose its logging dates here.'));
       } else {
-        parts.push(h('p', { class: 'note' }, 'Each tour has its own logging dates. Open a tour\u2019s Expenses and tap the gear to choose them.'));
+        parts.push(h('p', { class: 'note' }, 'Each tour has its own logging dates. Open a tour, tap \u22ef, then Card settings to choose them.'));
       }
       if (st.switchedOn) {
         parts.push(
@@ -19038,9 +18995,9 @@
             h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
               run('off', async function () {
                 var r = await B.feedCall('setup', { on: false });
-                toast(r && r.ok ? 'Card feed off. Charges already filed stay put.' : feedProblem('unavailable'));
+                toast(r && r.ok ? 'Linked cards are off. Charges already filed stay put.' : feedProblem('unavailable'));
               });
-            } }, 'Turn the feed off')));
+            } }, 'Turn linked cards off')));
       }
       parts.push(h('div', { class: 'stack', style: 'margin-top:14px' }, disconnectAll()), safety);
       body.replaceChildren(h('div', null, parts));
@@ -19049,12 +19006,12 @@
     openSheet(function () {
       load();
       return [
-        h('h2', { class: 'sh-title' }, settingUp ? 'Set up the card feed' : 'Card feed'),
+        h('h2', { class: 'sh-title' }, settingUp ? 'Link a card' : 'Linked Cards'),
         h('p', { class: 'sh-sub' }, 'Greenroom reads what your cards spend through Plaid and logs it. ' +
           'Money coming in is never logged, and only you see this.'),
         body
       ];
-    }, { label: settingUp ? 'Set up the card feed' : 'Card feed' });
+    }, { label: settingUp ? 'Link a card' : 'Linked Cards' });
   }
 
   /* ---------------- Card charges, imports and learned labels ---------------- */
