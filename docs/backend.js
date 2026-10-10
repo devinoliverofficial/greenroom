@@ -933,15 +933,19 @@
       return out;
     },
     // A guarantee logged "Sort later" finds its show(s): parts is
-    // [{ show, amount, agent? }] adding up to it; whole keeps it on the tour
-    // as money that belongs to no one night.
+    // [{ show, amount, agent? }], all of it or part of it (the rest stays to
+    // sort); whole keeps what is left on the tour as money that belongs to no
+    // one night. The tour's creator or a Manager.
     sortGuarantee: async function (depId, opts) {
       var o = opts || {};
       var q = await sb.rpc('sort_guarantee', {
-        dep_id: String(depId), t_id: o.tourId || null, parts: Array.isArray(o.parts) ? o.parts : [], whole: !!o.whole });
+        dep_id: String(depId), t_id: o.tourId || null, parts: Array.isArray(o.parts) ? o.parts : [], whole: !!o.whole,
+        // What this phone saw waiting: a tap that lands twice, or on an old amount, is refused.
+        expect: typeof o.expect === 'number' ? o.expect : null });
       if (q.error) throw mapError(q.error);
       var out = isObj(q.data) ? q.data : { ok: false };
-      if (out.ok && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
+      // (Also when it had changed underneath: the phone must see what is really left.)
+      if ((out.ok || out.why === 'changed') && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
       return out;
     },
     // Logged "Sort later" by mistake: off the tour and back into New income.

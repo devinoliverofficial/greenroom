@@ -101,7 +101,10 @@
    pinch zoom. An accidental pinch used to leave the page not fitting the
    screen with no obvious way back. */
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: pan-x pan-y; }
-/* No rubber-band bounce: the overscroll stretch is what tugs fixed bars around. */
+/* No rubber-band bounce: the overscroll stretch is what tugs fixed bars around.
+   (On the root as well: iPhone only honours it there for the page itself, so a
+   page with nothing to scroll to stays still instead of stretching.) */
+html { overscroll-behavior-y: none; }
 body { touch-action: pan-x pan-y; overscroll-behavior-y: none; }
 body {
   margin: 0;
@@ -380,7 +383,9 @@ a.btn { text-decoration: none; }
 .page.chat-page { padding-bottom: calc(152px + env(safe-area-inset-bottom, 0px)); }
 .page.guest-page { padding-bottom: calc(190px + env(safe-area-inset-bottom, 0px)); }
 /* The home page is a column, so its quiet links can sink to the floor. */
-.page.home { display: flex; flex-direction: column; min-height: 100dvh; }
+/* (Less the top safe area: the body already pads that much above the page, and
+   a full 100dvh on top of it made a short page scroll by the height of the notch.) */
+.page.home { display: flex; flex-direction: column; min-height: calc(100dvh - env(safe-area-inset-top, 0px)); }
 .page.home > * { flex: none; }
 
 
@@ -2013,7 +2018,10 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .ci-wrap.pinned { position: fixed; left: 0; right: 0; bottom: calc(55px + env(safe-area-inset-bottom, 0px) + 12px); /* the bottom bar's height, then a gap */
   z-index: 39; margin: 0; pointer-events: none; }
 .ci-wrap.pinned .ci-btn { pointer-events: auto; padding: 12px 34px; font-size: 15px; }
-.ci-room { height: 64px; }
+/* Room for the pinned button above the bottom bar: with the page's own bottom
+   padding (96px) this leaves the last line just clear of it, and no more (64px
+   here made Today a couple of pixels taller than the screen, so it scrolled). */
+.ci-room { height: 28px; }
 .ci-btn { border: 0; border-radius: 999px; padding: 9px 24px; font: inherit; font-size: 14px; font-weight: 800; letter-spacing: .04em;
   background: var(--brand); color: var(--on-brand); cursor: pointer; animation: bopulse 1.4s ease-in-out infinite;
   box-shadow: 0 0 16px color-mix(in oklab, var(--brand), transparent 40%); }
@@ -2526,8 +2534,12 @@ button.acct-row:active { background: var(--surface-2); }
 .vp-tabs.pt-tabs { margin-top: -6px; }
 .page.profile .vp-tab.pt-tab { flex-direction: column; gap: 3px; height: 54px; font-size: 11px; font-weight: 600; letter-spacing: 0; padding: 0 2px; }
 .pt-tab span:not(.ic) { white-space: nowrap; }
-/* Tall enough that a short tab doesn't yank the page back up when you switch to it. */
-.pt-body { position: relative; z-index: 1; padding-top: 6px; min-height: calc(100vh - 170px); min-height: calc(100dvh - 170px); }
+/* As tall as what's in it, and no taller: a forced screen-high body made the
+   profile scroll with nothing to scroll to (Devin, 2026-10-09). Keeping the
+   page from jumping when a shorter tab is picked while scrolled down is done
+   in profileTabs, with exactly the room that needs and only until he is back
+   at the top. */
+.pt-body { position: relative; z-index: 1; padding-top: 6px; }
 .pt-tourbar { display: flex; align-items: baseline; justify-content: center; flex-wrap: wrap; column-gap: 12px; margin: 4px 2px 10px; }
 .pt-tourname { display: inline-flex; align-items: center; gap: 4px; min-width: 0; appearance: none; border: 0; background: none; padding: 2px 0;
   font: inherit; font-size: 14px; font-weight: 600; color: var(--ink-2); cursor: pointer; }
@@ -2947,7 +2959,15 @@ button.fl-row { cursor: pointer; }
 .iv-ask .sh-h3 { margin: 4px 0 0; }
 .iv-ask-t { margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); }
 .rq-warn { color: var(--warn, #e0a030); }
+.iv-part { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 8px; }
+.iv-part-q { margin: 0; font-size: 13px; font-weight: 700; color: var(--ink); }
+.iv-part-opts { display: grid; gap: 6px; }
+.iv-part-opts .btn.sm { width: 100%; height: auto; min-height: 36px; padding: 6px 10px; white-space: normal; }
+.iv-part-say { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.iv-part-say.ask { color: var(--warn, #e0a030); }
 .iv-note { margin: 4px 0 6px; padding: 8px 10px; border-radius: 10px; background: var(--neg-soft); color: var(--ink); font-size: 12.5px; line-height: 1.35; }
+.iv-night.iv-later { margin-bottom: 4px; border: 1px dashed var(--line); }
+.iv-night.iv-later.on { border-style: solid; border-color: color-mix(in oklab, var(--pos), transparent 45%); }
 .iv-night.iv-whole { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; }
 .iv-hit.ok { border: 1px solid color-mix(in oklab, var(--pos), transparent 40%); }
 .iv-hit-pick { display: grid; gap: 6px; margin-bottom: 8px; }

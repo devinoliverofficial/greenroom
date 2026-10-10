@@ -715,6 +715,8 @@
     // Leaving your profile: how far down its tabs you were, for the way back.
     if (S.route && S.route.name === 'home' && route.name !== 'home') S.homeY = window.scrollY;
     var backToTabs = route === PF_HOME && S.homeY;
+    // Arriving on the profile afresh: no room is held under its tabs.
+    if (route.name === 'home' && !backToTabs) S.pfMinH = 0;
     S.route = route;
     S.xsAt = null; // the Expenses flow eases in afresh each time you arrive
     S.focusOnRender = !backToTabs;
@@ -5951,7 +5953,21 @@
   function profileTabs(entries, byArtist, loose, declared) {
     var id = profileTourId(), t = id ? getTour(id) : null;
     var tab = S.pfTab || (t ? 'today' : 'artists');
-    var pick = function (k) { if (k !== tab) { S.pfTab = k; render(true); } };
+    var pick = function (k) {
+      if (k === tab) return;
+      // Picked while scrolled down: the page keeps its place (the tab bar stays
+      // under the finger) even when the new tab is shorter. It gets exactly the
+      // room that takes, nothing at the top of the page, and loses it the
+      // moment he is back at the top (the scroll listener below).
+      var y = window.scrollY, pb = document.querySelector('.page.profile .pt-body');
+      if (y > 0 && pb) {
+        var page = pb.closest('.page');
+        var pad = page ? parseFloat(getComputedStyle(page).paddingBottom) || 0 : 0;
+        S.pfMinH = Math.max(0, Math.ceil(y + window.innerHeight - (pb.getBoundingClientRect().top + y) - pad));
+      } else S.pfMinH = 0;
+      S.pfTab = k; render(true);
+      if (y > 0) window.scrollTo(0, y);
+    };
     var none = function () {
       return emptyState('No tours yet', canWrite()
         ? 'Tap + to add an artist, then their first tour. Its day shows up here.'
@@ -5969,9 +5985,17 @@
           'aria-selected': on ? 'true' : 'false', onclick: function () { pick(x.key); } },
           icon(x.icon, 20), h('span', null, x.label));
       })),
-      h('div', { class: 'pt-body', role: 'tabpanel' }, body)
+      h('div', { class: 'pt-body', role: 'tabpanel', style: S.pfMinH > 0 ? 'min-height:' + S.pfMinH + 'px' : null }, body)
     ];
   }
+  // Back at the top of the profile: the room kept for a tab switch is given up,
+  // so the page never scrolls with nothing to scroll to.
+  window.addEventListener('scroll', function () {
+    if (!(S.pfMinH > 0) || window.scrollY > 0) return;
+    S.pfMinH = 0;
+    var pb = document.querySelector('.page.profile .pt-body');
+    if (pb) pb.style.minHeight = '';
+  }, { passive: true });
 
   function viewHome() {
     var entries = allTourEntries();
@@ -11115,8 +11139,9 @@
     if (!list.length) return null;
     var B = window.GR_BACKEND;
     var total = list.reduce(function (t, x) { return t + G.num(x.amount); }, 0);
-    // Whose bank it came from says where it goes: the owner (as in New income).
-    var mine = S.mode === 'db' && createdTour(id) && !!(B && B.sortGuarantee);
+    // Whoever manages the tour says where it goes (Devin: "any manage of the
+    // account should be able to sort through"): its creator, or a Manager.
+    var mine = S.mode === 'db' && moneyLead(id) && !!(B && B.sortGuarantee);
     var open = function (only) { openIncomeReview(id, { place: only ? [only] : list }); };
     return h('section', { class: 'us-box' },
       h('div', { class: 'us-head' },
@@ -11125,7 +11150,8 @@
       h('p', { class: 'us-sub' }, 'In the bank and counted as income. Not on a show yet.'),
       h('div', { class: 'ledger us-list' }, list.map(function (x) {
         var inner = [
-          h('div', { class: 'row-label' }, 'Deposit', h('span', { class: 'hint' }, 'Landed ' + dayMD(x.date))),
+          h('div', { class: 'row-label' }, 'Deposit', h('span', { class: 'hint' }, 'Landed ' + dayMD(x.date) +
+            (G.num(x.of) > 0 ? ' \u00b7 left of ' + G.moneyCents(G.num(x.of)) : ''))),
           h('span', { class: 'amt num' }, G.moneyCents(G.num(x.amount)))];
         return mine ? h('button', { class: 'row rowbtn', type: 'button', 'aria-label': 'Sort the ' + G.moneyCents(G.num(x.amount)) + ' guarantee deposit',
           onclick: function () { open(x); } }, inner) : h('div', { class: 'row' }, inner);
@@ -17063,7 +17089,7 @@
     var live = placing ? opts.place.map(function (d) {
       // Already logged as a guarantee on this tour: only the night is open.
       return { id: String(d.id), date: String(d.date || ''), amount: G.num(d.amount), av: false, watch: 'guarantees',
-        dest: 'pin', pinTour: tourId, upTo: null, place: true,
+        dest: 'pin', pinTour: tourId, upTo: null, place: true, of: G.num(d.of), part: null, partAmt: 0,
         kind: 'guarantee', show: '', showTouched: false, whole: false, later: false, armed: false };
     }) : ((S.incomeNew && S.incomeNew.items) || []).map(function (d) {
       return { id: String(d.id), date: String(d.date || ''), amount: G.num(d.amount), av: !!d.atvenu, watch: String(d.watch || ''),
@@ -17123,7 +17149,8 @@
       var mayMerch = r.watch === 'merch' || r.watch === 'both' || !r.watch;
       var mayGuar = r.watch === 'guarantees' || r.watch === 'both' || !r.watch;
       // Only the tours you run: the books a deposit can be logged to.
-      var books = band ? allTourEntries(false).filter(function (e) { return artistOf(e[1]) === band && createdTour(e[0]); }) : [[tourId, base]];
+      var books = r.place ? [[r.pinTour, getTour(r.pinTour) || base]]
+        : band ? allTourEntries(false).filter(function (e) { return artistOf(e[1]) === band && createdTour(e[0]); }) : [[tourId, base]];
       books.forEach(function (e) {
         var tid = e[0], t2 = e[1];
         G.rows(t2 && t2.shows).forEach(function (s) {
@@ -17353,8 +17380,10 @@
     }
     // The ticked nights against this deposit: what they have logged, what the
     // card says came in, and how the deposit is shared out when it's logged.
-    function nightPlan(r, nights) {
-      var amt = Math.round(G.num(r.amount) * 100);
+    // (only: share out this much of it, not all of it; used when part of a
+    // "Sort later" deposit is placed now and the rest stays to sort.)
+    function nightPlan(r, nights, only) {
+      var amt = Math.round(G.num(only != null ? only : r.amount) * 100);
       var wants = nights.map(function (s) { return Math.round(nightWants(s) * 100); });
       var logged = wants.reduce(function (a, b) { return a + b; }, 0);
       var cut = agentCut(r);
@@ -17377,7 +17406,33 @@
         if (agentFits && wholeNight(nights[i]) && wants[i] > c) part.agent = (wants[i] - c) / 100;
         parts.push(part);
       });
-      return { logged: logged / 100, amount: amt / 100, diff: (amt - logged) / 100, agentFits: agentFits, cut: cut, parts: parts, evenSplit: evenSplit };
+      return { logged: logged / 100, net: net / 100, amount: amt / 100, diff: (amt - logged) / 100, agentFits: agentFits, cut: cut, parts: parts, evenSplit: evenSplit };
+    }
+    /* Placing part of a "Sort later" deposit (Devin: "rebuild it so you can
+       account for partial payments if needed"). When the ticked shows have
+       less logged than the deposit holds, he says how much goes on them now:
+       only what's logged, all of it, or an amount he types. The rest stays in
+       Guarantees to sort. Null until he has said (never assumed), or when the
+       typed amount is nothing or more than is left. */
+    function partChoice(r, nights) {
+      var total = Math.round(G.num(r.amount) * 100) / 100, pl = nightPlan(r, nights), logged = pl.logged;
+      // A real choice only when the shows have something logged and it is less than what's left.
+      // net: what's logged less the booking agent's cut, when the deal has one and
+      // a ticked show is waiting on its whole guarantee (an agency lump sum arrives
+      // net: placing that amount logs each show less the cut, with the reason).
+      return { total: total, logged: logged, cut: pl.cut, net: pl.net > 0.005 && pl.net < logged - 0.005 ? pl.net : 0,
+        ask: logged > 0.005 && logged < total - 0.005 };
+    }
+    function placeAmount(r, nights) {
+      var c = partChoice(r, nights);
+      if (r.part === 'other') {
+        var v = Math.round(G.num(r.partAmt) * 100) / 100;
+        return v > 0 && v <= c.total + 0.005 ? Math.min(v, c.total) : null;
+      }
+      if (r.part === 'all') return c.total;
+      if (r.part === 'logged' && c.ask) return c.logged;
+      if (r.part === 'net' && c.ask && c.net > 0) return c.net;
+      return c.ask ? null : c.total;
     }
     // The nights a deposit most likely paid for. One night that fits it is
     // that night (as before). Else, when exactly one set of nights still
@@ -17471,7 +17526,7 @@
       // when the tour has a night with merch logged. Never assumed.
       var needs = r.kind === 'guarantee' ? !!nightsTour(r) : (r.kind === 'merch' && !!showChoices(r));
       if (needs && !r.whole && !r.later && !(r.kind === 'guarantee' ? (r.shows || []).length : r.show)) {
-        toast(r.place ? 'Tick the show it paid for' : r.kind === 'guarantee' ? 'Tick the show it paid for, or Sort later' : 'Pick the show it was for, or Whole tour');
+        toast(r.place ? 'Tick the show it paid for' : r.kind === 'guarantee' ? 'Tick the show it paid for, or \u201cNot sure which show yet\u201d' : 'Pick the show it was for, or Whole tour');
         return;
       }
       // Everything this call needs, read before any waiting; the row is
@@ -17486,10 +17541,16 @@
         pick.showId = ticked.length === 1 ? ticked[0].id : null;
         // "Sort later": guarantee income on the tour, no night yet.
         if (r.later && !r.place) { pick.kind = 'guarantee_later'; pick.showId = null; }
-        if (ticked.length > 1 || (r.place && ticked.length === 1)) {
+        if (r.place && ticked.length) {
+          // How much of it goes on now is his to say whenever there is a choice.
+          var nowAmt = placeAmount(r, ticked);
+          if (nowAmt == null) { toast(r.part === 'other' ? 'Type an amount, up to ' + G.moneyCents(r.amount) : 'Say how much of it goes on ' + (ticked.length === 1 ? 'this show' : 'these shows')); return; }
+          parts = nightPlan(r, ticked, nowAmt).parts;
+          if (!parts.length) { toast('Nothing to share out'); return; }
+        } else if (ticked.length > 1) {
           parts = nightPlan(r, ticked).parts;
           if (!parts.length) { toast('Nothing to share out'); return; }
-          if (parts.length === 1 && !r.place) { pick.showId = parts[0].show; parts = null; }
+          if (parts.length === 1) { pick.showId = parts[0].show; parts = null; }
         }
       }
       var wantsOff = !landsOn(r);
@@ -17501,11 +17562,16 @@
       }
       var out = null, bad = null;
       try {
-        out = r.place ? await B.sortGuarantee(r.id, { tourId: tid, parts: parts || [], whole: !!r.whole })
+        out = r.place ? await B.sortGuarantee(r.id, { tourId: tid, parts: parts || [], whole: !!r.whole, expect: r.amount })
           : parts ? await B.catalogIncomeSplit(r.id, { tourId: tid, parts: parts })
           : await B.catalogIncome(r.id, { tourId: tid, showId: pick.showId, kind: pick.kind });
       }
       catch (e) { bad = e; }
+      // 'changed': someone else sorted part of it since this sheet opened. Nothing
+      // was written; the list is read fresh.
+      if (out && !out.ok && out.why === 'changed') {
+        r.busy = false; closeSheet(); toast('That one has changed. Take another look.'); render(true); return;
+      }
       // 'done': a matcher claimed it first — same ending, the money is logged.
       if (!out || (!out.ok && out.why !== 'done')) {
         r.busy = false; row.redraw();
@@ -17513,9 +17579,19 @@
       }
       var where = ticked.length === 1 ? String(ticked[0].city || ticked[0].venue || 'the show').split(',')[0] : '';
       toast(out.why === 'done' ? (r.place ? 'Already sorted' : 'Already logged')
-        : r.place ? (r.whole ? 'Kept on the whole tour' : 'Sorted ' + G.moneyCents(r.amount) + (parts && parts.length > 1 ? ' across ' + parts.length + ' shows' : where ? ' onto ' + where : ''))
+        : r.place ? (r.whole ? 'Kept on the whole tour' : 'Sorted ' + G.moneyCents((parts || []).reduce(function (n, x) { return n + x.amount; }, 0)) +
+            (parts && parts.length > 1 ? ' across ' + parts.length + ' shows' : where ? ' onto ' + where : '') +
+            (G.num(out.left) > 0.005 ? ' \u00b7 ' + G.moneyCents(G.num(out.left)) + ' left to sort' : ''))
         : pick.kind === 'guarantee_later' ? 'Logged ' + G.moneyCents(r.amount) + ' \u00b7 to sort later'
         : 'Logged ' + G.moneyCents(r.amount) + (parts ? ' across ' + parts.length + ' shows' : ''));
+      // Part of it placed: the row stays, for what is left.
+      if (r.place && out.ok && G.num(out.left) > 0.005) {
+        r.of = r.of > 0 ? r.of : r.amount; r.amount = Math.round(G.num(out.left) * 100) / 100;
+        r.busy = false; r.show = ''; r.shows = []; r.whole = false; r.part = null; r.partAmt = 0;
+        r.approved = null; r.hitDone = false; r.lumpDone = false; r.showTouched = false; r.armed = false;
+        draw(); render(true);
+        return;
+      }
       drop(r);
     }
     // Logged "Sort later" by mistake: back to New income, as if never answered. Two taps.
@@ -17582,12 +17658,25 @@
       var wrap = h('div', { class: 'rv-row on iv-row' });
       var row = { redraw: redraw };
       function redraw() {
+        // "Sort later" needs a tour with nights to sort onto: never the Off Tour book.
+        var canLater = !r.place && !!nightsTour({ dest: r.dest, upTo: r.upTo, pinTour: r.pinTour });
+        if (r.later && !canLater) r.later = false;
         var kindSel = h('select', { class: 'input sm', 'aria-label': 'What this deposit was',
           disabled: r.busy || null,
-          onchange: function (e) { r.kind = e.target.value; r.showTouched = false; r.show = ''; r.shows = []; r.whole = false; r.later = false; r.allNights = false; redraw(); } },
+          onchange: function (e) {
+            var v = e.target.value;
+            // "Guarantee, not sure which show yet" is the Guarantee answer with Sort later already ticked.
+            r.kind = v === 'guarantee_later' ? 'guarantee' : v;
+            r.showTouched = v === 'guarantee_later'; r.show = ''; r.shows = []; r.whole = false; r.later = v === 'guarantee_later'; r.allNights = false;
+            redraw();
+          } },
           h('option', { value: '' }, 'What was it?'),
-          G.OTHER_INCOME_KINDS.map(function (k) { return h('option', { value: k.key }, k.label); }));
-        kindSel.value = r.kind;
+          G.OTHER_INCOME_KINDS.map(function (k) {
+            var o = [h('option', { value: k.key }, k.label)];
+            if (k.key === 'guarantee' && canLater) o.push(h('option', { value: 'guarantee_later' }, 'Guarantee \u00b7 not sure which show yet'));
+            return o;
+          }));
+        kindSel.value = r.kind === 'guarantee' && r.later && canLater ? 'guarantee_later' : r.kind;
         var choices = showChoices(r);
         var showSel = null;
         if (r.kind === 'guarantee' && nightsTour(r)) {
@@ -17605,7 +17694,9 @@
           var restN = choices.filter(function (s) { return !(nightWants(s) > 0 || on(s)); }).sort(G.byDate).reverse();
           var shown = r.allNights || !waitingN.length ? waitingN.concat(restN) : waitingN;
           var picked = choices.filter(on);
-          var plan = picked.length ? nightPlan(r, picked) : null;
+          // (Placing: how much of it goes on the ticked shows is his to say; the
+          // panel always shows the share-out of what he has said so far.)
+          var pch = r.place && picked.length ? partChoice(r, picked) : null;
           // What Log will do with more than one night ticked, said plainly: who
           // is marked received, how the money is shared, and any ticked night
           // that gets nothing because nothing was waiting there.
@@ -17624,24 +17715,29 @@
             if (skip > 0) txt += ' ' + (skip === 1 ? 'One ticked night has' : skip + ' ticked nights have') + ' nothing waiting, so nothing is added there.';
             return txt;
           };
-          var totals;
-          if (!plan) {
-            totals = h('p', { class: 'iv-none' }, r.whole ? 'It goes on the books for the whole tour, not on a night.'
-              : r.later ? 'It counts as guarantee income now. You put it on its show later, from the Income tab.'
-              : r.place ? 'Nothing ticked yet. Tick every night it paid for.'
-              : 'Nothing ticked yet. Tick every night it paid for, or Sort later.');
-          } else {
+          var mkTotals = function () {
+            if (!picked.length) {
+              return h('p', { class: 'iv-none' }, r.whole ? 'It goes on the books for the whole tour, not on a night.'
+                : r.later ? 'It counts as guarantee income now. You put it on its show later, from the Income tab.'
+                : r.place ? 'Nothing ticked yet. Tick every night it paid for.'
+                : 'Nothing ticked yet. Tick every night it paid for, or \u201cNot sure which show yet\u201d.');
+            }
+            // Placing: null until he has said how much (then the panel shows what's left, and promises nothing).
+            var placeNow = pch ? placeAmount(r, picked) : null, said = !pch || placeNow != null;
+            var plan = nightPlan(r, picked, pch && placeNow != null ? placeNow : null);
             var d = Math.round(plan.diff * 100) / 100, even = Math.abs(d) < 0.005;
             var pctTxt = String(Math.round(plan.cut * 1000) / 10);
-            totals = h('div', { class: 'iv-total' + (even ? ' ok' : plan.agentFits ? ' fits' : ' off') },
+            return h('div', { class: 'iv-total' + (even ? ' ok' : plan.agentFits ? ' fits' : ' off') },
               h('div', { class: 'iv-tline' }, h('span', null, 'Logged for ' + (picked.length === 1 ? 'this show' : 'these ' + picked.length + ' shows')),
                 h('span', { class: 'num' }, G.moneyCents(plan.logged))),
-              h('div', { class: 'iv-tline' }, h('span', null, 'This deposit'), h('span', { class: 'num' }, G.moneyCents(plan.amount))),
+              h('div', { class: 'iv-tline' }, h('span', null, !r.place ? 'This deposit' : said ? 'Going on now' : 'Left to sort'),
+                h('span', { class: 'num' }, G.moneyCents(plan.amount))),
               h('p', { class: 'iv-tsay' }, even ? 'Adds up'
                 : !(plan.logged > 0) ? 'Nothing was waiting on ' + (picked.length === 1 ? 'this show' : 'these shows') + ': this is extra'
                 : d < 0 ? G.moneyCents(-d) + ' less than what\u2019s logged' + (plan.agentFits ? ' \u00b7 the booking agent\u2019s ' + pctTxt + '% fits' : '')
                 : G.moneyCents(d) + ' more than what\u2019s logged'),
-              picked.length > 1 ? h('p', { class: 'iv-tnote' }, sayPlan(plan, picked, even))
+              !said ? null
+                : picked.length > 1 ? h('p', { class: 'iv-tnote' }, sayPlan(plan, picked, even))
                 : !even && plan.logged > 0 ? h('p', { class: 'iv-tnote' }, (function (n1) {
                     var hadD = G.num(n1.guaranteeDeposit);
                     // Already received with a Deposit Amount: the bank's money is set against it.
@@ -17650,9 +17746,54 @@
                       : 'Log adds it to what the bank has shown for this show.';
                     return 'Log marks it received on what the bank shows.';
                   })(picked[0])) : null);
-          }
+          };
+          var totals = mkTotals();
+          // Placing: how much of it goes on the ticked shows now.
+          var partBox = !pch ? null : (function () {
+            var say = h('p', { class: 'iv-part-say' });
+            var sayPart = function () {
+              var v = placeAmount(r, picked), rest = v != null ? Math.round((pch.total - v) * 100) / 100 : 0;
+              say.className = 'iv-part-say' + (v == null ? ' ask' : '');
+              say.textContent = v == null
+                ? (r.part === 'other' ? 'Type an amount, up to ' + G.moneyCents(pch.total) + '.' : 'Say how much of it goes on ' + (picked.length === 1 ? 'this show' : 'these shows') + '.')
+                : rest > 0.005 ? G.moneyCents(v) + ' goes on now. ' + G.moneyCents(rest) + ' stays in Guarantees to sort.'
+                : 'All ' + G.moneyCents(pch.total) + ' goes on ' + (picked.length === 1 ? 'this show' : 'these shows') + '.';
+            };
+            var pick = function (mode) { return function () { r.part = mode; redraw(); }; };
+            // (With nothing to choose between, all of it is what goes on: shown as chosen.)
+            var isOn = function (mode) { return r.part === mode || (mode === 'all' && !pch.ask && r.part !== 'other'); };
+            var btn = function (mode, label) {
+              return h('button', { class: 'btn sm ' + (isOn(mode) ? 'primary' : 'ghost'), type: 'button', disabled: r.busy || null, onclick: pick(mode) }, label);
+            };
+            var kids = [h('p', { class: 'iv-part-q' }, 'How much of it?')];
+            kids.push(h('div', { class: 'iv-part-opts' },
+              pch.ask ? btn('logged', 'What\u2019s logged \u00b7 ' + G.moneyCents(pch.logged)) : null,
+              pch.ask && pch.net > 0 ? btn('net', 'What\u2019s logged, less the agent\u2019s ' + String(Math.round(pch.cut * 1000) / 10) + '% \u00b7 ' + G.moneyCents(pch.net)) : null,
+              btn('all', 'All of it \u00b7 ' + G.moneyCents(pch.total)),
+              btn('other', 'Another amount')));
+            if (r.part === 'other') kids.push(moneyInput({ id: 'iv-part-' + r.id, value: r.partAmt || 0, label: 'Amount to put on now', last: true,
+              onValue: function (v) {
+                // Typed, not redrawn (the box keeps its cursor): the line under it and the panel follow.
+                r.partAmt = v; sayPart();
+                var fresh = mkTotals(); totals.replaceWith(fresh); totals = fresh;
+              } }));
+            kids.push(say);
+            sayPart();
+            var box = h('div', { class: 'iv-part' });
+            box.replaceChildren.apply(box, kids);
+            return box;
+          })();
+          // "Sort later" (Devin: "if I don't know which show it is for yet ... an
+          // answer that basically says Not sure"): guarantee income today, waiting
+          // on the Income tab for its show. First in the list, where it is seen
+          // before a long run of nights (he could not find it at the bottom).
+          var laterLine = r.place ? null : h('label', { class: 'iv-night iv-later' + (r.later ? ' on' : '') },
+            h('input', { type: 'checkbox', class: 'rv-check', checked: r.later || null, disabled: r.busy || null,
+              onchange: function (e) { r.later = e.target.checked; if (r.later) { r.shows = []; r.whole = false; } r.showTouched = true; redraw(); } }),
+            h('span', { class: 'iv-nwhere' }, 'Not sure which show yet', h('span', { class: 'iv-ntag' }, 'sort later: it counts as guarantee income now')));
           showSel = h('div', { class: 'iv-nights', role: 'group', 'aria-label': 'Which shows this deposit paid for' },
             h('p', { class: 'iv-nq' }, choices.length ? 'Which shows? Tick every night it paid for.' : 'No show on this tour has a guarantee logged yet.'),
+            laterLine,
             shown.map(function (s) {
               var want = nightWants(s), tag = nightTag(s);
               return h('label', { class: 'iv-night' + (on(s) ? ' on' : '') + (want > 0 ? '' : ' dim') },
@@ -17669,18 +17810,13 @@
             }),
             restN.length && waitingN.length ? h('button', { class: 'linkbtn iv-more', type: 'button', onclick: function () { r.allNights = !r.allNights; redraw(); } },
               r.allNights ? 'Only the nights still waiting' : 'Show every night (' + choices.length + ')') : null,
-            // "Sort later" (Devin: "if I don't know which show it is for yet"): it is
-            // guarantee income today and waits on the Income tab for its show.
-            r.place ? null : h('label', { class: 'iv-night iv-whole' + (r.later ? ' on' : '') },
-              h('input', { type: 'checkbox', class: 'rv-check', checked: r.later || null, disabled: r.busy || null,
-                onchange: function (e) { r.later = e.target.checked; if (r.later) { r.shows = []; r.whole = false; } r.showTouched = true; redraw(); } }),
-              h('span', { class: 'iv-nwhere' }, 'Sort later', h('span', { class: 'iv-ntag' }, 'don\u2019t know which show yet'))),
             // Whole tour is a choice he makes, never what an empty list means.
-            h('label', { class: 'iv-night' + (r.place ? ' iv-whole' : '') + (r.whole ? ' on' : '') },
+            h('label', { class: 'iv-night iv-whole' + (r.whole ? ' on' : '') },
               h('input', { type: 'checkbox', class: 'rv-check', checked: r.whole || null, disabled: r.busy || null,
                 onchange: function (e) { r.whole = e.target.checked; if (r.whole) { r.shows = []; r.later = false; } r.showTouched = true; redraw(); } }),
               h('span', { class: 'iv-nwhere' }, 'Whole tour', h('span', { class: 'iv-ntag' }, 'not for one night'))),
-            totals);
+            totals,
+            partBox);
         } else if (choices) {
           // No night is picked for him. (Redrawn on change, so an approval for
           // one night is taken back the moment another is chosen.)
@@ -17834,7 +17970,7 @@
             h('div', { class: 'rv-head' },
               h('span', { class: 'rv-name' }, r.place ? 'Guarantee to sort' : acct ? 'Deposit \u00b7 ' + acct : 'Bank deposit'),
               h('span', { class: 'amt num' }, G.moneyCents(r.amount))),
-            h('div', { class: 'rv-sub' }, (r.place ? 'In the bank ' : '') + dayMD(r.date),
+            h('div', { class: 'rv-sub' }, (r.place ? 'In the bank ' : '') + dayMD(r.date) + (r.place && r.of > 0 ? ' \u00b7 left of ' + G.moneyCents(r.of) : ''),
               r.av ? h('span', { class: 'rv-flag' }, 'Looks like atVenu') : null,
               r.watch && !r.place ? h('span', { class: 'hint' }, ' \u00b7 watched for ' + (r.watch === 'both' ? 'merch and guarantees' : r.watch)) : null),
             // Said once (an approval the books no longer bear out); gone at the next touch.
@@ -17843,7 +17979,8 @@
             lumpLine,
             r.place ? null : destPills(r, redraw),
             h('div', { class: 'iv-sels' }, r.place ? null : kindSel, showSel),
-            h('div', { class: 'rv-act iv-act' }, logBtn, aside)));
+            // (Putting it back is for the person whose bank it is, and only while none of it has been placed.)
+            h('div', { class: 'rv-act iv-act' }, logBtn, r.place && (!createdTour(tourId) || r.of > 0) ? null : aside)));
         r.note = null;
         // The header's count follows every change (what a row is, where it goes).
         if (!drawing) sayCount();

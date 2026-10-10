@@ -594,28 +594,38 @@ shim = r"""<script>
       await db.doc('tours/' + o.tourId).update({ shows: sh });
       return { ok: true, nights: parts.length };
     },
-    /* "Sort later" money finds its show(s), or stays on the whole tour (sort_guarantee, 0124). */
+    /* "Sort later" money finds its show(s): all of it, or part of it with the
+       rest left to sort; or it stays on the whole tour (sort_guarantee, 0125). */
     sortGuarantee: async function (depId, opts) {
       var H = window.__harness, o = opts || {}, parts = Array.isArray(o.parts) ? o.parts : [];
-      H.sorted = (H.sorted || []).concat([{ id: depId, tourId: o.tourId, parts: parts, whole: !!o.whole }]);
+      H.sorted = (H.sorted || []).concat([{ id: depId, tourId: o.tourId, parts: parts, whole: !!o.whole, expect: o.expect }]);
       var entry = ((tours[o.tourId] || {}).otherIncome || {})[depId];
       if (!entry || entry.unsorted !== true) return { ok: false, why: 'done' };
+      var amt = Number(entry.amount);
+      if (typeof o.expect === 'number' && Math.abs(o.expect - amt) > 0.02) return { ok: false, why: 'changed', left: amt };
       var oi = {};
       if (o.whole) {
         oi[depId] = { unsorted: null };
         await db.doc('tours/' + o.tourId).update({ otherIncome: oi });
-        return { ok: true, nights: 0 };
+        return { ok: true, nights: 0, left: 0 };
       }
-      var sh = this.__parts(o.tourId, parts, Number(entry.amount), entry.date);
-      oi[depId] = null;
+      var placing = parts.reduce(function (n, p) { return n + (Number(p.amount) || 0); }, 0);
+      if (!(placing > 0)) throw new Error('bad share');
+      if (placing > amt + 0.02) throw new Error('more than is left');
+      var rest = Math.round((amt - placing) * 100) / 100;
+      var sh = this.__parts(o.tourId, parts, placing, entry.date);
+      if (rest < 0.01) { rest = 0; oi[depId] = null; }
+      else oi[depId] = { amount: rest, of: Number(entry.of) > 0 ? Number(entry.of) : amt };
       await db.doc('tours/' + o.tourId).update({ otherIncome: oi, shows: sh });
-      return { ok: true, nights: parts.length };
+      return { ok: true, nights: parts.length, left: rest };
     },
-    /* Logged "Sort later" by mistake: back into New income (unpark_guarantee, 0124). */
+    /* Logged "Sort later" by mistake: back into New income (unpark_guarantee);
+       refused once part of it has been placed. */
     unparkGuarantee: async function (depId, opts) {
       var H = window.__harness, o = opts || {};
       var entry = ((tours[o.tourId] || {}).otherIncome || {})[depId];
       if (!entry || entry.unsorted !== true) return { ok: false, why: 'done' };
+      if (entry.of != null) return { ok: false, why: 'partly' };
       var dep = (H.deposits || []).filter(function (d) { return d.id === depId; })[0];
       if (!dep || !dep.matched) return { ok: false, why: 'gone' };
       dep.matched = false;
