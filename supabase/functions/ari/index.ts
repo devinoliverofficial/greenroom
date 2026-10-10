@@ -150,6 +150,17 @@ async function crewSubs(tourId: string, ownerId: string): Promise<Sub[]> {
   const { data: subs } = await admin.from("push_subs").select("endpoint, p256dh, auth, prefs, user_id").in("user_id", ids);
   return (subs ?? []) as Sub[];
 }
+/* The tour's Managers: its creator, and whoever the database says manages it
+   (tour_managers, migration 0133). Merch numbers are the tour's money, so
+   they go to Managers only (Devin, 2026-10-10). */
+async function managerIds(tourId: string, ownerId: string): Promise<Set<string>> {
+  const out = new Set<string>([ownerId]);
+  try {
+    const { data } = await admin.rpc("tour_managers", { t_id: tourId });
+    for (const id of (data ?? []) as string[]) if (id) out.add(String(id));
+  } catch { /* the creator alone */ }
+  return out;
+}
 async function push(subs: Sub[], body: string, tourId: string): Promise<number> {
   let sent = 0;
   const dead: string[] = [];
@@ -317,7 +328,8 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
       if (!prev || num(prev.value) !== merch) {
         await admin.from("ari_sent").upsert({ tour_id: tour.id, show_id: showId, kind: "merch", value: merch,
           sent_at: new Date().toISOString() }, { onConflict: "tour_id,show_id,kind" });
-        const to = (await everyone()).filter((s) => (s.prefs ?? {}).merchnums === true);
+        const mgr = await managerIds(tour.id, tour.owner_id);
+        const to = (await everyone()).filter((s) => mgr.has(s.user_id) && (s.prefs ?? {}).merchnums === true);
         sent += await push(to, `MERCH NUMBERS! ${raw.city}: ${money(merch)} in merch.`, tour.id);
       }
     }

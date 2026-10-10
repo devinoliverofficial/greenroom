@@ -1795,9 +1795,13 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .feed-accts { margin-top: 10px; }
 .fa-name { font-weight: 600; margin: 0 2px 6px; }
 /* The Budget tab, sized like the other tabs. */
-.budget-page .hero { padding: 18px 16px 14px; border-radius: 22px; }
-.budget-page .odo { font-size: clamp(40px, 12.5vw, 56px); }
-.budget-page .hero-cap { font-size: 13.5px; }
+.budget-page .hero, .exp-page .hero { padding: 18px 16px 14px; border-radius: 22px; }
+.budget-page .odo, .exp-page .odo { font-size: clamp(40px, 12.5vw, 56px); }
+.budget-page .hero-cap, .exp-page .hero-cap { font-size: 13.5px; }
+/* The climbing line leads the Expenses tab now: its numbers keep their own face there (the ledger's rule is for the ledger). */
+.exp-page .hero .num { font-family: var(--font-num); font-weight: 700; letter-spacing: -.015em; }
+.exp-page .hero .change-chip b { font-weight: 800; }
+.exp-page .hero { margin-bottom: 14px; }
 .budget-page .btn.add-more { min-height: 44px; font-size: 14px; margin: 2px 0 14px; }
 .budget-page .count-line { font-size: 12px; }
 .budget-page .show-row { min-height: 56px; padding: 10px 2px; gap: 12px; }
@@ -2089,6 +2093,8 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .xs-flow { display: block; overflow: visible; font-family: var(--font); -webkit-tap-highlight-color: transparent; }
 .xs-flow .xs-t { font-size: 10.5px; font-weight: 600; fill: var(--ink); }
 .xs-flow .xs-a { font-size: 10.5px; font-weight: 400; fill: var(--ink-2); font-variant-numeric: tabular-nums; }
+/* A third line under an amount (Merch: its average a show). */
+.xs-flow .xs-a.xs-s { font-size: 9px; fill: var(--ink-3); }
 .xs-flow .xs-trunk { fill: var(--ink); }
 .xs-flow .xs-rb { opacity: .28; transition: opacity .18s ease; }
 .xs-flow .xs-hit { fill: transparent; cursor: pointer; }
@@ -2509,6 +2515,15 @@ button.acct-row:active { background: var(--surface-2); }
 .mn-row .mn-chev { transition: transform .18s ease; }
 .mn-row.open > .mn-chev { transform: rotate(90deg); }
 .mn-over { margin: 10px 0 2px; }
+/* Budget History: a year, then Tours (which drops that year's tours down) and Off Tour. */
+.hist-year { margin-bottom: 6px; }
+.hist-y { font-size: 20px; font-weight: 700; letter-spacing: -.01em; color: var(--ink); margin-top: 14px; }
+.mn-drop { margin: 0 0 6px 17px; padding-left: 12px; border-left: 1px solid var(--line); }
+.hist-who { position: relative; z-index: 1; margin: -6px 0 8px; font-size: 14px; color: var(--ink-2); }
+/* Setting a tour up: a past crew member's Crew / Manager switch, and their tick. */
+.people-row.wz-pick { gap: 10px; cursor: pointer; }
+.people-row .role-tag.wz-lvl { border: 0; cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; letter-spacing: .05em; }
+.people-row .role-tag.aa { background: var(--pos-soft); color: var(--pos); }
 .mn-head.mn-tour { margin-top: 14px; }
 /* The menu and the pages under it: no band, the GR mark alone in green, centred. */
 .headband.dark.mn-top { margin-bottom: 6px; padding-bottom: 0; }

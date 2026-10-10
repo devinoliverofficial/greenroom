@@ -333,6 +333,53 @@
       (a.createdAt || 0) - (b.createdAt || 0);
   }
 
+  /* One calendar year of an Off Tour book, for Budget History (Devin,
+     2026-10-10: under each year, OFF TOUR "should take you to the summary of
+     that year"). The book is one running record, so a year is the entries
+     DATED in it: card charges, hand-logged payments, cash, income put on the
+     book. Left out, because they belong to no one year: the plan (projected),
+     card balances and loans carried in. A total typed in with no date counts
+     in the year the book began. Run calc() on what this returns. */
+  function yearSlice(tour, year) {
+    var y = String(year), t = isObj(tour) ? tour : {};
+    var dated = function (o) {
+      var out = {};
+      Object.keys(isObj(o) ? o : {}).forEach(function (k) {
+        if (isObj(o[k]) && String(o[k].date || '').slice(0, 4) === y) out[k] = o[k];
+      });
+      return out;
+    };
+    var began = bookYears(t)[0] || '';
+    var out = {};
+    Object.keys(t).forEach(function (k) { out[k] = t[k]; });
+    var exp = normExpenses(t.expenses), expenses = {};
+    Object.keys(exp).forEach(function (k) { expenses[k] = { projected: null, paid: began === y ? num(exp[k].paid) : 0 }; });
+    out.expenses = expenses;
+    out.charges = dated(t.charges);
+    out.otherIncome = dated(t.otherIncome);
+    out.extras = dated(t.extras);
+    out.cashLog = dated(t.cashLog);
+    out.debts = {};
+    out.shows = {};
+    out.crew = {};   // (the pay plan is the book's, not a year's)
+    delete out.cardAway; delete out.feedCards; delete out.merchToSort;
+    return out;
+  }
+  // The years a book has anything dated in, oldest first; its first year is when it began.
+  function bookYears(tour) {
+    var t = isObj(tour) ? tour : {}, seen = {};
+    var began = String(t.offFrom || '').slice(0, 4);
+    if (!/^\d{4}$/.test(began)) began = t.createdAt ? String(new Date(t.createdAt).getFullYear()) : '';
+    if (/^\d{4}$/.test(began)) seen[began] = true;
+    [t.charges, t.otherIncome, t.extras, t.cashLog].forEach(function (o) {
+      rows(o).forEach(function (x) { var d = String(x && x.date || '').slice(0, 4); if (/^\d{4}$/.test(d)) seen[d] = true; });
+    });
+    var list = Object.keys(seen).sort();
+    // (the year it began leads even when an entry is dated before it)
+    if (/^\d{4}$/.test(began)) list = [began].concat(list.filter(function (x) { return x !== began; }));
+    return list;
+  }
+
   function emptyExpenses() {
     var o = {};
     TYPED_CATEGORIES.forEach(function (c) { o[c.key] = { projected: null, paid: 0 }; });
@@ -2169,6 +2216,7 @@
     TYPED_CATEGORIES: TYPED_CATEGORIES,
     COMMISSION_LINES: COMMISSION_LINES, commissionLines: commissionLines,
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
+    yearSlice: yearSlice, bookYears: bookYears,
     OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
     HISTORY_TIERS: HISTORY_TIERS, LEGACY_BAR: LEGACY_BAR, historyTier: historyTier,
     BAND_ROLES: BAND_ROLES, ARTIST_CREW_ROLES: ARTIST_CREW_ROLES, CREW_ROLES: CREW_ROLES,

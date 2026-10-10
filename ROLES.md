@@ -9,7 +9,7 @@ This file is the reference for every later build: use these words, in this meani
 |---|---|---|
 | **Artist** | The act itself, e.g. I See Stars. Never a person's title. | "this is an artist as in 'I See Stars'" |
 | **Member** | A person who is IN the band: an owner of the artist. | "a person who is actually an owner of the artist entity. Like me" · "Anything that is not a Member isn't a part of the band." |
-| **Manager** | A permission, not a job. Members have it by default; a member can give it to the tour manager or anyone. Edits a page or a tour, never deletes. | "A manager can basically edit a page or tour but they cannot delete." |
+| **Manager** | A permission on a tour, not a job. Members have it by default; a member can give it to the tour manager or anyone. | "I think managers can do anything to a tour page. Members can do anything to an artists page and a touring page." (2026-10-10; earlier: "A manager can basically edit a page or tour but they cannot delete.") |
 | **Band / Touring Musician** | A hired player on stage. Not a member. Part of the crew. | "These are hired guns. They are not in the band but they are on stage. They are a part of the crew." |
 | **Crew** | Everyone else who works for the artist. | role list below |
 | **Fan** | Someone who follows and attends. May be endorsed by an artist as a **VIP** (friends, family, high-level fans). | |
@@ -62,11 +62,29 @@ Tour accountant. Then the two for hired players: Band, Touring Musician. (`G.CRE
 
 | Who | Sees | Edits |
 |---|---|---|
-| Artists and Members | Every tab, "BUT only for artists that they are a part of". "Each artists should have a clean slate." | Only Managers edit ("Obviously managers are the only ones that can edit"); members are Managers by default |
+| Artists and Members | Every tab, "BUT only for artists that they are a part of". "Each artists should have a clean slate." | "Members can do anything to an artists page and a touring page" |
+| Managers | Every tab of that tour | "managers can do anything to a tour page" |
 | Crew | Overview, Day sheets, Guest lists, Crew Stats, Chats; under Budget "they only see MY PAY NOT the bands income/expenses/card information" | Their own MY PAY |
 | Fans | "does not have any access to the overview page at all. Just the user profile experience and searching for artist pages" | |
 
    "If you invite people to your tour then the roles define what you can see."
+   So a tour has **two levels, Manager and Crew** (ALL ACCESS and GA are gone, 2026-10-10: "Just want this to be
+   simple"); Members are not a level, they get everything from the artist page.
+11. **A tour is made on the artist's page.** "I can only create a tour when on an artists page ... when you click
+    the artist it's for it should automatically take you off your members page and sign you onto that artist
+    page. This way all the tour logistics and invites / roles are done through the artists page ... when you
+    create a tour it should immediately ask you to add your crew and assign managers ... by default it should
+    show the list of past crew."
+12. **Money notifications are for Managers.** "In the green notifications and any notifications that are
+    pertaining to the 'managers' should only be available to managers of the tour."
+13. **When a tour is public.** "a tour is public the moment it's announced with dates. However, when a tour is
+    scheduled to end the greenroom app needs to do a quick search to make sure no dates were cancelled." (A tour
+    cancelled half-way "should be accounted for".)
+14. **Two NDAs.** The tester NDA "is signed once by everyone the moment they make an account". The artist's own
+    NDA is for crew: "crew only needs to sign the 'artist' NDA (NOT THE TESTER NDA) once ... the moment they are
+    added to either a tour or to the artist crew page. Whichever happens first ... This NDA is then stored."
+15. **Asking for an endorsement.** "when a crew member requests an endorsement I think a band has 30 days to
+    answer."
 
 ## 3. What the app does today (checked 2026-10-10)
 
@@ -82,8 +100,14 @@ Tour accountant. Then the two for hired players: Band, Touring Musician. (`G.CRE
   every night, the artist's whole list as it stood; crew: what the artist confirmed); nothing later is added.
   Crew are off at once. A member is off when every other member has said yes; one no stops it. Someone listed
   but never endorsed is simply taken off.
-- The three lines are Create a tour, Merchroom (artists and members) and Settings; crew get MY PAY alone under
-  Budget; on an artist's account Overview only opens that artist's tours.
+- The three lines are Create a tour, Merchroom (artists and members), Budget History and Settings; crew get MY
+  PAY alone under Budget; on an artist's account Overview only opens that artist's tours.
+- Two levels on a tour, Manager and Crew (migration 0133): everyone who was ALL ACCESS is a Manager; the words
+  ALL ACCESS and GA are gone from the app (guest passes still use them).
+- Create a tour signs you onto the artist's page you run and then asks who is on the tour: past crew ticked, a
+  Crew / Manager switch each, one Invite button.
+- Budget History: each year, its tours (each opens its Budget tab; MY PAY alone for crew) and the artist's Off
+  Tour (this year: the live book; a past year: a read-only summary of what is dated in it).
 - Crew claim tours and the artist page accepts or sends back each claim.
 - One rule counts cities and countries on artist and person pages; a member's Tours list is the artist page's.
 - Artist pages can be followed.
@@ -97,12 +121,12 @@ Tour accountant. Then the two for hired players: Band, Touring Musician. (`G.CRE
 | Hired players | On the artist page a person is "band" or "crew", one of the two, one role. "Band" there means member and gives the whole history. | Listing by Member or Crew with several roles each. Connor is already listed as crew. |
 | Dates | None. A member gets every night the artist ever played, the day they are listed. Crew get what they claimed. | From and until on each listing, asked at endorsement; history filtered by them. |
 | Leaving | Done 2026-10-10 (0132), with one stretch per person: listing the same person again picks up as if they never left. | From and until for each stretch (the dates build). |
-| Only Managers edit | Whoever is invited ALL ACCESS can edit the whole tour; Manager adds little (polls, answering Ari, sorting deposits, Tasks). There is no "sees everything, edits nothing". | Editing a tour asks for Manager, in the app and in the database; ALL ACCESS without it reads only. |
-| Members see every tab | What you see comes from how you were invited to that tour (GA or ALL ACCESS), not from being a Member. A Member who was not invited sees nothing of it. | Tours belong to the artist; a Member's access comes from the artist page. |
-| Crew never see the band's money | True on every screen and in the database for GA. But a crew person invited ALL ACCESS sees and edits all of it. | Invites offer Member / Manager / Crew, not ALL ACCESS / GA. |
+| Managers do anything on a tour | Done for seeing and editing (0133: two levels). Still only the tour's creator: naming, changing or removing a Manager; deleting the tour; the linked bank cards and bank deposits (those are tied to the creator's own bank login). | Decide which of those open to Managers (section 6). |
+| Members see and do everything | What you see comes from how you were invited to that tour (Manager or Crew), not from being a Member. A Member who was not invited sees nothing of it. | Tours belong to the artist; a Member's access comes from the artist page. |
+| Crew never see the band's money | True on every screen and in the database. Money notifications: MERCH NUMBERS only reaches a phone whose owner manages a tour and is crew on none (0133); "in the green" is switched off until the notification functions are pasted again (they are ready in the repo and then send both, and special requests, to Managers only). | Devin pastes the two functions (one step at a time); then "in the green" goes back on. |
 | A clean slate per artist | Each tour's data is walled off by tour. Overview follows the artist only for the account that runs the page; a listed Member cannot switch to the artist. Search still lists every tour you are on. | Tours carry the artist's id; Overview, the picker and Search follow the artist you are on. |
 | The public record outlives the private pages | Deleting a tour also takes its card off the artist's and people's tour lists until it is restored. | A tour that has been announced writes its name, dates, cities and venues into the archive, which then stands on its own. |
-| Tours made on the artist page | A tour belongs to the account that made it and names its artist as text. A tour manager's tours never show on the band's page. | Tours carry the artist's id; members and managers of the artist can open and edit them. |
+| Tours made on the artist page | Create a tour switches you to the artist page you run, and the new tour remembers that page's id (doc.artistId). But the database still treats a tour as its creator's, and a listed Member who does not run the page cannot switch to it. | A real artist id on the tour, checked by the database; Members get the artist's tours without an invite; any Member can switch to the artist. |
 | Claiming like Spotify | A note and an optional link, approved by hand by Devin. No proof step. | See section 5. |
 | Sign-up | The only way in is a tour invite. The account is created when the tour manager taps Invite. No account types. | Greenroom invite codes, an NDA step, then the account; a choice of what you are. |
 | NDAs | Nothing exists. | Documents and signatures tables; the signup gate refuses an email with no signature. |
@@ -170,16 +194,61 @@ account. A lawyer should read the NDA and the signing screen before the beta ope
 2. Letting a crew person go: whoever runs the page, at once. Letting a member go: every other member has to agree.
 3. A tour's private pages can be deleted and restored; the public record cannot.
 4. Fans need an invite code too, for now.
+5. Managers can do anything on a tour; Members anything on the artist page and its tours. Two levels on a tour.
+6. A tour is public once it is announced with dates; when it is due to end, the app checks no dates were cancelled.
+7. Two NDAs: the tester one for everyone at sign-up; the artist's own for crew, once, the first time they are
+   added to that artist's tour or crew page.
+8. A crew person will be able to ask an artist for an endorsement, and the artist has 30 days to answer (not
+   built yet). The "added by mistake" week for an unendorsed member stays a week.
 
 **Still to decide**
-1. When does a tour become part of the public record? ("as tours are announced"): at an Announce button, or as
-   soon as it has dates? Until this is built, deleting a tour also hides its public card.
-2. Account deletion (the App Store requires it): today it erases the tours that account made and had deleted, and
+1. "Managers can do anything to a tour page": does that include deleting the tour, and adding or removing other
+   Managers? Today only the tour's creator can do those (and the bank cards stay with whoever linked them).
+2. Cancelled dates, and a tour that ends early: see section 7.
+3. The artist's NDA: once per artist (someone crewing for two artists signs two), and Members never sign it?
+   If an artist changes its NDA later, do people who already signed sign again?
+4. Account deletion (the App Store requires it): today it erases the tours that account made and had deleted, and
    an account that runs an artist page cannot be deleted at all. What should happen to both?
-3. "Only Managers edit": does that include the card settings, logging bank deposits and naming other Managers,
-   which today only the tour's creator can do?
-4. Should anyone at all be able to tap + and add an artist (today yes; it is the only way a new artist starts),
+5. Should anyone at all be able to tap + and add an artist (today yes; it is the only way a new artist starts),
    or only an account that signed up as an artist or member?
-5. Merch that belongs to no show (an online store payout): "Get rid of off tour" was about what? The Off Tour
-   book itself is in use (it is the third tab under Budget).
 6. "View flyer" on a tour in someone's history: build it?
+7. Budget History: the live Off Tour page is the whole book, not only this year. Cut it to the year, or leave it?
+
+## 7. Cancelled dates and tours that end early (brainstorm, 2026-10-10)
+
+His words: "A tour becomes public the moment it starts. However in events of a tour cancellation which happens
+even halfway through tours - this should be accounted for." and "when a tour is scheduled to end the greenroom
+app needs to do a quick search to make sure no dates were cancelled."
+
+What the record is made of: nights. A night becomes history once its date has passed. Today a date that was
+cancelled but left on the tour would count as played the morning after. Three pieces close that:
+
+1. **A "Cancelled" mark on a show** (a Manager taps it; today the only choice is deleting the show). A cancelled
+   night stays on the tour's calendar, struck through, and counts for nobody: not the artist's shows, cities or
+   countries, not anyone's page.
+2. **"The tour ended early"**: one action that marks every date after the last show played as cancelled, so a
+   run that stops half-way keeps the nights that happened and nothing else.
+3. **The check when a tour is due to end**: the app looks each date up in the outside record it already reads
+   every day (setlist.fm), and gives the tour's Managers one card: "3 dates have no record of a show. Did they
+   happen?" with Yes / Cancelled on each. Nothing is changed without that answer (the same rule as bank
+   deposits: the app suggests, a person approves).
+
+To choose: does the public page show a cancelled date as "Cancelled" (a history book says what was announced),
+or leave it out? And does "public" start when the tour is announced (upcoming dates visible to fans) with each
+night becoming permanent only once it is played, which is how both of his sentences fit together?
+
+## 8. Signed NDAs: how they are stored (design, 2026-10-10; build waits for the tester wording)
+
+- **Two kinds of document.** Greenroom's tester NDA (one, written by Devin). An artist's own NDA (each artist
+  pastes its text on its page; it can be replaced, and the old text is kept).
+- **What is kept for each signature**, for good, even if the account is later deleted: which document and which
+  version, the exact text's fingerprint, the legal name typed, the account's email at that moment, the time,
+  and the phone or browser it was signed on. Nobody can edit or delete a signature.
+- **Who can see it.** The signer sees and can keep a copy of everything they signed (Settings). The account
+  that runs an artist page sees who has signed that artist's NDA and who has not yet.
+- **When it is asked.** Tester: the first time a new account opens the app, before anything else loads.
+  Artist: the next time the app opens after someone is added to one of the artist's tours or to its crew page,
+  whichever comes first; once signed for that artist it is never asked again.
+- **How hard the door is.** For the beta the app refuses to show anything until it is signed. That stops
+  everyone using the app normally; it does not stop someone technical from asking the database directly for
+  what their invite already lets them see. Closing that needs tours to carry the artist's id first.

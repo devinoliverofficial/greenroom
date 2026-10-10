@@ -1271,6 +1271,10 @@
         tour_role: tourRole
       };
       if (mgr) row.manager = true;
+      // The door first: the database only makes an account for an address that was let in (24 hours,
+      // spent by the sign-up; a day's invites are capped). Refused here, nothing is left half done.
+      var al = await sb.rpc('allow_signup', { addr: addr, note: tourRole });
+      if (al.error) throw mapError(al.error);
       var q = await sb.from('members').upsert(row);
       if (q.error) throw mapError(q.error);
       // Remembered for the next tour's invites. A nicety: never blocks the invite.
@@ -1285,10 +1289,6 @@
         });
       } catch (e) { /* the list can catch up next time */ }
       // The row alone is enough — an account made with this address claims it.
-      // The door: the database only makes an account this address was sent
-      // for, so the allowance goes first (24 hours, spent by the sign-up).
-      var al = await sb.rpc('allow_signup', { addr: addr, note: tourRole });
-      if (al.error) throw mapError(al.error);
       // The edge function adds the nicety: the account and the invite email.
       try {
         var r = await callFn('invite', {
@@ -2114,7 +2114,8 @@
     var needName = !first0 || !last0;
     var needRole = !m0.tour_role;
     var tourName = String(m0.tour_name || '').trim();
-    var access = m0.access === 'editor' ? 'ALL ACCESS' : (m0.access === 'viewer' ? 'GA' : '');
+    // Two levels on a tour now: a Manager, or crew (the invite still carries the old 'editor' / 'viewer').
+    var access = m0.access === 'editor' ? 'MANAGER' : (m0.access === 'viewer' ? 'CREW' : '');
     var who = [roleName(m0.tour_role), access].filter(Boolean).join(' \u00b7 ');
     wrap.innerHTML =
       '<div class="gate-card">' +

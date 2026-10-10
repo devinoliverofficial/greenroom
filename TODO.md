@@ -82,7 +82,15 @@ Choices made while building, for him to confirm or change:
 - [x] Nothing is erased: no 30-day clear-out, no "Delete forever", no "Delete artist profile"; the database refuses deleting a tour or an artist page (0131). A tour's private pages can be deleted and restored (Settings, Deleted tours)
 - [x] The three lines: Create a tour and Merchroom for artists and members, Settings for everyone; "Card feed" is "Linked Cards"; crew see MY PAY alone under Budget; on an artist's account Overview opens only that artist's tours (2026-10-10)
 - [x] Leaving keeps your history (0132, 2026-10-10): a listing ends instead of being deleted; crew at once, a member when every other member agrees
-- [ ] Build order and what is decided or still open are in ROLES.md sections 4 and 6. Next: sign-up with the NDA step (waiting on the NDA text), account kinds, and a way for Devin to test every kind of login
+- [x] Two levels on a tour, Manager and Crew; ALL ACCESS and GA are gone (0133, 2026-10-10)
+- [x] Create a tour signs you onto the artist's page and asks who is on the tour (past crew ticked, Crew / Manager each)
+- [x] Budget History in the three lines: each year, its tours, and Off Tour
+- [x] The two Budget graphs swapped (the two bars lead Income, the climbing line leads Expenses); Merch shows its average a show
+- [ ] Build order and what is decided or still open are in ROLES.md sections 4, 6, 7 and 8. Next: the NDAs (design in section 8; waiting on the tester wording), sign-up with account kinds, and a way for Devin to test every kind of login
+- [ ] **Devin to paste two server functions** (supabase/functions/notify and ari, ready in the repo): then "in the green", merch numbers and special requests go to a tour's Managers only, exactly per tour, and "in the green" can be switched back on in the app
+- [ ] Cancelled dates and tours that end early: three pieces in ROLES.md section 7 (a Cancelled mark on a show, "the tour ended early", a check card for Managers when the tour is due to end)
+- [ ] Crew asking an artist for an endorsement, with 30 days for the artist to answer (today only the artist can start it)
+- [ ] The titles offered when inviting someone to a tour are still the old list (Artist, Band, Friend ...), not his crew roles
 
 ## Who sees what: left open after 2026-10-10 (from the map of every tab by role)
 - [ ] **The notification function sends the band's money to crew phones.** "MERCH NUMBERS! city: $X" and "You're in the green" went to every phone that had them on, whatever the role. The app no longer sends "in the green" and no longer offers MERCH NUMBERS to crew, but the server function (supabase/functions/notify, and ari for merch) still would if asked: it should send both only to people who can see the tour's money. Needs a function deploy; then turn "in the green" back on
@@ -104,6 +112,14 @@ Choices made while building, for him to confirm or change:
 - [ ] A crew person who left can still send a "confirm your tours" claim naming later tours: approved, never counted past the leave day. The claim sheet should stop at that day; the artist's approve card and detail sheet still count the claim as sent
 - [ ] A member added less than a week ago and not endorsed is simply taken off (a slip of the finger). Devin to confirm the week
 - [ ] "Remove endorsement" on your own page still takes a crew person's confirmed tours with it, for good once they have left (the sheet now says so)
+
+## Tour setup, Budget History, notifications: left open after 2026-10-10
+- [ ] Past crew is remembered per person who invited, not per artist: only people who were on this artist's earlier tours start ticked in the tour setup; everyone else is listed unticked. A real per-artist crew list comes with tours belonging to the artist
+- [ ] A listed Member who does not run the artist's page is not switched to it by Create a tour (they cannot switch at all yet), and their tour does not show on the artist's page
+- [ ] Budget History: this year's Off Tour opens the live book, which is the whole book, not only this year (from next January last year's money shows in both). A tour that crosses New Year is filed under the year it started. Old tours open live and editable. A year's summary leaves out the plan, card balances and loans carried in; a total typed in with no date counts in the book's first year
+- [ ] A charge filed under a category the Off Tour book does not have (or "Day by day") is on no line and missing from the totals, on the live page too
+- [ ] After Devin pastes the notify and ari functions: turn "in the green" back on in the app (openIncome), drop the database stopgap (push_subs_guard, members_push_recheck), let the siren go by Manager instead of the "Tour Manager" title (serverLead), and make one test call
+- [ ] The big number's celebration when a tour crosses into the green now plays on the Expenses tab (the graph moved there), not on Income where the night is logged
 
 ## Fans, venues, promoters (Devin, 2026-10-10): later builds, see ROLES.md
 - [ ] **Fans**: "does not have any access to the overview page at all. Just the user profile experience and searching for artist pages". Needs an invite code for now. Today there is no fan account: someone on no tour and no artist page gets no Overview, no Create a tour, no Linked Cards, by a stand-in rule, not a real account kind. A fan cannot open a person's page or follow a person yet

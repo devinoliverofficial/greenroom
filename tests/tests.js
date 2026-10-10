@@ -1934,6 +1934,26 @@
       eq(G.etaText(3700), 'Come back in ~an hour.');
       eq(G.etaText(8000), 'Come back in ~2 hours.');
     });
+    test('yearSlice: one year of an Off Tour book is what is dated in it, nothing carried in', function () {
+      var book = { kind: 'offtour', artist: 'A', offFrom: '2025-03-01', createdAt: Date.UTC(2025, 2, 1),
+        expenses: Object.assign(G.emptyExpenses(), { bus: { projected: 900, paid: 50 } }),
+        charges: { a: { date: '2025-06-01', amount: 100, category: 'bus' }, b: { date: '2026-01-15', amount: 40, category: 'bus' },
+                   c: { date: '', amount: 999, category: 'bus' }, d: { date: '2025-07-01', amount: 30, category: 'bus', accounted: true } },
+        otherIncome: { x: { date: '2025-12-31', amount: 500, kind: 'royalties' }, y: { date: '2026-02-01', amount: 70, kind: 'advance' } },
+        debts: { card1: { amount: 5000 } }, shows: {} };
+      eq(G.bookYears(book).join(','), '2025,2026');
+      var c25 = G.calc(G.yearSlice(book, 2025)), c26 = G.calc(G.yearSlice(book, '2026')), c24 = G.calc(G.yearSlice(book, 2024));
+      var bus = function (c) { return c.lines.filter(function (l) { return l.key === 'bus'; })[0]; };
+      near(bus(c25).paid, 150, 'the dated charge plus the undated typed total, in the year the book began');
+      eq(bus(c25).projected, null, 'the plan is not a year\'s');
+      near(bus(c26).paid, 40);
+      near(c25.income, 500); near(c26.income, 70);
+      near(c24.income, 0); near(bus(c24).paid, 0);
+      near(c25.income - c25.out, 350, 'net: 500 in, 150 out, no card balance carried in');
+      // the book itself is untouched
+      eq(Object.keys(book.charges).length, 4); eq(book.expenses.bus.projected, 900);
+    });
+
     test('tourKnown matches a found tour against the page by loose name; paragraphsAbout keeps the right paragraphs', function () {
       eq(G.tourKnown('The Treehouse Tour', [{ name: 'Treehouse Tour' }]), true);
       eq(G.tourKnown('Spin the Wheel Tour', [{ name: 'Spin The Wheel' }]), true);

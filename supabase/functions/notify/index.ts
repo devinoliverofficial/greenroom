@@ -64,6 +64,24 @@ async function isTourManager(tourId: string, uid: string): Promise<boolean> {
   return String(ov.tourRole || p?.tour_role || m.tour_role || "").trim().toLowerCase() === "tour manager";
 }
 
+/* The tour's Managers: its creator, and whoever the database says manages it
+   (tour_managers, migration 0133: the rule lives there, so it can change
+   without pasting this function again). If the database cannot say, only the
+   creator counts. */
+async function managersOf(tourId: string, ownerId: string): Promise<Set<string>> {
+  const out = new Set<string>([ownerId]);
+  try {
+    const { data } = await admin.rpc("tour_managers", { t_id: tourId });
+    for (const id of (data ?? []) as string[]) if (id) out.add(String(id));
+  } catch { /* the creator alone */ }
+  return out;
+}
+/* News about the tour's money, and a request waiting on an answer, are for
+   its Managers (Devin, 2026-10-10: "In the green notifications and any
+   notifications that are pertaining to the managers should only be available
+   to managers of the tour"). */
+const FOR_MANAGERS = ["green", "merch", "request"];
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return reply(405, { error: "method_not_allowed" });
@@ -95,8 +113,13 @@ Deno.serve(async (req) => {
   const memberIds = new Set<string>([tour.owner_id, ...(members ?? []).map((m) => m.user_id).filter(Boolean)]);
   if (!memberIds.has(senderId)) return reply(403, { error: "not_on_tour" });
 
-  // Alerts are the tour manager's siren: the creator or the Tour Manager pulls it.
-  if (type === "alert" && senderId !== tour.owner_id && !(await isTourManager(tourId, senderId))) {
+  const managers = await managersOf(tourId, tour.owner_id);
+  // Alerts are the Managers' siren (a Tour Manager by title, from before there were Managers, still counts).
+  if (type === "alert" && !managers.has(senderId) && !(await isTourManager(tourId, senderId))) {
+    return reply(403, { error: "not_manager" });
+  }
+  // Only a Manager can send the tour's money news.
+  if ((type === "green" || type === "merch") && !managers.has(senderId)) {
     return reply(403, { error: "not_manager" });
   }
 
@@ -109,11 +132,9 @@ Deno.serve(async (req) => {
   const msg = message(type, data, tourName);
   if (!msg) return reply(400, { error: "invalid" });
 
-  // Everyone else on the tour who opted into this kind of news. A special
-  // request goes to the tour manager and ALL ACCESS, who answer it.
-  const leads = new Set<string>([tour.owner_id, ...(members ?? []).filter((m) => m.role === "editor")
-    .map((m) => m.user_id).filter(Boolean)]);
-  const targets = [...memberIds].filter((id) => id !== senderId && (type !== "request" || leads.has(id)));
+  // Everyone else on the tour who opted into this kind of news; money news
+  // and special requests go to the tour's Managers only.
+  const targets = [...memberIds].filter((id) => id !== senderId && (!FOR_MANAGERS.includes(type) || managers.has(id)));
   if (!targets.length) return reply(200, { sent: 0 });
   const { data: subs } = await admin.from("push_subs")
     .select("endpoint, p256dh, auth, prefs, user_id")

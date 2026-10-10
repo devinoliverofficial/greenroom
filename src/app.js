@@ -689,6 +689,8 @@
   /* ============================== Routing ============================== */
 
   function go(route) {
+    // The tour setup's people list is kept only while you are on that step.
+    if (!(route.name === 'wizard' && route.step === 2)) S.wzPeople = null;
     // On an artist account, home is that artist's page (see actingAs).
     if (route.name === 'home' && actingAs()) { S.fromMap = {}; route = actHome(); }
     // OVERVIEW always opens on today's show, not wherever you last flipped to.
@@ -724,7 +726,7 @@
     // Back from a tour opened under your profile's tabs: the same spot in the list.
     if (backToTabs) window.scrollTo(0, S.homeY);
   }
-  function clampStep(s) { return 2; } // one resume point: the shows
+  function clampStep(s) { return 3; } // one resume point: the shows (1 the name, 2 who is on it, 3 the shows)
   // A tour's setup wizard counts as that tour: where you came from survives it.
   function routeKey(route) {
     return (route.name === 'tour' || route.name === 'wizard') && route.id ? 'tour:' + route.id
@@ -800,6 +802,7 @@
     else if (S.route.name === 'search') node = viewSearch();
     else if (S.route.name === 'mainmenu') node = viewMenu();
     else if (S.route.name === 'merchroom') node = viewMerchroom();
+    else if (S.route.name === 'history') node = viewHistory();
     else node = viewHome();
     // The tab bar stays the same element when nothing about it changed, so a
     // tap on it always lands.
@@ -5619,21 +5622,39 @@
   function inMusic() {
     return allTourEntries().length > 0 || myArtistNames().length > 0 || ((myActs().list) || []).length > 0;
   }
+  /* A tour is made on the artist's page (Devin, 2026-10-10): "I can only create a
+     tour when on an artists page ... when you click the artist it's for it should
+     automatically take you off your members page and sign you onto that artist
+     page. This way all the tour logistics and invites / roles are done through
+     the artists page when being created." */
   function createTourFromMenu() {
     var acting = actingAs() ? actingCard() : null;
     if (acting && acting.name) { startTour(acting.name); return; }
     var names = myArtistNames();
     if (!names.length) { go({ name: 'newartist' }); return; }
-    if (names.length === 1) { startTour(names[0]); return; }
+    if (names.length === 1) { startTourAs(names[0]); return; }
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'Create a tour'),
-        h('p', { class: 'sh-sub' }, 'Which artist is it for?'),
+        h('p', { class: 'sh-sub' }, 'Which artist is it for? The tour is made on that artist\u2019s page.'),
         h('div', { class: 'stack' }, names.map(function (n) {
-          return h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(true); startTour(n); } }, n);
+          return h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(true); startTourAs(n); } }, n);
         }))
       ];
     }, { label: 'Create a tour' });
+  }
+  // Sign onto the artist's page (one you run), then start its tour. An artist with no page of yours just starts the tour.
+  function startTourAs(name) {
+    var key = String(name || '').trim().toLowerCase();
+    // (Your artist pages are still on their way: start once they are in, so the switch is not skipped.)
+    var acts = myActs();
+    if (!acts.list && acts.asking && !acts.onLoad) { acts.onLoad = function () { startTourAs(name); }; return; }
+    var page = ((acts.list) || []).filter(function (x) { return x.mine && String(x.name || '').trim().toLowerCase() === key; })[0];
+    if (page && actingAs() !== page.id) {
+      setActingAs(page.id); actOf(page.id, true);
+      toast('You\u2019re on ' + page.name + '\u2019s page now');
+    }
+    startTour(name);
   }
   function viewMenu() {
     var backTo = S.route.back || { name: 'home' };
@@ -5646,9 +5667,124 @@
       h('section', { class: 'mn-group' },
         mine ? menuRow('plus', 'Create a tour', createTourFromMenu) : null,
         mine ? menuRow('tag', 'Merchroom', function () { go({ name: 'merchroom', back: here }); }) : null,
+        inMusic() ? menuRow('tabmoney', 'Budget History', function () { go({ name: 'history', back: here }); }) : null,
         menuRow('gear', 'Settings', function () { openSettingsSheet(); })),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
+  }
+
+  /* ---- Budget History (Devin, 2026-10-10) ----
+     "I think in the horizontal tab it should say 'Budget History.' When you
+     click that you see each year since you've been on greenroom. Under each
+     year should be two options. 'TOURS' and then 'OFF TOUR.' When you click
+     tours it shows all the tours you've logged and you can access the
+     income/expense summary. When you click off tour it should take you to the
+     summary of that year. If the tour is current by default it should just
+     take you to that budget tab that already exists. If you are in the current
+     year ... and hit 'Off Tour' it should show the current 'off tour' tab that
+     we have. Note: When you click tour for members/managers it should show
+     the income/expenses/my pay. When you click tour for just crew it should
+     just show 'My Pay'."
+     A tour is filed under the year it started (one that runs over New Year is
+     still one tour, added up once). A tour opens its Budget tab, which is its
+     income and expense summary; for crew that tab is MY PAY alone (viewTour).
+     Off Tour is per artist and never on a crew phone, so crew get no Off Tour
+     row. On an artist's account only that artist's tours and book are here. */
+  function tourYear(t) {
+    var d = G.rows(t && t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+    return d.length ? String(d[0]).slice(0, 4) : (t && t.createdAt ? String(new Date(t.createdAt).getFullYear()) : '');
+  }
+  // A tour as a row in a list: its artist's picture, its name, and where it stands (on the road, or its dates).
+  function tourListRow(e, onTap) {
+    var t = e[1], artist = artistOf(t), logo = artist ? artistLogo(artist) : null;
+    var dates = G.rows(t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
+    var live = tourIsLive(t);
+    var span = dates.length ? dayMD(dates[0]) + (dates.length > 1 ? ' \u2013 ' + dayMD(dates[dates.length - 1]) : '') + ', ' + String(dates[dates.length - 1]).slice(0, 4) : 'No shows yet';
+    return h('button', { class: 'list-row tour-row', type: 'button', onclick: onTap },
+      h('span', { class: 'avatar' + (logo ? ' has' : ' letter'), 'aria-hidden': 'true' },
+        logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : String(artist || t.name || '?').trim().charAt(0).toUpperCase()),
+      h('span', { class: 'lr-text' },
+        h('span', { class: 'lr-title' }, t.name || 'Untitled tour'),
+        h('span', { class: 'lr-sub' + (live ? ' live' : '') }, [artist, live ? 'On the road' : span].filter(Boolean).join(' \u00b7 '))),
+      icon('chevron', 18));
+  }
+  // The artists whose Off Tour book this account can open (the people who see the artist's money).
+  function historyArtists() {
+    var acting = actingAs() ? actingCard() : null;
+    var names = acting ? (acting.name ? [acting.name] : []) : Array.from(tourGroups().byArtist.keys());
+    return names.filter(function (n) { return n && canSeeOffTour(n); });
+  }
+  function historyYears() {
+    var now = String(new Date().getFullYear()), by = {};
+    var slot = function (y) { return by[y] || (by[y] = { year: y, tours: [], off: [] }); };
+    scopedTours().forEach(function (e) { var y = tourYear(e[1]); if (y) slot(y).tours.push(e); });
+    historyArtists().forEach(function (name) {
+      var id = offTourOf(name), t = id ? getTour(id) : null;
+      // This year's Off Tour is the page that already exists.
+      slot(now).off.push({ artist: name, live: true });
+      if (t) G.bookYears(t).forEach(function (y) { if (y < now) slot(y).off.push({ artist: name, live: false }); });
+    });
+    return Object.keys(by).sort().reverse().map(function (y) { return by[y]; });
+  }
+  function viewHistory() {
+    var backTo = S.route.back || { name: 'mainmenu', back: { name: 'home' } };
+    var here = { name: 'history', back: backTo };
+    if (S.route.off && S.route.year) return viewHistoryOff(S.route.off, String(S.route.year), here);
+    var years = historyYears();
+    S.histOpen = S.histOpen || {};
+    var several = historyArtists().length > 1;
+    return h('div', { class: 'page home menu-page has-tabs' },
+      menuHead('Budget History', { menu: true }),
+      dbBanner(),
+      years.length ? years.map(function (y) {
+        var open = !!S.histOpen[y.year];
+        return h('section', { class: 'mn-group hist-year' },
+          h('h2', { class: 'mn-h mn-over hist-y' }, y.year),
+          y.tours.length ? [
+            menuRow('calendar', 'Tours', function () { S.histOpen[y.year] = !open; render(true); }, plural(y.tours.length, 'tour'), { open: open }),
+            !open ? null : h('ul', { class: 'tour-list rows mn-list mn-drop' }, y.tours.map(function (e) {
+              // Its Budget tab: income, expenses and my pay for whoever sees the tour's money; MY PAY alone for crew.
+              return h('li', null, tourListRow(e, function () { openTour(e[0], 'costs', here, 'Budget History', true); }));
+            }))
+          ] : null,
+          y.off.map(function (o) {
+            return menuRow('tabcost', 'Off Tour' + (several ? ' \u00b7 ' + o.artist : ''), function () {
+              if (o.live) go({ name: 'artist', artist: o.artist, view: 'off', from: here, fromLabel: 'Budget History' });
+              else go({ name: 'history', back: backTo, year: y.year, off: o.artist });
+            }, o.live ? 'The live book' : null);
+          }));
+      }) : emptyState('Nothing here yet', 'Once you\u2019re on a tour, its budget shows up here, year by year.'),
+      socialBar(''));
+  }
+  // One past year of an artist's Off Tour book: read only (the book itself is edited on the Off Tour page).
+  function viewHistoryOff(name, year, here) {
+    var id = offTourOf(name), t = id ? getTour(id) : null;
+    var body;
+    if (!t || !canSeeOffTour(name)) {
+      body = emptyState('Nothing off tour in ' + year, name + '\u2019s Off Tour book has nothing dated that year.');
+    } else {
+      var c = G.calc(G.yearSlice(t, year));
+      var slice = G.yearSlice(t, year);
+      var income = (c.otherRows || []), inTotal = income.reduce(function (n, x) { return n + G.num(x.amount); }, 0);
+      var spent = c.lines.filter(function (l) { return l.key !== 'offdebt' && !G.isDerived(l.key); }).reduce(function (n, l) { return n + G.num(l.paid); }, 0);
+      var net = Math.round(inTotal) - Math.round(spent);   // (the three numbers are shown in whole dollars: they have to add up as shown)
+      body = [
+        h('p', { class: 'note off-intro' }, 'What ' + name + ' took in and spent off the road in ' + year + ', by the date on each entry. ' +
+          'The plan, and card balances or loans carried in, belong to no one year and are left out.'),
+        h('p', { class: 'pay-sum' }, 'In ', h('strong', { class: 'num' }, money(inTotal)), ' \u00b7 out ', h('strong', { class: 'num' }, money(spent)),
+          ' \u00b7 net ', h('strong', { class: 'num' + (net < 0 ? ' neg' : '') }, money(net))),
+        income.length ? [h('h3', { class: 'oi-head' }, 'Income'),
+          h('div', { class: 'ledger oi-list' }, income.map(function (x) {
+            return h('div', { class: 'row' }, h('div', { class: 'row-label' }, G.otherKindLabel(x.kind), h('span', { class: 'hint' }, dayMD(x.date))),
+              h('span', { class: 'amt num' }, money(G.num(x.amount))));
+          }).concat(h('div', { class: 'row total' }, h('span', null, 'Income'), h('strong', { class: 'amt num' }, money(inTotal)))))] : null,
+        tabExpenses(id, slice, c, { off: true, readOnly: true })
+      ];
+    }
+    return h('div', { class: 'page home has-tabs exp-page off-page hist-off' },
+      menuHead('Off Tour \u00b7 ' + year, { menu: true }),
+      h('p', { class: 'hist-who' }, name),
+      dbBanner(), body, socialBar(''));
   }
 
   /* ---- The tabs under your own profile. ----
@@ -6315,7 +6451,7 @@
           entries.length ? h('p', { class: 'sec-sub' }, plural(entries.length, 'run') + ' for ' + name) : null),
         mayStartTourFor(name)
           ? h('button', { class: 'add-pill', type: 'button',
-              onclick: function () { startTour(name); } },
+              onclick: function () { startTourAs(name); } },
               icon('plus', 16), 'Add')
           : null),
       entries.length
@@ -6344,7 +6480,7 @@
         : emptyState('Nothing off tour yet', 'Once the tour manager starts ' + name + '\u2019s Off Tour book, it shows up here.');
     } else {
       var oc = G.calc(t);
-      body = [h('p', { class: 'note off-intro' }, 'What the band spends between tours. Card charges from off the road land here to sort; ' +
+      body = [h('p', { class: 'note off-intro' }, 'What ' + name + ' spends between tours. Card charges from off the road land here to sort; ' +
         'anything for the next tour can go straight to it.'),
         // Income catalogued onto the Off Tour book (royalties, advances)
         // sits above the spending, so the money in is never invisible.
@@ -6491,20 +6627,46 @@
         socialBar(''));
     }
     var exit = function () { return id ? go({ name: 'tour', id: id, view: 'menu' }) : go({ name: 'home' }); };
+    // Who is on the tour needs real accounts and invites; a copy that only saves to this device goes from the name to the shows.
+    var people = wzHasPeople();
+    if (!people && step === 2) step = 3;
+    var steps = people ? [1, 2, 3] : [1, 3];
     var head = h('div', { class: 'wz-head' },
-      h('div', { class: 'wz-bar', 'aria-hidden': 'true' }, [1, 2].map(function (n) {
+      h('div', { class: 'wz-bar', 'aria-hidden': 'true' }, steps.map(function (n) {
         return h('i', { class: n <= step ? 'on' : null });
       })),
       h('div', { class: 'wz-meta' },
-        h('span', null, 'Step ' + step + ' of 2'),
+        h('span', null, 'Step ' + (steps.indexOf(step) + 1) + ' of ' + steps.length),
         h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
         h('button', { class: 'linkbtn', type: 'button', onclick: exit }, id ? 'Finish later' : 'Cancel')));
 
     var body;
     // Costs and debts are no longer asked here — the Expenses tab owns both.
-    if (step >= 2) body = wzShows(id, t);
-    else body = wzName(id, t);
+    if (!id || step <= 1) body = wzName(id, t);
+    else if (step === 2) body = wzCrew(id, t);
+    else body = wzShows(id, t);
     return h('div', { class: 'page wizard has-tabs' }, head, body, socialBar(''));
+  }
+  function wzHasPeople() { return !!(window.GR_BACKEND && S.mode === 'db'); }
+  function wzPeopleNode(id) {
+    if (!S.wzPeople || S.wzPeople.id !== id) S.wzPeople = { id: id, node: peopleSection(id, { stay: true, wizard: true }) };
+    return S.wzPeople.node;
+  }
+  /* Who is on this tour (Devin, 2026-10-10): "when you create a tour it should
+     immediately ask you to add your crew and assign managers. Artists usually
+     have the same crew but they can invite or remove anyone when creating a
+     tour but by default it should show the list of past crew." The same list
+     and form as Share this tour; inviting someone here stays here. */
+  function wzCrew(id, t) {
+    return h('div', { class: 'wz-body wz-crew' },
+      h('h1', { class: 'wz-title' }, 'Who\u2019s on this tour?'),
+      h('p', { class: 'wz-sub' }, 'Bring your people onto this tour. A Manager sees and edits everything on it, the money included. ' +
+        'Crew see the Overview, day sheets, guest list, stats, chat and their own pay. You can change all of it later.'),
+      wzPeopleNode(id),
+      wzFoot(function () { go({ name: 'wizard', id: id, step: 1 }); }, 'Next', function () {
+        blurActive();
+        go({ name: 'wizard', id: id, step: 3 });
+      }));
   }
 
   function wzFoot(back, label, onNext) {
@@ -6558,11 +6720,14 @@
           expenses: G.emptyExpenses(), commission: G.emptyCommission(),
           crew: {}, debts: {}, shows: {}, extras: {}, charges: {}, imports: {}
         };
+        // Made on an artist's page: the tour carries that page's id, so it can belong to the artist and not only to whoever typed it.
+        var onPage = actingAs() ? actingCard() : null;
+        if (onPage && onPage.id && String(onPage.name || '').trim().toLowerCase() === artist.toLowerCase()) doc.artistId = onPage.id;
         if (!(await api.create(tid, doc))) return;
       }
       delete S.drafts.wzName;
       delete S.drafts.wzArtist;
-      go({ name: 'wizard', id: tid, step: 2 });
+      go({ name: 'wizard', id: tid, step: wzHasPeople() ? 2 : 3 });
     };
     var known = String(S.drafts.wzArtist || '').trim();
     return h('form', { class: 'wz-body', onsubmit: submit, novalidate: true },
@@ -6598,7 +6763,7 @@
             }, dateBlock(s.date), whereBlock(s), icon('chevron', 18)));
           }))
         : null,
-      wzFoot(function () { go({ name: 'wizard', id: id, step: 1 }); }, 'Finish', function () {
+      wzFoot(function () { go({ name: 'wizard', id: id, step: wzHasPeople() ? 2 : 1 }); }, 'Finish', function () {
         blurActive();
         S.lastNet[id] = 0; // count in from zero the first time the hero is seen
         go({ name: 'tour', id: id, view: 'details' });
@@ -7128,8 +7293,13 @@
     var guarOther = (Array.isArray(c.otherRows) ? c.otherRows : []).reduce(function (n, x) { return n + (x && x.kind === 'guarantee' ? G.num(x.amount) : 0); }, 0);
     var guar = Math.max(0, G.num(by.guarantee) + G.num(by.backend) + guarOther), merch = Math.max(0, G.num(by.merch));
     var income = Math.max(0, G.num(c.income));
+    // Merch says its average under its total (Devin, 2026-10-10: "where it says 'merch' in the 2 bar
+    // graph it should have an average underneath the total number ... current with the current total
+    // number deposits and shows"): what is in so far, over the nights that have merch in.
+    var merchNights = (Array.isArray(c.shows) ? c.shows : []).filter(function (x) { return G.incomeOf(x, 'merch') > 0; }).length;
+    var merchAvg = merchNights > 0 && merch > 0 ? 'avg ' + money(merch / merchNights) : '';   // (short: it sits in the bar's margin)
     var incParts = Array.isArray(c.incParts) ? c.incParts.map(function (x) { return { label: x.label, v: Math.max(0, G.num(x.v)), cls: x.cls }; })
-      : [{ label: 'Guarantees', v: guar, cls: 'guar' }, { label: 'Merch', v: merch, cls: 'merch' },
+      : [{ label: 'Guarantees', v: guar, cls: 'guar' }, { label: 'Merch', v: merch, cls: 'merch', sub: merchAvg },
          { label: 'Other', v: Math.max(0, income - guar - merch), cls: 'inother' }];
     var r2 = function (v) { return Math.round(v * 100) / 100; };
     expParts = expParts.map(function (x) { return { label: x.label, v: r2(x.v), cls: x.cls }; });
@@ -7154,7 +7324,7 @@
       parts.forEach(function (x) {
         x.t0 = at; at += x.v / sum * TRUNK; x.t1 = at;          // where it meets the trunk
         x.h = Math.max(1.5, x.v / sum * TRUNK);
-        x.slot = Math.max(x.h, minSlot); x.s0 = y; y += x.slot + gap;
+        x.slot = Math.max(x.h, minSlot + (x.sub ? 12 : 0)); x.s0 = y; y += x.slot + gap;
       });
       return parts.length ? y - gap : 0;
     };
@@ -7185,8 +7355,10 @@
       if (side === 'in') {
         g.appendChild(s('path', { class: 'xs-rb', d: ribbon(XL + BAR, y0, y1, XM, trunkY + x.t0, trunkY + x.t1) }));
         g.appendChild(s('rect', { class: 'xs-n', x: XL, y: f(y0), width: BAR, height: f(x.h), rx: 2 }));
-        g.appendChild(s('text', { class: 'xs-t', x: XL - 6, y: f(mid - 1.5), 'text-anchor': 'end' }, [short(x.label)]));
-        g.appendChild(s('text', { class: 'xs-a', x: XL - 6, y: f(mid + 10.5), 'text-anchor': 'end' }, [x.say || money(x.v)]));
+        var up = x.sub ? 6 : 0;   // three lines sit centred on the bar like two do
+        g.appendChild(s('text', { class: 'xs-t', x: XL - 6, y: f(mid - 1.5 - up), 'text-anchor': 'end' }, [short(x.label)]));
+        g.appendChild(s('text', { class: 'xs-a', x: XL - 6, y: f(mid + 10.5 - up), 'text-anchor': 'end' }, [x.say || money(x.v)]));
+        if (x.sub) g.appendChild(s('text', { class: 'xs-a xs-s', x: XL - 6, y: f(mid + 22 - up), 'text-anchor': 'end' }, [x.sub]));
         g.appendChild(s('rect', { class: 'xs-hit', x: 0, y: f(slot0), width: XM, height: f(x.slot) }));
       } else {
         g.appendChild(s('path', { class: 'xs-rb', d: ribbon(XM + BAR, trunkY + x.t0, trunkY + x.t1, XR, y0, y1) }));
@@ -7212,7 +7384,7 @@
     var head = function (label, amount, cls) {
       return h('div', { class: 'xs-head ' + cls }, h('span', { class: 'xs-k' }, label), h('strong', { class: 'xs-v num' }, money(amount)));
     };
-    var say = function (parts) { return parts.map(function (x) { return x.label + ' ' + money(x.v); }).join(', '); };
+    var say = function (parts) { return parts.map(function (x) { return x.label + ' ' + money(x.v) + (x.sub ? ' (' + x.sub + ' a show)' : ''); }).join(', '); };
     // The words on the right run shorter than the room kept for them, which
     // left the picture sitting to the left. Once it's on the page, measure
     // what's actually drawn (totals, bars, labels) and slide the lot so the
@@ -7246,12 +7418,14 @@
       body);
   }
 
+  /* o.parts: only work out the two-bar graph's Expenses parts (the Income tab
+     draws that graph now, and it has to say exactly what this tab adds up to). */
   function tabExpenses(id, t, c, o) {
-    var off = !!(o && o.off);
-    if (!off) syncCrew(id);
+    var off = !!(o && o.off), partsOnly = !!(o && o.parts), readOnly = !!(o && o.readOnly);
+    if (!off && !partsOnly) syncCrew(id);
     // The Off Tour book leaves out what only a tour has.
     if (off) c = Object.assign({}, c, { lines: c.lines.filter(function (l) { return l.key !== 'offdebt' && !G.isDerived(l.key); }) });
-    var edit = canEditTour(id);
+    var edit = canEditTour(id) && !readOnly;
     var chev = edit ? h('span', { class: 'ex-chev', 'aria-hidden': 'true' }) : null;
     var head = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
       h('span', null, ''), h('span', { class: 'ex-proj' }, 'Projected'), h('span', { class: 'ex-paid' }, 'Credit'),
@@ -7344,7 +7518,7 @@
     feedCards.forEach(function (card) { rowKey = 'feed:' + card.id; rows.push(cardRow(id, t, card, paidCell, creditCell, cashCell)); });
     // Every other linked card (debit cards; a credit card whose balance isn't on the tour yet) has its line too.
     tourCards(t).filter(function (c) { return !c.debt; }).forEach(function (c) { rows.push(plainCardRow(id, t, c)); });
-    if (!off) { syncCards(id); ensurePile(id); }
+    if (!off && !partsOnly) { syncCards(id); ensurePile(id); }
     entries.forEach(function (e) {
       rows.push(lineRow(e.l));
       // Monthly utilities opens out into the vendors behind it.
@@ -7359,6 +7533,7 @@
     var expParts = named.map(function (x) { return { label: x[0], v: Math.max(0, byRow[x[1]] || 0), cls: x[2] }; });
     expParts.push({ label: 'Other', cls: 'other',
       v: Math.max(0, spentAll - expParts.reduce(function (n, x) { return n + x.v; }, 0)) });
+    if (partsOnly) return expParts;
     var projTotal = 0, paidTotal = 0;
     c.lines.forEach(function (l) { projTotal += l.projected || 0; paidTotal += l.paid; });
     rows.unshift(head);
@@ -7377,9 +7552,10 @@
           icon('copy', 18), 'Start from a previous tour’s budget')
       : null;
     return [
-      expenseSummary(c, expParts, off),
+      // (On a tour the two bars lead the Income tab and the climbing line leads this one; the Off Tour book keeps its bars.)
+      off ? expenseSummary(c, expParts, off) : null,
       // On a tour, Refresh Card Expenses lives on the Cards tab; the Off Tour book keeps it here.
-      off ? feedEntry(id) : null,
+      off && !readOnly ? feedEntry(id) : null,
       baselineOffer,
       // The chart says it all: nothing under the Total.
       h('div', { class: 'ledger' }, rows)
@@ -9162,14 +9338,15 @@
     var netLine = h('p', { class: 'pay-sum' }, 'Gross ', h('strong', { class: 'num' }, money(inc.gross)), ' \u00b7 spent ', h('strong', { class: 'num' }, money(book.spent)),
       ' \u00b7 net ', h('strong', { class: 'num' + (net < 0 ? ' neg' : '') }, money(net)));
     var pays = Array.isArray(c.info.payments) ? c.info.payments : [];
+    // The two graphs sit where the tour's do (swapped 2026-10-10, Devin: the two bars lead Income, the
+    // climbing line, money in against what's spent day by day, leads Expenses); it is drawn once it's on the page.
+    var series = G.payBalanceSeries(c.book, c.info.payments, G.tourToday());
+    var climb = series.length > 1 ? h('div', { class: 'chart-wrap pay-chart', role: 'img',
+      'aria-label': 'Money in against what you spent, from ' + dayLong(series[0].date) + ' to ' + dayLong(series[series.length - 1].date) + '. Now ' +
+        money(series[series.length - 1].income) + ' in and ' + money(series[series.length - 1].spent) + ' spent.' }) : null;
+    if (climb) climb.__data = { series: series, nights: [], tourId: null };
+    climb = climb || h('p', { class: 'note pay-note' }, 'The graph draws itself once there\u2019s a payment or an entry to show.');
     if (tab === 'income') {
-      // Devin: the Income side carries the tour's climbing graph — money in
-      // against what's spent, day by day — drawn once it's on the page.
-      var series = G.payBalanceSeries(c.book, c.info.payments, G.tourToday());
-      var climb = series.length > 1 ? h('div', { class: 'chart-wrap pay-chart', role: 'img',
-        'aria-label': 'Money in against what you spent, from ' + dayLong(series[0].date) + ' to ' + dayLong(series[series.length - 1].date) + '. Now ' +
-          money(series[series.length - 1].income) + ' in and ' + money(series[series.length - 1].spent) + ' spent.' }) : null;
-      if (climb) climb.__data = { series: series, nights: [], tourId: null };
       var incRows = inc.lines.map(function (l) {
         var tourLine = l.key === 'tour';
         return h('button', { class: 'row rowbtn ex-row', type: 'button', onclick: function () { if (tourLine) openMyPayments(c.info); else openMyPayIncome(id, l.key); } },
@@ -9177,7 +9354,7 @@
             : (l.n ? plural(l.n, 'entry') : ''))),
           h('span', { class: 'amt num' + (l.total > 0 ? ' glow' : '') }, l.total > 0 ? money(l.total) : '\u2014'), icon('chevron', 18));
       });
-      return [head, climb || h('p', { class: 'note pay-note' }, 'The graph draws itself once there\u2019s a payment or an entry to show.'), netLine,
+      return [head, chart, netLine,
         h('div', { class: 'ledger' }, myPayCardsRow(id)),
         st.onCrew ? h('p', { class: 'note pay-note' }, 'Pay plan: ' + money(st.total) + ' for the tour \u00b7 ' + money(st.paid) + ' logged as paid \u00b7 ' + money(st.owed) + ' still owed')
           : h('p', { class: 'note pay-note' }, 'You\u2019re not on this tour\u2019s crew list yet, so there is no pay plan here. The tour manager adds you under Crew with your email.'),
@@ -9200,7 +9377,7 @@
         cell(l.credit, 'ex-paid', 'Credit'), cell(l.debit, 'ex-done', 'Debit'), cell(l.cash, 'ex-cash', 'Cash'),
         icon('chevron', 18));
     });
-    return [head, chart, netLine,
+    return [head, climb, netLine,
       h('div', { class: 'ledger' }, myPayCardsRow(id)),
       h('h3', { class: 'mn-h mn-over' }, 'My expenses'),
       h('div', { class: 'ledger' }, colHead, lines),
@@ -10067,6 +10244,7 @@
         payTabs(id, t, 'costs'),
         bookStrip(id, 'costs'),
         dbBanner(),
+        heroNode(t, id),
         tabExpenses(id, t, c),
         tourTabs(id, 'costs'));
     }
@@ -10131,7 +10309,7 @@
           h('button', { class: 'btn sm quiet', type: 'button',
             onclick: function () { openCloseout(id); } }, 'Tour closeout')) : null;
       })(),
-      heroNode(t, id),
+      expenseSummary(c, tabExpenses(id, t, c, { parts: true }), false),
       h('div', { class: 'shows-panel' }, body),
       tourTabs(id, 'money'));
   }
@@ -10308,7 +10486,7 @@
       // they sign up and their own card fills in.
       var pending = !m.joined;
       // Access sits under the name; the role is the green badge in the middle.
-      var access = m.owner ? 'Creator' : m.manager ? 'Manager' : (m.role === 'editor' ? 'All Access' : 'GA');
+      var access = m.owner ? 'Creator' : (m.manager || m.role === 'editor') ? 'Manager' : 'Crew';
       var canOpen = !pending && m.userId && socialOn();
       // Their profile photo beside the name (the first letter until they add one).
       var face = personPhoto({ name: title, avatar: (m.userId && faces[m.userId]) || '' }, 'xs crew-face');
@@ -11095,8 +11273,9 @@
   function openCrewEdit(tourId, m) {
     var who = m.name || m.username || m.email;
     var base = m.base || { tourRole: '', phone: '', email: m.invitedEmail };
-    var f = { tourRole: m.tourRole || '', phone: m.phone || '', email: m.email || '', access: m.manager ? 'manager' : (m.role === 'editor' ? 'editor' : 'viewer') };
-    var levels = createdTour(tourId) ? ['viewer', 'editor', 'manager'] : ['viewer', 'editor'];
+    // Two levels on a tour (Devin, 2026-10-10, "Just want this to be simple"): Manager or Crew. Only its creator names a Manager.
+    var f = { tourRole: m.tourRole || '', phone: m.phone || '', email: m.email || '', access: (m.manager || m.role === 'editor') ? 'manager' : 'viewer' };
+    var levels = ['viewer', 'manager'], grants = createdTour(tourId);
     openSheet(function () {
       var submit = async function (e) {
         e.preventDefault();
@@ -11108,7 +11287,7 @@
           if (v && v !== String(base[k] || '').trim()) ov[k] = v;
         });
         try {
-          await window.GR_BACKEND.editMember(tourId, m.invitedEmail, f.access, ov);
+          await window.GR_BACKEND.editMember(tourId, m.invitedEmail, grants ? f.access : null, ov);
         } catch (x) { saveFailed('crew edit', x); return; }
         forgetCrew(tourId);
         closeSheet(); toast(who + ' updated'); render(true);
@@ -11123,10 +11302,10 @@
             placeholder: 'Phone number', oninput: function (e) { f.phone = e.target.value; } })),
           field('Email', h('input', { class: 'input', type: 'email', value: f.email, maxlength: 120, autocomplete: 'off',
             placeholder: 'Email', oninput: function (e) { f.email = e.target.value; } })),
-          h('h3', { class: 'sh-h3' }, 'Access'),
-          segmented(['GA', 'ALL ACCESS', 'MANAGER'].slice(0, levels.length), Math.max(0, levels.indexOf(f.access)), function (i) { f.access = levels[i]; }, 'Access'),
-          h('p', { class: 'note' }, 'GA sees the shows, day sheets and guest list. ALL ACCESS also sees the money, and can edit or kick crew. ' +
-            'MANAGER is ALL ACCESS plus the card refresh, the polls and New tour tasks; only the tour\u2019s creator makes someone a Manager.'),
+          grants ? [h('h3', { class: 'sh-h3' }, 'On this tour'),
+            segmented(['CREW', 'MANAGER'], Math.max(0, levels.indexOf(f.access)), function (i) { f.access = levels[i]; }, 'Level on this tour'),
+            h('p', { class: 'note' }, 'A Manager sees and edits everything on this tour, the money included. Crew see the Overview, day sheets, guest list, stats, chat and their own pay.')]
+            : h('p', { class: 'note' }, 'Only the tour\u2019s creator makes someone a Manager.'),
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
@@ -13050,7 +13229,7 @@
           h('h2', { class: 'sh-title' }, 'Guest list \u2014 ' + (show.city || 'Show')),
           h('p', { class: 'sh-sub' }, sum.names
             ? plural(sum.names, 'name') + ' \u00b7 ' + plural(sum.tickets, 'ticket')
-            : 'Anyone on the tour can add names here \u2014 band, crew, GA, everyone.'),
+            : 'Anyone on the tour can add names here.'),
           h('div', { class: 'gl-actions' },
             h('button', { class: 'add-mini', type: 'button',
               onclick: function () { openGuestForm(tourId, showId, show, backend, build); } },
@@ -15156,14 +15335,34 @@
 
   /* Real invites (the GitHub Pages build): the tour manager runs the guest
      list; everyone else just sees who's on it. */
-  function peopleSection(tourId) {
+  function peopleSection(tourId, o) {
+    o = o || {};
     var B = window.GR_BACKEND;
     var owns = B.ownsTour(tourId);
-    // The creator and everyone with ALL ACCESS invite, and take back invites.
+    // The creator and every Manager invite, and take back invites.
     // (leadsTour: the form below has its own "tourRole" for the person being invited.)
     var runs = owns || leadsTour(tourId);
     var list = h('div', { class: 'ledger' },
       h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading…')));
+    // Setting a tour up (o.wizard): who is ticked and at what level. Kept here, so a redraw of the
+    // list (after an invite, after taking someone off) never ticks anyone back on.
+    var pick = {}, busy = false;
+    // Past crew is everyone this account ever invited, for any artist. Only the people who were on
+    // THIS artist's earlier tours start ticked; the rest are listed, unticked, as crew.
+    var regulars = {};
+    (function () {
+      var artist = artistOf(getTour(tourId) || {});
+      if (!artist) return;
+      bandTours(artist).forEach(function (e) {
+        if (e[0] === tourId) return;
+        G.rows(e[1] && e[1].crew).forEach(function (c) { var em = String(c && c.email || '').trim().toLowerCase(); if (em) regulars[em] = true; });
+      });
+    })();
+    // After an invite: from a sheet, on to the tour's Overview; setting a tour up, stay and show them on the list.
+    var invited = function (who) {
+      if (!o.stay) { afterInvite(tourId, who); return; }
+      forgetCrew(tourId); inviteSplash(who); drawForm(); refresh();
+    };
 
     function renderMembers(rows) {
       var kids = [h('div', { class: 'row people-row' },
@@ -15175,14 +15374,18 @@
           h('span', { class: 'who' }, shown || m.invited_email,
             h('span', { class: 'hint', style: 'display:block' },
               shown ? m.invited_email : null,
-              !m.user_id ? h('span', { class: 'crew-sub pending' }, (shown ? ' \u00b7 ' : '') + 'Pending') : null)),
-          h('span', { class: 'role-tag' + (m.role === 'editor' ? ' aa' : '') },
-            m.manager && m.role === 'editor' ? 'MANAGER' : m.role === 'editor' ? 'ALL ACCESS' : 'GA'),
+              !m.user_id ? h('span', { class: 'crew-sub pending' }, (shown ? ' · ' : '') + 'Pending') : null)),
+          h('span', { class: 'role-tag' + (m.role === 'editor' ? ' aa' : '') }, m.role === 'editor' ? 'MANAGER' : 'CREW'),
           // A Manager is the creator's to take off the tour.
           runs && (owns || !m.manager) ? h('button', {
             class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove ' + m.invited_email,
             onclick: async function () {
-              try { await B.uninvite(tourId, m.invited_email); forgetCrew(tourId); toast('Removed'); refresh(); }
+              try {
+                await B.uninvite(tourId, m.invited_email); forgetCrew(tourId); toast('Removed');
+                // (taken off just now: back on the past-crew list, not ticked)
+                pick[String(m.invited_email || '').toLowerCase()] = { on: false, mgr: false };
+                refresh();
+              }
               catch (e) { toast('Couldn’t remove them. Try again.'); }
             }
           }, icon('trash', 18)) : null));
@@ -15192,12 +15395,79 @@
 
     // Past crew: everyone invited to an earlier tour, one tap from this one.
     var past = h('div', null);
+    // Their level last time carries over; only the creator can bring someone in as a Manager.
+    var asLevel = function (p, mgr) { return owns && (mgr == null ? p.role === 'editor' : mgr) ? 'manager' : 'viewer'; };
+    var inviteOne = async function (p, level) {
+      var who = p.name || p.email;
+      var status = await B.invite(tourId, p.email, level, p.name, p.phone, { tourRole: p.tourRole || '' });
+      await addToCrewExpenses(tourId, p.name || who, p.tourRole, p.email);
+      return status;
+    };
     function renderPast(people, onTour) {
       var me = String(B.email() || '').toLowerCase();
       var here = {};
       onTour.forEach(function (m) { here[String(m.invited_email || '').toLowerCase()] = true; });
       var left = people.filter(function (p) { return !here[p.email] && p.email !== me; });
       if (!left.length) { past.replaceChildren(); return; }
+      // Setting a tour up: this artist's regulars are ticked, each with a Crew / Manager switch, and one
+      // button brings them all (Devin: "by default it should show the list of past crew").
+      if (o.wizard) {
+        left.forEach(function (p) {
+          if (!pick[p.email]) pick[p.email] = { on: !!regulars[p.email], mgr: !!regulars[p.email] && asLevel(p) === 'manager' };
+        });
+        var goBtn = h('button', { class: 'btn primary block', type: 'button' }, '');
+        var label = function () {
+          if (busy) return;
+          var n = left.filter(function (p) { return pick[p.email].on; }).length;
+          goBtn.textContent = !n ? 'Tick who’s coming' : n === 1 ? 'Invite 1 person' : 'Invite ' + n + ' people';
+          goBtn.disabled = !n;
+        };
+        goBtn.onclick = async function () {
+          if (busy) return;
+          var todo = left.filter(function (p) { return pick[p.email].on; }), sent = [], nomail = [], failed = null;
+          if (!todo.length) return;
+          busy = true; goBtn.disabled = true;
+          for (var i = 0; i < todo.length; i++) {
+            goBtn.textContent = 'Inviting ' + (i + 1) + ' of ' + todo.length + '…';
+            try {
+              var status = await inviteOne(todo[i], asLevel(todo[i], pick[todo[i].email].mgr));
+              sent.push(todo[i].name || todo[i].email);
+              if (status !== 'sent' && status !== 'existing') nomail.push(todo[i].name || todo[i].email);
+            }
+            // One that fails stops the run (a day's invites are capped): the rest stay ticked to try again.
+            catch (e) { failed = todo[i].name || todo[i].email; break; }
+          }
+          busy = false;
+          if (failed) toast('Couldn’t invite ' + failed + (sent.length ? '. The ' + sent.length + ' before them are in.' : '.') + ' Try again in a bit.');
+          else if (nomail.length) toast('On the tour, but the email didn’t go out to ' + nomail.join(', ') + '. They can still sign up with that address.');
+          if (sent.length) { forgetCrew(tourId); inviteSplash(sent.length === 1 ? sent[0] : sent.length + ' people'); }
+          refresh();
+        };
+        past.replaceChildren(
+          h('h3', { class: 'sh-h3', style: 'margin-top:14px' }, 'Past crew'),
+          h('p', { class: 'sh-sub', style: 'margin-top:-2px' }, 'Tick who’s coming' + (owns ? ', and tap CREW to make someone a Manager' : '') +
+            '. Invite emails each of them and puts them on this tour.'),
+          h('div', { class: 'ledger' }, left.map(function (p) {
+            var who = p.name || p.email, st = pick[p.email];
+            var lvl = owns ? h('button', { class: 'role-tag wz-lvl' + (st.mgr ? ' aa' : ''), type: 'button', 'aria-pressed': st.mgr ? 'true' : 'false',
+              'aria-label': who + ': ' + (st.mgr ? 'Manager' : 'Crew') + '. Tap to change.',
+              onclick: function (e) {
+                e.preventDefault();   // (inside the row's label: the tap is for the level, not the tick)
+                st.mgr = !st.mgr; lvl.textContent = st.mgr ? 'MANAGER' : 'CREW'; lvl.classList.toggle('aa', st.mgr);
+                lvl.setAttribute('aria-pressed', st.mgr ? 'true' : 'false');
+                lvl.setAttribute('aria-label', who + ': ' + (st.mgr ? 'Manager' : 'Crew') + '. Tap to change.');
+              } }, st.mgr ? 'MANAGER' : 'CREW') : h('span', { class: 'role-tag' }, 'CREW');
+            return h('label', { class: 'row people-row past-row wz-pick' },
+              h('input', { type: 'checkbox', class: 'rv-check', checked: st.on ? true : null, 'aria-label': 'Bring ' + who,
+                onchange: function (e) { st.on = !!e.target.checked; label(); } }),
+              h('span', { class: 'who' }, who,
+                h('span', { class: 'hint', style: 'display:block' }, [p.tourRole, p.name ? p.email : ''].filter(Boolean).join(' · '))),
+              lvl);
+          })),
+          h('div', { class: 'stack', style: 'margin:10px 0 22px' }, goBtn));
+        label();
+        return;
+      }
       past.replaceChildren(
         h('h3', { class: 'sh-h3', style: 'margin-top:14px' }, 'Past crew'),
         h('div', { class: 'ledger', style: 'margin-bottom:22px' }, left.map(function (p) {
@@ -15206,22 +15476,20 @@
             onclick: async function () {
               addBtn.disabled = true;
               try {
-                var status = await B.invite(tourId, p.email, p.role, p.name, p.phone,
-                  { tourRole: p.tourRole || '' });
-                await addToCrewExpenses(tourId, p.name || who, p.tourRole, p.email);
-                afterInvite(tourId, who);
+                var status = await inviteOne(p, asLevel(p));
+                invited(who);
                 if (status === 'existing') setTimeout(function () { toast(who + ' already has an account — the tour is in it now'); }, 1700);
-              } catch (e) { addBtn.disabled = false; toast('Couldn\u2019t invite them. Try again.'); }
+              } catch (e) { addBtn.disabled = false; toast('Couldn’t invite them. Try again.'); }
             } }, 'Invite');
           return h('div', { class: 'row people-row past-row' },
             h('span', { class: 'who' }, who,
               h('span', { class: 'hint', style: 'display:block' },
-                (p.name ? p.email + ' \u00b7 ' : '') + (p.role === 'editor' ? 'ALL ACCESS' : 'GA'))),
+                (p.name ? p.email + ' · ' : '') + (asLevel(p) === 'manager' ? 'Manager' : 'Crew'))),
             addBtn,
             h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Forget ' + who,
               onclick: async function () {
                 try { await B.forgetPastCrew(p.email); refresh(); }
-                catch (e) { toast('Couldn\u2019t take them off the list. Try again.'); }
+                catch (e) { toast('Couldn’t take them off the list. Try again.'); }
               } }, icon('close', 16)));
         })));
     }
@@ -15240,10 +15508,12 @@
     }
     refresh();
 
-    var form = null;
-    if (runs) {
+    // The form is drawn into its own box, so it can be emptied after an invite without touching the lists.
+    var formBox = h('div', null);
+    function drawForm() {
+      if (!runs) return;
       // Everything about them is typed here, so their sign-up is just a
-      // username and a password: name, email, their role, and their access.
+      // username and a password: name, email, their role, and their level.
       var role = 'viewer';
       var tourRole = '';
       var inp = function (type, ph, max, extra) {
@@ -15254,13 +15524,20 @@
       var lastI = inp('text', 'Last name', 30);
       var emailI = inp('email', 'Email', 120, { inputmode: 'email', 'aria-label': 'Email to invite' });
       var phoneI = inp('tel', 'Phone number', 30, { inputmode: 'tel', 'aria-label': 'Phone number' });
+      // Crew, or (the tour's creator only) a Manager.
+      var lvlBox = h('div', null);
+      var drawLevel = function () {
+        lvlBox.replaceChildren(segmented(['CREW', 'MANAGER'], role === 'manager' ? 1 : 0, function (i) { role = ['viewer', 'manager'][i]; }, 'Level on this tour'));
+      };
       var roleBtn = h('button', { class: 'input role-pick empty', type: 'button', 'aria-haspopup': 'listbox',
         onclick: function () {
           B.openRolePicker(tourRole, function (r) {
             tourRole = r; roleBtn.textContent = r; roleBtn.classList.remove('empty');
+            // A tour manager is almost always meant as a Manager: start there (it can be switched back).
+            if (owns && /tour manager/i.test(String(r)) && role !== 'manager') { role = 'manager'; drawLevel(); }
           });
         } }, 'Role');
-      form = h('form', {
+      var form = h('form', {
         class: 'card addform invite-form', novalidate: true, style: 'margin-top:14px',
         onsubmit: async function (e) {
           e.preventDefault();
@@ -15275,30 +15552,30 @@
           var sendBtn = form.querySelector('button[type=submit]');
           sendBtn.disabled = true;
           try {
-            var status = await B.invite(tourId, email, role, name, String(phoneI.value || '').trim(),
+            var status = await B.invite(tourId, email, owns ? role : 'viewer', name, String(phoneI.value || '').trim(),
               { first: first, last: last, tourRole: tourRole });
             await addToCrewExpenses(tourId, name, tourRole, email);
-            afterInvite(tourId, name);
-            if (status === 'existing') setTimeout(function () { toast(first + ' already has an account \u2014 the tour is in it now'); }, 1700);
-            else if (status !== 'sent') setTimeout(function () { toast('The email didn\u2019t go out, but ' + first + ' can still sign up in Greenroom with ' + email); }, 1700);
-          } catch (e2) { sendBtn.disabled = false; toast('Couldn\u2019t send that invite. Try again.'); }
+            invited(name);
+            if (status === 'existing') setTimeout(function () { toast(first + ' already has an account — the tour is in it now'); }, 1700);
+            else if (status !== 'sent') setTimeout(function () { toast('The email didn’t go out, but ' + first + ' can still sign up in Greenroom with ' + email); }, 1700);
+          } catch (e2) { sendBtn.disabled = false; toast('Couldn’t send that invite. Try again.'); }
         }
       },
         h('div', { class: 'gate-pair' }, firstI, lastI),
         emailI,
         phoneI,
         roleBtn,
-        // The tour's creator can invite someone straight in as a Manager.
-        createdTour(tourId)
-          ? h('div', { style: 'display:grid;gap:10px;margin-top:10px' },
-              segmented(['GA', 'ALL ACCESS', 'MANAGER'], 0, function (i) { role = ['viewer', 'editor', 'manager'][i]; }, 'Invite role'),
+        owns
+          ? h('div', { style: 'display:grid;gap:10px;margin-top:10px' }, lvlBox,
               h('button', { class: 'btn primary block', type: 'submit' }, 'Invite'))
-          : h('div', { style: 'display:flex;gap:10px;align-items:center;margin-top:10px' },
-              segmented(['GA', 'ALL ACCESS'], 0, function (i) { role = i ? 'editor' : 'viewer'; }, 'Invite role'),
-              h('button', { class: 'btn primary', type: 'submit', style: 'flex:1' }, 'Invite')));
+          : h('div', { style: 'display:grid;gap:10px;margin-top:10px' },
+              h('button', { class: 'btn primary block', type: 'submit' }, 'Invite as crew')));
+      if (owns) drawLevel();
+      formBox.replaceChildren(form);
     }
+    drawForm();
 
-    return h('div', null, past, list, form);
+    return h('div', null, past, list, formBox);
   }
 
   function prettyTime(v) {
@@ -15547,7 +15824,11 @@
               // Tour alerts always come through once this phone is signed up.
               await B.pushEnable({ group: prefs.group, soldout: prefs.soldout, merchnums: prefs.merchnums });
               S.pushOn = true;
-              toast('This phone gets ' + prefs.group.toUpperCase() + ' notifications');
+              // MERCH NUMBERS is the tour's money: the database keeps it for Managers, whatever a phone asks.
+              var kept = prefs.merchnums ? await B.pushState().catch(function () { return null; }) : null;
+              toast(kept && kept.prefs && kept.prefs.merchnums === false
+                ? 'Saved. MERCH NUMBERS stays off: it is for people who manage every tour they are on.'
+                : 'This phone gets ' + prefs.group.toUpperCase() + ' notifications');
               closeSheet();
               render(true);
             } catch (e) {

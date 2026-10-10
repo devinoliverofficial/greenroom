@@ -234,8 +234,9 @@ shim = r"""<script>
   };
   window.__harness.calls = []; window.__harness.marked = []; window.__harness.feedFns = [];
   window.__harness.members = []; window.__harness.invited = []; window.__harness.notified = []; window.__harness.notes = [];
-  window.__harness.past = [{ email: 'brent@example.com', name: 'Brent Allen', phone: '555-0142', role: 'editor' },
-    { email: 'tasha@example.com', name: 'Tasha Lane', phone: '', role: 'viewer' }];
+  window.__harness.past = [{ email: 'brent@example.com', name: 'Brent Allen', phone: '555-0142', role: 'editor', tourRole: 'Tour manager' },
+    { email: 'tasha@example.com', name: 'Tasha Lane', phone: '', role: 'viewer', tourRole: 'Production manager' },
+    { email: 'ana@example.com', name: 'Ana Reyes', phone: '', role: 'viewer', tourRole: 'FOH engineer' }];
   window.__harness.pushSupported = true; window.__harness.pushOn = false; window.__harness.phones = 3;
   window.__harness.feedState = function () { var F = window.__harness.feed; return { row: Object.assign({}, F.row), items: F.items.slice() }; };
   window.__harness.feedPush = function () { var st = window.__harness.feedState(); window.__harness.feedFns.forEach(function (fn) { fn(st); }); };
@@ -1271,9 +1272,12 @@ shim = r"""<script>
     },
     invite: function (tourId, email, role, name, phone, extra) {
       window.__harness.invited.push([email, role, name, (extra || {}).tourRole || '']);
-      window.__harness.members.push({ invited_email: email, role: role, display_name: name, user_id: null });
+      // As live (0133): a Manager is stored as editor + manager; anything else is crew.
+      var mgr = role === 'manager' || role === 'editor';
+      role = mgr ? 'editor' : 'viewer';
+      window.__harness.members.push({ invited_email: email, role: role, manager: mgr, display_name: name, user_id: null });
       // Like the real crew list, which reads the same members table.
-      window.__harness.crew = window.__harness.crew.concat([{ owner: false, role: role, name: name || '', email: email,
+      window.__harness.crew = window.__harness.crew.concat([{ owner: false, role: role, manager: mgr, name: name || '', email: email,
         invitedEmail: email, phone: phone || '', tourRole: (extra || {}).tourRole || '', joined: false }]);
       return Promise.resolve('sent');
     },
