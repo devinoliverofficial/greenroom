@@ -16780,10 +16780,16 @@
   async function loadIncomeNew() {
     var B = window.GR_BACKEND;
     S.incomeBusy = true;
-    var items = null;
+    var items = null, caught = null;
+    // First the sure ones: a merch deposit that is, to the dollar, what a night
+    // has logged is marked on that night by the database (hand-ticked nights
+    // included), so only what truly needs a person is left to ask about.
+    if (B.matchMerch) { try { caught = await B.matchMerch(); } catch (e) { caught = null; } }
     try { items = await B.incomeNew(); } catch (e) { items = null; }
     S.incomeBusy = false;
     S.incomeNew = { items: items || [], at: Date.now(), failed: !items };
+    var nCaught = caught ? G.num(caught.exact) : 0;
+    if (nCaught > 0) toast('Caught ' + plural(nCaught, 'merch deposit') + ': marked on ' + (nCaught === 1 ? 'its night' : 'their nights'));
     return S.incomeNew;
   }
   // Fetched when stale, like the Tour Manager's pile.
@@ -16832,6 +16838,25 @@
     // guarantee less the booking agent's cut — on the tours of this band,
     // within three weeks of the night. Devin: "if any of the deposits match
     // any of the merch numbers or guarantees it should say something".
+    // Every figure a night's merch deposit can be: the card deposit expected,
+    // and what was typed on the night itself (the merch total, and that less
+    // the cash kept). Devin: "It shows the dollar amount exactly as I logged it
+    // but the app didn't catch it" (the app had only compared the estimate).
+    function merchFigures(s) {
+      var inc = G.isObj(s.income) ? s.income : {}, m = G.num(inc.merch), cash = G.num(s.merchCash);
+      var out = [G.merchDue(s), m, cash > 0 ? Math.round((m - cash) * 100) / 100 : 0];
+      return out.filter(function (v, i) { return v > 0 && out.indexOf(v) === i; });
+    }
+    // How far a deposit is from the nearest of them (Infinity when none is within a dollar,
+    // or within 1% of the expected card deposit for a deposit that reads as atVenu's).
+    function merchOff(r, s) {
+      var best = Infinity, due = G.merchDue(s);
+      merchFigures(s).forEach(function (w) {
+        var off = Math.abs(G.num(r.amount) - w);
+        if (off <= Math.max(1, r.av && w === due ? w * 0.01 : 1)) best = Math.min(best, off);
+      });
+      return best;
+    }
     function suggest(r) {
       var hits = [];
       // What the account is watched for says what the money can be: a merch
@@ -16851,10 +16876,10 @@
           // Merch is paid after the night (atVenu within about a week, a settlement
           // within the month): a night still to come is never it, and a night whose
           // merch deposit the bank already showed can't be this deposit too.
-          var merch = G.merchDue(s);
-          if (mayMerch && merch > 0 && !s.merchReceivedAt && gap >= 0 && gap <= (r.av ? 10 : 30)) {
-            var offM = Math.abs(r.amount - merch);
-            if (offM <= Math.max(1, r.av ? merch * 0.01 : 1)) {
+          // Against the expected card deposit and against what was typed on the night.
+          if (mayMerch && G.num(inc.merch) > 0 && !s.merchReceivedAt && gap >= 0 && gap <= (r.av ? 10 : 30)) {
+            var offM = merchOff(r, s);
+            if (offM < Infinity) {
               hits.push({ kind: 'merch', tourId: tid, show: s, off: offM, gap: gap, waiting: owedBit({ kind: 'merch' }, s), received: s.merchReceived === true, what: 'the merch for' });
             }
           }
@@ -16960,8 +16985,8 @@
           // come is never it, and when no night's take fits, nothing is guessed
           // (the dropdown says Whole tour).
           if (gap < 0 || gap > 30) return;
-          var due = G.merchDue(s);
-          m = due > 0 && Math.abs(due - G.num(r.amount)) <= 1;
+          // The expected card deposit, or what was typed on the night: to the dollar.
+          m = merchFigures(s).some(function (w) { return Math.abs(w - G.num(r.amount)) <= 1; });
           if (!m) return;
           unpaid = true;
         } else {
@@ -17259,7 +17284,10 @@
         var hitLine = !hit ? null : h('div', { class: 'iv-hit' },
           h('p', { class: 'iv-hit-t' }, 'Same size as ' + hit.what + ' ' + dayMD(hit.show.date) + (hit.show.city ? ' \u00b7 ' + String(hit.show.city).split(',')[0] : '') +
             (hitTour && hitTour.name && !(curTour && hit.tourId === curTour.id) ? ' (' + hitTour.name + ')' : '') +
-            (hit.waiting ? ' \u2014 logged, still waiting on this money' : hit.received ? ' \u2014 already logged and ticked Received' : ' \u2014 logged, not yet marked Received')),
+            // A merch night ticked Received by hand: this deposit is the bank showing it.
+            (hit.waiting ? ' \u2014 logged, still waiting on this money'
+              : hit.received && hit.kind === 'merch' ? ' \u2014 ticked Received by hand; this looks like its deposit'
+              : hit.received ? ' \u2014 already logged and ticked Received' : ' \u2014 logged, not yet marked Received')),
           h('div', { class: 'pt-two' },
             h('button', { class: 'btn sm ghost', type: 'button', disabled: r.busy || null, onclick: function () {
               // It's the money already on the books: set the deposit aside for good, nothing doubles. Two taps, since it's final.
@@ -17272,7 +17300,7 @@
               else if (hit.tourId && ups.some(function (u) { return u.id === hit.tourId; })) { r.dest = 'up'; r.upTo = hit.tourId; }
               else if (hit.tourId) { r.dest = 'pin'; r.pinTour = hit.tourId; }
               redraw();
-            } }, 'Not logged yet')));
+            } }, hit.received && hit.kind === 'merch' ? 'Yes, that night' : 'Not logged yet')));
         // A lump sum: before anything is picked, a deposit the size of several
         // guarantees still waiting on this tour (in full, or less the booking
         // agent's cut) says so, and one tap ticks those nights.

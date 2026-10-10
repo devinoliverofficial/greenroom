@@ -547,6 +547,54 @@ shim = r"""<script>
       await db.doc('tours/' + o.tourId).update({ otherIncome: oi });
       return { ok: true };
     },
+    /* The sure merch matches (migration 0122): a deposit that is, to the
+       dollar, what one night has logged for merch (the total, that less the
+       cash kept, or the expected card deposit), 0 to 30 days after the night,
+       on a night the bank has not shown yet, hand-ticked or not. One night
+       for the deposit and one deposit for the night, or nothing.
+       __harness.noAutoMatch = true leaves them for the sheet to suggest. */
+    matchMerch: async function () {
+      var H = window.__harness;
+      if (H.noAutoMatch) return { exact: 0, twins: 0 };
+      var open = (H.deposits || []).filter(function (d) { return !d.matched && d.watch !== 'guarantees'; });
+      var pairs = [];
+      open.forEach(function (d) {
+        Object.keys(tours).forEach(function (tid) {
+          var shows = tours[tid].shows || {};
+          Object.keys(shows).forEach(function (sid) {
+            var s = shows[sid];
+            if (!s || !s.loggedAt || s.merchReceivedAt || !s.income || !(Number(s.income.merch) > 0)) return;
+            var gap = Math.round((new Date(d.date) - new Date(s.date)) / 864e5);
+            if (gap < 0 || gap > 30) return;
+            var m = Number(s.income.merch), cash = Number(s.merchCash) || 0, card = Number(s.merchCardDeposit) || 0;
+            var fits = Math.abs(d.amount - m) <= 1 || (cash > 0 && m - cash > 0 && Math.abs(d.amount - (m - cash)) <= 1) || (card > 0 && Math.abs(d.amount - card) <= 1);
+            if (fits) pairs.push({ d: d, tid: tid, sid: sid });
+          });
+        });
+      });
+      var n = 0;
+      for (var i = 0; i < pairs.length; i++) {
+        var p = pairs[i];
+        if (pairs.filter(function (x) { return x.d === p.d; }).length !== 1) continue;
+        if (pairs.filter(function (x) { return x.tid === p.tid && x.sid === p.sid; }).length !== 1) continue;
+        p.d.matched = true;
+        var sh = {}; sh[p.sid] = { merchReceived: true, merchReceivedAt: p.d.date, merchDeposit: p.d.amount };
+        await db.doc('tours/' + p.tid).update({ shows: sh });
+        n += 1;
+      }
+      return { exact: n, twins: 0 };
+    },
+    /* Opt-in seed for it: a night ticked Received by hand whose merch was typed
+       to the cent, carrying an older card estimate that is a little off, and
+       the bank deposit of exactly the typed amount four days later. */
+    seedMerchExact: async function () {
+      var H = window.__harness;
+      var day = function (daysAgo) { var d = new Date(Date.now() - daysAgo * 864e5); return d.toISOString().slice(0, 10); };
+      await db.doc('tours/t1').update({ shows: {
+        m1: { id: 'm1', date: day(6), city: 'Milwaukee, WI', venue: 'The Rave', loggedAt: 1, income: { merch: 4721.48 }, merchCardDeposit: 4698.2, merchReceived: true } } });
+      H.deposits = [{ id: 'mx1', date: day(2), amount: 4721.48, atvenu: false, matched: false, watch: 'both' }];
+      return true;
+    },
     /* One guarantee deposit over several nights (migration 0121): every part
        is a night and its share; the shares must add up to the deposit, or
        nothing is written. Each night is filed by the single-night rule. */

@@ -50,6 +50,7 @@ what is left to automate in PIPELINE.md, every platform checked in SOURCES.md.
 - [x] Listed is not played: old lists still showing, the 2020–21 shutdown months, and shows the band marked cancelled are kept off
 - [x] I See Stars accounted for in ISS-ROAD-STORY.md: 1,347 shows · 57 tours · 49 festivals · 400 cities · 34 countries
 - [x] One deposit, several guarantees (a lump sum from the agency): under Guarantee the New income sheet is a tick list of nights; every ticked night is marked received; the sheet shows what's logged for the ticked nights against what the card says, and says when they don't add up (migration 0121)
+- [x] Merch deposits the size of what was logged are caught: a night ticked Received by hand is no longer skipped, a deposit is compared to the merch typed on the night (not only to the old card estimate), and the match is made when the Cards tab reads the bank and every hour (migration 0122). Ten of Devin's waiting deposits were caught at once, Milwaukee among them
 
 ## 3. MERCHROOM
 - [ ] Square: real-money connection (OAuth, read-only scopes; never a production personal access token)
