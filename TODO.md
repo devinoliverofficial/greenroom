@@ -86,11 +86,51 @@ Choices made while building, for him to confirm or change:
 - [x] Create a tour signs you onto the artist's page and asks who is on the tour (past crew ticked, Crew / Manager each)
 - [x] Budget History in the three lines: each year, its tours, and Off Tour
 - [x] The two Budget graphs swapped (the two bars lead Income, the climbing line leads Expenses); Merch shows its average a show
-- [ ] Build order and what is decided or still open are in ROLES.md sections 4, 6, 7 and 8. Next: the NDAs (design in section 8; waiting on the tester wording), sign-up with account kinds, and a way for Devin to test every kind of login
+- [x] Sign-up with a Greenroom code, one question a screen, then "What brings you to Greenroom?" (MEMBER / CREW / FAN / PROMOTER, any number) with each one's questions (0134, 2026-10-10). What is left is in the section below
+- [ ] Build order and what is decided or still open are in ROLES.md sections 4, 6, 7, 8 and 9. Next: the legal screen (tester NDA, terms, privacy: his three documents are in TERMS AND CONDITIONS; to talk over first), and a way for Devin to test every kind of login
 - [ ] **Devin to paste two server functions** (supabase/functions/notify and ari, ready in the repo): then "in the green", merch numbers and special requests go to a tour's Managers only, exactly per tour, and "in the green" can be switched back on in the app
 - [ ] Cancelled dates and tours that end early: three pieces in ROLES.md section 7 (a Cancelled mark on a show, "the tour ended early", a check card for Managers when the tour is due to end)
 - [ ] Crew asking an artist for an endorsement, with 30 days for the artist to answer (today only the artist can start it)
 - [ ] The titles offered when inviting someone to a tour are still the old list (Artist, Band, Friend ...), not his crew roles
+
+## Sign-up with a code: left open after 2026-10-10 (migration 0134)
+**Before any code is handed out (Devin, in the Supabase dashboard, one step at a time):**
+- [ ] 1. A real mail sender (custom SMTP). The built-in one sends a couple of emails an hour and only to the project's own team, so a tester's confirmation code would never arrive
+- [ ] 2. Authentication, Email: "Confirm email" ON and "Secure email change" ON; paste supabase/email/confirmation.html as the Confirm signup template; code length 6, expiry one hour
+- [ ] 3. ONLY THEN "Allow new users to sign up" ON. Never the other way round: with sign-ups on and Confirm email off, anyone could take over a pending tour invite. The Invite codes sheet (Settings) warns when it finds them that way, and the sign-up screen stops at "sign-up isn't switched on yet"
+- [ ] 4. Make a code in Settings, Invite codes, and try it on a second phone
+- [ ] Paste the invite server function again once it checks who may invite (today it trusts whoever made the tour; the database now refuses the row, but the function would still email an invite for someone holding a code)
+- [ ] Before codes go to people Devin does not know: read every older database function and policy again with strangers in mind. They were written when everyone was invited by hand. The two reviews fixed what they found on the way (a listing or a tour invite could show a stranger someone's phone number; a tour could be handed to another account), and said plainly they did not re-read the rest (guests, chat, feed, follows)
+
+**Who can bring people in (new rule, his words: "Once you are accepted to claim a page you ... can assign other members and managers"):**
+- [ ] An account that came in on a code cannot add anyone to a tour, or list a stranger on a page, until Greenroom has confirmed an artist page it runs or is a Member of. Hand-invited people are not affected. Devin to confirm this is what he wants for crew who sign up with a code and then make their own tour
+- [ ] A page someone adds by hand (an artist that is not in the music database) is theirs but never "confirmed": there is no button for Devin to confirm it yet, so its maker can never add crew. Build "confirm this page" in Page claims, or send those pages through a claim too
+- [ ] Anyone can still add an artist page under any name with the + (it shows as unconfirmed). Close it or send it through claims
+
+**Claims (the submission process, built as a first version):**
+- [ ] Proof today is links (Spotify, Instagram, website) or a sentence, plus a code to put in the artist's bio; Devin checks by eye and approves in Page claims. No file upload ("a portal to submit documents"), nothing checks the bio automatically, nobody is notified (the claimant sees "Claim declined" on their Artists tab; Devin has to open the sheet to see new claims)
+- [ ] A claimant shows as a Member, pending, to themself and Greenroom only (his words were "listed as a member until the claim is approved or denied": shown to everyone it would let anyone put their name on any artist). Devin to choose
+- [ ] One account runs a page. A second Member who is accepted gets no control yet ("Members can do anything to an artist's page" waits for the roles build)
+
+**Requests to be listed:**
+- [ ] The artist is "alerted" by a card on the runner's profile and on the page. No push notification, no email
+- [ ] A request that was waiting when the person got listed another way comes back if they later leave; a listing that ended can be switched back on by its runner on an unconfirmed page (artist_members_relist)
+
+**Fans (his note: "we will expand on"):**
+- [ ] No search across tours ("search tours and press attended"): a fan picks an artist, opens a tour, taps Attended. Shows attended is a count and a list, no analytics yet (cities, years, first show, most seen)
+- [ ] A fan cannot open a person's page or follow a person; a fan code makes the same account as any other (the code only pre-ticks FAN)
+- [ ] Marking a night on a tour the artist has hidden is still possible by date
+
+**Promoters, venues, festivals (his note: "we will expand on"):**
+- [ ] Venue and festival pages are made only for places already in the show archive (2,087 venues, 67 festival names); a venue with no show on record cannot be found or made. No outside lookup yet
+- [ ] "I worked here" saves as pending and nothing approves it; no role is asked; nobody can claim a venue or festival page; no ratings ("almost the same as like AIRBNB"); the page does not list its people; festivals are not found by city
+- [ ] Promoter pages ("how many shows I've ran and the exact shows I've worked")
+
+**Smaller:**
+- [ ] The first questions inside the app ask the birthday with the phone's own date wheel; the sign-up screens use three pick-lists. Proof has four boxes on one screen. Make them one look
+- [ ] Someone under 18 who was invited to a tour is stuck on the birthday screen (the terms say 18). Decide with the legal screen
+- [ ] A mistyped email that is never corrected leaves a never-confirmed account behind; it is cleared the next time someone signs up or is invited with that address
+- [ ] The database refuses a user made "confirmed" by hand in the Supabase dashboard, an admin's edit of someone's address, and Apple or Google sign-in (signup_proof). Lift it before adding any of those
 
 ## Who sees what: left open after 2026-10-10 (from the map of every tab by role)
 - [ ] **The notification function sends the band's money to crew phones.** "MERCH NUMBERS! city: $X" and "You're in the green" went to every phone that had them on, whatever the role. The app no longer sends "in the green" and no longer offers MERCH NUMBERS to crew, but the server function (supabase/functions/notify, and ari for merch) still would if asked: it should send both only to people who can see the tour's money. Needs a function deploy; then turn "in the green" back on
@@ -125,7 +165,7 @@ Choices made while building, for him to confirm or change:
 - [ ] **Fans**: "does not have any access to the overview page at all. Just the user profile experience and searching for artist pages". Needs an invite code for now. Today there is no fan account: someone on no tour and no artist page gets no Overview, no Create a tour, no Linked Cards, by a stand-in rule, not a real account kind. A fan cannot open a person's page or follow a person yet
 - [ ] **Venue pages**: "almost the same as artist pages", auto-created when searched (the app already finds a venue's address and details), claimed by the venue's promoters, rated by artists, members and crew "almost the same as like AIRBNB"
 - [ ] **Promoter pages**: "This is how many shows i've ran and these are the exact shows I've worked"
-- [ ] Fan, venue and promoter as choices in the login process (with the sign-up build)
+- [x] Fan, venue and promoter as choices in the login process (0134): a fan ticks FAN, follows artists and marks shows attended; a promoter names venues and festivals. What is still thin is in "Sign-up with a code" above
 - [ ] Devin wants a rundown of this whole list at some point
 
 ## Members and crew on a tour: left open after 2026-10-09

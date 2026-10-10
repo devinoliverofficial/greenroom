@@ -252,3 +252,41 @@ night becoming permanent only once it is played, which is how both of his senten
 - **How hard the door is.** For the beta the app refuses to show anything until it is signed. That stops
   everyone using the app normally; it does not stop someone technical from asking the database directly for
   what their invite already lets them see. Closing that needs tours to carry the artist's id first.
+
+## 9. Sign-up with a code (built 2026-10-10, migration 0134)
+
+His words: "First you are asked for your code. No one should be on the sign up page without a code first and
+foremost. Secondly they are prompted with their first and last name. Then create a username. Then date of birth.
+Then email. Then purpose of using greenroom", with MEMBER, CREW, FAN, PROMOTER and "someone should be able to
+click multiple purposes".
+
+**The order on screen.** Code, name, username, birthday, email, password, the code Supabase emails to prove the
+address, then inside the app "What brings you to Greenroom?" and each ticked answer's questions. A person
+invited to a tour skips the code (their invite email is their way in) and is asked the same things.
+
+**What happens to a claim** (he asked for help designing it):
+1. On a page nobody runs: "Claim this page", your role, and a Spotify, Instagram or website link, or a sentence.
+2. Greenroom gives a short code (GR-7KQ2M4) to put in the artist's bio or on its site. It is the same code
+   every time for that person and that page.
+3. The claim waits. The claimant shows as a Member, pending, to themself and to Greenroom. They can withdraw.
+4. Devin sees it in Page claims with the links and the code, and looks at the bio himself.
+5. Approved: the claimant runs the page, is a Member with that role, endorsed; the page is confirmed. Anyone
+   else who had claimed it becomes a request for the new runner to answer.
+6. Declined: the claim closes, the Artists tab says so for 30 days, and they can claim again.
+
+**Rules the database holds** (so no build of the app can get round them):
+- No account without a live code or a tour invite; a code's use is spent when the account is really made.
+- An address is someone's only after they opened a message sent to it. The sign-up fails otherwise.
+- One code is one person: an account that came in on a code brings nobody else in (no tour invites, no listing
+  a stranger) until Greenroom has confirmed an artist page it runs or is a Member of.
+- 18 and older (his terms of use).
+- A date of birth can be read by its owner only.
+- A request to be listed runs out after 30 days; a person can ask the same page again after 7.
+
+**Still his to decide**
+1. Is a link enough for a claim, or must the code be in the bio?
+2. Should a pending claimant show to everyone (his sentence) or only to themself and Greenroom (built)?
+3. Crew who sign up with a code and make their own tour cannot add people until an artist page is confirmed
+   for them. Right, or should a code be able to say "this person may invite"?
+4. Should every accepted Member run the page, not only the one who claimed it?
+

@@ -601,6 +601,8 @@
     var first = !S.loaded;
     S.loaded = true;
     if (first) restoreLastTour();
+    // Whoever asked to be listed on a page you run: asked for once as the app starts, so the cards are on your profile when it draws.
+    if (first) artistAsks(true);
     render(first);
   }
   function loadLocal() {
@@ -718,6 +720,8 @@
     var backToTabs = route === PF_HOME && S.homeY;
     // Arriving on the profile afresh: no room is held under its tabs.
     if (route.name === 'home' && !backToTabs) S.pfMinH = 0;
+    // Opening your profile asks again who wants to be listed on a page you run ("the artist page is alerted").
+    if (route.name === 'home') artistAsks(true);
     S.route = route;
     S.xsAt = null; // the Expenses flow eases in afresh each time you arrive
     S.focusOnRender = !backToTabs;
@@ -792,6 +796,7 @@
     // The pages the old menu led to (every tour, every artist, Budget by artist) are gone: your own page instead.
     if (S.loaded && ['tours', 'artists', 'book'].indexOf(S.route.name) >= 0) S.route = PF_HOME;
     if (!S.loaded) node = viewLoading();
+    else if (firstRunDue()) node = viewFirstRun();
     else if (S.route.name === 'wizard') node = viewWizard();
     else if (S.route.name === 'tour') node = viewTour();
     else if (S.route.name === 'artist') node = viewArtist();
@@ -803,6 +808,7 @@
     else if (S.route.name === 'mainmenu') node = viewMenu();
     else if (S.route.name === 'merchroom') node = viewMerchroom();
     else if (S.route.name === 'history') node = viewHistory();
+    else if (S.route.name === 'place') node = viewPlace();
     else node = viewHome();
     // The tab bar stays the same element when nothing about it changed, so a
     // tap on it always lands.
@@ -840,13 +846,14 @@
   /* ============================== Toast + sheets ============================== */
 
   var toastTimer = 0;
-  function toast(msg) {
+  // ms: how long it stays, for the few that take two sentences to say (the usual line is gone in three seconds).
+  function toast(msg, ms) {
     var root = $('#toast');
     var t = h('div', { class: 't' }, msg);
     root.replaceChildren(t);
     requestAnimationFrame(function () { t.classList.add('is-on'); });
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('is-on'); }, 3200);
+    toastTimer = setTimeout(function () { t.classList.remove('is-on'); }, ms > 0 ? ms : 3200);
   }
 
   var sheet = null;
@@ -3098,6 +3105,11 @@
     // (vouched: taking them off keeps their history, and for a member takes the other members)
     var on = {}, vouched = {};
     ((known && known.members) || []).forEach(function (m) { on[m.userId] = m.kind; if (m.endorsed || (m.kind === 'band' && m.settled)) vouched[m.userId] = true; });
+    // Has Greenroom confirmed this page? (As its card says now; a page made a moment ago has no card yet, and is not.)
+    var pageConfirmed = function () {
+      var c = S.actCards && S.actCards[artistId] && S.actCards[artistId].card;
+      return !!(c && c.verified);
+    };
     var results = h('div', { class: 'am-results' });
     var timer = 0, seq = 0, last = [];
     var row = function (p) {
@@ -3121,7 +3133,12 @@
           paint();
         } catch (x) {
           btn.disabled = false;
-          if (x && x.code === 'former_member') toast('They were a member here. Add them under Members: listing a former member as crew isn\u2019t built yet.');
+          if (x && x.code === 'former_member') toast('They were a Member here, so they can\u2019t be listed as crew. Add them under Members instead.', 6000);
+          // A page Greenroom has not confirmed yet lists only people its runner has toured with (the
+          // database's rule): anyone else asks from the page, and the runner accepts.
+          else if (x && x.code === 'permission' && !pageConfirmed()) {
+            toast('Until Greenroom has confirmed this page, you can add people you\u2019ve toured with. Anyone else can open the page and tap Ask to be listed.', 9000);
+          }
           else saveFailed('member', x);
         }
       };
@@ -3207,6 +3224,8 @@
     var members = Array.isArray(card.members) ? card.members : [];
     var bandList = members.filter(function (m) { return m.kind === 'band'; });
     var crewList = members.filter(function (m) { return m.kind === 'crew'; });
+    // (A claimant still waiting is listed under Members, but is not counted as one yet.)
+    var bandN = bandList.filter(function (m) { return !m.pending; }).length;
     var tours = Array.isArray(card.tours) ? card.tours : [];
     // A page nobody runs yet: no band or crew to show, so it opens on its tours.
     var unclaimed = !!card.unclaimed;
@@ -3239,7 +3258,10 @@
       // The trophy: the artist's word that this person really worked for them. For good.
       // On the page you run it's a button either way: Endorse asks their role
       // first, and Endorsed (or Role) opens the role to change it.
-      var trophy = m.endorsed
+      // A claimant waiting on Greenroom's answer (only they and an admin are handed the row):
+      // listed as Pending, with no trophy and nothing to tap.
+      var trophy = m.pending ? h('span', { class: 'act-tag aq-pending' }, 'Pending')
+        : m.endorsed
         ? (manage && m.userId && B && B.setMemberRole
             ? h('button', { class: 'am-endorsed am-tap', type: 'button', 'aria-label': (m.name || 'Their') + ' is endorsed. Change their role.',
                 onclick: function () { openEndorse(id, card.name, m); } }, h('span', { 'aria-hidden': 'true' }, TROPHY), ' Endorsed')
@@ -3254,10 +3276,10 @@
         m.canOpen ? h('button', { class: 'fl-row', type: 'button', onclick: function () { openProfile(m.userId); } }, inner)
           : h('div', { class: 'fl-row' }, inner),
         trophy,
-        manage && m.leaving ? h('button', { class: 'am-endorse am-leaving', type: 'button',
+        manage && !m.pending && m.leaving ? h('button', { class: 'am-endorse am-leaving', type: 'button',
           'aria-label': (m.name || 'They') + ': waiting on the other members',
           onclick: function () { openLeaving(id, card.name, m); } }, 'Waiting on ' + G.num(m.leaving.waiting)) : null,
-        manage && !m.leaving ? h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Take ' + (m.name || 'them') + ' off',
+        manage && !m.pending && !m.leaving ? h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Take ' + (m.name || 'them') + ' off',
           onclick: function () { openLetGo(id, card, m); } }, icon('close', 14)) : null);
     };
     var people = function (list, kind) {
@@ -3312,6 +3334,20 @@
         ? h('button', { class: 'pf-btn on', type: 'button', onclick: function () { openClaimPage(id); } }, 'Claim sent', icon('chevron', 14))
         : h('button', { class: 'pf-btn', type: 'button', onclick: function () { openClaimPage(id); } },
             card.myClaim === 'declined' ? 'Claim again' : 'Claim this page');
+    // Asking to be listed (Devin, 2026-10-10: "the artist page is alerted of an endorsement request"):
+    // for a visitor who is not on the page and has no claim waiting. One request at a time, and the
+    // button says where it stands.
+    var meId = B && B.uid ? B.uid() : null;
+    var onPage = !!meId && members.some(function (m) { return m.userId === meId && !m.pending; });
+    var myReq = G.isObj(card.myRequest) ? card.myRequest : null;
+    var askBtn = manage || onPage || card.myClaim === 'pending' || !B || !B.requestArtist ? null
+      : myReq && myReq.state === 'pending'
+        ? h('button', { class: 'pf-btn on aq-btn', type: 'button', onclick: function () { openAskToBeListed(id); } }, 'Request pending', icon('chevron', 14))
+      : h('button', { class: 'pf-btn aq-btn', type: 'button', onclick: function () { openAskToBeListed(id); } },
+          myReq && myReq.state === 'expired' ? 'No answer in 30 days' : 'Ask to be listed');
+    // A fan's own count: the shows of this artist they were at (once its road history has something to tick).
+    var beenBtn = manage || !B || !B.fanNights || !B.markAttended || !pastTours.length ? null
+      : h('button', { class: 'pf-btn aq-btn', type: 'button', onclick: function () { openAttended(id, card.name); } }, 'Shows attended');
     var aboutLine = unclaimed ? [card.about, regionName(card.country)].filter(Boolean).join(' \u00b7 ') : '';
     // The page you run gets the same compact green band as your own page (pf-home).
     return h('div', { class: 'page home profile has-tabs' + (S.route.manage && card.mine ? ' pf-home' : '') },
@@ -3332,7 +3368,7 @@
                  pfStat(tours.reduce(function (n, x) { return n + G.num(x.shows); }, 0), tours.reduce(function (n, x) { return n + G.num(x.shows); }, 0) === 1 ? 'show' : 'shows')],
             right: synced ? [pfStat(G.num(hsum.countries) + '/195', 'countries'),
                              pfStat(G.num(hsum.cities), G.num(hsum.cities) === 1 ? 'city' : 'cities')]
-              : [pfStat(bandList.length, bandList.length === 1 ? 'member' : 'members', function () { pickTab('band'); }),
+              : [pfStat(bandN, bandN === 1 ? 'member' : 'members', function () { pickTab('band'); }),
                  pfStat(crewList.length, 'crew', function () { pickTab('crew'); })],
             under: h('p', { class: 'hist-fans' }, h('span', { class: 'hf-txt' }, plural(G.num(card.followers), 'fan')))
           });
@@ -3342,13 +3378,21 @@
           : aboutLine ? h('p', { class: 'pf-bio act-about' }, aboutLine)
           : (manage ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openActEdit(id); } }, 'Add a short bio') : null),
         historyBlock(id, manage, tours),
-        unclaimed ? h('p', { class: 'hist-note act-note' }, 'Nobody runs this page yet. If you are a member, claim it.') : null,
+        unclaimed ? h('p', { class: 'hist-note act-note' }, 'Nobody runs this page yet. If you are a Member, claim it.') : null,
         manage ? h('div', { class: 'pf-actions' },
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openHistorySheet(id, card.name); } }, 'Tour history'))
-          : (followBtn || claimBtn) ? h('div', { class: 'pf-actions' + (followBtn && claimBtn ? ' two' : '') }, followBtn, claimBtn) : null),
+          : (function () {
+              // Fan and the main door first (Claim on a page nobody runs, else Ask to be listed); the rest on a second line.
+              var first = [followBtn, unclaimed ? claimBtn : askBtn].filter(Boolean);
+              var second = [unclaimed ? askBtn : null, beenBtn].filter(Boolean);
+              return [first.length ? h('div', { class: 'pf-actions' + (first.length === 2 ? ' two' : '') }, first) : null,
+                second.length ? h('div', { class: 'pf-actions aq-more' + (second.length === 2 ? ' two' : '') }, second) : null];
+            })()),
       // On the page you run: whoever is waiting on your yes for their tours.
       manage ? creditQueueCards(id) : null,
+      // And whoever is asking to be listed as a member or as crew.
+      manage ? artistRequestCards(id, card.name) : null,
       // For a Greenroom admin: whoever is asking to run this page.
       unclaimed ? claimQueueCards(id) : null,
       h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Members', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
@@ -3493,18 +3537,35 @@
     var B = window.GR_BACKEND;
     var card = S.actCards && S.actCards[id] && S.actCards[id].card;
     if (!card || !B || !B.claimArtist) return;
-    var f = { note: '', link: '', busy: false };
-    var after = function () { actOf(id, true); S.claimQ = null; };
+    /* The claim (Devin, 2026-10-10): "they are given a portal to submit
+       documents like Spotify and get the approval process in motion but can
+       still be listed as a member until the claim is approved or denied."
+       Their role in the artist, up to three links, a note; then a short code
+       to put where only the artist's own people can (its Instagram bio, its
+       website), which is what Greenroom looks for. */
+    var f = { note: '', links: { spotify: '', instagram: '', website: '' }, busy: false };
+    var after = function () { actOf(id, true); S.claimQ = null; myClaimList(true); };
     openSheet(function () {
       if (card.myClaim === 'pending') {
+        var code = String(card.myClaimCode || '').trim();
+        var codeBox = code ? h('input', { class: 'clm-code', type: 'text', readonly: true, value: code, 'aria-label': 'Your claim code' }) : null;
         return [
           h('h2', { class: 'sh-title ca-title' }, 'Your claim is with Greenroom'),
           h('p', { class: 'sh-sub' }, 'Someone at Greenroom checks every claim by hand. The moment it\u2019s approved, ' + card.name + ' is yours to run.'),
+          code ? h('div', { class: 'clm-box' },
+            h('p', { class: 'clm-say' }, 'Put this code in ' + card.name + '\u2019s Instagram bio or on its website so we can check:'),
+            codeBox,
+            h('button', { class: 'btn sm quiet', type: 'button', onclick: async function () {
+              toast((await copyText(code, codeBox)) ? 'Copied ' + code : 'Press and hold the code to copy it.');
+            } }, icon('copy', 16), 'Copy the code'),
+            h('p', { class: 'clm-say quiet' }, 'It can come out again once the claim is answered.')) : null,
+          h('p', { class: 'note' }, 'Until it is answered you are listed under Members as Pending. Only you and Greenroom see that. ' +
+            'If the claim is declined you come off the page, and you can claim again.'),
           h('div', { class: 'stack' },
             h('button', { class: 'btn danger block', type: 'button', onclick: function () {
               confirmSheet({ title: 'Withdraw your claim?', body: 'You can claim ' + card.name + ' again any time.', action: 'Withdraw', danger: true,
                 onConfirm: async function () {
-                  try { await B.withdrawClaim(id); card.myClaim = null; after(); toast('Claim withdrawn'); return true; }
+                  try { await B.withdrawClaim(id); card.myClaim = null; card.myClaimCode = null; after(); toast('Claim withdrawn'); return true; }
                   catch (e) { saveFailed('claim', e); return false; }
                 } });
             } }, 'Withdraw the claim'),
@@ -3512,7 +3573,37 @@
         ];
       }
       var send = h('button', { class: 'btn primary block', type: 'submit' }, 'Send the claim');
-      var ready = function () { send.disabled = f.note.trim().length < 3 || f.busy; };
+      var said = h('span', { class: 'pe-said bad' });
+      // The three links as they will be sent (made whole), and whether one of them cannot be a link.
+      var links = function () {
+        var out = { spotify: '', instagram: '', website: '' }, bad = false, any = false;
+        Object.keys(out).forEach(function (k) {
+          var v = claimLink(k, f.links[k]);
+          if (v === null) bad = true; else if (v) { out[k] = v; any = true; }
+        });
+        return { out: out, bad: bad, any: any };
+      };
+      // It needs a role, and something to check: one link at least, or a few words.
+      var ready = function () {
+        var l = links();
+        send.disabled = f.busy || !role.value() || l.bad || !(l.any || f.note.trim().length >= 3);
+        said.textContent = l.bad ? 'One of the links doesn\u2019t look right. Fix it or clear it.' : '';
+      };
+      var role = roleChoice(G.BAND_ROLES, '', function () { ready(); }, 'Your role in ' + card.name);
+      var linkField = function (key, label, hint) {
+        var mark = h('span', { class: 'ca-mark', 'aria-hidden': 'true' });
+        var input = h('input', { class: 'ca-in', type: 'text', inputmode: key === 'instagram' ? null : 'url', maxlength: 200,
+          autocapitalize: 'none', autocorrect: 'off', autocomplete: 'off', spellcheck: 'false', placeholder: hint, 'aria-label': label + ' link',
+          oninput: function (e) {
+            f.links[key] = e.target.value;
+            var v = claimLink(key, f.links[key]);
+            mark.className = 'ca-mark' + (v ? ' ok' : v === null ? ' bad' : '');
+            mark.replaceChildren(v ? icon('check', 14) : v === null ? icon('close', 13) : '');
+            ready();
+          } });
+        return h('label', { class: 'ca-field' }, h('span', { class: 'ca-label' }, label + ' (optional)'),
+          h('span', { class: 'ca-line' }, input, mark));
+      };
       ready();
       return [
         h('h2', { class: 'sh-title ca-title' }, 'Claim ' + card.name),
@@ -3524,24 +3615,44 @@
           blurActive();
           f.busy = true; ready();
           try {
-            var r = await B.claimArtist(id, f.note.trim(), f.link.trim());
-            if (r && r.ok) { card.myClaim = 'pending'; after(); closeSheet(); toast('Claim sent'); render(true); return; }
+            // (A phone can hold this page with an older backend.js for a while after an update. That one
+            // takes a note and one link, and would save this object as the words "[object Object]":
+            // it is sent what it knows, with the role and every link written into the note.)
+            var l = links().out, r;
+            if (typeof B.requestArtist === 'function') r = await B.claimArtist(id, { role: role.value(), note: f.note.trim(), links: l });
+            else {
+              r = await B.claimArtist(id, [role.value(), f.note.trim()].concat(['spotify', 'instagram', 'website'].map(function (k) {
+                return l[k] ? k + ': ' + l[k] : '';
+              })).filter(Boolean).join(' · ').slice(0, 500), l.website || l.instagram || l.spotify || '');
+            }
+            if (r && r.ok) {
+              card.myClaim = 'pending'; card.myClaimCode = r.code || card.myClaimCode || null; after();
+              toast('Claim sent');
+              // Straight on to the code: it is what Greenroom looks for.
+              openClaimPage(id); render(true);
+              return;
+            }
             f.busy = false; ready();
             toast(r && r.why === 'taken' ? 'Someone already runs this page.' : 'Couldn\u2019t send that. Try again.');
             if (r && r.why === 'taken') { after(); closeSheet(); }
           } catch (x) {
             f.busy = false; ready();
-            if (x && x.code === 'short') toast('Say who you are to ' + card.name + '.');
+            if (x && x.code === 'short') toast('Add a link, or say who you are to ' + card.name + '.');
             else if (x && x.code === 'too-many') toast('You have a lot of claims waiting. Let those be answered first.');
             else saveFailed('claim', x);
           }
         } },
-          field('Who are you to ' + card.name + '?', h('textarea', { class: 'input', rows: 3, maxlength: 500,
-            placeholder: 'e.g. I sing in the band. / I\u2019m their tour manager.', 'aria-label': 'Who you are to ' + card.name,
+          h('p', { class: 'field-label aq-q' }, 'Your role in ' + card.name),
+          role.nodes,
+          h('p', { class: 'field-label aq-q clm-links-h' }, 'Links that show it'),
+          linkField('spotify', 'Spotify', 'open.spotify.com/artist/\u2026'),
+          linkField('instagram', 'Instagram', '@name or a link'),
+          linkField('website', 'Website', 'theirsite.com'),
+          said,
+          field('Anything else that shows it (optional)', h('textarea', { class: 'input clm-note', rows: 3, maxlength: 500,
+            placeholder: 'e.g. I sing. Our manager is\u2026', 'aria-label': 'Anything else that shows who you are to ' + card.name,
             oninput: function (e) { f.note = e.target.value; ready(); } })),
-          field('A link that shows it (optional)', h('input', { class: 'input', type: 'url', maxlength: 200, autocapitalize: 'none', autocorrect: 'off',
-            autocomplete: 'off', spellcheck: 'false', placeholder: 'The band\u2019s site or socials, where you appear', 'aria-label': 'A link that shows it',
-            oninput: function (e) { f.link = e.target.value; } })),
+          h('p', { class: 'note clm-next' }, 'Next you get a short code to put in ' + card.name + '\u2019s Instagram bio or on its website. That is how we check.'),
           h('div', { class: 'stack' }, send,
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now')))
       ];
@@ -3613,6 +3724,8 @@
       return true;
     };
     var safeLink = /^https?:\/\//i.test(String(x.link || '')) ? x.link : '';
+    // (A claim sent before the three link boxes has one link of its own; a newer one may repeat one of the three there.)
+    var linkTwice = !!x.link && G.isObj(x.links) && Object.keys(x.links).some(function (k) { return String(x.links[k] || '').trim() === String(x.link).trim(); });
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title ca-title' }, 'Claim: ' + x.artist),
@@ -3622,10 +3735,22 @@
             h('span', { class: 'hint' }, [x.handle ? '@' + x.handle : ''].concat([x.tourRole].concat(x.roles || []).filter(function (v, i, all) { return v && all.indexOf(v) === i; })).filter(Boolean).join(' \u00b7 ')),
             x.email ? h('span', { class: 'hint' }, x.email) : null),
             h('button', { class: 'btn sm quiet', type: 'button', onclick: function () { closeSheet(true); openProfile(x.userId); } }, 'Profile')),
+          x.role ? h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'Their role in ' + x.artist, h('span', { class: 'hint cq-said' }, x.role))) : null,
           h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'What they said', h('span', { class: 'hint cq-said' }, x.note || '\u2014'))),
-          x.link ? h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'Their link',
+          x.link && !linkTwice ? h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'Their link',
             safeLink ? h('a', { class: 'hint cq-link', href: safeLink, target: '_blank', rel: 'noopener noreferrer' }, x.link)
               : h('span', { class: 'hint cq-said' }, x.link))) : null,
+          // The links they gave, each one a tap away (only a real web address is made a link).
+          [['spotify', 'Spotify'], ['instagram', 'Instagram'], ['website', 'Website']].map(function (k) {
+            var v = String((G.isObj(x.links) && x.links[k[0]]) || '').trim();
+            if (!v) return null;
+            return h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, k[1],
+              /^https?:\/\//i.test(v) ? h('a', { class: 'hint cq-link', href: v, target: '_blank', rel: 'noopener' }, v)
+                : h('span', { class: 'hint cq-said' }, v)));
+          }),
+          x.code ? h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'Their code',
+            h('span', { class: 'hint cq-said clm-code-said' }, x.code),
+            h('span', { class: 'hint' }, 'Look for this code in their bio or on their site.'))) : null,
           G.num(x.others) > 0 ? h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' },
             plural(G.num(x.others), 'other person') .replace('persons', 'people') + ' also asked for this page',
             h('span', { class: 'hint' }, 'Approving this one declines the rest.'))) : null),
@@ -3640,6 +3765,891 @@
       ];
     }, { label: 'Claim: ' + x.artist, cls: 'ca-sheet' });
   }
+  /* ---- After sign-up: the later surfaces (Devin, 2026-10-10) ----
+     The first run asks what brings you here; what it starts is finished on
+     these pages. "After that the artist page is alerted of an endorsement
+     request. Until it's accepted it just says pending under the crew member's
+     artist list." So the page you run shows who is asking to be listed, your
+     own Artists tab shows what is still waiting on an answer, a fan ticks the
+     shows they were at ("press 'attended' on these shows and start building
+     their analytics"), and a venue or a festival gets a page "just like
+     artists". The server holds every rule; these only ask, and show. */
+
+  // An answer from the server kept for a minute, the way creditAsks keeps
+  // its list: { val, at, asking, failed }. Asked afresh after a change; the
+  // page is drawn again only when the answer is a different one.
+  function kept(key, ask, fresh) {
+    S.kept = S.kept || {};
+    var c = S.kept[key] || (S.kept[key] = { val: null, at: 0, asking: false, failed: false });
+    if (fresh && c.asking) c.again = true;
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      var was = JSON.stringify(c.val), p;
+      try { p = Promise.resolve(ask()); } catch (e) { p = Promise.reject(e); }
+      p.then(function (v) {
+        c.asking = false;
+        if (c.again) { c.again = false; kept(key, ask, true); return; }
+        var changed = c.failed || !c.at || JSON.stringify(v) !== was;
+        c.val = v == null ? null : v; c.at = Date.now(); c.failed = false;
+        if (changed) render();
+      }, function () {
+        c.asking = false; c.at = Date.now();
+        if (c.again) { c.again = false; kept(key, ask, true); return; }
+        var first = !c.failed;
+        c.failed = true;
+        if (first) render();
+      });
+    }
+    return c;
+  }
+  // (Nothing to ask: signed out, or a server that has no such question yet.)
+  var NO_ANSWER = { val: null, at: 0, asking: false, failed: false, none: true };
+  function askedAgo(at) { return isNaN(Date.parse(at || '')) ? '' : feedAgo(at); }
+  // What the account said it is at sign-up: any of member, crew, fan, promoter.
+  function myKinds() {
+    var B = window.GR_BACKEND, fr = null;
+    try { fr = B && B.firstRun ? B.firstRun() : null; } catch (e) { fr = null; }
+    return fr && Array.isArray(fr.kinds) ? fr.kinds : [];
+  }
+
+  /* On the artist page you run: who is asking to be listed as a member or as
+     crew. One card each, beside the tour credits waiting on your yes. */
+  function artistRequests(artistId, fresh) {
+    var B = window.GR_BACKEND;
+    if (!artistId || !socialOn() || !B || !B.artistRequestQueue) return NO_ANSWER;
+    return kept('aq:' + artistId, function () { return B.artistRequestQueue(artistId); }, fresh);
+  }
+  function artistRequestCards(artistId, artistName) {
+    var list = artistRequests(artistId).val;
+    list = (Array.isArray(list) ? list : []).filter(function (x) { return x && x.userId && (!x.artistId || x.artistId === artistId); });
+    if (!list.length) return null;
+    return h('div', { class: 'tc-asks' }, list.map(function (x) {
+      return h('button', { class: 'tc-ask on', type: 'button', onclick: function () { openArtistRequest(artistId, artistName, x); } },
+        h('span', { class: 'tc-ask-t' }, (x.name || 'Someone') + ' asks to be listed as ' + (x.kind === 'band' ? 'a Member' : 'crew') + (x.role ? ' · ' + x.role : '')),
+        icon('chevron', 16));
+    }));
+  }
+  /* "After that the artist page is alerted of an endorsement request." The
+     page's own cards are seen only by whoever opens that page to run it, so
+     the same requests, for every page you run, are asked for as the app
+     starts and each time your profile opens, and sit at the top of your own
+     profile beside the other things waiting on your yes. */
+  function artistAsks(fresh) {
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B || typeof B.artistRequestQueue !== 'function') return NO_ANSWER;
+    return kept('aq:all', function () { return B.artistRequestQueue(null); }, fresh);
+  }
+  function artistAskCards() {
+    var list = artistAsks().val;
+    list = (Array.isArray(list) ? list : []).filter(function (x) { return x && x.userId && x.artistId; });
+    if (!list.length) return null;
+    return h('div', { class: 'tc-asks' }, list.map(function (x) {
+      var artist = x.artist || 'your page';
+      return h('button', { class: 'tc-ask on', type: 'button', onclick: function () { openArtistRequest(x.artistId, x.artist, x); } },
+        h('span', { class: 'tc-ask-t' }, (x.name || 'Someone') + ' asks to be listed on ' + artist + ' as ' +
+          (x.kind === 'band' ? 'a Member' : 'crew') + (x.role ? ' · ' + x.role : '')),
+        icon('chevron', 16));
+    }));
+  }
+  // One request, to answer. Accepting lists them with the role they gave and endorses them.
+  function openArtistRequest(artistId, artistName, x) {
+    var B = window.GR_BACKEND, name = x.name || 'Someone', artist = artistName || x.artist || 'this artist';
+    var member = x.kind === 'band', busy = false;
+    var roles = (Array.isArray(x.roles) ? x.roles : []).filter(Boolean);
+    if (!B || typeof B.decideArtistRequest !== 'function') return;
+    var answer = async function (yes) {
+      if (busy) return;
+      busy = true;
+      var r = null;
+      try { r = await B.decideArtistRequest(artistId, x.userId, yes); }
+      catch (e) { busy = false; saveFailed('request', e); return; }
+      busy = false;
+      // Settled one way or the other: the cards (the page's, and the ones on your profile) and the
+      // page's own list of people are read again.
+      artistRequests(artistId, true);
+      artistAsks(true);
+      actOf(artistId, true);
+      closeSheet();
+      if (!r || r.ok === false) {
+        toast(r && r.why === 'former_member' ? name + ' was a Member here, so they can’t be listed as crew. Add them under Members instead.'
+          : r && r.why === 'expired' ? 'That request ran out after 30 days. ' + name + ' can ask again.'
+          : 'That request was already settled.', r && r.why === 'former_member' ? 6000 : 0);
+      } else if (yes) { staleCards(); toast(name + ' is on the page.'); }
+      else toast('Declined.');
+      render(true);
+    };
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, name + ' asks to be listed'),
+        h('p', { class: 'sh-sub' }, 'On ' + artist + '’s page, as ' + (member ? 'a Member.' : 'crew.')),
+        h('div', { class: 'ledger cq-card' },
+          h('div', { class: 'row' }, personPhoto({ name: x.name, avatar: x.avatar }, 'xs'),
+            h('div', { class: 'row-label' }, name,
+              h('span', { class: 'hint' }, [x.handle ? '@' + x.handle : ''].concat(roles).filter(Boolean).join(' · ') || 'No username yet'))),
+          h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'The role they gave',
+            h('span', { class: 'hint cq-said' }, x.role || 'None given'))),
+          h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'Asked',
+            h('span', { class: 'hint cq-said' }, askedAgo(x.at) || 'Not long ago')))),
+        h('p', { class: 'note' }, 'Endorsing says ' + name + ' really ' + (member ? 'is in ' : 'worked for ') + artist +
+          '. It shows on their page and can’t be taken back.'),
+        member ? h('p', { class: 'note' }, 'Accepting makes them a Member of ' + artist + '. Letting a Member go later takes every other Member’s yes.') : null,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: function () { answer(true); } }, 'Accept and endorse'),
+          h('button', { class: 'btn danger block', type: 'button', onclick: function () { answer(false); } }, 'Decline'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
+      ];
+    }, { label: name + ' asks to be listed' });
+  }
+
+  /* Asking an artist to list you, from its page. Devin's two questions: a
+     Member says their role in the artist; crew pick "Which of these best
+     describes your role" from his 20 roles. "Of course make an option 'Other'
+     so that it can add a space to be filled out." */
+  // His 20 crew roles, then the two words for a hired player on stage.
+  function askCrewRoles() { return G.CREW_ROLES.slice(0, 20).concat(['Band', 'Touring Musician']); }
+  // Role chips with Other, which opens a line to type it. value() is the role as it will be sent.
+  function roleChoice(presets, start, onChange, label) {
+    var cur = String(start || '').trim();
+    var other = !!cur && presets.indexOf(cur) < 0;
+    var input = h('input', { class: 'input aq-other', type: 'text', maxlength: 40, value: other ? cur : '', autocapitalize: 'words',
+      autocomplete: 'off', placeholder: 'Type the role', 'aria-label': 'The role, typed', hidden: other ? null : true,
+      oninput: function () { if (onChange) onChange(); } });
+    var chips = h('div', { class: 'chips', role: 'group', 'aria-label': label || 'Pick a role' });
+    var sync = function () {
+      Array.prototype.forEach.call(chips.children, function (b) {
+        b.setAttribute('aria-pressed', String(other ? b.textContent === 'Other' : b.textContent === cur));
+      });
+      input.hidden = !other;
+    };
+    presets.concat(['Other']).forEach(function (r) {
+      chips.append(h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', onclick: function () {
+        if (r === 'Other') { other = true; cur = ''; sync(); input.focus(); }
+        else { other = false; cur = r; sync(); }
+        if (onChange) onChange();
+      } }, r));
+    });
+    sync();
+    return { nodes: [chips, input],
+      value: function () { return String(other ? input.value : cur).replace(/\s+/g, ' ').trim().slice(0, 40); } };
+  }
+  // What you asked artists for: pending, run out (no answer in 30 days), declined or accepted.
+  function myArtistRequests(fresh) {
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B || !B.myArtistRequests) return NO_ANSWER;
+    return kept('myreq', function () { return B.myArtistRequests(); }, fresh);
+  }
+  // The pages you asked to run, each with the code its claim was given.
+  function myClaimList(fresh) {
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B || !B.myClaims) return NO_ANSWER;
+    return kept('myclaims', function () { return B.myClaims(); }, fresh);
+  }
+  // One place for what the server can say back to "list me": it says it, has
+  // the lists that show it read again, and answers 'sent', 'stop' (no use
+  // asking this again now) or 'retry'.
+  async function sendArtistRequest(artistId, artist, kind, role) {
+    var B = window.GR_BACKEND, r = null;
+    if (!B || typeof B.requestArtist !== 'function') { toast('Couldn’t send that. Try again.'); return 'retry'; }
+    try { r = await B.requestArtist(artistId, kind, String(role || '').replace(/\s+/g, ' ').trim().slice(0, 40)); }
+    catch (e) { saveFailed('request', e); return 'retry'; }
+    var why = r && r.ok ? '' : String((r && r.why) || 'failed');
+    myArtistRequests(true);
+    if (S.actCards && S.actCards[artistId]) actOf(artistId, true);
+    if (!why) {
+      // (You run that page: there is nobody to ask, you are simply on it.)
+      if (r.listed) { myActs(true); staleCards(); toast('You are on ' + artist + '’s page.'); }
+      else toast('Request sent. It waits on ' + artist + '’s page for an answer.');
+      return 'sent';
+    }
+    toast(why === 'listed' ? 'You are already on ' + artist + '’s page.'
+      : why === 'former_member' ? 'You were a Member of ' + artist + '. Ask to be listed as a Member: a former Member can’t be listed as crew yet.'
+      : why === 'wait' ? artist + ' said no in the last 7 days. You can ask again after that.'
+      : why === 'many' ? 'You have 10 requests waiting. Let some be answered, or withdraw one, first.'
+      : 'Couldn’t send that. Try again.');
+    return why === 'former_member' || why === 'failed' ? 'retry' : 'stop';
+  }
+  // A request of your own (from the artist's page or your Artists tab): withdraw it
+  // while it waits; ask again once it has run out or been declined.
+  function openMyRequest(r) {
+    var B = window.GR_BACKEND, artist = r.artist || 'this artist', busy = false;
+    var what = (r.kind === 'band' ? 'a Member' : 'crew') + (r.role ? ' (' + r.role + ')' : '');
+    var here = !!(S.route && S.route.name === 'act' && S.route.id === r.artistId);
+    var pageBtn = here || !r.artistId ? null : h('button', { class: 'btn ghost block', type: 'button',
+      onclick: function () { closeSheet(true); openAct(r.artistId); } }, 'Open ' + artist + '’s page');
+    var close = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close');
+    // Taking the request back: while it waits it is withdrawn; once it has run out or been declined
+    // the same call simply takes its row off your Artists tab.
+    var takeBack = function (label, said) {
+      if (!B || typeof B.withdrawArtistRequest !== 'function') return null;
+      return h('button', { class: 'btn danger block', type: 'button', onclick: async function (e) {
+        var btn = e.currentTarget;
+        if (busy) return;
+        busy = true; btn.disabled = true;
+        try { await B.withdrawArtistRequest(r.artistId); }
+        catch (x) { busy = false; btn.disabled = false; saveFailed('request', x); return; }
+        myArtistRequests(true);
+        var c = S.actCards && S.actCards[r.artistId];
+        if (c) { if (c.card) c.card.myRequest = null; actOf(r.artistId, true); }
+        closeSheet(); toast(said); render(true);
+      } }, label);
+    };
+    if (r.state === 'pending') {
+      openSheet(function () {
+        return [
+          h('h2', { class: 'sh-title' }, 'Request pending'),
+          h('p', { class: 'sh-sub' }, 'You asked ' + artist + ' to list you as ' + what + (askedAgo(r.at) ? ', ' + askedAgo(r.at) : '') + '. ' +
+            (r.unclaimed ? 'Nobody runs that page yet, so it waits until someone does. ' : 'Whoever runs the page answers it. ') +
+            'With no answer in 30 days it runs out, and you can ask again.'),
+          h('div', { class: 'stack' }, takeBack('Withdraw the request', 'Request withdrawn.'), pageBtn, close)
+        ];
+      }, { label: 'Request pending' });
+      return;
+    }
+    var ranOut = r.state === 'expired';
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, ranOut ? 'No answer in 30 days' : 'Declined'),
+        h('p', { class: 'sh-sub' }, ranOut
+          ? artist + ' did not answer your request to be listed as ' + what + ', so it ran out. You can ask again, or remove it from your list.'
+          : artist + ' declined your request to be listed as ' + what + '. You can ask again once 7 days have passed, or remove it from your list.'),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: async function (e) {
+            var btn = e.currentTarget;
+            if (busy) return;
+            busy = true; btn.disabled = true;
+            var out = await sendArtistRequest(r.artistId, artist, r.kind, r.role);
+            busy = false; btn.disabled = false;
+            if (out !== 'retry') { closeSheet(); render(true); }
+          } }, 'Ask again'),
+          takeBack('Remove', 'Removed.'),
+          pageBtn, close)
+      ];
+    }, { label: ranOut ? 'No answer in 30 days' : 'Declined' });
+  }
+  function openAskToBeListed(id) {
+    var B = window.GR_BACKEND;
+    var card = S.actCards && S.actCards[id] && S.actCards[id].card;
+    if (!card || !B || !B.requestArtist) return;
+    var req = G.isObj(card.myRequest) ? card.myRequest : null;
+    if (req && (req.state === 'pending' || req.state === 'expired')) {
+      openMyRequest({ artistId: id, artist: card.name, unclaimed: !!card.unclaimed, kind: req.kind, role: req.role, state: req.state, at: req.at });
+      return;
+    }
+    var f = { kind: 'band', busy: false }, pick = null;
+    openSheet(function () {
+      var host = h('div', { class: 'aq-roles' });
+      var send = h('button', { class: 'btn primary block', type: 'button' }, 'Send request');
+      var ready = function () { send.disabled = f.busy || !pick || !pick.value(); };
+      var draw = function () {
+        pick = roleChoice(f.kind === 'band' ? G.BAND_ROLES : askCrewRoles(), '', ready, 'Your role with ' + card.name);
+        fillEl(host, [h('p', { class: 'field-label aq-q' }, f.kind === 'band' ? 'What is your role in ' + card.name + '?' : 'Which of these best describes your role?'),
+          pick.nodes]);
+        ready();
+      };
+      send.addEventListener('click', async function () {
+        if (send.disabled) return;
+        blurActive();
+        f.busy = true; ready();
+        var out = await sendArtistRequest(id, card.name, f.kind, pick.value());
+        f.busy = false; ready();
+        if (out !== 'retry') { closeSheet(); render(true); }
+      });
+      draw();
+      return [
+        h('h2', { class: 'sh-title' }, 'Ask ' + card.name + ' to list you'),
+        h('p', { class: 'sh-sub' }, 'A Member is in ' + card.name + '. Crew work for ' + card.name + ', hired players on stage too. ' +
+          (card.unclaimed ? 'Nobody runs this page yet, so your request waits until someone does.' : 'Whoever runs the page says yes or no.')),
+        h('div', { class: 'aq-seg' }, segmented(['Member', 'Crew'], 0, function (i) { f.kind = i === 0 ? 'band' : 'crew'; draw(); }, 'Member or crew')),
+        host,
+        h('div', { class: 'stack' }, send,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
+      ];
+    }, { label: 'Ask ' + card.name + ' to list you' });
+  }
+  // A link typed on the claim sheet, made whole: "theirsite.com" and, for
+  // Instagram, "@name" become https:// links. '' for nothing typed, null for
+  // something that cannot be a link.
+  function claimLink(kind, v) {
+    v = String(v || '').trim();
+    if (!v) return '';
+    if (kind === 'instagram' && /^@?[A-Za-z0-9._]{1,30}$/.test(v) && !/\.(com|net|org|co|io)$/i.test(v)) v = 'https://instagram.com/' + v.replace(/^@/, '');
+    else if (/^http:\/\//i.test(v)) v = 'https://' + v.slice(7);
+    else if (!/^https:\/\//i.test(v)) v = 'https://' + v;
+    return v.length <= 200 && /^https:\/\/[^\s\/?#.]+(\.[^\s\/?#.]+)+([\/?#]\S*)?$/i.test(v) ? v : null;
+  }
+
+  /* On your own Artists tab: what you asked for and is still waiting (or ran
+     out, or was declined), and the pages you asked to run. Here even when the
+     tab has nothing else: a new account's first rows. */
+  function waitingRow(name, avatar, sub, onTap) {
+    var nm = String(name || '').trim() || 'Artist';
+    return h('li', null, h('button', { class: 'list-row art-row', type: 'button', onclick: onTap },
+      h('span', { class: 'avatar' + (avatar ? ' has photo' : ' letter'), 'aria-hidden': 'true' },
+        avatar ? h('img', { class: 'brand-logo', src: avatar, alt: '' }) : nm.charAt(0).toUpperCase()),
+      h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, nm), h('span', { class: 'lr-sub' }, sub)),
+      icon('chevron', 18)));
+  }
+  function myWaitingRows() {
+    var reqs = myArtistRequests().val, claims = myClaimList().val, rows = [];
+    (Array.isArray(reqs) ? reqs : []).forEach(function (r) {
+      if (!r || r.state === 'accepted') return;
+      var sub = r.state === 'pending' ? [r.kind === 'band' ? 'Member' : 'Crew', r.role, 'Pending'].filter(Boolean).join(' · ')
+        : r.state === 'expired' ? 'No answer in 30 days' : 'Declined';
+      rows.push(waitingRow(r.artist, r.avatar, sub, function () { openMyRequest(r); }));
+    });
+    (Array.isArray(claims) ? claims : []).forEach(function (c) {
+      if (!c) return;
+      // A claim Greenroom said no to: nothing else tells the claimant, so its row stays for 30 days,
+      // says so, and opens the claim again ("If it is denied ... can resubmit again").
+      if (c.status === 'declined') {
+        if (Date.now() - declinedSince(c) > 30 * 864e5) return;
+        rows.push(waitingRow(c.artist, '', 'Claim declined · Claim again', function () { openClaimAgain(c); }));
+        return;
+      }
+      if (c.status !== 'pending') return;
+      // The page itself has the claim, its code and Withdraw behind "Claim sent".
+      rows.push(waitingRow(c.artist, '', 'Claim pending' + (c.code ? ' · code ' + c.code : ''), function () { openAct(c.artistId); }));
+    });
+    return rows;
+  }
+  /* Since when a claim has been declined, for its 30 days on the Artists tab.
+     The server's list carries the day the claim was sent, not the day it was
+     answered (a claim can wait longer than 30 days), so unless it says when,
+     the count starts the first time this phone is shown the no. */
+  function declinedSince(c) {
+    var said = Date.parse(c.decidedAt || '');
+    if (!isNaN(said)) return said;
+    var key = 'gr-claim-no:' + frUid() + ':' + c.artistId + ':' + String(c.at || '');
+    var seen = Number(lsGet(key)) || 0;
+    if (!seen) { seen = Date.now(); lsSet(key, String(seen)); }
+    return seen;
+  }
+  // "Claim again", from the row of a claim that was declined: the claim sheet needs the page's card, so it is fetched first.
+  function openClaimAgain(c) {
+    var B = window.GR_BACKEND, id = c && c.artistId;
+    if (!id || !B || !B.artistCard || !B.claimArtist) return;
+    var show = function (card) {
+      // Someone was given the page since: there is nothing to claim, but they can ask to be listed on it.
+      if (!card.unclaimed) { toast('Someone runs ' + (card.name || 'that page') + ' now. You can ask to be listed on it.', 5000); myClaimList(true); openAct(id); return; }
+      openClaimPage(id);
+    };
+    // (Asked for afresh each time: the card kept from an earlier visit may still say the claim is waiting.)
+    Promise.resolve().then(function () { return B.artistCard(id); }).then(function (card) {
+      if (!card) { toast('That page isn’t on Greenroom any more.'); myClaimList(true); return; }
+      S.actCards = S.actCards || {};
+      var slot = S.actCards[id] || (S.actCards[id] = { card: null, at: 0, asking: false, gone: false });
+      slot.card = card; slot.at = Date.now(); slot.gone = false; slot.failed = false;
+      show(card);
+    }, function (e) {
+      toast(e && e.code === 'offline' ? 'No connection right now. Try again when you have signal.' : 'Couldn’t open that. Try again.');
+    });
+  }
+
+  /* Attended (Devin: "find shows you've attended and this way they can search
+     tours and press 'attended' on these shows and start building their
+     analytics"). The count sits on your Artists tab once you have ticked a
+     show, or from the start for an account that said it is a fan. */
+  function myAttended(fresh) {
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B || !B.myAttended) return NO_ANSWER;
+    return kept('attended', function () { return B.myAttended(); }, fresh);
+  }
+  function attendedCard() {
+    var c = myAttended();
+    if (c.none) return null;
+    var n = G.isObj(c.val) ? G.num(c.val.count) : 0;
+    if (!(n > 0) && myKinds().indexOf('fan') < 0) return null;
+    return h('div', { class: 'tc-asks' }, h('button', { class: 'tc-ask', type: 'button', onclick: function () { openAttendedList(); } },
+      h('span', { class: 'tc-ask-t' }, 'Shows attended: ' + n), icon('chevron', 16)));
+  }
+  // The artists you have ticked shows for, each with its count; one opens its shows.
+  function openAttendedList() {
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B || !B.myAttended) return;
+    var known = myAttended().val;
+    var st = { a: G.isObj(known) ? known : null, failed: false };
+    var host = h('div', { class: 'att-artists' });
+    var draw = function () {
+      var list = st.a && Array.isArray(st.a.artists) ? st.a.artists : [];
+      fillEl(host, !st.a ? h('p', { class: 'note' }, st.failed ? 'Couldn’t load this just now. Close and try again.' : 'Loading…')
+        : !list.length ? h('p', { class: 'note' }, 'None yet. Find an artist, open their page and tap Shows attended.')
+        : h('div', { class: 'acct-list' }, list.map(function (x) {
+            return h('button', { class: 'acct-row', type: 'button', onclick: function () { openAttended(x.artistId, x.artist); } },
+              personPhoto({ name: x.artist, avatar: x.avatar }, 'xs'),
+              h('span', { class: 'lr-text' },
+                h('span', { class: 'lr-title' }, x.artist || 'Artist'),
+                h('span', { class: 'lr-sub' }, plural(G.num(x.n), 'show'))),
+              icon('chevron', 16));
+          })));
+    };
+    // Asked here too: the card that opened this may have been drawn before its answer came.
+    Promise.resolve().then(function () { return B.myAttended(); }).then(function (v) {
+      st.a = G.isObj(v) ? v : { count: 0, artists: [] }; st.failed = false; draw();
+    }, function () { st.failed = true; draw(); });
+    openSheet(function () {
+      draw();
+      return [
+        h('h2', { class: 'sh-title' }, 'Shows attended'),
+        h('p', { class: 'sh-sub' }, 'The shows you marked Attended, artist by artist. Tap one to add more or take one back.'),
+        host,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn quiet block', type: 'button',
+            onclick: function () { closeSheet(true); go({ name: 'search', back: S.route, focus: true }); } }, icon('search', 18), 'Find an artist'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: 'Shows attended' });
+  }
+  /* One artist's road history, the same entries its Tours tab lists for a
+     visitor (tours, festivals, each year's loose shows). An entry opens to
+     its nights; each night already played has one button, and a night still
+     to come has none. The first run opens this too: its name and its two
+     parameters are part of that agreement. */
+  function openAttended(artistId, artistName) {
+    var B = window.GR_BACKEND;
+    if (!artistId || !socialOn() || !B || !B.fanNights || !B.markAttended) return;
+    var artist = String(artistName || '').trim();
+    var st = { rows: null, failed: false, reading: false, open: {}, nights: {}, count: null, changed: false };
+    var host = h('div', { class: 'att-host' }), tally = h('p', { class: 'note att-tally', hidden: true });
+    var today = G.ymd(new Date());
+    var had = myAttended().val;
+    if (G.isObj(had)) st.count = G.num(had.count);
+    var say = function () {
+      tally.hidden = !(st.count > 0);
+      tally.textContent = st.count > 0 ? 'Shows attended: ' + st.count + ', every artist counted.' : '';
+    };
+    // One word for it everywhere: the button reads Attended, and wears a tick once it is on.
+    var paintBtn = function (btn, on) {
+      btn.className = 'att-btn' + (on ? ' on' : '');
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.textContent = on ? 'Attended ✓' : 'Attended';
+    };
+    var mark = async function (n, btn) {
+      if (btn.disabled) return;
+      var going = !n.attended, r = null;
+      btn.disabled = true;
+      try { r = await B.markAttended(artistId, n.date, going); }
+      catch (e) { btn.disabled = false; saveFailed('attended', e); return; }
+      btn.disabled = false;
+      if (!r || !r.ok) {
+        toast(r && r.why === 'many' ? 'That’s a lot for one day. Carry on tomorrow.'
+          : r && r.why === 'future' ? 'That show has not been played yet.'
+          : r && r.why === 'none' ? 'That night is not on record any more.'
+          : 'Couldn’t save that. Try again.');
+        return;
+      }
+      st.changed = true; st.count = G.num(r.count);
+      // The same night can sit under two entries (a festival inside a tour): both read the same.
+      Object.keys(st.nights).forEach(function (k) {
+        (st.nights[k].list || []).forEach(function (m) { if (m.date === n.date) m.attended = going; });
+      });
+      n.attended = going;
+      // Only the buttons change: nothing is redrawn under a finger that is ticking the next night.
+      Array.prototype.forEach.call(host.querySelectorAll('.att-btn'), function (b) {
+        if (b.getAttribute('data-d') === n.date) paintBtn(b, going);
+      });
+      say();
+    };
+    var nightsOf = function (key) {
+      var c = st.nights[key];
+      if (c) return c;
+      c = st.nights[key] = { list: null, failed: false };
+      Promise.resolve().then(function () { return B.fanNights(artistId, key); }).then(function (l) {
+        c.list = Array.isArray(l) ? l : []; draw();
+      }, function () { c.failed = true; draw(); });
+      return c;
+    };
+    var nightRow = function (n, entryName) {
+      var where = [n.city, n.state && n.country === 'US' ? n.state : (n.country && n.country !== 'US' ? n.country : '')].filter(Boolean).join(', ');
+      var fest = n.festival && n.festival !== entryName ? h('span', { class: 'tn-fest' }, ' · ' + n.festival) : null;
+      var btn = null;
+      if (String(n.date || '') <= today) {
+        btn = h('button', { type: 'button', 'data-d': n.date });
+        paintBtn(btn, !!n.attended);
+        btn.addEventListener('click', function () { mark(n, btn); });
+      }
+      return h('li', { class: 'tn-row att-row' },
+        h('span', { class: 'tn-date' }, dayMD(n.date) + ', ' + String(n.date).slice(0, 4)),
+        h('span', { class: 'tn-where' }, where || '—', n.venue ? h('span', { class: 'tn-venue' }, ' · ' + n.venue) : null, fest),
+        btn || h('span', { class: 'tn-tag' }, 'not yet played'));
+    };
+    var entry = function (r) {
+      // As on the Tours tab: a year's loose shows are asked for by key ("year:2009"), the rest by name.
+      var src = r.tour && typeof r.tour === 'object' ? r.tour : r;
+      var key = src.kind === 'shows' && src.key ? src.key : r.name;
+      var open = !!st.open[key], body = null;
+      var span = r.first ? tourSpan(r.first, r.last) + (r.n ? ' · ' + plural(r.n, 'show') : '') : (r.n ? plural(r.n, 'show') : 'No dates yet');
+      if (open) {
+        var c = nightsOf(key);
+        body = c.failed ? h('p', { class: 'pt-next pt-nodates' }, 'Couldn’t load the dates just now. ',
+            h('button', { class: 'linkbtn', type: 'button', onclick: function () { delete st.nights[key]; draw(); } }, 'Try again'))
+          : !c.list ? h('p', { class: 'pt-next pt-nodates' }, 'Loading…')
+          : !c.list.length ? h('p', { class: 'pt-next pt-nodates' }, 'No dates yet')
+          : h('ul', { class: 'shows cal-list tn-list' }, c.list.map(function (n) { return nightRow(n, r.name); }));
+      }
+      return h('div', { class: 'pt-run tn-run' + (open ? ' open' : '') },
+        h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
+          onclick: function () { st.open[key] = !open; draw(); } },
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'lr-title' }, r.name, src.kind === 'festival' ? h('span', { class: 'tn-tag tn-kind' }, 'festival') : null),
+            h('span', { class: 'lr-sub' }, span)),
+          icon('chevron', 16)),
+        body);
+    };
+    function draw() {
+      say();
+      if (!st.rows) {
+        fillEl(host, st.failed ? h('p', { class: 'note' }, 'Couldn’t load the shows just now. ',
+            h('button', { class: 'linkbtn', type: 'button', onclick: function () { st.failed = false; draw(); load(); } }, 'Try again'))
+          : h('p', { class: 'note' }, 'Loading…'));
+        return;
+      }
+      // A page made a moment ago (a new fan's first tap on an act) has nothing yet because its history
+      // is still being read: that is not "no shows", and it can be asked for again.
+      fillEl(host, st.rows.length ? st.rows.map(entry)
+        : st.reading ? h('p', { class: 'note' }, 'Greenroom is still reading this artist’s shows. Give it a minute. ',
+            h('button', { class: 'linkbtn', type: 'button', onclick: function () { again(); } }, 'Try again'))
+        : h('p', { class: 'note' }, 'Greenroom has no shows on record for ' + (artist || 'this artist') + ' yet.'));
+    }
+    function take(row) {
+      var sum = row && G.isObj(row.summary) ? row.summary : null;
+      st.rows = G.tourTimeline([], sum && Array.isArray(sum.toursList) ? sum.toursList : [], G.tourToday());
+      var madeAt = S.pagesMade && S.pagesMade[artistId];
+      st.reading = !st.rows.length && (histBusy(row) || (!!madeAt && Date.now() - madeAt < 10 * 60e3 && !(sum && Object.keys(sum).length)));
+      st.failed = false;
+      draw();
+    }
+    function load(fresh) {
+      // The artist's page may already hold its history; from the first run it is asked for here.
+      var known = !fresh && S.histCards && S.histCards[artistId] && S.histCards[artistId].row;
+      if (known) { take(known); return; }
+      if (!B.artistHistory) { take(null); return; }
+      Promise.resolve().then(function () { return B.artistHistory(artistId); }).then(take, function () { st.failed = true; draw(); });
+    }
+    // "Try again": the reading is moved along a step (the server reads on by itself too), then asked for afresh.
+    function again() {
+      st.rows = null; st.failed = false; st.reading = false;
+      draw();
+      Promise.resolve().then(function () { return B.historyNudge ? B.historyNudge(artistId) : null; })
+        .then(null, function () { return null; }).then(function () { load(true); });
+    }
+    openSheet(function () {
+      load();
+      return [
+        h('h2', { class: 'sh-title' }, 'Shows attended'),
+        h('p', { class: 'sh-sub' }, (artist ? artist + '. ' : '') + 'Open a tour or a festival, then tap Attended on each night you were at.'),
+        tally, host,
+        h('div', { class: 'stack' }, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done'))
+      ];
+    }, { label: 'Shows attended',
+      // The count on your Artists tab is read again once something was ticked.
+      onClose: function () { if (st.changed) myAttended(true); } });
+  }
+
+  /* Venue and festival pages (Devin: "The page should generate venue pages
+     just like artists and festival pages just like artists"). A place is
+     found in Search from the show archive and gets its page the first time
+     someone opens it; nobody runs it until it is claimed. What is here now:
+     where it is, how many shows are on record, who played there, and "I
+     worked here". Claiming a place, ratings and promoter pages come later. */
+  function placeOf(kind, id, fresh) {
+    var B = window.GR_BACKEND, fn = kind === 'festival' ? 'festivalCard' : 'venueCard';
+    if (!id || !socialOn() || !B || !B[fn]) return NO_ANSWER;
+    return kept('place:' + kind + ':' + id, function () { return B[fn](id); }, fresh);
+  }
+  // "2009–2025", or the one year, from years or dates.
+  function yearsSpan(a, b) {
+    var y = function (v) { var s = String(v == null ? '' : v).slice(0, 4); return /^(19|20)\d\d$/.test(s) ? s : ''; };
+    a = y(a); b = y(b);
+    return a && b && a !== b ? a + '–' + b : (a || b);
+  }
+  function viewPlace() {
+    var kind = S.route.kind === 'festival' ? 'festival' : 'venue', id = S.route.id, B = window.GR_BACKEND;
+    var word = kind === 'festival' ? 'Festival' : 'Venue';
+    var c = placeOf(kind, id), card = G.isObj(c.val) ? c.val : null;
+    if (!card) {
+      return h('div', { class: 'page home menu-page has-tabs plc-page' }, menuHead(word, { menu: true }),
+        c.failed ? h('div', { class: 'fw-fail' }, emptyState('Couldn’t load this page', 'Check your signal and try again.'),
+            h('button', { class: 'btn ghost', type: 'button', onclick: function () { placeOf(kind, id, true); render(true); } }, 'Try again'))
+          : (c.none || c.at) ? emptyState('This ' + word.toLowerCase() + ' isn’t on Greenroom', 'The link may be wrong.')
+          : h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading…'),
+        socialBar(''));
+    }
+    var name = String(card.name || '').trim() || word;
+    var unclaimed = !!card.unclaimed;
+    // (The card's country is a name, or on an older server a two-letter code: a code is spelled out, a name is shown as it is.)
+    var country = String(card.country || '').trim();
+    var abroad = country && !/^(US|USA|United States|United States of America)$/i.test(country) ? (regionName(country) || country) : '';
+    var where = kind === 'venue' ? [card.city, card.region || abroad].filter(Boolean).join(', ') : '';
+    var years = (Array.isArray(card.editions) ? card.editions : []).map(function (e) { return G.num(e && e.year); })
+      .filter(function (v) { return v > 0; }).sort();
+    var span = kind === 'venue' ? yearsSpan(card.firstYear, card.lastYear) : yearsSpan(years[0], years[years.length - 1]);
+    var artists = (Array.isArray(card.artists) ? card.artists : []).filter(G.isObj);
+    var work = G.isObj(card.myWork) ? card.myWork : null;
+    var workBtn = !B || !B.placeWorkAsk ? null
+      : work && work.state === 'approved' ? h('span', { class: 'pf-btn on plc-still' }, 'You work here')
+      : work && work.state === 'pending'
+        ? h('button', { class: 'pf-btn on', type: 'button', onclick: function () { openPlaceWork(kind, card); } }, 'Worked here · Pending', icon('chevron', 14))
+      : h('button', { class: 'pf-btn', type: 'button', onclick: function () { openPlaceWork(kind, card); } }, 'I worked here');
+    return h('div', { class: 'page home menu-page has-tabs plc-page' },
+      menuHead(name, { menu: true }),
+      h('section', { class: 'plc-top', 'aria-label': name },
+        h('p', { class: 'plc-kind' }, [where, word].filter(Boolean).join(' · '), unclaimed ? h('span', { class: 'act-tag' }, 'Unclaimed') : null),
+        h('p', { class: 'plc-count' }, plural(G.num(card.shows), 'show') + ' on record' + (span ? ' · ' + span : '')),
+        kind === 'venue' && card.address ? h('a', { class: 'plc-addr', href: mapsHref(card.address), target: '_blank', rel: 'noopener' }, card.address) : null,
+        unclaimed ? h('p', { class: 'hist-note act-note' }, 'Nobody runs this page yet.') : null,
+        workBtn ? h('div', { class: 'pf-actions' }, workBtn) : null),
+      h('h2', { class: 'plc-h' }, kind === 'venue' ? 'Artists who played here' : 'Artists who played it'),
+      artists.length ? h('ul', { class: 'tour-list rows plc-artists' }, artists.map(function (a) {
+        var an = String(a.name || '').trim() || 'Artist', ys = yearsSpan(a.first, a.last);
+        var inner = [
+          h('span', { class: 'avatar' + (a.avatar ? ' has photo' : ' letter'), 'aria-hidden': 'true' },
+            a.avatar ? h('img', { class: 'brand-logo', src: a.avatar, alt: '' }) : an.charAt(0).toUpperCase()),
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, an),
+            h('span', { class: 'lr-sub' }, plural(G.num(a.n), 'show') + (ys ? ' · ' + ys : '')))];
+        return h('li', null, a.id
+          ? h('button', { class: 'list-row art-row', type: 'button', onclick: function () { openAct(a.id); } }, inner, icon('chevron', 18))
+          : h('div', { class: 'list-row art-row still' }, inner));
+      })) : emptyState('No artists on record yet', 'They show up here as artists’ road histories are read.'),
+      h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
+      socialBar(''));
+  }
+  /* "I worked here": the role is yours to give or leave out. Nobody runs a
+     venue's or a festival's page yet, so nothing can confirm it: it is saved,
+     it shows as pending, and the words promise no answer. */
+  function openPlaceWork(kind, card) {
+    var B = window.GR_BACKEND, o = kind === 'festival' ? { festivalId: card.id } : { venueId: card.id };
+    var work = G.isObj(card.myWork) ? card.myWork : null, busy = false, name = card.name || 'this place';
+    var PLACE_SAVED = 'It shows as pending until ' + (kind === 'festival' ? 'festivals' : 'venues') + ' can confirm their people.';
+    if (!B || !B.placeWorkAsk) return;
+    if (work && work.state === 'pending') {
+      openSheet(function () {
+        return [
+          h('h2', { class: 'sh-title' }, 'You worked here'),
+          h('p', { class: 'sh-sub' }, 'You said you worked at ' + name + (work.role ? ' as ' + work.role : '') + '. ' + PLACE_SAVED),
+          h('div', { class: 'stack' },
+            B.placeWorkWithdraw ? h('button', { class: 'btn danger block', type: 'button', onclick: async function (e) {
+              var btn = e.currentTarget;
+              if (busy) return;
+              busy = true; btn.disabled = true;
+              try { await B.placeWorkWithdraw(o); }
+              catch (x) { busy = false; btn.disabled = false; saveFailed('place', x); return; }
+              card.myWork = null; placeOf(kind, card.id, true);
+              closeSheet(); toast('Removed.'); render(true);
+            } }, 'Remove it') : null,
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+        ];
+      }, { label: 'You worked here' });
+      return;
+    }
+    var role = '';
+    openSheet(function () {
+      var send = h('button', { class: 'btn primary block', type: 'submit' }, 'Save');
+      return [
+        h('h2', { class: 'sh-title' }, 'I worked here'),
+        h('p', { class: 'sh-sub' }, 'What did you do at ' + name + '? You can leave it blank. ' + PLACE_SAVED),
+        h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
+          e.preventDefault();
+          if (busy) return;
+          blurActive();
+          busy = true; send.disabled = true;
+          var said = role.replace(/\s+/g, ' ').trim().slice(0, 40);
+          try { await B.placeWorkAsk(Object.assign({ role: said }, o)); }
+          catch (x) {
+            busy = false; send.disabled = false;
+            if (x && x.code === 'too-many') toast('That’s a lot for one day. Try again tomorrow.');
+            else saveFailed('place', x);
+            return;
+          }
+          card.myWork = { role: said, state: 'pending' }; placeOf(kind, card.id, true);
+          closeSheet(); toast('Saved. ' + PLACE_SAVED, 5000); render(true);
+        } },
+          field('Your role (optional)', h('input', { class: 'input', type: 'text', maxlength: 40, autocapitalize: 'words', autocomplete: 'off',
+            placeholder: kind === 'festival' ? 'e.g. Stage manager' : 'e.g. Promoter, talent buyer, production', 'aria-label': 'Your role',
+            oninput: function (e) { role = e.target.value; } })),
+          h('div', { class: 'stack' }, send,
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now')))
+      ];
+    }, { label: 'I worked here' });
+  }
+
+  /* Invite codes, for a Greenroom admin (the server answers null to anyone
+     else, and the row in Settings never shows). Devin: "No one should be on
+     the sign up page without a code first and foremost." A code lets a set
+     number of people make an account, until it runs out or is switched off. */
+  var KIND_WORDS = { member: 'Member', crew: 'Crew', fan: 'Fan', promoter: 'Promoter' };
+  // Is this account an admin? then(list or null). The answer is kept: a minute for a list, ten for a no (as claimQ does).
+  function inviteCodesKnown(then) {
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B || !B.inviteCodes) return;
+    var c = S.inviteCodes || (S.inviteCodes = { list: undefined, at: 0 });
+    if (c.list !== undefined) then(c.list);
+    if (c.list !== undefined && Date.now() - c.at < (c.list ? 60e3 : 600e3)) return;
+    Promise.resolve().then(function () { return B.inviteCodes(); }).then(function (l) {
+      c.list = Array.isArray(l) ? l : null; c.at = Date.now(); then(c.list);
+    }, function () { /* no answer: the row stays as it was */ });
+  }
+  function openInviteCodes() {
+    var B = window.GR_BACKEND;
+    if (!B || !B.inviteCodes) return;
+    var KINDS = ['member', 'crew', 'fan', 'promoter'];
+    var st = { list: null, failed: false, old: false, busy: false, made: '' };
+    var f = { uses: '1', days: '30', note: '', kinds: {} };
+    var host = h('div', { class: 'ivc-list' }), formHost = h('div', { class: 'ivc-new' });
+    var copy = async function (code, box) {
+      var ok = await copyText(code, box);
+      toast(ok ? 'Copied ' + code : 'Press and hold the code to copy it.');
+    };
+    var codeBox = function (code, big) {
+      return h('input', { class: 'ivc-code' + (big ? ' big' : ''), type: 'text', readonly: true, value: code, 'aria-label': 'Invite code ' + code });
+    };
+    var ranOut = function (x) { var t = Date.parse(x.expiresAt || ''); return !isNaN(t) && t <= Date.now(); };
+    var dead = function (x) { return !!x.revoked || !(G.num(x.usesLeft) > 0) || ranOut(x); };
+    var standing = function (x) {
+      var left = G.num(x.usesLeft);
+      return x.revoked ? 'switched off' : !(left > 0) ? 'used up' : left + ' left of ' + (left + G.num(x.used));
+    };
+    // (What a code was made for is only where its people start: the first run ticks it for them, and they can change it.)
+    var who = function (x) {
+      var k = (Array.isArray(x.kinds) ? x.kinds : []).map(function (v) { return KIND_WORDS[v] || ''; }).filter(Boolean);
+      return k.length ? 'Starts them as ' + k.join(', ') : '';
+    };
+    var until = function (x) {
+      var t = Date.parse(x.expiresAt || '');
+      if (isNaN(t)) return '';
+      return (t <= Date.now() ? 'Ran out ' : 'Runs out ') + dayMD(G.ymd(new Date(t))) + ', ' + new Date(t).getFullYear();
+    };
+    var codeRow = function (x) {
+      var box = codeBox(x.code);
+      var off = dead(x) || typeof B.revokeInviteCode !== 'function' ? null : h('button', { class: 'btn sm ghost', type: 'button' }, 'Switch off');
+      var offSays = h('p', { class: 'ivc-note', hidden: true }, 'Nobody can sign up with this code after you switch it off.');
+      if (off) off.addEventListener('click', async function () {
+        // Two taps: the first asks (and says what it does), the second does it. A code that is switched off stays off.
+        if (!off.armed) { off.armed = true; off.textContent = 'Switch it off for good?'; off.classList.add('danger'); offSays.hidden = false; return; }
+        if (off.disabled) return;
+        off.disabled = true;
+        try { await B.revokeInviteCode(x.code); }
+        catch (e) { off.disabled = false; saveFailed('invite code', e); return; }
+        x.revoked = true;
+        toast(x.code + ' is switched off.');
+        draw(); load();
+      });
+      return h('div', { class: 'ivc-row' + (dead(x) ? ' off' : '') },
+        box,
+        h('p', { class: 'ivc-line' }, [standing(x), who(x), until(x)].filter(Boolean).join(' · ')),
+        x.note ? h('p', { class: 'ivc-note' }, x.note) : null,
+        h('div', { class: 'ivc-acts' },
+          h('button', { class: 'btn sm quiet', type: 'button', onclick: function () { copy(x.code, box); } }, icon('copy', 16), 'Copy'),
+          off),
+        off ? offSays : null);
+    };
+    function draw() {
+      if (!st.list) {
+        fillEl(host, h('p', { class: 'note' }, st.failed ? 'Couldn’t load the codes. Close and try again.' : 'Loading…'));
+        return;
+      }
+      var live = st.list.filter(function (x) { return !dead(x); }), old = st.list.filter(dead);
+      fillEl(host, [
+        live.length ? live.map(codeRow) : h('p', { class: 'note' }, 'No code is in use right now. Make one below.'),
+        old.length ? h('button', { class: 'linkbtn ivc-old', type: 'button', onclick: function () { st.old = !st.old; draw(); } },
+          st.old ? 'Hide the old codes' : 'Show ' + plural(old.length, 'old code')) : null,
+        st.old ? old.map(codeRow) : null
+      ]);
+    }
+    function load() {
+      Promise.resolve().then(function () { return B.inviteCodes(); }).then(function (l) {
+        if (!Array.isArray(l)) { st.list = null; st.failed = true; draw(); return; }
+        // Newest first, as the server sends them; sorted here too in case it did not.
+        st.list = l.filter(G.isObj).sort(function (a, b) { return String(b.at || '').localeCompare(String(a.at || '')); });
+        st.failed = false;
+        if (S.inviteCodes) { S.inviteCodes.list = l; S.inviteCodes.at = Date.now(); }
+        draw();
+      }, function () { st.failed = !st.list; draw(); });
+    }
+    /* A code only works when Supabase itself takes new sign-ups, and (the
+       database's own rule) only when a new address has to be confirmed by an
+       emailed code: without that, anyone could sign up with an address that
+       is not theirs. Both are dashboard switches, so whoever makes codes is
+       told here when one is off. Nothing is said when it cannot be read. */
+    var warnHost = h('div', { class: 'ivc-warns' });
+    if (typeof B.signupSettings === 'function') {
+      Promise.resolve().then(function () { return B.signupSettings(); }).then(function (s) {
+        if (!G.isObj(s)) return;
+        fillEl(warnHost, [
+          s.open === false ? h('p', { class: 'ivc-warn', role: 'status' }, 'Sign-up is switched off in Supabase, so codes won’t work yet.') : null,
+          s.confirm === false ? h('p', { class: 'ivc-warn', role: 'status' },
+            'Email confirmation is off in Supabase. Codes won’t work until it is on: the database refuses those sign-ups, so nobody can use an address that isn’t theirs.') : null
+        ]);
+      }, function () { /* not read: no warning */ });
+    }
+    function drawForm() {
+      // (An older backend.js lists the codes but cannot make one.)
+      if (typeof B.makeInviteCode !== 'function') { fillEl(formHost, []); return; }
+      // Just made: the code, large, where the form was.
+      if (st.made) {
+        var big = codeBox(st.made, true), code = st.made;
+        fillEl(formHost, [
+          h('h3', { class: 'ivc-h' }, 'Your new code'),
+          big,
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'button', onclick: function () { copy(code, big); } }, icon('copy', 18), 'Copy'),
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { st.made = ''; drawForm(); } }, 'Make another'))
+        ]);
+        return;
+      }
+      var usesIn = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: '1', max: '500', step: '1', value: f.uses,
+        'aria-label': 'How many people can use it', oninput: function (e) { f.uses = e.target.value; } });
+      var daysIn = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: '1', max: '365', step: '1', value: f.days,
+        'aria-label': 'How many days it lasts', oninput: function (e) { f.days = e.target.value; } });
+      var make = h('button', { class: 'btn primary block', type: 'submit' }, 'Make the code');
+      fillEl(formHost, [
+        h('h3', { class: 'ivc-h' }, 'New code'),
+        h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
+          e.preventDefault();
+          if (st.busy) return;
+          var uses = Math.round(G.num(f.uses)), days = Math.round(G.num(f.days));
+          if (!(uses >= 1 && uses <= 500)) { toast('How many people: 1 to 500.'); usesIn.focus(); return; }
+          if (!(days >= 1 && days <= 365)) { toast('How many days: 1 to 365.'); daysIn.focus(); return; }
+          blurActive();
+          st.busy = true; make.disabled = true;
+          var r = null;
+          try {
+            r = await B.makeInviteCode({ kinds: KINDS.filter(function (k) { return f.kinds[k]; }), uses: uses, days: days,
+              note: f.note.replace(/\s+/g, ' ').trim().slice(0, 60) });
+          } catch (x) { st.busy = false; make.disabled = false; saveFailed('invite code', x); return; }
+          st.busy = false; make.disabled = false;
+          if (!r || !r.code) { toast('Couldn’t make a code. Try again.'); return; }
+          st.made = String(r.code); f.note = '';
+          drawForm(); load();
+        } },
+          h('div', { class: 'field-row' },
+            field('How many people', usesIn),
+            field('Days it lasts', daysIn)),
+          h('div', { class: 'field' },
+            h('span', { class: 'field-label' }, 'Starts them as'),
+            h('div', { class: 'ivc-kinds', role: 'group', 'aria-label': 'Starts them as' }, KINDS.map(function (k) {
+              return h('label', { class: 'ivc-kind' },
+                h('input', { type: 'checkbox', class: 'rv-check', checked: f.kinds[k] ? true : null,
+                  onchange: function (e) { f.kinds[k] = e.target.checked; } }),
+                h('span', null, KIND_WORDS[k]));
+            })),
+            h('span', { class: 'hint' }, 'A suggestion: they can change it.')),
+          field('A note for yourself (optional)', h('input', { class: 'input', type: 'text', maxlength: 60, value: f.note, autocomplete: 'off',
+            placeholder: 'e.g. Crew for the fall run', 'aria-label': 'A note for yourself', oninput: function (e) { f.note = e.target.value; } })),
+          make)
+      ]);
+    }
+    load();
+    openSheet(function () {
+      draw(); drawForm();
+      return [
+        h('h2', { class: 'sh-title' }, 'Invite codes'),
+        h('p', { class: 'sh-sub' }, 'A code lets the number of people you set make an account, until it runs out or you switch it off. People invited to a tour sign up from their invite, without one.'),
+        warnHost, host, formHost,
+        h('div', { class: 'stack' }, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: 'Invite codes', cls: 'ivc-sheet' });
+  }
+
   /* Taking someone off an artist page (Devin, 2026-10-10): "Just because you
      were fired doesn't mean your history is erased. It just means from the
      moment you were fired you are no longer listed on that artist page and
@@ -5304,7 +6314,46 @@
         return { kind: 'tour', id: t.id, title: t.name || 'Untitled tour', sub: [t.artist, span(t)].filter(Boolean).join(' \u00b7 '),
           avatar: (t.artist && artistLogo(t.artist)) || '', letter: t.artist || t.name, logo: true, artistId: t.artistId || null, artist: t.artist || '' };
       },
-      term: function (q) { return { kind: 'term', id: q.toLowerCase(), title: q, sub: 'Search' }; }
+      term: function (q) { return { kind: 'term', id: q.toLowerCase(), title: q, sub: 'Search' }; },
+      // A venue or a festival with shows on record. Like an act from the encyclopedia it has
+      // no page until someone opens it; Recent keeps what is needed to open it again.
+      venue: function (v) {
+        var where = [v.city, v.region || (v.cc && v.cc !== 'US' ? regionName(v.cc) : '')].filter(Boolean).join(', ');
+        var n = G.num(v.nights);
+        return { kind: 'venue', id: [v.name, v.city, v.cc].join('|').toLowerCase(), title: v.name || 'Venue', name: v.name || '', city: v.city || '', cc: v.cc || '',
+          sub: [where, 'Venue', n ? plural(n, 'show') : ''].filter(Boolean).join(' · '), pin: true };
+      },
+      festival: function (x) {
+        var n = Array.isArray(x.editions) ? x.editions.length : G.num(x.editions);
+        return { kind: 'festival', id: String(x.name || '').toLowerCase(), title: x.name || 'Festival', name: x.name || '',
+          sub: ['Festival', n ? plural(n, 'year') : ''].filter(Boolean).join(' · '), pin: true };
+      }
+    };
+    // A place opens the way an act with no page does: its page is found or made, then shown.
+    var openPlace = function (it) {
+      var mark = it.kind + ':' + it.id;
+      // (A place kept under Recent, on a phone whose backend.js is an older one that has no such pages.)
+      if (typeof (it.kind === 'venue' ? B.openVenue : B.openFestival) !== 'function') { toast('Couldn’t open that page. Try again.'); return; }
+      if (st.opening === mark) return;
+      st.opening = mark;
+      var redraw = function () { if (results.isConnected) paint(); else if (S.route && S.route.name === 'search') render(true); };
+      var mine = function () { if (st.opening !== mark) return false; st.opening = ''; return true; };
+      redraw();                           // its row reads "Opening…"
+      Promise.resolve().then(function () {
+        return it.kind === 'venue' ? B.openVenue(it.name, it.city, it.cc) : B.openFestival(it.name);
+      }).then(function (r) {
+        if (!mine()) return;
+        if (!r || !r.id) { toast('Couldn’t open that page. Try again.'); redraw(); return; }
+        // Only while they're still waiting here, with nothing opened since.
+        if (!S.route || S.route.name !== 'search') return;
+        if (sheet) { redraw(); return; }
+        go({ name: 'place', kind: it.kind, id: r.id, back: S.route });
+      }, function (e) {
+        if (!mine()) return;
+        toast(e && e.code === 'too-many' ? 'That’s a lot of new pages for one day. Try again tomorrow.'
+          : e && e.code === 'offline' ? NO_SIGNAL : 'Couldn’t open that page. Try again.');
+        redraw();
+      });
     };
     // Opening an act that has no page yet makes its page (unclaimed, run by
     // nobody) and goes there. Recent then keeps the page, not the lookup.
@@ -5338,6 +6387,7 @@
         if (it.canOpen) openProfile(it.id);
         else { toast('You can open the profiles of people you tour with or share an artist with.'); paint(); }
       } else if (it.kind === 'artist') openAct(it.id);
+      else if (it.kind === 'venue' || it.kind === 'festival') openPlace(it);
       else if (it.kind === 'folder') go({ name: 'artist', artist: it.id });
       else if (it.kind === 'tour') {
         if (getTour(it.id)) openTour(it.id);
@@ -5347,13 +6397,16 @@
     };
     var row = function (it, onDrop) {
       var face = it.kind === 'term' ? h('span', { class: 'sr-face clock', 'aria-hidden': 'true' }, icon('clock', 22))
+        // A venue or a festival wears the map pin.
+        : it.kind === 'venue' || it.kind === 'festival' ? h('span', { class: 'sr-face plc-pin', 'aria-hidden': 'true' }, icon('tabmap', 22))
         : h('span', { class: 'sr-face' + (it.avatar ? (it.logo ? ' logo' : ' has') : ' letter'), 'aria-hidden': 'true' },
             it.avatar ? h('img', { src: it.avatar, alt: '' }) : (String(it.letter || it.title || '?').trim().charAt(0).toUpperCase() || '?'));
       return h('div', { class: 'sr-row' },
         h('button', { class: 'sr-main', type: 'button', onclick: function () { open(it); } }, face,
           h('span', { class: 'lr-text' },
             h('span', { class: 'sr-title' }, h('span', { class: 'sr-title-t' }, it.title), it.verified ? verifiedBadge() : null, it.verified && it.claimed ? claimedTag('sm') : null),
-            it.kind === 'mb' && st.opening === it.id ? h('span', { class: 'sr-sub' }, 'Opening\u2026')
+            (it.kind === 'mb' && st.opening === it.id) || ((it.kind === 'venue' || it.kind === 'festival') && st.opening === it.kind + ':' + it.id)
+              ? h('span', { class: 'sr-sub' }, 'Opening\u2026')
               : it.sub ? h('span', { class: 'sr-sub' }, it.sub) : null)),
         onDrop ? h('button', { class: 'sr-x', type: 'button', 'aria-label': 'Remove ' + it.title + ' from Recent', onclick: onDrop }, icon('close', 18)) : null);
     };
@@ -5446,9 +6499,21 @@
         kids.push(h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, items.length ? 'More artists' : 'Artists')),
           h('div', { class: 'sr-list' }, more.map(function (it) { return row(it); })));
       }
+      // Venues and festivals, after the artists, each under its own small heading.
+      var pl = st.places && st.places.q === q ? st.places : null;
+      var venues = (pl ? pl.venues : []).filter(G.isObj).map(asItem.venue), fests = (pl ? pl.festivals : []).filter(G.isObj).map(asItem.festival);
+      if (venues.length) {
+        kids.push(h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, 'Venues')),
+          h('div', { class: 'sr-list' }, venues.map(function (it) { return row(it); })));
+      }
+      if (fests.length) {
+        kids.push(h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, 'Festivals')),
+          h('div', { class: 'sr-list' }, fests.map(function (it) { return row(it); })));
+      }
+      var places = venues.length + fests.length;
       if (st.busy || !r) kids.push(h('p', { class: 'note sr-hint' }, 'Searching\u2026'));
-      else if (r.failed && !more.length) kids.push(h('p', { class: 'note sr-hint' }, 'Couldn\u2019t reach Greenroom. Check your signal and try again.'));
-      else if (!items.length && !more.length) {
+      else if (r.failed && !more.length && !places) kids.push(h('p', { class: 'note sr-hint' }, 'Couldn\u2019t reach Greenroom. Check your signal and try again.'));
+      else if (!items.length && !more.length && !places) {
         kids.push(h('p', { class: 'note sr-hint' }, st.mbWait === q ? 'Searching\u2026'
           : mb && mb.failed ? 'Couldn\u2019t reach the artist list just now. Try again in a moment.'
           : 'Nothing found for \u201c' + q + '\u201d.'));
@@ -5495,6 +6560,16 @@
           st.res = { q: q, people: out[0] || [], artists: out[1] || [], tours: out[2] || [], failed: !out[0] && !out[1] && !out[2] };
           if (results.isConnected) paint();
         });
+        // Venues and festivals are asked on their own: a slow answer never holds up the rest, and a failed
+        // one leaves the rest standing. (A username search, "@...", is for people only.)
+        if (B.findPlaces && q.charAt(0) !== '@' && !(st.places && st.places.q === q)) {
+          Promise.resolve().then(function () { return B.findPlaces(q); }).then(function (p) {
+            if (n !== st.seq) return;
+            st.places = { q: q, venues: p && Array.isArray(p.venues) ? p.venues : [], festivals: p && Array.isArray(p.festivals) ? p.festivals : [] };
+            if (results.isConnected) paint();
+            else if (S.route && S.route.name === 'search') render(true);
+          }, function () { /* no venues or festivals this time */ });
+        }
       }, 300);
     };
     var input = h('input', { class: 'sr-in', type: 'search', value: st.q, placeholder: 'Search', autocomplete: 'off',
@@ -5620,7 +6695,12 @@
      runs an artist or is listed on one is in music; someone who is on
      nothing is, for now, a fan. */
   function inMusic() {
-    return allTourEntries().length > 0 || myArtistNames().length > 0 || ((myActs().list) || []).length > 0;
+    // On a tour, running an artist or listed on one: in music, whatever the account said it was.
+    if (allTourEntries().length > 0 || myArtistNames().length > 0 || ((myActs().list) || []).length > 0) return true;
+    // Otherwise it is what the account said at sign-up: a member, crew or a promoter is; a fan and nothing else is not.
+    // (An account that was never asked, or a build with no such answer: on nothing means a fan, as before.)
+    var kinds = myKinds();
+    return kinds.length > 0 && !(kinds.length === 1 && kinds[0] === 'fan');
   }
   /* A tour is made on the artist's page (Devin, 2026-10-10): "I can only create a
      tour when on an artists page ... when you click the artist it's for it should
@@ -5671,6 +6751,1082 @@
         menuRow('gear', 'Settings', function () { openSettingsSheet(); })),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
+  }
+
+  /* ---- The first run (Devin, 2026-10-10) ----
+     "I want to clean up the sign up page ... questions are prompts one at a
+     time ... Then purpose of using greenroom (think of a better way to ask
+     this). The answers are MEMBER - owner/artist, CREW - work for artist,
+     FAN - follow artists, PROMOTER - Book/Promote concerts. I think someone
+     should be able to click multiple purposes. Here are the prompts that come
+     after you choose 1 or more."
+     The gate (site/backend.js) asks for the code, the name, the username, the
+     birthday, the email and the password, and makes the account. This is what
+     a new account sees next, signed in, before any other page: what brings
+     you here (any of the four), then his questions for each one picked, in
+     his order, then home. An account that left the gate half way is asked for
+     its username and birthday first.
+     One question a screen, in the look of his references: an arrow back, a
+     big title, a grey sentence, one rounded field with its label inside, one
+     pill. Every answer is kept in S.firstRun, so a redraw (live updates
+     redraw the whole page) loses nothing that was typed. Every kind's
+     questions can be skipped, and Back and Skip never wait on a save, so a
+     search that finds nothing, or a call that hangs, holds nobody here.
+     Settings opens the same page to change the kinds later
+     (startFirstRunAgain). ---- */
+  var FR_KINDS = ['member', 'crew', 'fan', 'promoter'];
+  // Each card is one of his four words, with one plain line under it saying who that is.
+  var FR_CARDS = {
+    member: ['MEMBER', 'I’m the artist, or one of its Members'],
+    crew: ['CREW', 'I work for artists'],
+    fan: ['FAN', 'I follow artists and go to shows'],
+    promoter: ['PROMOTER', 'I book or promote shows']
+  };
+  var FR_FIRST = { member: 'm-find', crew: 'c-find', fan: 'f-find', promoter: 'p-find' };
+  var FR_LETTER = { m: 'member', c: 'crew', f: 'fan', p: 'promoter' };
+  var FR_NO_SIGNAL = 'No connection right now. Try again when you have signal.';
+  // (His terms say 18. The database refuses anyone younger; the screen says so first.)
+  var FR_MIN_AGE = 18;
+  var FR_YOUNG = 'Greenroom is for people 18 and older.';
+  // The list on screen now (search results): an answer that lands late fills
+  // it in where it is, so the keyboard never drops while someone is typing.
+  var frLive = null;
+
+  // What the account has answered so far, as the backend holds it (null when no account is behind the app).
+  function frFacts() {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || typeof B.firstRun !== 'function') return null;
+    try { var a = B.firstRun(); return G.isObj(a) ? a : null; } catch (e) { return null; }
+  }
+  function frUid() { var B = window.GR_BACKEND; return String((B && B.uid && B.uid()) || 'me'); }
+  /* Someone invited to a tour is asked their username, birthday and password
+     by the invite overlay (site/backend.js, #gr-pass-gate), with the app
+     already started underneath. While it is up the first run is not due: begun
+     under it, it would fix what to ask from facts read before those answers,
+     and ask the username and birthday a second time. The overlay redraws the
+     app as it lifts; this looks too, in case that never comes. A "not due"
+     is never kept: only S.firstRunDone, set when the run is finished, ends it. */
+  var frGateWatch = 0;
+  function frGateUp() {
+    if (!document.getElementById('gr-pass-gate')) return false;
+    if (!frGateWatch) {
+      frGateWatch = setInterval(function () {
+        if (document.getElementById('gr-pass-gate')) return;
+        clearInterval(frGateWatch); frGateWatch = 0;
+        render();
+      }, 500);
+    }
+    return true;
+  }
+  function firstRunDue() {
+    if (S.firstRun && S.firstRun.again) return true;
+    // Saved once on this phone, it is over whatever a stale answer says: nobody is sent round twice.
+    if (S.firstRunDone && S.firstRunDone === frUid()) return false;
+    if (frGateUp()) return false;
+    var a = frFacts(), B = window.GR_BACKEND;
+    // (An older backend.js that cannot save the answer is never asked the question.)
+    return !!(a && a.due && typeof B.finishFirstRun === 'function');
+  }
+  // The kinds, in his order, and nothing that isn't one.
+  function frKindList(list) {
+    return FR_KINDS.filter(function (k) { return Array.isArray(list) && list.indexOf(k) >= 0; });
+  }
+  function frNew(o) {
+    return Object.assign({ again: false, step: 'kinds', trail: [], kinds: [], had: [], queue: [], f: {}, needs: { handle: false, birth: false },
+      find: null, pfind: null, pick: null, claim: false, last: null, fans: [], places: [], busy: false, err: '', op: 0, finishing: 0, fails: 0,
+      // Already on a tour as this begins (someone a Manager invited): the crew questions know it.
+      onTour: allTourEntries().length > 0 }, o);
+  }
+  /* From Settings: the same question, to change the answer. It opens on the
+     kinds with the account's own ticked, an X leaves without saving, and only
+     a kind that is newly ticked has its questions asked (the ones already
+     answered are not asked again). */
+  function startFirstRunAgain() {
+    var a = frFacts(), B = window.GR_BACKEND;
+    if (!a || typeof B.saveKinds !== 'function') { toast('Couldn’t open that. Try again.'); return; }
+    var kinds = frKindList(a.kinds);
+    if (sheet) closeSheet(true);
+    S.firstRun = frNew({ again: true, kinds: kinds.slice(), had: kinds });
+    window.scrollTo(0, 0);
+    render(true);
+  }
+
+  // Stepping to another screen drops whatever save was still out (its answer
+  // no longer moves anyone) and frees the pill.
+  function frShow(step) {
+    var fr = S.firstRun;
+    fr.step = step; fr.busy = false; fr.err = ''; fr.op += 1;
+    blurActive();
+    window.scrollTo(0, 0);
+    render(true);
+  }
+  function frGo(step) { var fr = S.firstRun; if (!fr) return; fr.trail.push(fr.step); frShow(step); }
+  function frBack() { var fr = S.firstRun; if (fr && fr.trail.length) frShow(fr.trail.pop()); }
+  function frClose() { S.firstRun = null; frLive = null; window.scrollTo(0, 0); render(true); }
+  // A save starts: the pill waits on it. The number tells its answer whether anyone is still waiting for it.
+  function frBegin() { var fr = S.firstRun; fr.busy = true; fr.err = ''; fr.op += 1; render(true); return fr.op; }
+  function frStill(fr, op) { return fr === S.firstRun && fr.op === op; }
+  // The quiet line under the field, changed where it is (typing never redraws the page).
+  function frSay(text) {
+    var fr = S.firstRun;
+    if (!fr) return;
+    fr.err = text || '';
+    var el = $('#view .fr-err');
+    if (el) { el.textContent = fr.err; el.hidden = !fr.err; }
+  }
+  // Why something didn't go, as one line (and a note of it kept, the way saveFailed keeps one).
+  function frWhy(place, x, fallback) {
+    var B = window.GR_BACKEND;
+    if (B && B.noteError) { try { B.noteError('firstrun:' + place, x); } catch (e) { /* the note is a convenience */ } }
+    var offline = (x && (x.code === 'offline' || x.error === 'offline')) || (B && B.netTrouble && B.netTrouble());
+    return offline ? FR_NO_SIGNAL : fallback;
+  }
+  // An answer for a list: drawn only if that list is still the one on screen.
+  function frRepaint(fr, step) {
+    if (!fr || fr !== S.firstRun || fr.step !== step) return;
+    if (frLive && frLive.step === step && frLive.node.isConnected) frLive.paint();
+  }
+  function frKindOf(step) { var m = /^([mcfp])-/.exec(String(step)); return m ? FR_LETTER[m[1]] : ''; }
+  // On to the next kind they ticked; after the last one it is saved, and they are in.
+  function frNextKind() {
+    var fr = S.firstRun;
+    if (!fr) return;
+    var cur = frKindOf(fr.step);
+    var next = fr.queue[cur ? fr.queue.indexOf(cur) + 1 : 0];
+    if (!next) { frFinish(); return; }
+    /* The kind being left keeps one screen behind it: its search. Skipped
+       from its role or proof screen, with the artist that was picked let go
+       just below, those screens would be empty ones for Back to walk through
+       from the next kind. */
+    if (cur && /-(unclaimed|role|proof)$/.test(fr.step)) {
+      var first = FR_FIRST[cur], i = fr.trail.lastIndexOf(first);
+      if (i >= 0) { fr.trail.length = i; fr.step = first; }
+    }
+    frFindClear(); fr.pick = null; fr.claim = false;
+    frGo(FR_FIRST[next]);
+  }
+  async function frFinish() {
+    var B = window.GR_BACKEND, fr = S.firstRun;
+    // One save at a time; one that has hung for a while may be tried again.
+    if (fr.finishing && Date.now() - fr.finishing < 15000) return;
+    fr.finishing = Date.now();
+    var op = frBegin(), ok = false;
+    try {
+      // A save with no answer in 12 seconds counts as one that failed (nothing else times it out), so
+      // the pill comes back, the third failure lets them through, and Skip never goes dead behind it.
+      var r = await Promise.race([
+        Promise.resolve().then(function () { return fr.again ? B.saveKinds(fr.kinds.slice()) : B.finishFirstRun(fr.kinds.slice()); }),
+        sleep(12000).then(function () { return { ok: false }; })]);
+      ok = !(r && r.ok === false);
+    } catch (x) { frWhy('finish', x, ''); }
+    if (fr !== S.firstRun) return;
+    fr.finishing = 0;
+    if (!ok) {
+      fr.fails = (fr.fails || 0) + 1;
+      // Nobody is locked out by a save that keeps failing: after the third try they are let through.
+      // (A new account is asked again the next time the app opens; whatever they asked for here is kept.)
+      if (fr.fails >= 3) {
+        S.firstRun = null; frLive = null;
+        if (!fr.again) S.firstRunDone = frUid();
+        go({ name: 'home' });
+        toast(fr.again ? 'Couldn’t save that. Try again later, from Settings.' : 'Couldn’t save that just now. You’ll be asked again next time.');
+        return;
+      }
+      // Still on the screen they finished from: the same button tries again.
+      if (frStill(fr, op)) { fr.busy = false; fr.err = 'Couldn’t save that. Try again.'; render(true); }
+      return;
+    }
+    S.firstRun = null; frLive = null;
+    if (!fr.again) S.firstRunDone = frUid();
+    // What you said you are, and whoever you asked, change what your own pages show: they are asked for afresh.
+    S.searchSug = null; staleCards(); myActs(true);
+    go({ name: 'home' });
+    toast(fr.again ? 'Saved' : 'You’re in.');
+  }
+
+  /* The one frame every question is drawn in. o: title, sub, body, onBack (or
+     onClose: an X in its place), next { label, onTap, ready } (the pill), alt
+     { label, onTap } (a second, quieter pill), skip (a function: "Skip for
+     now"). Once drawn, next.set(ready) switches the pill on and off where it
+     is and next.name(label) rewords it, so typing never redraws the page. */
+  function frShell(o) {
+    var fr = S.firstRun, nx = o.next || null;
+    var pill = nx ? h('button', { class: 'btn primary block fr-next', type: 'submit' }, nx.label || 'Next') : null;
+    if (nx) {
+      nx.set = function (ready) { nx.ready = !!ready; pill.disabled = !nx.ready || fr.busy; };
+      nx.name = function (label) { pill.textContent = label; };
+      nx.set(nx.ready !== false);
+    }
+    return h('div', { class: 'page fr-page' },
+      h('div', { class: 'fr-top' },
+        o.onClose ? h('button', { class: 'iconbtn fr-back', type: 'button', 'aria-label': 'Close', onclick: function () { o.onClose(); } }, icon('close', 26))
+          : o.onBack ? h('button', { class: 'iconbtn fr-back', type: 'button', 'aria-label': 'Back', onclick: function () { o.onBack(); } }, icon('back', 26))
+          : null),
+      h('h1', { class: 'fr-title' }, o.title),
+      o.sub ? h('p', { class: 'fr-sub' }, o.sub) : null,
+      h('form', { class: 'fr-form', novalidate: true,
+        onsubmit: function (e) { e.preventDefault(); if (nx && !pill.disabled) nx.onTap(); } },
+        o.body || null,
+        h('p', { class: 'fr-err', role: 'alert', hidden: fr.err ? null : true }, fr.err || ''),
+        pill,
+        o.alt ? h('button', { class: 'btn quiet block fr-alt', type: 'button', onclick: function () { o.alt.onTap(); } }, o.alt.label) : null,
+        o.skip ? h('button', { class: 'fr-skip', type: 'button', onclick: function () { o.skip(); } }, 'Skip for now') : null));
+  }
+  // One rounded box with its small label inside, above the value; mark sits at its right (the tick).
+  function frField(label, control, mark) {
+    return h('label', { class: 'fr-field' },
+      h('span', { class: 'fr-text' }, typeof label === 'string' ? h('span', { class: 'fr-label' }, label) : label, control),
+      mark || null);
+  }
+  function frSearchField(label, key, value, onType) {
+    return frField(label, h('input', { class: 'fr-in', type: 'text', 'data-k': key, value: value, maxlength: 80, autocomplete: 'off',
+      autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'search', 'aria-label': label,
+      oninput: function (e) { onType(e.target.value); },
+      // The Search key puts the keyboard away; it must not press the pill.
+      onkeydown: function (e) { if (e.key === 'Enter') { e.preventDefault(); blurActive(); } } }),
+      h('span', { class: 'fr-glass', 'aria-hidden': 'true' }, icon('search', 18)));
+  }
+
+  function viewFirstRun() {
+    frLive = null;
+    var fr = S.firstRun, B = window.GR_BACKEND;
+    var a = fr && fr.again ? null : frFacts();
+    if (!fr) {
+      a = a || {};
+      var kinds = frKindList(a.kinds);
+      // Nothing ticked yet: start from what their invite code was made for, and (already on a tour: a
+      // Manager invited them) from "I work for artists". A start only: every card can be unticked.
+      if (!kinds.length) kinds = frKindList((Array.isArray(a.suggest) ? a.suggest : []).concat(allTourEntries().length ? ['crew'] : []));
+      fr = S.firstRun = frNew({ kinds: kinds });
+      fr.needs = { handle: !!a.needsHandle, birth: !!a.needsBirth && typeof B.saveBirthDate === 'function' };
+      fr.step = fr.needs.handle ? 'handle' : fr.needs.birth ? 'birth' : 'kinds';
+    }
+    /* What is still to ask is read again on every draw, never kept from the
+       first one: a username or a birthday that was given somewhere else since
+       (the invite overlay asks both itself, and a sign-up's own save can land
+       late) is not asked a second time. One this run saved itself stays, so
+       Back can still return to it. */
+    if (a && !fr.again) {
+      if (!a.needsHandle && fr.f.handleSaved == null) fr.needs.handle = false;
+      if (!a.needsBirth && !fr.f.birthSaved) fr.needs.birth = false;
+      if (fr.step === 'handle' && !fr.needs.handle && fr.f.handleSaved == null) fr.step = fr.needs.birth ? 'birth' : 'kinds';
+      if (fr.step === 'birth' && !fr.needs.birth && !fr.f.birthSaved) fr.step = 'kinds';
+    }
+    // (A screen about an artist with no artist picked, or about something sent with nothing sent, has nothing to show.)
+    if (/-(unclaimed|role|proof)$/.test(fr.step) && !fr.pick) fr.step = fr.step.charAt(0) + '-find';
+    if (/-sent$/.test(fr.step) && !fr.last) fr.step = fr.step.charAt(0) + '-more';
+    var s = fr.step;
+    return s === 'handle' ? frHandle(fr)
+      : s === 'birth' ? frBirth(fr)
+      : s === 'm-find' || s === 'c-find' ? frArtist(fr)
+      : s === 'm-unclaimed' ? frUnclaimed(fr)
+      : s === 'm-role' || s === 'c-role' ? frRole(fr)
+      : s === 'm-proof' ? frProof(fr)
+      : s === 'm-sent' || s === 'c-sent' ? frSentPage(fr)
+      : s === 'm-more' || s === 'c-more' ? frMore(fr)
+      : s === 'f-find' ? frFans(fr)
+      : s === 'f-shows' ? frShows(fr)
+      : s === 'p-find' ? frPlaces(fr)
+      : frKinds(fr);
+  }
+
+  /* ---- Username and birthday: only for an account that has none (the gate
+     asks both; this is for whoever shut the app half way through it). ---- */
+  function frHandle(fr) {
+    var B = window.GR_BACKEND, f = fr.f, nx = null;
+    if (f.handle == null) {
+      // Something to start from, as his reference offers a suggestion: their own name, run together.
+      var a = frFacts() || {};
+      var guess = cleanHandle(String(a.firstName || '') + String(a.lastName || ''));
+      f.handle = HANDLE_OK.test(guess) ? guess : '';
+      f.handleOk = false; f.handleTyped = false;
+    }
+    // (The name they saved a moment ago is theirs: asked whether it is free, the answer would be no.
+    // A check that could not be made says so, and the pill comes back as it is: the save itself says
+    // if the username is taken, so nobody has to retype one to get the button again.)
+    var hf = handleField(f, function (v) {
+      return v === f.handleSaved ? Promise.resolve(true) : B.handleFree(v).then(function (free) {
+        if (f.handle === v) f.handleUnsure = '';
+        return free;
+      }, function (x) {
+        if (S.firstRun === fr && fr.step === 'handle' && f.handle === v) {
+          f.handleUnsure = v;
+          frSay('Couldn’t check that username. You can still tap Next to try it.');
+        }
+        throw x;
+      });
+    }, function () { if (nx && nx.set) nx.set(ready()); });
+    var ready = function () { return !!f.handleOk || (!!f.handleUnsure && f.handleUnsure === f.handle && HANDLE_OK.test(f.handle)); };
+    hf.input.classList.add('fr-in');
+    hf.input.setAttribute('data-k', 'fr-handle');
+    hf.input.addEventListener('input', function () { frSay(''); });
+    // (A redraw keeps a check that could not be made as it was, rather than asking, failing and saying so again.)
+    if (f.handle && !(f.handleUnsure && f.handleUnsure === f.handle)) hf.run();
+    nx = { label: 'Next', ready: ready(), onTap: frSaveHandle };
+    return frShell({ title: 'Create a username',
+      sub: 'Your username is how people find you on Greenroom. It shows as @name. Letters, numbers, dots and underscores. You can change it later.',
+      body: [frField('Username', hf.input, hf.mark), h('div', { class: 'fr-under' }, hf.said)],
+      onBack: fr.trail.length ? frBack : null, next: nx });
+  }
+  /* A save that keeps failing for no reason of theirs (not a taken username,
+     not a date that cannot be) holds nobody on these two screens, which have
+     no Skip: after the third they go on to the kinds, and the server asks
+     again the next time the app opens. True when it has moved them on. */
+  function frGaveUp(fr) {
+    fr.fails = (fr.fails || 0) + 1;
+    if (fr.fails < 3) return false;
+    fr.fails = 0;
+    frGo('kinds');
+    return true;
+  }
+  async function frSaveHandle() {
+    var B = window.GR_BACKEND, fr = S.firstRun, f = fr.f, v = f.handle;
+    var unsure = !!f.handleUnsure && f.handleUnsure === v;
+    if (fr.busy || !(f.handleOk || unsure) || !HANDLE_OK.test(v)) return;
+    // A username that arrived from somewhere else while this screen was up (a sign-up's own save landing
+    // late) is the one they chose: the name in this box, a guess, is never saved over it. The redraw moves on.
+    var now = frFacts();
+    if (now && !now.needsHandle && f.handleSaved == null) { render(true); return; }
+    var on = function () { fr.fails = 0; frGo(fr.needs.birth ? 'birth' : 'kinds'); };
+    if (v === f.handleSaved) { on(); return; }
+    blurActive();
+    var op = frBegin();
+    try { await B.setHandle(v); }
+    catch (x) {
+      if (!frStill(fr, op)) return;
+      fr.busy = false;
+      var theirs = x && (x.code === 'taken' || x.code === 'shape');
+      var why = x && x.code === 'taken' ? '@' + v + ' is taken. Try another.'
+        : x && x.code === 'shape' ? 'That username can’t be used. Try another.'
+        : frWhy('username', x, 'Couldn’t save that. Try again.');
+      if (theirs) { f.handleOk = false; f.handleUnsure = ''; }
+      else if (frGaveUp(fr)) return;
+      fr.err = why;
+      render(true);
+      return;
+    }
+    f.handleSaved = v; f.handleUnsure = '';
+    // Your own profile reads the username off your card: the two are kept the same.
+    if (myCard().handle !== v) saveMyCard({ handle: v });
+    if (frStill(fr, op)) on();
+  }
+  // Whole years old today for a YYYY-MM-DD day; null when it isn't a real day that has been.
+  function frAge(ymd) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ''));
+    if (!m) return null;
+    var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]), now = new Date();
+    if (y < 1900) return null;
+    var born = new Date(y, mo - 1, d);
+    if (born.getFullYear() !== y || born.getMonth() !== mo - 1 || born.getDate() !== d || born > now) return null;
+    return now.getFullYear() - y - ((now.getMonth() + 1 < mo || (now.getMonth() + 1 === mo && now.getDate() < d)) ? 1 : 0);
+  }
+  function frBirth(fr) {
+    var f = fr.f;
+    if (f.birth == null) f.birth = '';
+    var now = new Date();
+    var today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+    var label = h('span', { class: 'fr-label' });
+    var say = function () { var a = frAge(f.birth); label.textContent = a == null ? 'Birthday' : 'Birthday (' + plural(a, 'year') + ' old)'; };
+    var nx = { label: 'Next', ready: frAge(f.birth) != null, onTap: frSaveBirth };
+    // (The phone's own date wheel. It is a field as far as a redraw goes, so one never shuts the wheel mid-spin.
+    // An iPhone draws an empty date as nothing at all, so until a day is picked the box says what goes in it.)
+    var typed = function (e) {
+      f.birth = e.target.value;
+      wrap.classList.toggle('empty', !f.birth);
+      say(); frSay(''); nx.set(frAge(f.birth) != null);
+    };
+    var input = h('input', { class: 'fr-in fr-date', type: 'date', 'data-k': 'fr-birth', value: f.birth, min: '1900-01-01', max: today,
+      autocomplete: 'bday', 'aria-label': 'Birthday', oninput: typed, onchange: typed });
+    var wrap = h('span', { class: 'fr-datewrap' + (f.birth ? '' : ' empty') }, input,
+      h('span', { class: 'fr-ph', 'aria-hidden': 'true' }, 'Month, day and year'));
+    say();
+    // (Greenroom keeps it and nobody else is shown it: "Only you can see it" is the true way to say so.)
+    return frShell({ title: 'What’s your birthday?', sub: 'Use your own birthday. Only you can see it.',
+      body: frField(label, wrap), onBack: fr.trail.length ? frBack : null, next: nx });
+  }
+  async function frSaveBirth() {
+    var B = window.GR_BACKEND, fr = S.firstRun, f = fr.f, age = frAge(f.birth);
+    if (fr.busy || age == null) return;
+    if (age < FR_MIN_AGE) { frSay(FR_YOUNG); return; }
+    // (Back to this screen with the day it already saved: on, without saving it again.)
+    if (f.birthSaved && f.birthSaved === f.birth) { fr.fails = 0; frGo('kinds'); return; }
+    // (Saved somewhere else while this screen was up, as with the username: that one stands, and the redraw moves on.)
+    var now = frFacts();
+    if (now && !now.needsBirth && !f.birthSaved) { render(true); return; }
+    blurActive();
+    var op = frBegin(), day = f.birth;
+    try { await B.saveBirthDate(day); }
+    catch (x) {
+      if (!frStill(fr, op)) return;
+      fr.busy = false;
+      var theirs = x && (x.code === 'young' || x.code === 'shape');
+      var why = x && x.code === 'young' ? FR_YOUNG
+        : x && x.code === 'shape' ? 'That date doesn’t look right. Check it and try again.'
+        : frWhy('birthday', x, 'Couldn’t save that. Try again.');
+      if (!theirs && frGaveUp(fr)) return;
+      fr.err = why;
+      render(true);
+      return;
+    }
+    f.birthSaved = day;
+    if (frStill(fr, op)) { fr.fails = 0; frGo('kinds'); }
+  }
+
+  /* ---- What brings you here: four cards, any number of them on. ---- */
+  function frKinds(fr) {
+    // Opened again from Settings, only a newly ticked kind has questions: with none, the pill simply saves.
+    var word = function () { return fr.again && !fr.kinds.some(function (k) { return fr.had.indexOf(k) < 0; }) ? 'Save' : 'Next'; };
+    var nx = { label: word(), ready: fr.kinds.length > 0, onTap: frKindsNext };
+    var cards = FR_KINDS.map(function (k) {
+      var b = h('button', { class: 'fr-kind', type: 'button', role: 'checkbox', 'aria-checked': String(fr.kinds.indexOf(k) >= 0),
+        onclick: function () {
+          var on = fr.kinds.indexOf(k) < 0;
+          fr.kinds = frKindList(on ? fr.kinds.concat([k]) : fr.kinds.filter(function (x) { return x !== k; }));
+          b.setAttribute('aria-checked', String(on));
+          frSay('');
+          nx.name(word()); nx.set(fr.kinds.length > 0);
+        } },
+        h('span', { class: 'fr-kind-text' }, h('span', { class: 'fr-kind-t' }, FR_CARDS[k][0]), h('span', { class: 'fr-kind-s' }, FR_CARDS[k][1])),
+        h('span', { class: 'fr-tick', 'aria-hidden': 'true' }, icon('check', 15)));
+      return b;
+    });
+    return frShell({ title: 'What brings you to Greenroom?', sub: 'Pick everything that fits. You can change it later.',
+      body: h('div', { class: 'fr-kinds', role: 'group', 'aria-label': 'What brings you to Greenroom' }, cards),
+      onClose: fr.again ? frClose : null, onBack: !fr.again && fr.trail.length ? frBack : null, next: nx });
+  }
+  function frKindsNext() {
+    var fr = S.firstRun, B = window.GR_BACKEND;
+    if (!fr || !fr.kinds.length) return;
+    // (A kind whose questions this build of the backend cannot ask is ticked all the same, and simply has none.)
+    var can = { member: !!(B.findArtists && B.artistCard && B.requestArtist && B.claimArtist), crew: !!(B.findArtists && B.artistCard && B.requestArtist),
+      fan: !!(B.findArtists && B.followArtist && B.unfollowArtist),
+      promoter: !!(B.findPlaces && B.openVenue && B.openFestival && B.placeWorkAsk && B.placeWorkWithdraw) };
+    fr.queue = fr.kinds.filter(function (k) { return can[k] && fr.had.indexOf(k) < 0; });
+    frNextKind();
+  }
+
+  /* ---- Finding an artist, the way the Search page finds one: Greenroom's
+     own pages 300 ms after the last key, then every other act there is, from
+     MusicBrainz, on its own clock (it allows one question a second). What it
+     has found is kept in S.firstRun.find. ---- */
+  function frFind() {
+    var fr = S.firstRun;
+    return fr.find || (fr.find = { q: '', seq: 0, res: null, mb: null, busy: false, mbWait: '', mbAt: 0, timer: 0, mbTimer: 0, opening: '' });
+  }
+  function frFindClear() {
+    var fr = S.firstRun;
+    if (fr && fr.find) { clearTimeout(fr.find.timer); clearTimeout(fr.find.mbTimer); fr.find = null; }
+  }
+  /* One row at a time is opened or saved, and the others wait on it. A call
+     that has hung for 20 seconds no longer holds them: the list is drawn
+     again then, with its buttons back. */
+  function frHold(st, key, fr, step) {
+    st.opening = key; st.openingAt = Date.now();
+    setTimeout(function () { if (st.opening === key) frRepaint(fr, step); }, 20500);
+  }
+  function frHeld(st) { return st.opening && Date.now() - (st.openingAt || 0) < 20000 ? st.opening : ''; }
+  function frFindAsk(step) {
+    var B = window.GR_BACKEND, fr = S.firstRun, st = frFind(), q = st.q.trim();
+    clearTimeout(st.timer); clearTimeout(st.mbTimer);
+    // Every key starts a new question, whether or not one is sent: an answer still out for older
+    // words can no longer write over the list (it used to, when the words went back to ones already answered).
+    st.seq += 1;
+    st.mbWait = '';
+    if (q.replace(/^@/, '').length < 2) { st.busy = false; frRepaint(fr, step); return; }
+    // (A username search never leaves Greenroom; a lookup that failed is not an answer, and is asked again.)
+    if (B.mbSearch && q.charAt(0) !== '@' && !(st.mb && st.mb.q === q && !st.mb.failed)) {
+      st.mbWait = q;
+      st.mbTimer = setTimeout(function () {
+        st.mbAt = Date.now();
+        var settle = function (list, failed) {
+          if (st.mbWait === q) st.mbWait = '';
+          if (st.q.trim() !== q) return;
+          st.mb = { q: q, list: Array.isArray(list) ? list : [], failed: !!failed };
+          frRepaint(fr, step);
+        };
+        B.mbSearch(q).then(function (list) { settle(list, false); }, function () { settle([], true); });
+      }, Math.max(450, 1100 - (Date.now() - (st.mbAt || 0))));
+    }
+    if (st.res && st.res.q === q && !st.res.failed) { st.busy = false; frRepaint(fr, step); return; }
+    st.busy = true;
+    frRepaint(fr, step);
+    var n = ++st.seq;
+    st.timer = setTimeout(function () {
+      B.findArtists(q).then(function (rows) { return { rows: Array.isArray(rows) ? rows : [], failed: false }; },
+        function () { return { rows: [], failed: true }; }).then(function (out) {
+        if (n !== st.seq) return;
+        st.busy = false;
+        st.res = { q: q, artists: out.rows, failed: out.failed };
+        frRepaint(fr, step);
+      });
+    }, 300);
+  }
+  // Back on a search with words in the box and no answer for them: ask.
+  function frFindWake(step) {
+    var st = frFind(), q = st.q.trim();
+    if (q.replace(/^@/, '').length >= 2 && !st.busy && !(st.res && st.res.q === q)) frFindAsk(step);
+  }
+  // What the search has for the words in the box: pages, then acts with no page yet, and the line to say under them.
+  function frFound(none) {
+    var st = frFind(), q = st.q.trim();
+    if (q.replace(/^@/, '').length < 2) return null;
+    var r = st.res && st.res.q === q ? st.res : null;
+    var mb = st.mb && st.mb.q === q ? st.mb : null;
+    var have = {};
+    var pages = (r ? r.artists : []).map(function (a) {
+      if (a.mbid) have[a.mbid] = true;
+      // A page nobody runs has only a machine's username: the act's name leads (as in Search).
+      var bare = machineHandle(a.handle), ghost = a.unclaimed != null ? !!a.unclaimed : bare;
+      return { key: 'a:' + a.id, id: a.id, mbid: a.mbid || '', name: String(a.name || ''), title: ghost || bare ? a.name : a.handle,
+        sub: ghost ? [a.about, 'Artist', 'Unclaimed'].filter(Boolean).join(' · ') : bare ? 'Artist' : [a.name, 'Artist'].join(' · '),
+        avatar: ghost ? '' : String(a.avatar || ''), unclaimed: ghost, mine: !!a.mine, verified: !!a.checkmark, claimed: !!a.claimed };
+    });
+    // (An act that already has a page shows once, as its page.)
+    var more = (mb ? mb.list : []).filter(function (m) { return !have[m.mbid]; }).map(function (m) {
+      return { key: 'm:' + m.mbid, id: null, mbid: m.mbid, name: String(m.name || ''), title: m.name,
+        sub: [m.about, regionName(m.country), 'Artist'].filter(Boolean).join(' · '), avatar: '', unclaimed: true, mine: false };
+    });
+    var hint = (st.busy || !r) ? 'Searching…'
+      : (r.failed && !more.length) ? 'Couldn’t reach Greenroom. Check your signal and try again.'
+      : (pages.length || more.length) ? ''
+      : st.mbWait === q ? 'Searching…'
+      : mb && mb.failed ? 'Couldn’t reach the artist list just now. Try again in a moment.'
+      : 'Nothing found for “' + q + '”.' + (none ? ' ' + none : '');
+    return { pages: pages, more: more, hint: hint };
+  }
+  function frFoundKids(found, row) {
+    var kids = [];
+    if (!found) return kids;
+    if (found.pages.length) kids.push(h('div', { class: 'sr-list' }, found.pages.map(row)));
+    if (found.more.length) {
+      kids.push(h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, found.pages.length ? 'More artists' : 'Artists')),
+        h('div', { class: 'sr-list' }, found.more.map(row)));
+    }
+    if (found.hint) kids.push(h('p', { class: 'note sr-hint' }, found.hint));
+    return kids;
+  }
+  function frFace(it) {
+    return h('span', { class: 'sr-face' + (it.avatar ? ' has' : ' letter'), 'aria-hidden': 'true' },
+      it.avatar ? h('img', { src: it.avatar, alt: '' }) : (String(it.name || it.title || '?').trim().charAt(0).toUpperCase() || '?'));
+  }
+  function frRowText(it, sub) {
+    return h('span', { class: 'lr-text' },
+      h('span', { class: 'sr-title' }, h('span', { class: 'sr-title-t' }, it.title || it.name),
+        it.verified ? verifiedBadge() : null, it.verified && it.claimed ? claimedTag('sm') : null),
+      sub ? h('span', { class: 'sr-sub' }, sub) : null);
+  }
+
+  /* ---- MEMBER and CREW: "Which artist are you a member of?" / "Which artist
+     do you work for?" Tap the artist; an act with no page yet gets one. ---- */
+  function frArtist(fr) {
+    var step = fr.step, member = step === 'm-find';
+    var results = h('div', { class: 'fr-results' });
+    var row = function (it) {
+      var held = frHeld(frFind()), mine = held === it.key;
+      return h('div', { class: 'sr-row' },
+        h('button', { class: 'sr-main', type: 'button', disabled: held && !mine ? true : null,
+          onclick: function () { frPick(it, step); } }, frFace(it), frRowText(it, mine ? 'Setting up the page…' : it.sub)));
+    };
+    // (An act the encyclopedia has never heard of can still have a page: its members make one from their profile.)
+    var paint = function () { fillEl(results, frFoundKids(frFound(member ? 'You can make its page later, from the + on your profile.' : ''), row)); };
+    frLive = { step: step, node: results, paint: paint };
+    paint();
+    frFindWake(step);
+    var field = frSearchField('Artist name', 'fr-find', frFind().q, function (v) { frFind().q = v; frSay(''); frFindAsk(step); });
+    /* Someone a Manager invited is on a tour already: asked "Which artist do
+       you work for?" as if they were on nothing, the honest answer has no
+       button. So for them the way on comes first and says so, and the search
+       under it is for any other artist they work for. */
+    if (!member && fr.onTour) {
+      var mine = frTourArtist();
+      return frShell({ title: 'Which artists do you work for?',
+        sub: 'You’re already on a tour' + (mine ? ' with ' + mine : '') + ', so there’s nothing you have to add. If you work for another artist too, search for it.',
+        body: [h('button', { class: 'btn primary block fr-first', type: 'button', onclick: function () { frNextKind(); } }, 'I’m already on my tour'),
+          field, results],
+        onBack: fr.trail.length ? frBack : null });
+    }
+    return frShell({ title: member ? 'Which artist are you a Member of?' : 'Which artist do you work for?',
+      sub: 'Search for it. If it isn’t on Greenroom yet, its page will be made.',
+      body: [field, results],
+      onBack: fr.trail.length ? frBack : null, skip: frNextKind });
+  }
+  // The artist of the tour they are on (the newest one that names its artist), for the line that says so.
+  function frTourArtist() {
+    var hit = allTourEntries().filter(function (e) { return artistOf(e[1]); })[0];
+    return hit ? String(artistOf(hit[1])) : '';
+  }
+  // A page opened here for an act that had none: when, so that for a few minutes "no shows on record"
+  // is read as "still being read" (openAttended).
+  function frPageMade(id) {
+    if (!id) return;
+    S.pagesMade = S.pagesMade || {};
+    S.pagesMade[id] = Date.now();
+  }
+  /* A page just made cannot be asked or claimed until the encyclopedia has
+     confirmed the act: its history is nudged along and its card asked for
+     until the card wears its check, or about 12 seconds have gone. */
+  async function frPageReady(id, still) {
+    var B = window.GR_BACKEND, t0 = Date.now(), card = null;
+    while (still()) {
+      if (B.historyNudge) { try { await B.historyNudge(id); } catch (e) { /* the server reads it by itself too */ } }
+      try { card = await B.artistCard(id); } catch (e2) { /* asked again on the next turn */ }
+      if ((card && card.checkmark) || Date.now() - t0 > 12000) break;
+      await sleep(1500);
+    }
+    return card;
+  }
+  async function frPick(it, step) {
+    var B = window.GR_BACKEND, fr = S.firstRun, st = frFind();
+    if (!fr || fr.step !== step || frHeld(st)) return;
+    // (Back or Skip while a page is being set up, or another row tapped once this one has hung: its answer no longer moves anyone.)
+    var op = fr.op;
+    var here = function () { return fr === S.firstRun && fr.op === op && fr.step === step && st.opening === it.key; };
+    blurActive();
+    frSay('');
+    frHold(st, it.key, fr, step);
+    frRepaint(fr, step);
+    var id = it.id, card = null, made = false, why = '';
+    try {
+      if (!id) {
+        var r = await B.openMbArtist(it.mbid, it.name);
+        id = r && r.id;
+        made = true;
+        if (r && r.made !== false) frPageMade(id);
+        if (id && here()) card = await frPageReady(id, here);
+      } else {
+        // (Its card says who runs it now; if it can't be had, the search row said enough to go on.)
+        try { card = await B.artistCard(id); } catch (e) { card = null; }
+      }
+    } catch (x) {
+      why = x && x.code === 'too-many' ? 'That’s a lot of new pages for one day. Try again tomorrow.'
+        : frWhy('open', x, 'Couldn’t open that page. Try again.');
+    }
+    if (!here()) { if (st.opening === it.key) st.opening = ''; return; }
+    st.opening = '';
+    if (!why && (!id || (made && !card))) why ='Couldn’t open that page. Try again.';
+    if (why) { frSay(why); frRepaint(fr, step); return; }
+    fr.pick = { id: id, name: String((card && card.name) || it.name || 'this artist'), unclaimed: card ? !!card.unclaimed : !!it.unclaimed,
+      mine: card ? !!card.mine : !!it.mine, unchecked: made && !(card && card.checkmark) };
+    fr.claim = false;
+    Object.assign(fr.f, { role: '', other: false, otherText: '', spotify: '', instagram: '', website: '', note: '' });
+    frGo(step === 'm-find' && fr.pick.unclaimed ? 'm-unclaimed' : step.charAt(0) + '-role');
+  }
+  /* "If the artist hasn't been claimed yet it should say 'This page hasn't
+     been claimed yet. Would you like to submit to claim?'" */
+  function frUnclaimed(fr) {
+    var p = fr.pick;
+    var on = function (claim) { return function () { fr.claim = claim; frGo('m-role'); }; };
+    return frShell({ title: 'This page hasn’t been claimed yet.',
+      sub: 'Would you like to submit to claim it? Greenroom checks every claim. While it does, you show as a Member, pending. Only you and Greenroom see that until the claim is approved.',
+      body: h('p', { class: 'fr-who' }, p.name),
+      onBack: frBack, next: { label: 'Claim this page', onTap: on(true) },
+      alt: { label: 'Not now, just ask to be listed', onTap: on(false) }, skip: frNextKind });
+  }
+  // The role as it will be sent: the chip, or what was typed under Other.
+  function frRoleValue() {
+    var f = S.firstRun.f;
+    return f.other ? String(f.otherText || '').trim().slice(0, 40) : String(f.role || '');
+  }
+  /* "What is your role under this entity?" (a member: vocalist, guitarist,
+     bassist...) and "Which of these best describes your role" (crew: his 20
+     roles, then the two words for a hired player on stage). "Of course make
+     an option 'Other' so that it can add a space to be filled out." */
+  function frRole(fr) {
+    var member = fr.step === 'm-role', f = fr.f, p = fr.pick;
+    var claiming = member && fr.claim;
+    var roles = member ? G.BAND_ROLES : G.CREW_ROLES.slice(0, 20).concat(['Band', 'Touring Musician']);
+    var nx = { label: claiming ? 'Next' : 'Send request', ready: !!frRoleValue(),
+      onTap: function () { if (claiming) frGo('m-proof'); else frAsk(member ? 'band' : 'crew'); } };
+    var otherIn = h('input', { class: 'fr-in', type: 'text', 'data-k': 'fr-other', maxlength: 40, value: f.otherText || '', autocapitalize: 'words',
+      autocomplete: 'off', enterkeyhint: 'done', placeholder: member ? 'Guitar and vocals' : 'Backline tech', 'aria-label': 'Your role',
+      oninput: function (e) { f.otherText = e.target.value; frSay(''); nx.set(!!frRoleValue()); } });
+    var otherBox = frField('Your role', otherIn);
+    var chips = h('div', { class: 'chips fr-chips', role: 'group', 'aria-label': 'Pick a role' });
+    var sync = function () {
+      Array.prototype.forEach.call(chips.children, function (b) {
+        b.setAttribute('aria-pressed', String(f.other ? b === otherChip : b.textContent === f.role));
+      });
+      otherBox.hidden = !f.other;
+      nx.set(!!frRoleValue());
+    };
+    roles.forEach(function (r) {
+      chips.append(h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false',
+        onclick: function () { f.role = r; f.other = false; frSay(''); sync(); } }, r));
+    });
+    var otherChip = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false',
+      onclick: function () { f.other = true; f.role = ''; frSay(''); sync(); otherIn.focus(); } }, 'Other');
+    chips.append(otherChip);
+    var page = frShell({ title: member ? 'What is your role in ' + p.name + '?' : 'Which of these best describes your role?',
+      sub: member ? 'It shows under your name on ' + p.name + '’s page.'
+        : 'Your role with ' + p.name + '. A hired player on stage is Band or Touring Musician.',
+      body: [chips, otherBox], onBack: frBack, next: nx, skip: frNextKind });
+    sync();
+    return page;
+  }
+  // Their own pages and the artist's are out of date once something is asked of the artist.
+  function frStale(id) {
+    if (S.actCards && S.actCards[id]) S.actCards[id].at = 0;
+    staleCards();
+  }
+  // What was sent is sent: from here Back never returns to the form that sent it.
+  function frSent(last) {
+    var fr = S.firstRun, k = fr.step.charAt(0);
+    var i = fr.trail.lastIndexOf(k + '-find');
+    if (i >= 0) fr.trail.length = i;
+    fr.last = last;
+    frFindClear();
+    frShow(k + '-sent');
+  }
+  /* Asking the artist to list you: "the artist page is alerted of an
+     endorsement request. Until it's accepted it just says pending under the
+     crew member's artist list." */
+  async function frAsk(kind) {
+    var B = window.GR_BACKEND, fr = S.firstRun, p = fr.pick, role = frRoleValue();
+    if (fr.busy || !p || !role) return;
+    blurActive();
+    var op = frBegin(), r = null, bad = null;
+    try { r = await B.requestArtist(p.id, kind, role); } catch (x) { bad = x || {}; }
+    if (!frStill(fr, op)) return;
+    if (r && r.ok) {
+      frStale(p.id);
+      if (r.listed) myActs(true);
+      frSent(r.listed ? { title: 'You’re listed', sub: 'You’re listed on ' + p.name + '.' }
+        : { title: 'Request sent', sub: p.unclaimed
+            ? 'Nobody runs ' + p.name + '’s page yet, so nobody can answer for now. It shows as pending on your Artists tab.'
+            : p.name + ' can see your request on their page. If there’s no answer in 30 days it runs out and you can ask again. ' +
+              'Until then it shows as pending on your Artists tab.' });
+      return;
+    }
+    // Already on the page: nothing to ask, so on they go.
+    if (r && r.why === 'listed') { frSent({ title: 'You’re already there', sub: 'You’re already on ' + p.name + '’s page.' }); return; }
+    fr.busy = false;
+    fr.err = bad ? frWhy('request', bad, 'Couldn’t send that. Try again.')
+      : r && r.why === 'wait' ? p.name + ' said no in the last 7 days. You can ask again after that.'
+      : r && r.why === 'many' ? 'You have 10 requests waiting. Wait for some answers first.'
+      : r && r.why === 'former_member' && kind === 'crew' ? 'You were a Member of ' + p.name + '. Ask to be listed as a Member instead.'
+      : 'Couldn’t send that. Try again.';
+    render(true);
+  }
+  // A link as people type one ("iseestars.com", "@iseestars"), made whole.
+  function frLink(key, raw) {
+    var v = String(raw || '').trim();
+    if (!v) return '';
+    if (key === 'instagram' && /^@?[A-Za-z0-9._]{1,30}$/.test(v) && !/^(www\.)?instagram\.com$/i.test(v)) return 'https://www.instagram.com/' + v.replace(/^@/, '');
+    if (/^http:\/\//i.test(v)) return 'https://' + v.slice(7);
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(v) && /^[^\s\/]+\.[^\s\/.]{2,}(\/\S*)?$/.test(v)) return 'https://' + v;
+    return v;
+  }
+  /* "At this point they are given a portal to submit documents like Spotify
+     and get the approval process in motion." Links where the act can be
+     checked, and a note; the answer is a short code to put where only the
+     act's own people can put it. */
+  function frProof(fr) {
+    var f = fr.f, p = fr.pick;
+    var ready = function () {
+      return !!(String(f.spotify || '').trim() || String(f.instagram || '').trim() || String(f.website || '').trim() || String(f.note || '').trim().length >= 3);
+    };
+    var nx = { label: 'Send the claim', ready: ready(), onTap: frClaim };
+    var link = function (key, label, ph) {
+      return frField(label, h('input', { class: 'fr-in', type: 'text', inputmode: 'url', 'data-k': 'fr-' + key, value: f[key] || '', maxlength: 200,
+        autocapitalize: 'none', autocorrect: 'off', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'next', placeholder: ph,
+        'aria-label': label + ' link',
+        oninput: function (e) { f[key] = e.target.value; frSay(''); nx.set(ready()); },
+        // (Enter walks to the next box; it must not send the claim from the first one.)
+        onkeydown: function (e) { if (e.key === 'Enter') { e.preventDefault(); advance(e.target); } } }));
+    };
+    // (What passes is what the server's rule passes: one link, or a note of a few words.)
+    return frShell({ title: 'Show us it’s yours',
+      sub: 'Add a link, or tell us in a sentence how to check it’s you. After you send this, Greenroom gives you a short code to put in ' + p.name + '’s Instagram bio or on its website.',
+      body: [link('spotify', 'Spotify', 'https://open.spotify.com/artist/…'), link('instagram', 'Instagram', 'https://instagram.com/…'),
+        link('website', 'Website', 'https://…'),
+        frField('Anything else we should know', h('textarea', { class: 'fr-in fr-note', rows: 3, maxlength: 300, 'data-k': 'fr-note', value: f.note || '',
+          'aria-label': 'A note for Greenroom', oninput: function (e) { f.note = e.target.value; frSay(''); nx.set(ready()); } }))],
+      onBack: frBack, next: nx, skip: frNextKind });
+  }
+  async function frClaim() {
+    var B = window.GR_BACKEND, fr = S.firstRun, f = fr.f, p = fr.pick;
+    if (fr.busy || !p) return;
+    // Each link is made whole as far as it can be ("theirsite.com", "@name"). One that still is not a
+    // web address is sent as it was typed: the backend keeps it beside the claim, so nothing typed is
+    // lost and nobody is asked to type "https://".
+    var links = {};
+    ['spotify', 'instagram', 'website'].forEach(function (k) { links[k] = frLink(k, f[k]).slice(0, 200); });
+    blurActive();
+    var op = frBegin(), r = null, bad = null;
+    try {
+      // (A page whose check had not come in is looked at once more: until it has one it cannot be claimed.)
+      if (p.unchecked) {
+        if (B.historyNudge) { try { await B.historyNudge(p.id); } catch (e) { /* the claim says so if it is still too early */ } }
+        try { var c = await B.artistCard(p.id); if (c && c.checkmark) p.unchecked = false; } catch (e2) { /* as above */ }
+      }
+      r = await B.claimArtist(p.id, { role: frRoleValue(), note: String(f.note || '').trim().slice(0, 300), links: links });
+    } catch (x) { bad = x || {}; }
+    if (!frStill(fr, op)) return;
+    if (r && r.ok) {
+      frStale(p.id); S.claimQ = null;
+      var code = String(r.code || '');
+      // (True for everyone: the pending row is handed only to the claimant and to Greenroom.)
+      var shown = 'You show as a Member, pending. Only you and Greenroom see that until the claim is approved.';
+      frSent(code ? { title: 'Claim sent', sub: 'Put this code in ' + p.name + '’s Instagram bio or on its website so we can check.', code: code, after: shown }
+        : { title: 'Claim sent', sub: 'Greenroom checks every claim. ' + shown });
+      return;
+    }
+    fr.busy = false;
+    if (r && r.why === 'taken' && !p.unchecked) {
+      // Someone was given the page while this was being typed. The role is kept: the role screen's pill now asks to be listed.
+      fr.claim = false; p.unclaimed = false;
+      var i = fr.trail.lastIndexOf('m-find');
+      if (i >= 0) fr.trail.length = i + 1;
+      fr.step = 'm-role';
+      fr.err = 'Someone runs that page now. Ask to be listed instead.';
+      window.scrollTo(0, 0);
+      render(true);
+      return;
+    }
+    fr.err = r && r.why === 'taken' ? 'Greenroom is still setting up this page. Try again in a minute.'
+      : bad && bad.code === 'short' ? 'Add a link, or tell us in a sentence how to check it’s you.'
+      : bad && bad.code === 'too-many' ? 'You have a lot of claims waiting. Let those be answered first.'
+      : frWhy('claim', bad, 'Couldn’t send that. Try again.');
+    render(true);
+  }
+  // "Request sent", "Claim sent" (with its code, to copy), "You're listed".
+  function frSentPage(fr) {
+    var l = fr.last;
+    var code = l.code ? h('input', { class: 'fr-code', type: 'text', readonly: true, value: l.code, 'aria-label': 'Your code' }) : null;
+    return frShell({ title: l.title, sub: l.sub,
+      body: [code,
+        code ? h('button', { class: 'fr-copy', type: 'button',
+          onclick: async function () { toast((await copyText(l.code, code)) ? 'Copied' : 'Press and hold the code to copy it'); } }, 'Copy the code') : null,
+        l.after ? h('p', { class: 'fr-sub' }, l.after) : null],
+      next: { label: 'Next', onTap: function () { frGo(fr.step.charAt(0) + '-more'); } } });
+  }
+  // "After this it should ask 'Would you like to claim another artist' if yes it just goes through the same process."
+  function frMore(fr) {
+    var k = fr.step.charAt(0);
+    return frShell({ title: k === 'm' ? 'Would you like to claim another artist?' : 'Do you work for another artist?',
+      onBack: fr.trail.length ? frBack : null,
+      next: { label: 'Add another', onTap: function () { frFindClear(); fr.pick = null; fr.claim = false; frGo(k + '-find'); } },
+      alt: { label: 'No, continue', onTap: frNextKind } });
+  }
+
+  /* ---- FAN: "'Search artists and become a fan now' this way they can
+     search artists and click 'Fan' - after that it says find shows you've
+     attended." The same search; each row has its own Fan button, and the
+     ones tapped stay listed under the results. ---- */
+  function frFans(fr) {
+    var step = 'f-find';
+    // Next is always there: opened again from Settings, or after the app was shut half way, the artists
+    // they are already a fan of are not in this run's list, and nobody should have to tap one to go on.
+    var nx = { label: 'Next', ready: true,
+      onTap: function () { if (fr.fans.length && typeof openAttended === 'function') frGo('f-shows'); else frNextKind(); } };
+    var results = h('div', { class: 'fr-results' });
+    var row = function (it) {
+      var held = frHeld(frFind()), on = frFanOf(it), busy = held === it.key;
+      return h('div', { class: 'sr-row' },
+        h('div', { class: 'sr-main fr-static' }, frFace(it), frRowText(it, busy && !on && !it.id ?'Setting up the page…' : it.sub)),
+        h('button', { class: 'am-add fr-toggle' + (on ? ' on' : ''), type: 'button', 'aria-pressed': String(!!on), disabled: held ? true : null,
+          'aria-label': on ?'You are a fan of ' + it.name + '. Tap to stop being one.' : 'Become a fan of ' + it.name,
+          onclick: function () { frFan(it, !on); } }, on ? icon('check', 13) : null, 'Fan'));
+    };
+    var paint = function () {
+      var kids = frFoundKids(frFound(''), row);
+      if (fr.fans.length) {
+        kids.push(h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, 'You’re a fan of')),
+          h('div', { class: 'sr-list' }, fr.fans.map(row)));
+      }
+      fillEl(results, kids);
+    };
+    frLive = { step: step, node: results, paint: paint };
+    // (Next is the way on whether or not anyone was tapped, so this screen needs no Skip beside it.)
+    var page = frShell({ title: 'Search artists and become a fan', sub: 'Tap Fan on every artist you’re a fan of.',
+      body: [frSearchField('Artist name', 'fr-find', frFind().q, function (v) { frFind().q = v; frSay(''); frFindAsk(step); }), results],
+      onBack: fr.trail.length ? frBack : null, next: nx });
+    paint();
+    frFindWake(step);
+    return page;
+  }
+  // The fan row for a search row: by its page, or (an act opened here a moment ago) by its encyclopedia entry.
+  function frFanOf(it) {
+    return S.firstRun.fans.filter(function (x) { return (it.id && x.id === it.id) || (it.mbid && x.mbid === it.mbid); })[0] || null;
+  }
+  async function frFan(it, on) {
+    var B = window.GR_BACKEND, fr = S.firstRun, st = frFind(), step = 'f-find';
+    if (!fr || frHeld(st)) return;
+    var had = frFanOf(it), id = had ? had.id : it.id, why = '';
+    frHold(st, it.key, fr, step);
+    frSay('');
+    frRepaint(fr, step);
+    try {
+      if (on) {
+        if (!id) {
+          // An act with no page yet: the page is made first, and its road history set reading (the shows to tick come from it).
+          var r = await B.openMbArtist(it.mbid, it.name);
+          id = r && r.id;
+          if (!id) throw new Error('none');
+          if (r.made !== false) frPageMade(id);
+          if (B.historyNudge) B.historyNudge(id).then(null, function () { /* the server reads it by itself too */ });
+        }
+        await B.followArtist(id);
+        if (!had) fr.fans.push(Object.assign({}, it, { key: 'a:' + id, id: id }));
+      } else if (id) {
+        await B.unfollowArtist(id);
+        fr.fans = fr.fans.filter(function (x) { return x.id !== id; });
+      }
+      if (id && S.actCards && S.actCards[id]) S.actCards[id].at = 0;
+      S.searchSug = null; // Search's Artists list puts the ones you follow first
+    } catch (x) {
+      why = x && x.code === 'too-many' ? 'That’s a lot of new pages for one day. Try again tomorrow.'
+        : frWhy('fan', x, 'Couldn’t save that. Try again.');
+    }
+    if (st.opening === it.key) st.opening = '';
+    if (fr !== S.firstRun) return;
+    if (why && fr.step === step) frSay(why);
+    frRepaint(fr, step);
+  }
+  /* "Find shows you've attended and this way they can search tours and press
+     'attended' on these shows and start building their analytics." Each
+     artist they are a fan of opens its tours, to tick the nights they were at. */
+  function frShows(fr) {
+    var rows = fr.fans.map(function (x) {
+      return h('div', { class: 'sr-row' },
+        h('button', { class: 'sr-main', type: 'button',
+          onclick: function () { if (typeof openAttended === 'function') openAttended(x.id, x.name); } },
+          frFace(x), frRowText(x, 'Tap Attended on the shows you were at'), icon('chevron', 16)));
+    });
+    return frShell({ title: 'Find shows you’ve attended', sub: 'Pick an artist, open a tour, then tap Attended on each show you were at.',
+      body: h('div', { class: 'fr-results sr-list' }, rows), onBack: fr.trail.length ? frBack : null, next: { label: 'Done', onTap: frNextKind } });
+  }
+
+  /* ---- PROMOTER: "What venue or festivals have you worked for? This way a
+     search bar comes up ... The page should generate venue pages just like
+     artists and festival pages just like artists." A row is a place with
+     shows on record; "I worked here" finds or makes its page and asks to be
+     listed on it. ---- */
+  function frPlaceFind() {
+    var fr = S.firstRun;
+    return fr.pfind || (fr.pfind = { q: '', seq: 0, res: null, busy: false, timer: 0, opening: '' });
+  }
+  function frPlaceAsk() {
+    var B = window.GR_BACKEND, fr = S.firstRun, st = frPlaceFind(), q = st.q.trim(), step = 'p-find';
+    clearTimeout(st.timer);
+    st.seq += 1; // (as in frFindAsk: a late answer for older words never writes over the list)
+    if (q.length < 2) { st.busy = false; frRepaint(fr, step); return; }
+    if (st.res && st.res.q === q && !st.res.failed) { st.busy = false; frRepaint(fr, step); return; }
+    st.busy = true;
+    frRepaint(fr, step);
+    var n = ++st.seq;
+    st.timer = setTimeout(function () {
+      B.findPlaces(q).then(function (out) {
+        var o = G.isObj(out) ? out : {};
+        var venues = (Array.isArray(o.venues) ? o.venues : []).map(function (v) {
+          var name = String(v.name || ''), city = String(v.city || ''), cc = String(v.cc || '');
+          return { key: ['v', name, city, cc].join('|').toLowerCase(), kind: 'venue', name: name, city: city, cc: cc, title: name,
+            sub: [[city, v.region || cc].filter(Boolean).join(', '), plural(G.num(v.nights), 'show') + ' on record'].filter(Boolean).join(' · ') };
+        });
+        var fests = (Array.isArray(o.festivals) ? o.festivals : []).map(function (x) {
+          var name = String(x.name || '');
+          return { key: ['f', name].join('|').toLowerCase(), kind: 'festival', name: name, title: name,
+            sub: ['Festival', G.num(x.editions) > 0 ? plural(G.num(x.editions), 'year') : ''].filter(Boolean).join(' · ') };
+        });
+        return { items: venues.concat(fests).filter(function (x) { return x.name; }), failed: false };
+      }).then(null, function () { return { items: [], failed: true }; }).then(function (out) {
+        if (n !== st.seq) return;
+        st.busy = false;
+        st.res = { q: q, items: out.items, failed: out.failed };
+        frRepaint(fr, step);
+      });
+    }, 300);
+  }
+  function frPlaces(fr) {
+    var step = 'p-find';
+    var nx = { label: 'Next', ready: fr.places.length > 0, onTap: frNextKind };
+    var results = h('div', { class: 'fr-results' });
+    var row = function (it) {
+      var held = frHeld(frPlaceFind()), on = fr.places.some(function (x) { return frPlaceSame(x, it); });
+      return h('div', { class: 'sr-row' },
+        h('div', { class: 'sr-main fr-static' }, frFace(it), frRowText(it, it.sub)),
+        h('button', { class: 'am-add fr-toggle' + (on ? ' on' : ''), type: 'button', 'aria-pressed': String(on), disabled: held ? true : null,
+          onclick: function () { frPlace(it, !on); } }, on ? icon('check', 13) : null, 'I worked here'));
+    };
+    var paint = function () {
+      var st = frPlaceFind(), q = st.q.trim(), kids = [];
+      if (q.length >= 2) {
+        var r = st.res && st.res.q === q ? st.res : null;
+        if (r && r.items.length) kids.push(h('div', { class: 'sr-list' }, r.items.map(row)));
+        if (st.busy || !r) kids.push(h('p', { class: 'note sr-hint' }, 'Searching…'));
+        else if (r.failed) kids.push(h('p', { class: 'note sr-hint' }, 'Couldn’t search. Check your signal and try again.'));
+        else if (!r.items.length) kids.push(h('p', { class: 'note sr-hint' }, 'Not there yet. Venues appear once a show there is on record.'));
+      }
+      // The ones you tapped stay, whatever the box says now.
+      if (fr.places.length) {
+        kids.push(h('div', { class: 'sr-head' }, h('h2', { class: 'sr-h' }, 'You worked at')),
+          h('div', { class: 'sr-list' }, fr.places.map(row)));
+      }
+      fillEl(results, kids);
+      if (nx.set) nx.set(fr.places.length > 0);
+    };
+    frLive = { step: step, node: results, paint: paint };
+    var page = frShell({ title: 'Which venues or festivals have you worked for?', sub: 'Search by name or city.',
+      body: [frSearchField('Venue or festival', 'fr-place', frPlaceFind().q, function (v) { frPlaceFind().q = v; frSay(''); frPlaceAsk(); }), results],
+      onBack: fr.trail.length ? frBack : null, next: nx, skip: frNextKind });
+    paint();
+    var st0 = frPlaceFind();
+    if (st0.q.trim().length >= 2 && !st0.busy && !(st0.res && st0.res.q === st0.q.trim())) frPlaceAsk();
+    frPlacesKnown(fr);
+    return page;
+  }
+  // The same place: a search row, and one already asked (known by its page, which does not say its country).
+  function frPlaceSame(a, b) {
+    if (a.key === b.key) return true;
+    var low = function (v) { return String(v || '').trim().toLowerCase(); };
+    return a.kind === b.kind && low(a.name) === low(b.name) && (a.kind !== 'venue' || low(a.city) === low(b.city)) &&
+      (!a.cc || !b.cc || low(a.cc) === low(b.cc));
+  }
+  /* The places this account already said it worked at (opened again from
+     Settings, or after the app was shut half way) start as on: read once a
+     run, and put under "You worked at" beside the ones tapped here. */
+  function frPlacesKnown(fr) {
+    var B = window.GR_BACKEND;
+    if (fr.placesAsked || !B || typeof B.myPlaces !== 'function') return;
+    fr.placesAsked = true;
+    Promise.resolve().then(function () { return B.myPlaces(); }).then(function (list) {
+      if (fr !== S.firstRun) return;
+      (Array.isArray(list) ? list : []).forEach(function (p) {
+        if (!G.isObj(p) || !p.id || !p.name || p.state === 'declined') return;
+        var fest = p.kind === 'festival', name = String(p.name), city = fest ? '' : String(p.city || '');
+        var it = { key: [fest ? 'f' : 'v', name, city, 'mine'].join('|').toLowerCase(), kind: fest ? 'festival' : 'venue', id: p.id,
+          name: name, city: city, cc: '', title: name, sub: fest ? 'Festival' : [city, 'Venue'].filter(Boolean).join(' · ') };
+        if (!fr.places.some(function (x) { return frPlaceSame(x, it); })) fr.places.push(it);
+      });
+      frRepaint(fr, 'p-find');
+    }, function () { /* not read: they show as off, and tapping one asks again, which does no harm */ });
+  }
+  async function frPlace(it, on) {
+    var B = window.GR_BACKEND, fr = S.firstRun, st = frPlaceFind(), step = 'p-find';
+    if (!fr || frHeld(st)) return;
+    var had = fr.places.filter(function (x) { return frPlaceSame(x, it); })[0] || null, why = '';
+    frHold(st, it.key, fr, step);
+    frSay('');
+    frRepaint(fr, step);
+    try {
+      if (on && !had) {
+        var r = it.kind === 'venue' ? await B.openVenue(it.name, it.city, it.cc) : await B.openFestival(it.name);
+        var id = r && r.id;
+        if (!id) throw new Error('none');
+        await B.placeWorkAsk(it.kind === 'venue' ? { venueId: id, role: '' } : { festivalId: id, role: '' });
+        fr.places.push(Object.assign({}, it, { id: id }));
+      } else if (!on && had) {
+        await B.placeWorkWithdraw(had.kind === 'venue' ? { venueId: had.id, role: '' } : { festivalId: had.id, role: '' });
+        fr.places = fr.places.filter(function (x) { return x !== had; });
+      }
+    } catch (x) {
+      why = x && x.code === 'too-many' ? 'That’s a lot for one day. Try again tomorrow.'
+        : frWhy('place', x, 'Couldn’t save that. Try again.');
+    }
+    if (st.opening === it.key) st.opening = '';
+    if (fr !== S.firstRun) return;
+    if (why && fr.step === step) frSay(why);
+    frRepaint(fr, step);
   }
 
   /* ---- Budget History (Devin, 2026-10-10) ----
@@ -6069,8 +8225,11 @@
     var extra = ends.filter(function (x) { return used.indexOf(x) < 0; });
     // Artists that endorsed you ask you to confirm your tours with them, on top.
     var asks = creditAskCards();
+    // What you asked artists for and is still waiting ("Until it's accepted it just says pending under the
+    // crew member's artist list"), the pages you asked to run, and a fan's shows: here even when nothing else is.
+    var waiting = myWaitingRows(), been = attendedCard();
     if (!names.length && !extra.length) {
-      return [asks, emptyState('No artists yet', loose.length
+      return [asks, been, waiting.length ? h('ul', { class: 'tour-list rows' }, waiting) : emptyState('No artists yet', loose.length
         ? 'Your tours are under Tours. Open one, then \u22ef, then Name and artist, to file it under its artist.'
         : canWrite() ? 'Tap + to add your artist, then their first tour.'
         : 'Nothing has been shared with you yet.')];
@@ -6119,7 +8278,7 @@
     var stray = function (n, page) {
       return canWrite() && !page && !n.endorsed && registeredArtists().indexOf(n.name) >= 0 && !(byArtist.get(n.name) || []).length;
     };
-    return [asks, h('ul', { class: 'tour-list rows' },
+    return [asks, been, h('ul', { class: 'tour-list rows' }, waiting,
       named.map(function (n) {
         var page = pages[String(n.name).trim().toLowerCase()];
         if (stray(n, page)) {
@@ -6221,7 +8380,8 @@
           icon(x.icon, 20), h('span', null, x.label));
       })),
       // A member of one of your artists that someone asked to let go: it waits on your answer, on every tab.
-      h('div', { class: 'pt-body', role: 'tabpanel', style: S.pfMinH > 0 ? 'min-height:' + S.pfMinH + 'px' : null }, memberAskCards(), body)
+      // So does anyone asking to be listed on a page you run (the same cards that page shows when you run it).
+      h('div', { class: 'pt-body', role: 'tabpanel', style: S.pfMinH > 0 ? 'min-height:' + S.pfMinH + 'px' : null }, memberAskCards(), artistAskCards(), body)
     ];
   }
   // Back at the top of the profile: the room kept for a tab switch is given up,
@@ -6277,7 +8437,9 @@
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar('me'),
       (function () {
-        if (S.mode === 'db' && !S.askedUsername && window.GR_BACKEND &&
+        // (It asks "your role on the tour": only for someone who is on one. A fan or a promoter has no tour.
+        // Never under the invite overlay, which asks the same thing itself.)
+        if (S.mode === 'db' && !S.askedUsername && window.GR_BACKEND && allTourEntries().length && !document.getElementById('gr-pass-gate') &&
             window.GR_BACKEND.saveProfile && window.GR_BACKEND.myProfile &&
             !window.GR_BACKEND.myProfile().tourRole) {
           S.askedUsername = true;
@@ -6323,15 +8485,30 @@
     };
     var cards = cardsDoor() ? function () { var f = cardsDoor(); if (f) f(); } : null;
     openSheet(function () {
+      // Invite codes: a Greenroom admin's row. It is only shown once the server has answered with a list
+      // (anyone else is answered null), and sits on top so nothing under a finger moves when it appears.
+      var codesRow = signedIn && B.inviteCodes ? h('button', { class: 'btn ghost block', type: 'button', hidden: true,
+        onclick: function () { openInviteCodes(); } }, icon('tag', 18), 'Invite codes') : null;
+      if (codesRow) inviteCodesKnown(function (list) { codesRow.hidden = !Array.isArray(list); });
       return [
         h('h2', { class: 'sh-title' }, 'Settings'),
         who ? h('p', { class: 'sh-sub' }, 'Signed in as ' + who) : null,
         h('div', { class: 'stack' },
+          codesRow,
           offId ? cardMenuItem(offId) : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openUsernameSheet(false); } },
             icon('people', 18),
             (B.myProfile && B.myProfile().tourRole) ? 'Your contact card' : 'Add your details') : null,
+          // The sign-up question, to change the answer (member, crew, fan, promoter). What was asked for
+          // during it is read again afterwards, so the Artists tab shows it at once.
+          // (Only with a backend.js that can read the answer and save it: an older one still on the phone gets no row.)
+          signedIn && typeof B.firstRun === 'function' && typeof B.saveKinds === 'function' ? h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () {
+              closeSheet(true);
+              if (S.kept) { delete S.kept.myreq; delete S.kept.myclaims; delete S.kept.attended; }
+              startFirstRunAgain();
+            } }, icon('edit', 18), 'What I do on Greenroom') : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openNotifications(null); } },
             icon('bell', 18), 'Notifications') : null,
@@ -15333,6 +17510,20 @@
     }).catch(function () { S.crewSync[id] = 0; });
   }
 
+  /* Two refusals an invite can meet that trying again will not change, said
+     in full (and long enough to read). 'page-first': an account that came in
+     on a Greenroom code adds people to a tour only once Greenroom has
+     confirmed an artist page it runs or is a Member of. 'too-many': the
+     day's limit. True when it has been said, so the caller says nothing more. */
+  function inviteRefused(e) {
+    var code = e && e.code;
+    if (code === 'page-first') {
+      toast('You can add people once Greenroom has confirmed your artist page. Your claim is with Greenroom now.', 9000);
+      return true;
+    }
+    if (code === 'too-many') { toast('That’s the limit for today. The rest can go tomorrow.', 6000); return true; }
+    return false;
+  }
   /* Real invites (the GitHub Pages build): the tour manager runs the guest
      list; everyone else just sees who's on it. */
   function peopleSection(tourId, o) {
@@ -15424,7 +17615,7 @@
         };
         goBtn.onclick = async function () {
           if (busy) return;
-          var todo = left.filter(function (p) { return pick[p.email].on; }), sent = [], nomail = [], failed = null;
+          var todo = left.filter(function (p) { return pick[p.email].on; }), sent = [], nomail = [], failed = null, why = null;
           if (!todo.length) return;
           busy = true; goBtn.disabled = true;
           for (var i = 0; i < todo.length; i++) {
@@ -15435,10 +17626,12 @@
               if (status !== 'sent' && status !== 'existing') nomail.push(todo[i].name || todo[i].email);
             }
             // One that fails stops the run (a day's invites are capped): the rest stay ticked to try again.
-            catch (e) { failed = todo[i].name || todo[i].email; break; }
+            catch (e) { failed = todo[i].name || todo[i].email; why = e; break; }
           }
           busy = false;
-          if (failed) toast('Couldn’t invite ' + failed + (sent.length ? '. The ' + sent.length + ' before them are in.' : '.') + ' Try again in a bit.');
+          // (The page not confirmed yet, or the day's limit: said as what it is, not as something to try again in a bit.)
+          if (failed && inviteRefused(why)) { /* said */ }
+          else if (failed) toast('Couldn’t invite ' + failed + (sent.length ? '. The ' + sent.length + ' before them are in.' : '.') + ' Try again in a bit.');
           else if (nomail.length) toast('On the tour, but the email didn’t go out to ' + nomail.join(', ') + '. They can still sign up with that address.');
           if (sent.length) { forgetCrew(tourId); inviteSplash(sent.length === 1 ? sent[0] : sent.length + ' people'); }
           refresh();
@@ -15479,7 +17672,7 @@
                 var status = await inviteOne(p, asLevel(p));
                 invited(who);
                 if (status === 'existing') setTimeout(function () { toast(who + ' already has an account — the tour is in it now'); }, 1700);
-              } catch (e) { addBtn.disabled = false; toast('Couldn’t invite them. Try again.'); }
+              } catch (e) { addBtn.disabled = false; if (!inviteRefused(e)) toast('Couldn’t invite them. Try again.'); }
             } }, 'Invite');
           return h('div', { class: 'row people-row past-row' },
             h('span', { class: 'who' }, who,
@@ -15558,7 +17751,7 @@
             invited(name);
             if (status === 'existing') setTimeout(function () { toast(first + ' already has an account — the tour is in it now'); }, 1700);
             else if (status !== 'sent') setTimeout(function () { toast('The email didn’t go out, but ' + first + ' can still sign up in Greenroom with ' + email); }, 1700);
-          } catch (e2) { sendBtn.disabled = false; toast('Couldn’t send that invite. Try again.'); }
+          } catch (e2) { sendBtn.disabled = false; if (!inviteRefused(e2)) toast('Couldn’t send that invite. Try again.'); }
         }
       },
         h('div', { class: 'gate-pair' }, firstI, lastI),

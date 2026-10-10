@@ -138,7 +138,8 @@ shim = r"""<script>
     if (!H.ghosts) {
       H.ghosts = [{ id: 'pub1', handle: 'mb.11111111111141118111', name: 'Sleeping With Sirens', mbid: MB[0].mbid, about: '', country: 'US', owner: null, checked: true }];
       H.claims = (H.claims || []).concat([{ id: 'cl1', artistId: 'pub1', userId: 'u-brent', note: 'I tour-manage them. Ask their management.',
-        link: 'https://example.com/sws-crew', status: 'pending', at: new Date(Date.now() - 36e5).toISOString() }]);
+        link: 'https://example.com/sws-crew', role: 'Guitar', links: { spotify: 'https://open.spotify.com/artist/3N8Hy6xQnQv1F1XCiyGQqA', instagram: 'https://instagram.com/sleepingwithsirens', website: '' },
+        code: 'GR-7KQ2MX', status: 'pending', at: new Date(Date.now() - 36e5).toISOString() }]);
       H.histories = H.histories || {};
       H.histories.pub1 = { artist_id: 'pub1', status: 'ok', detail: '', total: 58, pages: 3, next_page: 0, synced_at: new Date(Date.now() - 864e5).toISOString(),
         mb_url: 'https://www.setlist.fm/setlists/example.html', auto: true,
@@ -146,6 +147,11 @@ shim = r"""<script>
           toursList: [{ name: 'Feel Tour', n: 30, first: '2025-03-01', last: '2025-04-12', lineup: 'Our Last Night, The Word Alive, Ashland' }] } };
     }
     return H.ghosts;
+  }
+  // Is this person on that artist's page now (listed, and not left)?
+  function listedOn(artistId, userId) {
+    var a = ((window.__harness.acts) || []).filter(function (x) { return x.id === artistId; })[0];
+    return !!(a && (a.members || []).some(function (m) { return m.userId === userId && !m.leftAt; }));
   }
   function creditShowsOf(key) {
     var g = CREDIT_TOURS.filter(function (x) { return x.key === key; })[0];
@@ -972,6 +978,9 @@ shim = r"""<script>
         // __harness.budgetGone: the day's allowance is used up, so nothing moves.
         if (H.budgetGone && row.status === 'syncing') return Object.assign(JSON.parse(JSON.stringify(row)), { waiting: true });
         var g = ghostList().filter(function (x) { return x.id === artistId; })[0];
+        // __harness.checkSlow: the encyclopedia has not answered yet, so a new page stays unchecked
+        // (it cannot be claimed, and its shows are "still being read").
+        if (H.checkSlow && row.status === 'checking') return JSON.parse(JSON.stringify(row));
         // One step a nudge: confirmed by the encyclopedia, then three pages, then done.
         if (fresh && row.status === 'ok') { row.status = 'syncing'; row.next_page = 1; }
         else if (row.status === 'checking') { row.status = 'syncing'; row.pages = 3; row.total = 58; if (g) g.checked = true; }
@@ -985,14 +994,25 @@ shim = r"""<script>
         return JSON.parse(JSON.stringify(row));
       });
     },
-    claimArtist: function (artistId, note, link) {
+    // (artistId, { role, note, links: { spotify, instagram, website } }); the old (artistId, note, link) still works.
+    // Proof is a link or a note of three letters; the answer carries the code to put in the act's bio.
+    claimArtist: function (artistId, o, oldLink) {
       var H = window.__harness; H.claims = H.claims || [];
+      (H.frCalls = H.frCalls || []).push({ fn: 'claimArtist', args: [artistId, isObj(o) ? JSON.parse(JSON.stringify(o)) : o, oldLink] });
+      var c = isObj(o) ? o : { note: o, link: oldLink };
+      var from = isObj(c.links) ? c.links : {}, links = {};
+      ['spotify', 'instagram', 'website'].forEach(function (k) { links[k] = String(from[k] || '').trim().slice(0, 200); });
+      var note = String(c.note || '').trim().slice(0, 500);
+      var link = String(c.link || links.website || links.instagram || links.spotify || '').trim();
       var g = ghostList().filter(function (x) { return x.id === artistId; })[0];
-      if (!g || g.owner) return Promise.resolve({ ok: false, why: 'taken' });
-      if (String(note || '').trim().length < 3) return Promise.reject(Object.assign(new Error('short'), { code: 'short' }));
-      H.claims = H.claims.filter(function (c) { return !(c.artistId === artistId && c.userId === 'u-devin'); });
-      H.claims.push({ id: 'cl' + Date.now(), artistId: artistId, userId: 'u-devin', note: String(note).trim(), link: String(link || '').trim(), status: 'pending', at: new Date().toISOString() });
-      return Promise.resolve({ ok: true });
+      // (As live: a page the encyclopedia has not confirmed yet cannot be claimed, and says 'taken' too.)
+      if (!g || g.owner || !g.checked) return Promise.resolve({ ok: false, why: 'taken' });
+      if (!link && note.length < 3) return Promise.reject(Object.assign(new Error('short'), { code: 'short' }));
+      H.claims = H.claims.filter(function (x) { return !(x.artistId === artistId && x.userId === 'u-devin'); });
+      // (The code is "GR-" and six characters since the review; four before.)
+      H.claims.push({ id: 'cl' + Date.now(), artistId: artistId, userId: 'u-devin', note: note, link: link, role: String(c.role || '').trim().slice(0, 40),
+        links: links, code: 'GR-T3ST9K', status: 'pending', at: new Date().toISOString() });
+      return Promise.resolve({ ok: true, code: 'GR-T3ST9K' });
     },
     withdrawClaim: function (artistId) {
       var H = window.__harness, n = (H.claims || []).length;
@@ -1003,7 +1023,9 @@ shim = r"""<script>
       var H = window.__harness;
       return Promise.resolve((H.claims || []).filter(function (c) { return c.userId === 'u-devin'; }).map(function (c) {
         var g = ghostList().filter(function (x) { return x.id === c.artistId; })[0] || {};
-        return { artistId: c.artistId, artist: g.name || '', status: c.status, at: c.at, mine: false }; }));
+        // (0134: each claim carries the role and links it was sent with, and the code to put in the act's bio.)
+        return { artistId: c.artistId, artist: g.name || '', status: c.status, at: c.at, role: c.role || '',
+          links: Object.assign({ spotify: '', instagram: '', website: '' }, c.links || {}), code: c.code || '', mine: false }; }));
     },
     claimQueue: function () {
       var H = window.__harness, P = window.GR_BACKEND.people;
@@ -1014,6 +1036,7 @@ shim = r"""<script>
         return { id: c.id, artistId: c.artistId, artist: g.name || '', about: g.about || '', country: g.country || '', userId: c.userId,
           name: p.name || 'Devin Oliver', handle: c.userId === 'u-devin' ? (H.handle || '') : (p.handle || ''), avatar: '', roles: p.roles || [], tourRole: p.tourRole || '',
           email: c.userId === 'u-brent' ? 'brent@example.com' : 'devin@example.com', note: c.note, link: c.link, at: c.at,
+          role: c.role || '', links: Object.assign({ spotify: '', instagram: '', website: '' }, c.links || {}), code: c.code || '',
           others: H.claims.filter(function (o) { return o.artistId === c.artistId && o.status === 'pending' && o.id !== c.id; }).length };
       }));
     },
@@ -1049,6 +1072,167 @@ shim = r"""<script>
     myArtists: function () {
       var H = window.__harness; H.acts = H.acts || [];
       return Promise.resolve(H.acts.map(function (a) { return { id: a.id, handle: a.handle, name: a.name, avatar: a.avatar, mine: true, kind: null }; }));
+    },
+    /* Venues and festivals (0134). findPlaces answers from a few pretend
+       places with shows on record; a place becomes a page only when it is
+       opened, and those are kept in __harness.places as { id: 'v1' | 'f1'...,
+       kind: 'venue' | 'festival', name, city, cc }. Who said they worked
+       there is in __harness.placeWork as { kind, id, userId, role, state }.
+       __harness.placesDown = true makes the search fail. */
+    findPlaces: function (q) {
+      var H = window.__harness, t = String(q || '').trim().toLowerCase();
+      (H.frCalls = H.frCalls || []).push({ fn: 'findPlaces', args: [q] });
+      var venues = [
+        { name: 'Mohawk', city: 'Austin', region: 'TX', cc: 'US', nights: 41, artists: 37 },
+        { name: 'Saint Andrew’s Hall', city: 'Detroit', region: 'MI', cc: 'US', nights: 63, artists: 52 },
+        { name: 'House of Blues', city: 'Cleveland', region: 'OH', cc: 'US', nights: 88, artists: 70 },
+        { name: 'House of Blues', city: 'Lake Buena Vista', region: 'FL', cc: 'US', nights: 54, artists: 49 },
+        { name: 'O2 Academy Brixton', city: 'London', region: '', cc: 'GB', nights: 1, artists: 1 }];
+      var fests = [{ name: 'Vans Warped Tour', editions: 12, artists: 240 }, { name: 'Download Festival', editions: 6, artists: 180 },
+        { name: 'Austin City Limits', editions: 1, artists: 30 }];
+      if (H.placesDown) return Promise.reject(Object.assign(new Error('offline'), { code: 'offline' }));
+      if (t.length < 2) return Promise.resolve({ venues: [], festivals: [] });
+      return new Promise(function (res) { setTimeout(function () {
+        res({ venues: venues.filter(function (v) { return v.name.toLowerCase().indexOf(t) >= 0 || v.city.toLowerCase().indexOf(t) >= 0; }),
+          festivals: fests.filter(function (f) { return f.name.toLowerCase().indexOf(t) >= 0; }) });
+      }, 80); });
+    },
+    openVenue: function (name, city, cc) {
+      var H = window.__harness; H.places = H.places || [];
+      (H.frCalls = H.frCalls || []).push({ fn: 'openVenue', args: [name, city, cc] });
+      var same = function (p) { return p.kind === 'venue' && p.name === String(name || '') && p.city === String(city || '') && p.cc === String(cc || ''); };
+      var p = H.places.filter(same)[0];
+      if (!p) {
+        p = { id: 'v' + (H.places.filter(function (x) { return x.kind === 'venue'; }).length + 1), kind: 'venue', name: String(name || ''), city: String(city || ''), cc: String(cc || '') };
+        H.places.push(p);
+      }
+      return Promise.resolve({ id: p.id });
+    },
+    openFestival: function (name) {
+      var H = window.__harness; H.places = H.places || [];
+      (H.frCalls = H.frCalls || []).push({ fn: 'openFestival', args: [name] });
+      var p = H.places.filter(function (x) { return x.kind === 'festival' && x.name === String(name || ''); })[0];
+      if (!p) {
+        p = { id: 'f' + (H.places.filter(function (x) { return x.kind === 'festival'; }).length + 1), kind: 'festival', name: String(name || ''), city: '', cc: '' };
+        H.places.push(p);
+      }
+      return Promise.resolve({ id: p.id });
+    },
+    placeWorkAsk: function (o) {
+      var H = window.__harness; o = o || {};
+      (H.frCalls = H.frCalls || []).push({ fn: 'placeWorkAsk', args: [JSON.parse(JSON.stringify(o))] });
+      if (H.placeTooMany) return Promise.reject(Object.assign(new Error('too-many'), { code: 'too-many' }));
+      var kind = o.venueId ? 'venue' : 'festival', id = o.venueId || o.festivalId;
+      H.placeWork = (H.placeWork || []).filter(function (w) { return !(w.kind === kind && w.id === id && w.userId === 'u-devin'); })
+        .concat([{ kind: kind, id: id, userId: 'u-devin', role: String(o.role || '').trim().slice(0, 40), state: 'pending' }]);
+      return Promise.resolve({ ok: true });
+    },
+    placeWorkWithdraw: function (o) {
+      var H = window.__harness; o = o || {};
+      (H.frCalls = H.frCalls || []).push({ fn: 'placeWorkWithdraw', args: [JSON.parse(JSON.stringify(o))] });
+      var kind = o.venueId ? 'venue' : 'festival', id = o.venueId || o.festivalId;
+      H.placeWork = (H.placeWork || []).filter(function (w) { return !(w.kind === kind && w.id === id && w.userId === 'u-devin'); });
+      return Promise.resolve({ ok: true });
+    },
+    myPlaces: function () {
+      var H = window.__harness;
+      return Promise.resolve((H.placeWork || []).filter(function (w) { return w.userId === 'u-devin'; }).map(function (w) {
+        var p = (H.places || []).filter(function (x) { return x.kind === w.kind && x.id === w.id; })[0] || {};
+        return { kind: w.kind, id: w.id, name: p.name || '', city: p.city || '', role: w.role, state: w.state };
+      }));
+    },
+    /* Asking an artist to list you (0134). The asks are kept in
+       __harness.artistRequests as { artistId, userId, kind, role, state, at }.
+       The test user runs every test artist, so asking one of those lists them
+       at once (or says 'listed' when they are on it already); a page nobody
+       runs keeps the ask waiting. __harness.requestWhy = 'wait' | 'many' |
+       'former_member' makes the next ask come back refused that way. */
+    requestArtist: function (artistId, kind, role) {
+      var H = window.__harness; (H.frCalls = H.frCalls || []).push({ fn: 'requestArtist', args: [artistId, kind, role] });
+      H.artistRequests = H.artistRequests || [];
+      var k = kind === 'crew' ? 'crew' : 'band', r = String(role || '').trim().slice(0, 40);
+      var a = (H.acts || []).filter(function (x) { return x.id === artistId; })[0];
+      if (a && a.members.some(function (m) { return m.userId === 'u-devin' && !m.leftAt; })) return Promise.resolve({ ok: false, why: 'listed' });
+      if (H.requestWhy) return Promise.resolve({ ok: false, why: H.requestWhy });
+      var waiting = H.artistRequests.filter(function (x) { return x.userId === 'u-devin' && x.state === 'pending' && x.artistId !== artistId; });
+      if (waiting.length >= 10) return Promise.resolve({ ok: false, why: 'many' });
+      if (a) {
+        a.members = a.members.filter(function (m) { return m.userId !== 'u-devin'; }).concat([{ userId: 'u-devin', kind: k, role: r }]);
+        return Promise.resolve({ ok: true, listed: true });
+      }
+      // (Asking again replaces the ask that was waiting.)
+      H.artistRequests = H.artistRequests.filter(function (x) { return !(x.artistId === artistId && x.userId === 'u-devin'); });
+      H.artistRequests.push({ artistId: artistId, userId: 'u-devin', kind: k, role: r, state: 'pending', at: new Date().toISOString() });
+      return Promise.resolve({ ok: true });
+    },
+    // (As live since the review: a request from someone who is on that page by now is left out, whatever its state.)
+    myArtistRequests: function () {
+      var H = window.__harness;
+      return Promise.resolve((H.artistRequests || []).filter(function (x) { return x.userId === 'u-devin' && !listedOn(x.artistId, 'u-devin'); }).map(function (x) {
+        var a = (H.acts || []).filter(function (y) { return y.id === x.artistId; })[0];
+        var g = ghostList().filter(function (y) { return y.id === x.artistId; })[0];
+        var p = a || g || {};
+        return { artistId: x.artistId, artist: p.name || '', handle: p.handle || '', avatar: p.avatar || '', unclaimed: !a && !!g && !g.owner,
+          kind: x.kind, role: x.role, state: x.state, at: x.at };
+      }));
+    },
+    // Takes the request back while it waits, and takes its row away once it has run out or been declined ("Remove").
+    withdrawArtistRequest: function (artistId) {
+      var H = window.__harness; (H.frCalls = H.frCalls || []).push({ fn: 'withdrawArtistRequest', args: [artistId] });
+      H.artistRequests = (H.artistRequests || []).filter(function (x) { return !(x.artistId === artistId && x.userId === 'u-devin'); });
+      return Promise.resolve({ ok: true });
+    },
+    /* The first run, in memory (0134). The test account has answered already,
+       so nothing is asked. __harness.firstRun = { needsHandle, needsBirth }
+       (or just true) makes it due, as for an account fresh from the gate;
+       a username or birthday saved since stops being needed. What it ticked
+       is kept in __harness.kinds. Every call the first run makes is noted in
+       __harness.frCalls as { fn, args }, and __harness.frFail = true makes the
+       save at its end fail. __harness.firstRun.suggest = ['fan'] is what the
+       account's invite code was made for (the cards that start ticked); it is
+       always answered in the order member, crew, fan, promoter, [] for none. */
+    firstRun: function () {
+      var H = window.__harness, d = H.firstRun;
+      var suggest = ['member', 'crew', 'fan', 'promoter'].filter(function (k) { return !!(d && Array.isArray(d.suggest)) && d.suggest.indexOf(k) >= 0; });
+      return { due: !!d, needsHandle: !!(d && d.needsHandle) && !H.handle, needsBirth: !!(d && d.needsBirth) && !H.birthDate,
+        kinds: (H.kinds || []).slice(), suggest: suggest,
+        firstName: me.first_name, lastName: me.last_name, handle: H.handle || '', email: 'devin@example.com' };
+    },
+    /* What the project's sign-up switches say, for the Invite codes sheet:
+       __harness.signup = { open: false } or { confirm: false } shows each
+       warning; both are on unless set, and __harness.signup = null is "could
+       not be read". */
+    signupSettings: function () {
+      var H = window.__harness;
+      if (H.signup === null) return Promise.resolve(null);
+      var s = H.signup || {};
+      return Promise.resolve({ open: s.open !== false, confirm: s.confirm !== false });
+    },
+    saveBirthDate: function (d) {
+      var H = window.__harness; (H.frCalls = H.frCalls || []).push({ fn: 'saveBirthDate', args: [d] });
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d || '')), now = new Date();
+      var day = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+      if (!day || day.getMonth() !== Number(m[2]) - 1 || day.getDate() !== Number(m[3]) || Number(m[1]) < 1900 || day > now) {
+        return Promise.reject(Object.assign(new Error('shape'), { code: 'shape' }));
+      }
+      var age = now.getFullYear() - day.getFullYear() - ((now.getMonth() < day.getMonth() || (now.getMonth() === day.getMonth() && now.getDate() < day.getDate())) ? 1 : 0);
+      // (18, as the terms say; it was 13.)
+      if (age < 18) return Promise.reject(Object.assign(new Error('young'), { code: 'young' }));
+      H.birthDate = String(d);
+      return Promise.resolve({ ok: true });
+    },
+    finishFirstRun: function (kinds) {
+      var H = window.__harness; (H.frCalls = H.frCalls || []).push({ fn: 'finishFirstRun', args: [kinds] });
+      if (H.frFail) return Promise.reject(Object.assign(new Error('offline'), { code: 'offline' }));
+      H.kinds = ['member', 'crew', 'fan', 'promoter'].filter(function (k) { return (kinds || []).indexOf(k) >= 0; });
+      H.firstRun = undefined;
+      return Promise.resolve({ ok: true });
+    },
+    saveKinds: function (kinds) {
+      var H = window.__harness; (H.frCalls = H.frCalls || []).push({ fn: 'saveKinds', args: [kinds] });
+      if (H.frFail) return Promise.reject(Object.assign(new Error('offline'), { code: 'offline' }));
+      H.kinds = ['member', 'crew', 'fan', 'promoter'].filter(function (k) { return (kinds || []).indexOf(k) >= 0; });
+      return Promise.resolve({ ok: true });
     },
     artistHandleFree: function (h, forArtist) {
       var H = window.__harness; H.acts = H.acts || [];
@@ -1140,8 +1324,11 @@ shim = r"""<script>
         submittedAt: row.submittedAt, declinedAt: row.declinedAt });
     },
     // Listing someone (again): their role and endorsement stay, and a day they left is cleared.
+    // __harness.listFails = true refuses it the way the database does on a page Greenroom has not
+    // confirmed, for someone who is not on one of the runner's tours ('permission').
     addArtistMember: function (id, uid, kind) {
       var H = window.__harness, a = H.acts.filter(function (x) { return x.id === id; })[0];
+      if (H.listFails) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
       var was = a.members.filter(function (m) { return m.userId === uid; })[0];
       if (was && was.endorsed && !was.leftAt && was.kind === 'band' && kind === 'crew') return Promise.resolve();
       a.members = a.members.filter(function (m) { return m.userId !== uid; }).concat([Object.assign({}, was || {}, { userId: uid, kind: kind, leftAt: null, leaving: null })]);
@@ -1180,6 +1367,141 @@ shim = r"""<script>
       if (a) a.members.forEach(function (m) { if (m.userId === uid) { m.leftAt = new Date().toISOString().slice(0, 10); m.leaving = null; } });
       return Promise.resolve({ ok: true, ended: true });
     },
+    /* Who is asking to be listed on a page the test user runs (0134): the
+       asks in __harness.artistRequests from anyone else, pending ones only.
+       __harness.seedRequests = true puts two on the first test artist: Ana
+       (crew, FOH engineer) and Jeff (a Member, Drums). */
+    artistRequestQueue: function (artistId) {
+      var H = window.__harness, P = window.GR_BACKEND.people;
+      H.artistRequests = H.artistRequests || [];
+      if (H.seedRequests && !H.requestsSeeded && (H.acts || []).length) {
+        H.requestsSeeded = true;
+        var first = H.acts[0].id;
+        H.artistRequests.push({ artistId: first, userId: 'u-ana', kind: 'crew', role: 'FOH engineer', state: 'pending', at: new Date(Date.now() - 2 * 36e5).toISOString() },
+          { artistId: first, userId: 'u-jeff', kind: 'band', role: 'Drums', state: 'pending', at: new Date(Date.now() - 3 * 864e5).toISOString() });
+      }
+      var mine = (H.acts || []).map(function (a) { return a.id; });
+      (H.queueAsks = H.queueAsks || []).push(artistId == null ? null : artistId);
+      // (As live since the review: someone who is on the page by now is left out, so their card goes.)
+      return Promise.resolve(H.artistRequests.filter(function (x) {
+        return (x.userId || 'u-devin') !== 'u-devin' && (x.state || 'pending') === 'pending' && mine.indexOf(x.artistId) >= 0 && (!artistId || x.artistId === artistId) &&
+          !listedOn(x.artistId, x.userId);
+      }).map(function (x) {
+        var a = H.acts.filter(function (y) { return y.id === x.artistId; })[0], p = P[x.userId] || {};
+        return { artistId: x.artistId, artist: a.name, userId: x.userId, name: p.name || 'Someone', handle: p.handle || '', avatar: '',
+          roles: p.roles || [], kind: x.kind, role: x.role || '', at: x.at };
+      }));
+    },
+    // Yes lists them with the kind and role they gave, endorsed; no marks the ask declined.
+    // __harness.decideWhy = 'gone' | 'expired' | 'former_member' makes the answer come back refused that way.
+    decideArtistRequest: function (artistId, userId, accept) {
+      var H = window.__harness;
+      H.requestDecisions = (H.requestDecisions || []).concat([{ artistId: artistId, userId: userId, accept: !!accept }]);
+      if (H.decideWhy) return Promise.resolve({ ok: false, why: H.decideWhy });
+      var x = (H.artistRequests || []).filter(function (y) { return y.artistId === artistId && y.userId === userId && (y.state || 'pending') === 'pending'; })[0];
+      var a = (H.acts || []).filter(function (y) { return y.id === artistId; })[0];
+      if (!x || !a) return Promise.resolve({ ok: false, why: 'gone' });
+      x.state = accept ? 'accepted' : 'declined';
+      if (accept) a.members = a.members.filter(function (m) { return m.userId !== userId; }).concat([{ userId: userId, kind: x.kind, role: x.role || '', endorsed: true }]);
+      return Promise.resolve({ ok: true, accepted: !!accept });
+    },
+    /* A fan's shows (0134). The nights are the ones tourNights pretends for
+       any entry, plus one still to come (so the row with no button can be
+       seen); the ones ticked are kept in __harness.attended as
+       'artistId|date'. __harness.attendMany = true answers 'many', the
+       day's limit. */
+    fanNights: function (artistId, tourName) {
+      var H = window.__harness; H.attended = H.attended || [];
+      H.fanNightAsks = (H.fanNightAsks || []).concat([[artistId, tourName]]);
+      return window.GR_BACKEND.tourNights(artistId, tourName).then(function (list) {
+        var ahead = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+        return list.map(function (n) { return { date: n.date, city: n.city, state: n.state, country: n.country, venue: n.venue, festival: n.festival || '' }; })
+          .concat([{ date: ahead, city: 'Phoenix', state: 'AZ', country: 'US', venue: 'Crescent Ballroom', festival: '' }])
+          .map(function (n) { n.attended = H.attended.indexOf(artistId + '|' + n.date) >= 0; return n; });
+      });
+    },
+    markAttended: function (artistId, date, going) {
+      var H = window.__harness; H.attended = H.attended || [];
+      H.attendCalls = (H.attendCalls || []).concat([{ artistId: artistId, date: date, going: !!going }]);
+      if (H.attendMany) return Promise.resolve({ ok: false, why: 'many' });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return Promise.resolve({ ok: false, why: 'none' });
+      if (String(date) > new Date().toISOString().slice(0, 10)) return Promise.resolve({ ok: false, why: 'future' });
+      var k = artistId + '|' + date;
+      H.attended = H.attended.filter(function (x) { return x !== k; });
+      if (going) H.attended.push(k);
+      return Promise.resolve({ ok: true, count: H.attended.length });
+    },
+    myAttended: function () {
+      var H = window.__harness, by = {};
+      (H.attended || []).forEach(function (k) { var id = k.split('|')[0]; by[id] = (by[id] || 0) + 1; });
+      return Promise.resolve({ count: (H.attended || []).length, artists: Object.keys(by).map(function (id) {
+        var a = (H.acts || []).filter(function (x) { return x.id === id; })[0] || ghostList().filter(function (x) { return x.id === id; })[0] || {};
+        return { artistId: id, artist: a.name || 'Artist', handle: a.handle || '', avatar: a.avatar || '', n: by[id] };
+      }).sort(function (a, b) { return b.n - a.n; }) });
+    },
+    /* A venue's or a festival's page (0134): the place as openVenue or
+       openFestival made it (__harness.places), with pretend shows on record
+       and the test artists as who played there. myWork comes from
+       __harness.placeWork. An id nobody opened answers null. */
+    venueCard: function (id) {
+      var H = window.__harness, p = (H.places || []).filter(function (x) { return x.kind === 'venue' && x.id === id; })[0];
+      if (!p) return Promise.resolve(null);
+      var w = (H.placeWork || []).filter(function (x) { return x.kind === 'venue' && x.id === id && x.userId === 'u-devin'; })[0];
+      var played = (H.acts || []).map(function (a, i) { return { id: a.id, name: a.name, avatar: a.avatar || '', n: 4 - Math.min(i, 3), first: '2012-04-05', last: '2024-10-12' }; })
+        .concat(ghostList().filter(function (g) { return g.checked; }).map(function (g) { return { id: g.id, name: g.name, avatar: '', n: 2, first: '2015-06-20', last: '2015-06-21' }; }));
+      // (As live: the card's country is a name, not the two-letter code the search row carries.)
+      return Promise.resolve({ id: p.id, name: p.name, city: p.city, region: { Austin: 'TX', Detroit: 'MI', Cleveland: 'OH', 'Lake Buena Vista': 'FL' }[p.city] || '',
+        country: { US: 'United States', GB: 'United Kingdom', CA: 'Canada', IE: 'Ireland' }[p.cc] || p.cc,
+        address: p.name === 'Mohawk' ? '912 Red River St, Austin, TX 78701' : '', phone: '', unclaimed: true,
+        shows: played.reduce(function (n, x) { return n + x.n; }, 0), firstYear: played.length ? 2012 : null, lastYear: played.length ? 2024 : null,
+        artists: played, workers: (H.placeWork || []).filter(function (x) { return x.kind === 'venue' && x.id === id; }).length,
+        myWork: w ? { role: w.role, state: w.state } : null });
+    },
+    festivalCard: function (id) {
+      var H = window.__harness, p = (H.places || []).filter(function (x) { return x.kind === 'festival' && x.id === id; })[0];
+      if (!p) return Promise.resolve(null);
+      var w = (H.placeWork || []).filter(function (x) { return x.kind === 'festival' && x.id === id && x.userId === 'u-devin'; })[0];
+      var played = (H.acts || []).map(function (a) { return { id: a.id, name: a.name, avatar: a.avatar || '', n: 3 }; })
+        .concat(ghostList().filter(function (g) { return g.checked; }).map(function (g) { return { id: g.id, name: g.name, avatar: '', n: 1 }; }));
+      return Promise.resolve({ id: p.id, name: p.name, unclaimed: true, shows: played.reduce(function (n, x) { return n + x.n; }, 0),
+        editions: played.length ? [{ year: 2014, n: 1 }, { year: 2016, n: 1 }, { year: 2018, n: 1 }] : [],
+        artists: played, workers: (H.placeWork || []).filter(function (x) { return x.kind === 'festival' && x.id === id; }).length,
+        myWork: w ? { role: w.role, state: w.state } : null });
+    },
+    /* Invite codes (0134), for a Greenroom admin: __harness.admin = false
+       answers null, as it does for anyone else. Kept in __harness.codes,
+       newest first: one in use, one used up, one switched off. */
+    inviteCodes: function () {
+      var H = window.__harness;
+      if (H.admin === false) return Promise.resolve(null);
+      var day = function (d) { return new Date(Date.now() + d * 864e5).toISOString(); };
+      if (!H.codes) H.codes = [
+        { code: 'GR-7KQ2-M4XP', kinds: [], usesLeft: 3, used: 2, expiresAt: day(21), note: 'Fall run crew', revoked: false, at: day(-9) },
+        { code: 'GR-B3NT-9WLA', kinds: ['fan'], usesLeft: 0, used: 25, expiresAt: day(5), note: 'Detroit meet and greet', revoked: false, at: day(-25) },
+        { code: 'GR-HX4D-22RV', kinds: ['member', 'crew'], usesLeft: 4, used: 1, expiresAt: day(2), note: '', revoked: true, at: day(-28) }];
+      return Promise.resolve(H.codes.map(function (c) { return Object.assign({}, c); }));
+    },
+    makeInviteCode: function (o) {
+      var H = window.__harness; o = o || {};
+      H.codeCalls = (H.codeCalls || []).concat([JSON.parse(JSON.stringify(o))]);
+      if (H.admin === false) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      return window.GR_BACKEND.inviteCodes().then(function () {
+        var abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+        var four = function () { var s = ''; for (var i = 0; i < 4; i++) s += abc.charAt(Math.floor(Math.random() * abc.length)); return s; };
+        var code = 'GR-' + four() + '-' + four();
+        var uses = Math.max(1, Math.min(500, parseInt(o.uses, 10) || 1)), days = Math.max(1, parseInt(o.days, 10) || 30);
+        H.codes.unshift({ code: code, kinds: ['member', 'crew', 'fan', 'promoter'].filter(function (k) { return (o.kinds || []).indexOf(k) >= 0; }),
+          usesLeft: uses, used: 0, expiresAt: new Date(Date.now() + days * 864e5).toISOString(), note: String(o.note || '').trim().slice(0, 60),
+          revoked: false, at: new Date().toISOString() });
+        return { code: code };
+      });
+    },
+    revokeInviteCode: function (code) {
+      var H = window.__harness;
+      H.codeCalls = (H.codeCalls || []).concat([{ revoke: code }]);
+      (H.codes || []).forEach(function (c) { if (c.code === code) c.revoked = true; });
+      return Promise.resolve({ ok: true });
+    },
     people: { 'u-devin': { name: 'Devin Oliver', handle: '', verified: true, roles: ['Artist'], tourRole: 'Artist', canOpen: true },
       'u-brent': { name: 'Brent Allen', handle: 'brent', roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', canOpen: true, followers: 12 },
       'u-jeff': { name: 'Jeff Valentine', handle: 'jeffv', roles: ['Artist'], tourRole: 'Artist', canOpen: false },
@@ -1201,14 +1523,26 @@ shim = r"""<script>
         // A page nobody runs (or one someone else was given): the viewer's side only.
         var gf = (H.artistFollows || []).indexOf(g.id) >= 0;
         var mc = (H.claims || []).filter(function (c) { return c.artistId === g.id && c.userId === 'u-devin'; })[0];
+        // (0134) What the test user asked this page for, and the claimants still waiting: each is
+        // listed as a Member marked pending, shown to the claimant and to a Greenroom admin only.
+        var rq = (H.artistRequests || []).filter(function (x) { return x.artistId === g.id && (x.userId || 'u-devin') === 'u-devin'; })[0];
+        var waiting = g.owner ? [] : (H.claims || []).filter(function (c) {
+          return c.artistId === g.id && c.status === 'pending' && (c.userId === 'u-devin' || H.admin !== false);
+        }).map(function (c) {
+          return Object.assign({ userId: c.userId, kind: 'band', role: c.role || '', avatar: '', endorsed: false, pending: true }, P[c.userId], c.userId === 'u-devin' ? { handle: H.handle || '' } : {});
+        });
         return Promise.resolve({ id: g.id, handle: g.handle, name: g.name, bio: '', avatar: '', mine: false,
-          unclaimed: !g.owner, verified: !!g.owner, checkmark: true, claimed: !!g.owner, about: g.about || '', country: g.country || '', myClaim: mc ? mc.status : null,
-          iFollow: gf, followers: gf ? 1 : 0, members: [], tours: [] });
+          // (The check follows the encyclopedia's answer: a page made a moment ago has none until a nudge confirms it.)
+          unclaimed: !g.owner, verified: !!g.owner, checkmark: !!g.checked, claimed: !!g.owner, about: g.about || '', country: g.country || '', myClaim: mc ? mc.status : null,
+          myClaimCode: mc && mc.status === 'pending' ? (mc.code || null) : null,
+          myRequest: rq ? { kind: rq.kind, role: rq.role || '', state: rq.state || 'pending', at: rq.at } : null,
+          iFollow: gf, followers: gf ? 1 : 0, members: waiting, tours: [] });
       }
       if (!a) return Promise.resolve(null);
       var fol = (H.artistFollows || []).indexOf(a.id) >= 0;
       return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '', mine: true,
         unclaimed: false, verified: !!a.verified || /i see stars/i.test(a.name || ''), checkmark: !!a.verified || /i see stars/i.test(a.name || ''), claimed: !!a.verified || /i see stars/i.test(a.name || ''), about: a.about || '', country: a.country || '', myClaim: null,
+        myClaimCode: null, myRequest: null,
         iFollow: fol, followers: (a.followers || 0) + (fol ? 1 : 0),
         members: a.members.filter(function (m) { return !m.leftAt; }).map(function (m) { return Object.assign({ userId: m.userId, kind: m.kind, role: m.role || '', avatar: '', endorsed: !!m.endorsed, leaving: m.leaving || null, settled: m.kind === 'band' && (!!m.endorsed || !!m.settled),
           hasCredits: !!((H.creditRows || {})[a.id + ':' + m.userId] && H.creditRows[a.id + ':' + m.userId].approved) }, P[m.userId], m.userId === 'u-devin' ? { handle: H.handle || '' } : {}); }),
@@ -1270,7 +1604,11 @@ shim = r"""<script>
       window.__harness.crew = window.__harness.crew.filter(function (c) { return c.invitedEmail !== email; });
       return Promise.resolve();
     },
+    // __harness.inviteFails = 'page-first' (the account came in on a code and its artist page is not
+    // confirmed yet) or 'too-many' (the day's limit) refuses the invite the way the real one does.
     invite: function (tourId, email, role, name, phone, extra) {
+      var why = window.__harness.inviteFails;
+      if (why) return Promise.reject(Object.assign(new Error(String(why)), { code: String(why) }));
       window.__harness.invited.push([email, role, name, (extra || {}).tourRole || '']);
       // As live (0133): a Manager is stored as editor + manager; anything else is crew.
       var mgr = role === 'manager' || role === 'editor';

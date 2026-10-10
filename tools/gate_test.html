@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Greenroom gate test</title>
+<!--
+  Tries Greenroom's gate (site/backend.js) with NO real project behind it:
+  the sign-in card, "I have a code", the one-question sign-up, and the
+  screens an invited person gets. tools/fake_supabase.js plays the server
+  (its rules are at the top of that file, and under "Test notes" here).
+
+  Open it through the project's local server, not as a file:
+    http://localhost:4173/tools/gate_test.html
+  (backend.js only takes the stand-in on localhost, 127.0.0.1, [::1] or a
+  name ending .localhost or .test. Anywhere else it loads the real library.)
+  It borrows the app's styles from ../src/index.html, so what you see is
+  the real look. When the gate hands over, nothing else is loaded: a plain
+  panel shows what the app would have been told and every call that was
+  made (passwords as "***"). There is no app under the invited person's
+  screens here, so "asked twice" cannot show: watch B.firstRun() instead
+  (due stays false until "Join the tour" has saved, then turns true with
+  needsHandle and needsBirth false).
+
+  EVERY CODE THE FAKE KNOWS (capitals, spaces and dashes do not matter)
+    GR-TEST-0001   good, any number of times
+    GR-CREW-0001   good, and made for crew and fans (see suggest in B.firstRun())
+    GR-ONCE-0001   good for one account only (try the mistyped email with it)
+    GR-LAST-0001   good when checked, used up by the time the account is made
+    GR-USED-0001   used up: "bad", the same as a code nobody made
+    GR-SLOW-0001   "too many tries"
+    GR-HANG-0001   the check never answers: the offline line after 15 seconds
+    anything else with a letter in it is bad
+    123456         the emailed code (no letter in it: "123 456." works too)
+
+  EVERY ADDRESS THE FAKE KNOWS
+    anyone@example.com   signs in with the password  greenroom  (an account
+                         that finished its first run long ago)
+    taken@example.com    already has an account (at "Create account")
+    invited@example.com  has a tour invite waiting (at "Create account");
+                         with the emailed code 123456 it is Ana Reyes, invited
+    bare@example.com     with 123456: invited, no name or role on the invite
+    reset@example.com    with 123456: a password reset
+    bad@example.com      the server says the address is invalid
+    slow@example.com     the sign-up never answers, yet the account is made:
+                         the offline line after 30 seconds, then "Create
+                         account" again goes on to "Check your email"
+    any other address    a new account: "Check your email", code 123456
+  The username  brent  is taken. The password  password  is too easy to
+  guess. A birthday under 18 is refused.
+
+  SWITCHES, added to the address (several: join them with &)
+    ?closed=1       sign-ups are switched off (?open=0 means the same):
+                    the code screen says so as soon as the code is good
+    ?confirm=0      "Confirm email" is off: the same early answer
+    ?settings=0     the settings cannot be read, so the gate carries on;
+                    with ?closed=1 or ?confirm=0 as well, the refusal
+                    then comes at "Create account"
+    ?settings=hang  the settings read never answers (5 seconds, then on)
+    ?mail=0         no email can be sent (the confirmation, a new code)
+    ?old=1          the database change is not live yet
+    ?code=123456    arriving from an email's button
+-->
+<style>
+  /* Only this page's own bits. The gate's look comes from src/index.html. */
+  #gt-panel { max-width: 720px; margin: 0 auto; padding: 24px 20px 120px; font: 15px/1.45 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; color: #F1F4E3; }
+  #gt-panel h1 { margin: 0 0 6px; font-size: 22px; font-weight: 800; }
+  #gt-panel h2 { margin: 22px 0 6px; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8F947B; }
+  #gt-panel p { margin: 0 0 10px; color: #8F947B; }
+  #gt-panel pre { margin: 0; padding: 12px 14px; border: 1px solid #2A3305; border-radius: 12px; background: #0C0F02; color: #F1F4E3; font: 12.5px/1.5 "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+  #gt-panel details { margin: 18px 0 0; }
+  #gt-panel summary { margin: 0 0 6px; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #8F947B; cursor: pointer; }
+  #gt-panel button { margin: 16px 0 0; padding: 0 18px; min-height: 44px; border: 1px solid #626750; border-radius: 999px; background: none; color: #F1F4E3; font: inherit; font-weight: 600; cursor: pointer; }
+  #gt-fail { margin: 0; padding: 24px 20px; font: 15px/1.5 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; color: #FF5F57; }
+  /* Top right: the one corner the gate's screens and its pick-lists leave empty. */
+  #gt-notes { position: fixed; right: 10px; top: calc(10px + env(safe-area-inset-top, 0px)); z-index: 300; max-width: min(420px, calc(100vw - 20px)); border: 1px solid #626750; border-radius: 14px; background: #161A07; color: #F1F4E3; font: 13px/1.45 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  #gt-notes summary { padding: 8px 14px; font-weight: 700; cursor: pointer; }
+  #gt-notes ul { margin: 0; padding: 0 16px 12px 30px; max-height: 50vh; overflow-y: auto; }
+  #gt-notes li { margin: 0 0 6px; }
+  #gt-notes code { font: 12.5px "SF Mono", Menlo, monospace; color: #CCF80A; }
+  #gt-notes a { color: #CCF80A; }
+</style>
+</head>
+<body>
+<div id="gt-panel" hidden>
+  <h1>Signed in: the app would start here</h1>
+  <p>The gate has handed over. Below is what the app would be told about this account, and every call the gate made. If a screen is still on top (an invited person's questions), finish it and this updates.</p>
+  <h2>B.firstRun()</h2>
+  <pre id="gt-first"></pre>
+  <h2>B.myProfile()</h2>
+  <pre id="gt-me"></pre>
+  <h2>B.signupSettings()</h2>
+  <pre id="gt-set">reading</pre>
+  <h2>What the pretend database holds</h2>
+  <pre id="gt-account"></pre>
+  <h2>What was sent: codes, sign-in, sign-up, saves</h2>
+  <pre id="gt-sent"></pre>
+  <details>
+    <summary id="gt-all">Every call (window.__gate.calls)</summary>
+    <pre id="gt-calls"></pre>
+  </details>
+  <button type="button" id="gt-again">Start over</button>
+</div>
+<p id="gt-fail" hidden></p>
+<details id="gt-notes">
+  <summary>Test notes</summary>
+  <ul>
+    <li>Codes (capitals, spaces and dashes do not matter): <code>GR-TEST-0001</code> is good. <code>GR-CREW-0001</code> is good and made for crew and fans. <code>GR-ONCE-0001</code> makes one account only. <code>GR-LAST-0001</code> is good when checked, used up at "Create account". <code>GR-USED-0001</code> is used up. <code>GR-SLOW-0001</code> says "too many tries". <code>GR-HANG-0001</code> never answers (15 seconds). Anything else with a letter in it is bad.</li>
+    <li>Every sign-up ends on "Check your email": the code is <code>123456</code>. "Wrong address? Go back" and a new address hands the first account back.</li>
+    <li>The username <code>brent</code> is taken. The password <code>password</code> is too easy to guess. A birthday under 18 is refused.</li>
+    <li>At "Create account": <code>taken@example.com</code> already has an account. <code>invited@example.com</code> has a tour invite waiting. <code>bad@example.com</code> is not a real address. <code>slow@example.com</code> never answers (30 seconds), yet the account is made: tap again.</li>
+    <li>An emailed code has no letter in it: <code>123456</code> with <code>invited@example.com</code> is an invited person (Ana Reyes). With <code>bare@example.com</code> the invite carried no name or role. With <code>reset@example.com</code> it is a password reset.</li>
+    <li>Sign in: <code>anyone@example.com</code> with the password <code>greenroom</code> (first run done long ago).</li>
+    <li><a href="?closed=1">?closed=1</a>: sign-ups are off. <a href="?confirm=0">?confirm=0</a>: "Confirm email" is off. <a href="?settings=0&amp;closed=1">?settings=0&amp;closed=1</a>: off, and the settings cannot be read. <a href="?settings=hang">?settings=hang</a>: the settings never answer. <a href="?mail=0">?mail=0</a>: no email can be sent. <a href="?old=1">?old=1</a>: the database change is not live yet. <a href="?code=123456">?code=123456</a>: arriving from an email's button. <a href="?">Plain</a>.</li>
+  </ul>
+</details>
+<script src="fake_supabase.js"></script>
+<script>
+(function () {
+  'use strict';
+  function fail(text) {
+    var p = document.getElementById('gt-fail');
+    p.textContent = text;
+    p.hidden = false;
+  }
+  function show(id, value) {
+    var el = document.getElementById(id), text;
+    try { text = JSON.stringify(value, null, 2); } catch (e) { text = String(value); }
+    if (el.textContent !== text) el.textContent = text;
+  }
+  // The gate has handed over: nothing else is loaded, just what it left behind.
+  function panel(db) {
+    if (!db) { fail('The backend did not start (boot failed). Look at the browser console.'); return; }
+    var B = window.GR_BACKEND;
+    document.getElementById('gt-panel').hidden = false;
+    document.getElementById('gt-again').addEventListener('click', function () { location.reload(); });
+    // Reads and plumbing (the tours being fetched, the live line) are in the full list only.
+    var QUIET = /^createClient$|^auth\.(getSession|refreshSession|onAuthStateChange)$|\.select$|^channel\(|^removeChannel$/;
+    function draw() {
+      var calls = window.__gate.calls;
+      show('gt-first', B.firstRun());
+      show('gt-me', B.myProfile());
+      show('gt-account', window.__gate.account);
+      show('gt-sent', calls.filter(function (c) { return !QUIET.test(c.fn); }));
+      show('gt-calls', calls);
+      document.getElementById('gt-all').textContent = 'Every call (window.__gate.calls): ' + calls.length;
+    }
+    draw();
+    setInterval(draw, 700); // an invited person's screens save after the hand-over
+    // Read once: what the gate itself asked at the code screen (null: could not be read).
+    B.signupSettings().then(function (s) { show('gt-set', s); }, function () { show('gt-set', 'failed'); });
+  }
+
+  fetch('../src/index.html', { cache: 'no-store' }).then(function (r) {
+    if (!r.ok) throw new Error('http ' + r.status);
+    return r.text();
+  }).then(function (html) {
+    // The app's own styles (and its fonts), so the gate looks the way it will in the app.
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    Array.prototype.forEach.call(doc.querySelectorAll('link[rel="stylesheet"]'), function (l) {
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = l.getAttribute('href');
+      document.head.appendChild(link);
+    });
+    Array.prototype.forEach.call(doc.querySelectorAll('style'), function (s) {
+      var st = document.createElement('style');
+      st.textContent = s.textContent;
+      document.head.appendChild(st);
+    });
+    window.GREENROOM_CONFIG = { url: 'https://fake.invalid', anonKey: 'fake' };
+    window.GR_SUPABASE = window.GR_FAKE_SUPABASE;
+    var s = document.createElement('script');
+    s.src = '../site/backend.js';
+    s.onload = function () { window.claude.use('db').then(panel); };
+    s.onerror = function () { fail('Could not load ../site/backend.js.'); };
+    document.body.appendChild(s);
+  }).catch(function (e) {
+    fail('Could not read ../src/index.html (' + (e && e.message) + '). Open this page through the local server: http://localhost:4173/tools/gate_test.html');
+  });
+})();
+</script>
+</body>
+</html>

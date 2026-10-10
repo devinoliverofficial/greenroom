@@ -243,6 +243,79 @@
     if (/network|fetch|load failed|connection/i.test(msg)) return err('offline');
     return err('unavailable');
   }
+  // The database doesn't have this function (yet): a build that got ahead of
+  // its migration. Never a reason to lock anyone out.
+  function fnMissing(e) {
+    return !!e && (e.code === 'PGRST202' || e.code === '42883' ||
+      /could not find the function|function .* does not exist/i.test(String(e.message || '')));
+  }
+  // The database's own words for a "no" the app has an answer to (a day's or
+  // a queue's limit); anything else the way mapError has it.
+  function knownError(e) {
+    if (/too many/i.test(String(e && e.message || ''))) return err('too-many');
+    return mapError(e);
+  }
+  // A proof link the way people type one, as the full https address the database keeps.
+  function httpsLink(kind, v) {
+    var t = String(v || '').trim();
+    if (/^https:\/\//i.test(t)) return t;
+    if (/^http:\/\//i.test(t)) return 'https://' + t.slice(7);
+    if (kind === 'instagram' && /^@?[A-Za-z0-9._]{1,30}$/.test(t)) return 'https://www.instagram.com/' + t.replace(/^@/, '');
+    if (/^[^\s\/@]+\.[^\s]+$/.test(t)) return 'https://' + t;
+    return t;
+  }
+  // The four reasons to be here that an account can tick, in his order.
+  var KINDS = ['member', 'crew', 'fan', 'promoter'];
+  function cleanKinds(list) {
+    var got = Array.isArray(list) ? list.map(function (k) { return String(k || '').toLowerCase(); }) : [];
+    return KINDS.filter(function (k) { return got.indexOf(k) >= 0; });
+  }
+  // A birthday as the database wants it: a real day, YYYY-MM-DD.
+  function realDay(d) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d || ''));
+    if (!m) return false;
+    var t = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return t.getFullYear() === Number(m[1]) && t.getMonth() === Number(m[2]) - 1 && t.getDate() === Number(m[3]);
+  }
+  // Whole years old today by the UTC calendar, the way the database counts
+  // (save_birth_date): by the phone's own date someone could pass the
+  // birthday screen on the day they turn 18 and then have the save refused.
+  function yearsOld(y, m, d) {
+    var now = new Date();
+    var n = now.getUTCFullYear() - y;
+    if (now.getUTCMonth() + 1 < m || (now.getUTCMonth() + 1 === m && now.getUTCDate() < d)) n -= 1;
+    return n;
+  }
+  // A developer's own machine, never the live site.
+  function localHost() {
+    var h = String(location.hostname || '').toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || /\.localhost$/.test(h) || /\.test$/.test(h);
+  }
+  /* What a Greenroom code was made for (member, crew, fan, promoter), kept
+     from the sign-up to the first run so those start ticked there. It is
+     written when the account is made, under the address it was made for, so
+     another account on this phone never gets it; the first run's last save
+     and signing out clear it. One key; a phone that will not store it only
+     loses the head start. */
+  var SUGGEST_KEY = 'gr-signup-kinds';
+  function suggestSave(email, kinds) {
+    var k = cleanKinds(kinds);
+    try {
+      if (k.length) localStorage.setItem(SUGGEST_KEY, JSON.stringify({ email: String(email || '').toLowerCase(), kinds: k }));
+      else localStorage.removeItem(SUGGEST_KEY);
+    } catch (e) { /* no head start, nothing else */ }
+  }
+  function suggestClear() {
+    try { localStorage.removeItem(SUGGEST_KEY); } catch (e) { /* nothing stored */ }
+  }
+  function suggestRead() {
+    try {
+      var s = JSON.parse(localStorage.getItem(SUGGEST_KEY) || 'null');
+      var me = session && session.user ? String(session.user.email || '').toLowerCase() : '';
+      if (isObj(s) && me && String(s.email || '').toLowerCase() === me) return cleanKinds(s.kinds);
+    } catch (e) { /* none */ }
+    return [];
+  }
 
   /* On the road a phone drops its signal all the time, and an iPhone that
      has been asleep can fail its first request outright ("Load failed")
@@ -479,13 +552,76 @@
     },
     setHandle: async function (h) {
       if (!session || !session.user) return;
-      var q = await sb.from('profiles').upsert({ user_id: session.user.id, handle: String(h || '').trim().toLowerCase() || null,
+      var clean = String(h || '').trim().toLowerCase();
+      var q = await sb.from('profiles').upsert({ user_id: session.user.id, handle: clean || null,
         updated_at: new Date().toISOString() });
       if (q.error) {
         if (q.error.code === '23505') { var taken = new Error('taken'); taken.code = 'taken'; throw taken; }
         if (q.error.code === '23514') { var bad = new Error('shape'); bad.code = 'shape'; throw bad; }
         throw mapError(q.error);
       }
+      // The first run stops asking for a username the moment there is one.
+      if (firstFacts) firstFacts.handle = clean;
+    },
+    /* ---- The first run: what a new account is asked once it is in (what
+       brings you here, and a username or birthday it still lacks). The facts
+       are read once at start-up, before the app is handed the database
+       (loadFirstRun); these keep them true as the answers are saved. If
+       they could not be read, the account counts as finished and nothing is
+       asked: nobody is ever locked out by this.
+       Someone invited to a tour is asked their username, birthday and
+       password by the overlay over the app (passwordGate). While it is up
+       nothing is due here, or they would be asked the first two twice; when
+       it has saved, the facts are read again and the app is told.
+       suggest: what their Greenroom code was made for, to start ticked. ---- */
+    firstRun: function () {
+      var f = firstFacts || { onboarded: true, kinds: [], handle: '', hasBirth: true, unknown: true };
+      var p = window.GR_BACKEND.myProfile();
+      var asking = !!(session && session.user && session.user.user_metadata &&
+        session.user.user_metadata.invited === true);
+      return { due: !f.onboarded && !asking, needsHandle: !f.unknown && !f.handle, needsBirth: !f.unknown && !f.hasBirth,
+        kinds: f.kinds.slice(), firstName: p.firstName, lastName: p.lastName, handle: f.handle, email: p.email,
+        suggest: suggestRead() };
+    },
+    // Whether Greenroom's project is taking sign-ups at all (open), and whether
+    // a new address has to be confirmed by an emailed code (confirm). null
+    // when it could not be read.
+    signupSettings: function () { return signupSettings(); },
+    // Throws 'shape' (not a real day) or 'young' (under 18). Only you can read it back.
+    saveBirthDate: async function (d) {
+      var day = String(d || '');
+      if (!realDay(day)) throw err('shape');
+      if (yearsOld(Number(day.slice(0, 4)), Number(day.slice(5, 7)), Number(day.slice(8, 10))) < 18) throw err('young');
+      var q = await sb.rpc('save_birth_date', { d: day });
+      if (q.error) {
+        var m = String(q.error.message || '');
+        if (/\byoung\b/i.test(m)) throw err('young');
+        if (/\bshape\b/i.test(m) || q.error.code === '22007' || q.error.code === '22008') throw err('shape');
+        throw mapError(q.error);
+      }
+      var out = isObj(q.data) ? q.data : { ok: true };
+      if (out.ok === false) throw err(out.why === 'young' || out.why === 'shape' ? out.why : 'unavailable');
+      if (firstFacts) firstFacts.hasBirth = true;
+      return out;
+    },
+    // The last step of the first run: what brings you here, and done.
+    finishFirstRun: async function (kinds) {
+      var k = cleanKinds(kinds);
+      var q = await sb.rpc('finish_first_run', { k: k });
+      if (q.error) throw mapError(q.error);
+      var out = isObj(q.data) ? q.data : { ok: true };
+      if (out.ok !== false && firstFacts) { firstFacts.onboarded = true; firstFacts.kinds = k; }
+      if (out.ok !== false) suggestClear(); // the code's head start has done its job
+      return out;
+    },
+    // The same ticks, changed later from Settings.
+    saveKinds: async function (kinds) {
+      var k = cleanKinds(kinds);
+      var q = await sb.rpc('save_kinds', { k: k });
+      if (q.error) throw mapError(q.error);
+      var out = isObj(q.data) ? q.data : { ok: true };
+      if (out.ok !== false && firstFacts) firstFacts.kinds = k;
+      return out;
     },
     profileCard: async function (userId) {
       var q = await sb.rpc('profile_card', { u: userId });
@@ -872,13 +1008,44 @@
       if (q.error) throw mapError(q.error);
       return isObj(q.data) ? q.data : null;
     },
-    // Asking for a page nobody runs: who you are to the act, and where that can be checked.
-    claimArtist: async function (artistId, note, link) {
-      var q = await sb.rpc('claim_artist', { a_id: artistId, note: String(note || '').slice(0, 500), link: String(link || '').slice(0, 200) });
+    /* Asking for a page nobody runs: who you are to the act, and where that
+       can be checked. o = { role, note, links: { spotify, instagram, website } }.
+       The answer carries a code ({ ok: true, code: 'GR-7KQ2' }) to put in the
+       artist's Instagram bio or on its website, so Greenroom can check it.
+       Throws 'short' with no proof at all (no link, and a note under three
+       letters) and 'too-many'. Older callers passed (artistId, note, link):
+       a string second argument still works. */
+    claimArtist: async function (artistId, o, oldLink) {
+      var c = isObj(o) ? o : { note: o, link: oldLink };
+      var note = String(c.note || '').trim().slice(0, 500);
+      var role = String(c.role || '').trim().slice(0, 40);
+      // The database keeps a proof link only when it is a full https address
+      // (0134, claim_links). People type "@theband" and "theband.com": those
+      // are made into addresses here. Anything that still is not one rides
+      // in the old single-link box, so nothing typed is lost on the way.
+      var links = {}, loose = '';
+      ['spotify', 'instagram', 'website'].forEach(function (k) {
+        var raw = isObj(c.links) ? String(c.links[k] || '').trim() : '';
+        if (!raw) return;
+        var url = httpsLink(k, raw).slice(0, 200);
+        if (/^https:\/\/\S{4,}$/i.test(url)) links[k] = url;
+        else if (!loose) loose = raw.slice(0, 200);
+      });
+      var link = String(c.link || '').trim().slice(0, 200) || loose;
+      if (!link && !Object.keys(links).length && note.length < 3) throw err('short');
+      var q = await sb.rpc('claim_artist', { a_id: artistId, note: note, link: link, role: role, links: links });
+      if (q.error && fnMissing(q.error)) {
+        // The database still has the older claim (a note and one link): send
+        // it everything in the note, so whoever reviews it misses nothing.
+        var all = [role, note].concat(Object.keys(links).map(function (k) { return k + ': ' + links[k]; }))
+          .filter(Boolean).join(' · ').slice(0, 500);
+        q = await sb.rpc('claim_artist', { a_id: artistId, note: all,
+          link: link || links.website || links.spotify || links.instagram || '' });
+      }
       if (q.error) {
         var m = String(q.error.message || '');
-        if (/say who you are/i.test(m)) { var e1 = new Error('short'); e1.code = 'short'; throw e1; }
-        if (/too many waiting/i.test(m)) { var e2 = new Error('too-many'); e2.code = 'too-many'; throw e2; }
+        if (/say who you are/i.test(m)) throw err('short');
+        if (/too many/i.test(m)) throw err('too-many');
         throw mapError(q.error);
       }
       return isObj(q.data) ? q.data : { ok: false };
@@ -901,6 +1068,134 @@
     },
     decideClaim: async function (claimId, approve) {
       var q = await sb.rpc('decide_claim', { c_id: claimId, approve: !!approve });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    /* ---- Asking an artist to list you. A newcomer cannot put themselves on
+       an artist's page: they ask (as a Member, kind 'band', or as crew, with
+       the role they hold) and the people who run the page say yes or no. A
+       yes lists them and endorses them in one go. { ok: false, why } is an
+       answer, not a failure: 'listed' (already on the page), 'former_member',
+       'wait' (declined in the last week), 'many' (ten already waiting). ---- */
+    requestArtist: async function (artistId, kind, role) {
+      var q = await sb.rpc('request_artist', { a_id: artistId, k: kind === 'crew' ? 'crew' : 'band',
+        r: String(role || '').trim().slice(0, 40) });
+      // Someone who left as a member cannot come back as crew yet (0132 says so with an error).
+      if (q.error && /former_member/.test(String(q.error.message || ''))) return { ok: false, why: 'former_member' };
+      if (q.error) throw knownError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    // Your own asks and where each stands: pending, expired (no answer in 30 days), declined, accepted.
+    myArtistRequests: async function () {
+      var q = await sb.rpc('my_artist_requests');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    withdrawArtistRequest: async function (artistId) {
+      var q = await sb.rpc('withdraw_artist_request', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    // Who is waiting on one page you run, or (no id) on every page you run.
+    artistRequestQueue: async function (artistId) {
+      var q = await sb.rpc('artist_request_queue', { a_id: artistId || null });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    decideArtistRequest: async function (artistId, userId, accept) {
+      var q = await sb.rpc('decide_artist_request', { a_id: artistId, u_id: userId, accept: !!accept });
+      if (q.error && /former_member/.test(String(q.error.message || ''))) return { ok: false, why: 'former_member' };
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    /* ---- Fans: the nights of one tour (or festival entry) on an artist's
+       history, each with whether you were there, and saying you were. Only a
+       night already played can be marked. ---- */
+    fanNights: async function (artistId, tourName) {
+      var q = await sb.rpc('artist_fan_nights', { a_id: artistId, tour_name: tourName });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    // { ok: true, count } (your lifetime shows attended) or { ok: false, why: 'future' | 'none' | 'many' }.
+    markAttended: async function (artistId, date, going) {
+      var q = await sb.rpc('mark_attended', { a_id: artistId, night: date, going: going !== false });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    myAttended: async function () {
+      var q = await sb.rpc('my_attended');
+      if (q.error) throw mapError(q.error);
+      var d = isObj(q.data) ? q.data : {};
+      return { count: Number(d.count) || 0, artists: Array.isArray(d.artists) ? d.artists : [] };
+    },
+    /* ---- Venues and festivals ("places"). Search reads the show archive: a
+       row is a place with shows on record, not yet a page. Opening one finds
+       its page or makes it, the way an artist's page is made. Someone who
+       worked there asks to be listed, with their role. ---- */
+    findPlaces: async function (text) {
+      var q = await sb.rpc('find_places', { q: String(text || '') });
+      if (q.error) throw mapError(q.error);
+      var d = isObj(q.data) ? q.data : {};
+      return { venues: Array.isArray(d.venues) ? d.venues : [], festivals: Array.isArray(d.festivals) ? d.festivals : [] };
+    },
+    openVenue: async function (name, city, cc) {
+      var q = await sb.rpc('venue_open', { v_name: String(name || ''), v_city: String(city || ''), v_cc: String(cc || '') });
+      if (q.error) throw knownError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    openFestival: async function (name) {
+      var q = await sb.rpc('festival_open', { f_name: String(name || '') });
+      if (q.error) throw knownError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    venueCard: async function (id) {
+      var q = await sb.rpc('venue_card', { v_id: id });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    festivalCard: async function (id) {
+      var q = await sb.rpc('festival_card', { f_id: id });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    // o = { venueId } or { festivalId }, plus role. Throws 'too-many'.
+    placeWorkAsk: async function (o) {
+      var p = o || {};
+      var q = await sb.rpc('place_work_ask', { v_id: p.venueId || null, f_id: p.festivalId || null,
+        r: String(p.role || '').trim().slice(0, 40) });
+      if (q.error) throw knownError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    placeWorkWithdraw: async function (o) {
+      var p = o || {};
+      var q = await sb.rpc('place_work_withdraw', { v_id: p.venueId || null, f_id: p.festivalId || null });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
+    myPlaces: async function () {
+      var q = await sb.rpc('my_places');
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    /* ---- Invite codes: what gets someone through the door with no tour
+       invite. A Greenroom admin makes them; null for everyone else (so the
+       app knows not to show the door, like claimQueue). ---- */
+    inviteCodes: async function () {
+      var q = await sb.rpc('invite_codes');
+      if (q.error) throw mapError(q.error);
+      return q.data == null ? null : (Array.isArray(q.data) ? q.data : []);
+    },
+    // o = { kinds ([] = any), uses, days, note }. Hands back { code }.
+    makeInviteCode: async function (o) {
+      var p = o || {};
+      var q = await sb.rpc('invite_code_make', { k: cleanKinds(p.kinds),
+        uses: Math.max(1, Math.round(Number(p.uses)) || 1), days: Math.max(1, Math.round(Number(p.days)) || 30),
+        note: String(p.note || '').trim().slice(0, 80) });
+      if (q.error) throw knownError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    revokeInviteCode: async function (code) {
+      var q = await sb.rpc('invite_code_revoke', { c: String(code || '') });
       if (q.error) throw mapError(q.error);
       return isObj(q.data) ? q.data : { ok: false };
     },
@@ -1273,8 +1568,11 @@
       if (mgr) row.manager = true;
       // The door first: the database only makes an account for an address that was let in (24 hours,
       // spent by the sign-up; a day's invites are capped). Refused here, nothing is left half done.
+      // Two of its refusals the app has words for: an account that came in on a Greenroom code cannot
+      // add people until Greenroom has confirmed an artist page of theirs ('page-first'), and the
+      // day's limit ('too-many').
       var al = await sb.rpc('allow_signup', { addr: addr, note: tourRole });
-      if (al.error) throw mapError(al.error);
+      if (al.error) throw /page first/i.test(String(al.error.message || '')) ? err('page-first') : knownError(al.error);
       var q = await sb.from('members').upsert(row);
       if (q.error) throw mapError(q.error);
       // Remembered for the next tour's invites. A nicety: never blocks the invite.
@@ -1322,7 +1620,7 @@
     // tour manager sending a code ahead of the tour).
     allowSignup: async function (addr, note) {
       var q = await sb.rpc('allow_signup', { addr: String(addr || ''), note: String(note || '') });
-      if (q.error) throw mapError(q.error);
+      if (q.error) throw (/page first/i.test(String(q.error.message || '')) ? err('page-first') : knownError(q.error));
       return isObj(q.data) ? q.data : { ok: false };
     },
     // Deleting your own account and what is yours alone. The database says
@@ -1634,6 +1932,7 @@
           if (/^sb-.*-auth-token/.test(k)) localStorage.removeItem(k);
         });
       } catch (e) { /* nothing stored */ }
+      suggestClear(); // what a sign-up code was made for is not for whoever signs in next
       location.replace(appUrl());
     }
   };
@@ -1789,6 +2088,516 @@
     if (q.error) throw q.error;
   }
 
+  /* ---------------- One question per screen ----------------
+     The sign-up, and an invited person's first minute, ask one thing at a
+     time: an arrow back, a title, a grey sentence, one field, one button.
+     (Devin's reference is Instagram's sign-up; the colours are Greenroom's
+     own.) The look lives here rather than in the app's stylesheet because
+     this file draws these screens, and it runs before the app does. */
+  var SG_CSS = [
+    '#gr-gate.sg-host, #gr-pass-gate.sg-host { display: block; padding: calc(8px + env(safe-area-inset-top, 0px)) 20px calc(40px + env(safe-area-inset-bottom, 0px)); }',
+    '.sg { width: 100%; max-width: 440px; margin: 0 auto; text-align: left; color: var(--ink, #F1F4E3); }',
+    '.sg-top { display: flex; align-items: center; height: 44px; margin: 0 0 12px -10px; }',
+    '.sg-back { -webkit-appearance: none; appearance: none; border: 0; background: none; color: var(--ink, #F1F4E3); width: 44px; height: 44px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; cursor: pointer; }',
+    '.sg-back svg { display: block; width: 26px; height: 26px; }',
+    '.sg-title { margin: 0 0 8px; font-size: 26px; line-height: 1.15; font-weight: 800; letter-spacing: -.02em; color: var(--ink, #F1F4E3); }',
+    '.sg-sub { margin: 0 0 22px; font-size: 15px; line-height: 1.45; font-weight: 400; color: var(--ink-2, #8F947B); overflow-wrap: break-word; }',
+    /* A second grey line (the address the password is for) sits close under the first. */
+    '.sg-sub + .sg-sub { margin-top: -14px; }',
+    '.sg-form { display: block; margin: 0; }',
+    '.sg-field { position: relative; display: block; margin: 0 0 10px; padding: 10px 50px 10px 16px; min-height: 64px; border: 1px solid var(--ink-3, #626750); border-radius: 16px; background: var(--surface, #0C0F02); text-align: left; cursor: text; }',
+    '.sg-field:focus-within { border-color: var(--brand, #CCF80A); box-shadow: 0 0 0 3px var(--ring, rgba(204, 248, 10, .3)); }',
+    '.sg-label { display: block; font-size: 12.5px; line-height: 1.3; font-weight: 500; color: var(--ink-2, #8F947B); }',
+    '.sg-input { display: block; width: 100%; height: 26px; margin: 1px 0 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--ink, #F1F4E3); font: inherit; font-size: 17px; font-weight: 600; line-height: 26px; -webkit-appearance: none; appearance: none; }',
+    '.sg-input:focus, .sg-input:focus-visible { outline: none; border-radius: 0; box-shadow: none; }',
+    /* A saved name or email dropped in by the phone must not paint the box white. */
+    '.sg-input:-webkit-autofill { -webkit-text-fill-color: var(--ink, #F1F4E3); caret-color: var(--ink, #F1F4E3); transition: background-color 99999s ease-out 0s; }',
+    '.sg-ghost { position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; }',
+    '.sg-tick { position: absolute; right: 14px; top: 50%; width: 24px; height: 24px; margin-top: -12px; color: var(--pos, #CCF80A); display: none; pointer-events: none; }',
+    '.sg-tick svg { display: block; width: 24px; height: 24px; }',
+    '.sg-field.ok .sg-tick { display: block; }',
+    '.sg-err { min-height: 20px; margin: 0 2px; font-size: 14px; line-height: 1.4; color: var(--neg, #FF5F57); text-align: left; }',
+    '.sg-err.quiet { color: var(--ink-2, #8F947B); }',
+    '.sg-err .linkbtn { display: inline; min-height: 0; margin: 0; padding: 0; font-size: inherit; }',
+    '.sg .btn.primary.sg-next { display: flex; width: 100%; min-height: 52px; margin: 14px 0 0; border-radius: 999px; }',
+    /* "Check your email" has two ways out that are always there, under the button. */
+    '.sg-more { display: grid; justify-items: start; gap: 2px; margin: 18px 2px 0; }',
+    '.sg-more .linkbtn { min-height: 40px; margin: 0; font-size: 15px; text-align: left; font-variant-numeric: tabular-nums; }',
+    '.sg-more .linkbtn:disabled { color: var(--ink-3, #626750); text-decoration: none; cursor: default; }',
+    /* A birthday (and a role) is picked, not typed: the box holds buttons that read like its value. */
+    '.sg-field.sg-picks { cursor: pointer; }',
+    '.sg-date { display: flex; flex-wrap: wrap; margin: 1px 0 0; }',
+    '.sg-pickb { -webkit-appearance: none; appearance: none; border: 0; background: none; height: 40px; margin: -7px 0; padding: 0 12px 0 0; color: var(--ink, #F1F4E3); font: inherit; font-size: 17px; font-weight: 600; line-height: 40px; text-align: left; cursor: pointer; }',
+    '.sg-pickb.empty { color: var(--ink-3, #626750); font-weight: 500; }',
+    '.sg-pickb:focus, .sg-pickb:focus-visible { outline: none; }',
+    '.sg-pick { position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, .62); display: flex; align-items: flex-end; justify-content: center; }',
+    '.sg-pick-card { width: 100%; max-width: 520px; max-height: 72vh; display: flex; flex-direction: column; background: var(--surface-2, #161A07); border: 1px solid var(--ink-3, #626750); border-bottom: 0; border-radius: 20px 20px 0 0; padding-bottom: env(safe-area-inset-bottom, 0px); }',
+    '.sg-pick-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 2px 20px; font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2, #8F947B); text-align: left; }',
+    '.sg-pick-x { -webkit-appearance: none; appearance: none; flex: none; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px; background: none; color: var(--ink-2, #8F947B); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }',
+    '.sg-pick-x svg { display: block; width: 22px; height: 22px; }',
+    '.sg-pick-list { overflow-y: auto; -webkit-overflow-scrolling: touch; display: grid; gap: 2px; padding: 0 10px 12px; }',
+    '.sg-pick-opt { -webkit-appearance: none; appearance: none; display: block; width: 100%; min-height: 48px; padding: 0 2px; border: 0; border-radius: 12px; background: none; color: var(--ink, #F1F4E3); font: inherit; font-size: 16px; font-weight: 600; text-align: center; cursor: pointer; }',
+    '.sg-pick-opt.on { color: var(--on-brand, #121500); background: var(--brand, #CCF80A); }'
+  ].join('\n');
+  function sgStyle() {
+    if (document.getElementById('gr-sg-style')) return;
+    var st = document.createElement('style');
+    st.id = 'gr-sg-style';
+    st.textContent = SG_CSS;
+    document.head.appendChild(st);
+  }
+  // Our own drawings (nothing typed ever goes near them): the app's back arrow and X, and a ringed tick.
+  var SG_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+  var SG_ICON = {
+    back: SG_SVG + '<path d="M15 5l-7 7 7 7"/></svg>',
+    close: SG_SVG + '<path d="M6 6l12 12M18 6L6 18"/></svg>',
+    tick: SG_SVG + '<circle cx="12" cy="12" r="9.5"/><path d="M7.8 12.4l2.9 2.9 5.5-6.1"/></svg>'
+  };
+  var SG_OFFLINE = 'Couldn’t reach the server. Check your connection and try again.';
+  var SG_BADCODE = 'That code didn’t work. Check it and try again.';
+  var SG_SLOW = 'Too many tries. Wait a few minutes and try again.';
+  var SG_SOON = 'Greenroom isn’t taking new sign-ups just yet. Try again soon.';
+  // The code was fine; the project's own switches are what said no.
+  var SG_OFF = 'Greenroom isn’t taking new sign-ups yet. Ask the person who gave you the code.';
+  var SG_MAIL = 'We couldn’t send the email just now. Wait a few minutes and try again.';
+  // The server answered, with something this file has no better words for.
+  var SG_AGAIN = 'That didn’t work. Try again in a minute.';
+  // How to tell the two kinds of code apart, for someone holding the wrong one.
+  var SG_LETTERS = 'A Greenroom code has letters in it, like GR-7KQ2-M4XD.';
+  var SG_NOCODE = 'That code wasn’t recognised. Check it and try again. ' + SG_LETTERS;
+  var SG_SHAPE = '3 to 24 letters, numbers, dots or underscores.';
+  var SG_HANDLE = /^[a-z0-9._]{3,24}$/;   // the database's own rule for a username
+  var SG_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  var SG_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
+    'October', 'November', 'December'];
+  /* No request may hang a screen. Whatever the gate asks the server gets
+     this long to answer (15 seconds unless told otherwise); after that it
+     counts as no answer, so the screen says so and its button comes back.
+     (sturdyFetch has no limit of its own: on a weak signal a request can sit
+     for minutes, and Back was the only way out.) The request itself is not
+     called off, so whoever waits on this has to cope with it landing late. */
+  function sgLimit(work, ms) {
+    return new Promise(function (res, rej) {
+      var t = setTimeout(function () { rej(err('offline')); }, ms || 15000);
+      Promise.resolve(work).then(function (v) { clearTimeout(t); res(v); }, function (e) { clearTimeout(t); rej(e); });
+    });
+  }
+  // No answer at all (no signal, or the limit above), as against a "no" from the server.
+  function sgNoAnswer(e) {
+    if (!e) return false;
+    if (e.code === 'offline' || e.name === 'AuthRetryableFetchError' || e.status === 0) return true;
+    return /failed to fetch|load failed|network|timed? ?out/i.test(String(e.message || ''));
+  }
+  // What to say when a question to the database came back with nothing usable.
+  function sgNoData(q) {
+    if (fnMissing(q && q.error)) return SG_SOON;
+    return !q || q.status === 0 || sgNoAnswer(q.error) ? SG_OFFLINE : SG_AGAIN;
+  }
+  /* The project's two public sign-up switches (Supabase's /auth/v1/settings,
+     readable with the publishable key the client already uses): are new
+     accounts being made at all, and must a new address be confirmed by an
+     emailed code. The database refuses a code sign-up unless both are on, so
+     the code screen asks here first and says so there, not five questions
+     later. null: it could not be read (5 seconds at most), and whoever asked
+     carries on. */
+  async function signupSettings() {
+    try {
+      var s = await sgLimit(fetch(cfg.url + '/auth/v1/settings', { headers: { apikey: cfg.anonKey }, cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null; }), 5000);
+      if (!isObj(s)) return null;
+      return { open: s.disable_signup !== true && !(isObj(s.external) && s.external.email === false),
+        confirm: s.mailer_autoconfirm !== true };
+    } catch (e) { return null; }
+  }
+  // What the server said about a password it would not take.
+  function sgPassSay(msg) {
+    var n = /at least (\d+)/i.exec(msg);
+    if (/weak|easy to guess|pwned|compromised/i.test(msg)) return 'That password is too easy to guess. Pick a different one.';
+    return n ? 'Pick a longer password (' + n[1] + ' characters or more).' : 'Pick a longer password.';
+  }
+  function sgEl(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function sgTick() {
+    var t = sgEl('span', 'sg-tick');
+    t.setAttribute('aria-hidden', 'true');
+    t.innerHTML = SG_ICON.tick;
+    return t;
+  }
+
+  /* One screen, drawn into host (the gate, or the invited person's overlay).
+     o: first (an X, not an arrow), onBack (none: nothing is drawn there),
+     title, sub, fields [{ label, type, value, cls, attrs }] or body (a node
+     of its own in their place, with focus naming what to focus in it), next
+     (the button's word), onInput(ui, input), onNext(ui). onNext may hand
+     back a promise: the button waits on it, comes back when it settles (a
+     failure included, so no screen is ever left with a dead button), and
+     stays off only when it resolves 'wait' (signed in: the page is leaving).
+     Whatever was typed only ever goes in through .value and textContent. */
+  function sgScreen(host, o) {
+    sgStyle();
+    host.classList.add('sg-host');
+    host.textContent = '';
+    host.scrollTop = 0;
+    var box = sgEl('div', 'sg');
+    var top = sgEl('div', 'sg-top');
+    if (o.onBack) {
+      var back = sgEl('button', 'sg-back');
+      back.type = 'button';
+      back.setAttribute('aria-label', o.first ? 'Close' : 'Back');
+      back.innerHTML = o.first ? SG_ICON.close : SG_ICON.back;
+      back.addEventListener('click', function () { o.onBack(); });
+      top.appendChild(back);
+    }
+    box.appendChild(top);
+    box.appendChild(sgEl('h1', 'sg-title', o.title));
+    box.appendChild(sgEl('p', 'sg-sub', o.sub));
+    var form = sgEl('form', 'sg-form');
+    form.setAttribute('novalidate', '');
+    var ui = { host: host, form: form, inputs: [], fields: [], labels: [] };
+    (o.fields || []).forEach(function (f) {
+      var field = sgEl('label', 'sg-field');
+      var lab = sgEl('span', 'sg-label', f.label);
+      var inp = sgEl('input', 'sg-input' + (f.cls ? ' ' + f.cls : ''));
+      inp.type = f.type || 'text';
+      inp.setAttribute('enterkeyhint', 'next');
+      Object.keys(f.attrs || {}).forEach(function (k) { inp.setAttribute(k, f.attrs[k]); });
+      inp.value = f.value || '';
+      inp.addEventListener('input', function () { if (o.onInput) o.onInput(ui, inp); });
+      field.appendChild(lab); field.appendChild(inp); field.appendChild(sgTick());
+      form.appendChild(field);
+      ui.inputs.push(inp); ui.fields.push(field); ui.labels.push(lab);
+    });
+    if (o.body) form.appendChild(o.body);
+    var errEl = sgEl('div', 'sg-err');
+    errEl.setAttribute('role', 'alert');
+    form.appendChild(errEl);
+    var btn = sgEl('button', 'btn primary sg-next', o.next || 'Next');
+    btn.type = 'submit';
+    form.appendChild(btn);
+    box.appendChild(form);
+    host.appendChild(box);
+    var busy = false, stopped = false;
+    function sync() { btn.disabled = busy || stopped; }
+    // The one quiet line under the field. quiet: not an error ("Checking…").
+    ui.say = function (text, quiet) {
+      errEl.textContent = text || '';
+      errEl.classList.toggle('quiet', !!quiet);
+    };
+    // A way out, right after the sentence that needs one ("Back to sign in").
+    ui.act = function (label, fn) {
+      var b = sgEl('button', 'linkbtn inline', label);
+      b.type = 'button';
+      b.addEventListener('click', fn);
+      errEl.appendChild(document.createTextNode(' '));
+      errEl.appendChild(b);
+    };
+    ui.ok = function (i, yes) { if (ui.fields[i]) ui.fields[i].classList.toggle('ok', !!yes); };
+    // No going on from here until the answer changes (under 18).
+    ui.stop = function (yes) { stopped = !!yes; sync(); };
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (busy || stopped) return;
+      ui.say('');
+      var p;
+      try { p = o.onNext(ui); } catch (x) { p = Promise.reject(x); }
+      if (!p || typeof p.then !== 'function') return;
+      busy = true; sync();
+      p.then(function (how) { busy = how === 'wait'; sync(); },
+        function () { busy = false; sync(); ui.say(SG_OFFLINE); });
+    });
+    var aim = ui.inputs[0] || o.focus;
+    if (aim) {
+      try { aim.focus(); } catch (e) { /* cosmetic */ }
+      // Carry on typing where the answer ends (an email box refuses this in some browsers).
+      try { if (aim.value) aim.setSelectionRange(aim.value.length, aim.value.length); } catch (e) { /* cosmetic */ }
+    }
+    return ui;
+  }
+
+  /* A list of our own to pick from, like the role picker: the phone's
+     dropdown misbehaves inside the scrolling gate. cols: how many across
+     (months 3, days 7, years 4). near: where to open the list when nothing
+     is picked yet. opener: the button that opened it. Tapping outside the
+     card, the X in its corner and Escape all back out.
+     Only one list is ever open, and while it is the focus is inside it (on
+     the current answer): with the focus left on the button behind, Enter
+     opened a second list over the first, and a screen reader had no way to
+     leave without choosing. Closing hands the focus back to the opener. */
+  var sgPickShut = null;   // closes the list that is open, when one is
+  function sgPick(title, opts, current, cols, near, onPick, opener) {
+    sgStyle();
+    if (sgPickShut) sgPickShut(false);
+    var ov = sgEl('div', 'sg-pick');
+    ov.setAttribute('role', 'dialog');
+    ov.setAttribute('aria-modal', 'true');
+    ov.setAttribute('aria-label', title);
+    var card = sgEl('div', 'sg-pick-card');
+    var head = sgEl('div', 'sg-pick-head');
+    head.appendChild(sgEl('span', '', title));
+    var x = sgEl('button', 'sg-pick-x');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Close');
+    x.innerHTML = SG_ICON.close;
+    head.appendChild(x);
+    card.appendChild(head);
+    var list = sgEl('div', 'sg-pick-list');
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', title);
+    list.style.gridTemplateColumns = 'repeat(' + (cols || 1) + ', 1fr)';
+    function onKey(e) {
+      if (e.key !== 'Escape' && e.key !== 'Esc') return;
+      e.preventDefault(); e.stopPropagation();
+      shut(true);
+    }
+    // back: the opener gets the focus again (not when another list is taking this one's place).
+    function shut(back) {
+      if (sgPickShut !== shut) return;
+      sgPickShut = null;
+      document.removeEventListener('keydown', onKey, true);
+      ov.remove();
+      if (back && opener) { try { opener.focus(); } catch (e) { /* cosmetic */ } }
+    }
+    var onEl = null, nearEl = null;
+    opts.forEach(function (opt) {
+      var b = sgEl('button', 'sg-pick-opt' + (opt.value === current ? ' on' : ''), opt.label);
+      b.type = 'button';
+      b.setAttribute('role', 'option');
+      b.setAttribute('aria-selected', String(opt.value === current));
+      b.addEventListener('click', function () { shut(true); onPick(opt.value); });
+      if (opt.value === current) onEl = b;
+      if (opt.value === near) nearEl = b;
+      list.appendChild(b);
+    });
+    card.appendChild(list);
+    ov.appendChild(card);
+    x.addEventListener('click', function () { shut(true); });
+    ov.addEventListener('click', function (e) { if (e.target === ov) shut(true); });
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(ov);
+    sgPickShut = shut;
+    var show = onEl || nearEl;
+    if (show && show.scrollIntoView) show.scrollIntoView({ block: 'center' });
+    var aim = show || list.firstChild;
+    if (aim) { try { aim.focus({ preventScroll: true }); } catch (e) { /* cosmetic */ } }
+  }
+
+  /* The questions the sign-up and an invite share. Each takes where to draw
+     (host), the answers so far (a: kept while they go back and forth) and
+     nav: { first, back, next } plus what that screen needs. */
+  function sgName(host, a, nav) {
+    function read() {
+      a.first = String(ui.inputs[0].value || '').trim().slice(0, 30);
+      a.last = String(ui.inputs[1].value || '').trim().slice(0, 30);
+      ui.ok(0, !!a.first); ui.ok(1, !!a.last);
+    }
+    var words = { maxlength: '30', autocapitalize: 'words', autocorrect: 'off', spellcheck: 'false' };
+    var ui = sgScreen(host, {
+      first: nav.first, onBack: nav.back,
+      title: 'What’s your name?',
+      sub: 'Your first and last name, the way people on the road know you.',
+      fields: [
+        { label: 'First name', value: a.first, attrs: Object.assign({ autocomplete: 'given-name' }, words) },
+        { label: 'Last name', value: a.last, attrs: Object.assign({ autocomplete: 'family-name' }, words) }
+      ],
+      onInput: function () { read(); },
+      onNext: function () {
+        read();
+        if (!a.first) { ui.say('Type your first name.'); ui.inputs[0].focus(); return; }
+        if (!a.last) { ui.say('Type your last name.'); ui.inputs[1].focus(); return; }
+        nav.next();
+      }
+    });
+    read();
+  }
+
+  // A username to start from: first.last, cut down to what the rule allows.
+  function sgSuggest(first, last) {
+    function part(s) {
+      var t = String(s || '').toLowerCase();
+      // An accented letter splits into the plain letter and its mark; the mark drops out below.
+      try { t = t.normalize('NFD'); } catch (e) { /* older phones: the whole letter drops out instead */ }
+      return t.replace(/[^a-z0-9]+/g, '');
+    }
+    var f = part(first), l = part(last);
+    var h = (f && l ? f + '.' + l : f || l).slice(0, 24).replace(/\.+$/, '');
+    return SG_HANDLE.test(h) ? h : '';
+  }
+  /* nav.check(h) asks the database whether the name is free and resolves
+     { free: true | false } or { why } (it would not say); it rejects when
+     it could not be asked at all. nav.skip (an invite): when the question
+     itself keeps failing, they may go on without a username rather than be
+     stuck behind it; the first run asks again. */
+  function sgHandle(host, a, nav) {
+    if (!a.handleMine) a.handle = sgSuggest(a.first, a.last);
+    var timer = 0, seq = 0, known = '';
+    function clean(v) { return String(v || '').toLowerCase().replace(/\s+/g, '').replace(/^@+/, '').slice(0, 24); }
+    // Resolves true only when the database has just said this name is free.
+    function look(v, pressed) {
+      var mine = ++seq;
+      if (!SG_HANDLE.test(v)) { ui.ok(0, false); ui.say(SG_SHAPE); return Promise.resolve(false); }
+      return nav.check(v).then(function (r) {
+        if (mine !== seq) return false;
+        if (r && r.free === true) { known = v; ui.ok(0, true); ui.say(''); return true; }
+        ui.ok(0, false);
+        if (r && r.free === false) ui.say('That one is taken.');
+        else if (r && r.why === 'slow') ui.say(SG_SLOW);
+        else if (r && r.why === 'bad') ui.say(SG_BADCODE);
+        else if (r && r.why === 'shape') ui.say(SG_SHAPE);
+        else ui.say('Couldn’t check that name. Try again.');
+        return false;
+      }, function () {
+        if (mine !== seq) return false;
+        ui.ok(0, false);
+        ui.say('Couldn’t check that name. Check your connection and try again.');
+        if (pressed && nav.skip) ui.act('Skip for now', function () { a.handle = ''; a.handleMine = false; nav.next(); });
+        return false;
+      });
+    }
+    var ui = sgScreen(host, {
+      first: nav.first,
+      onBack: nav.back ? function () { clearTimeout(timer); seq += 1; nav.back(); } : null,
+      title: 'Create a username',
+      sub: 'This is your @name on Greenroom. Letters, numbers, dots and underscores. You can change it later.',
+      fields: [{ label: 'Username', value: a.handle, attrs: { maxlength: '24', autocomplete: 'off',
+        autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false' } }],
+      onInput: function (u, inp) {
+        var v = clean(inp.value);
+        if (v !== inp.value) inp.value = v;
+        a.handle = v; a.handleMine = true;
+        ui.ok(0, false); ui.say('');
+        clearTimeout(timer); seq += 1;
+        // Checked a moment after the last key, not on every one.
+        if (v) timer = setTimeout(function () { look(v, false); }, 350);
+      },
+      onNext: function () {
+        var v = clean(ui.inputs[0].value);
+        clearTimeout(timer);
+        if (!v) { ui.say('Pick a username.'); ui.inputs[0].focus(); return; }
+        if (known === v) { a.handle = v; nav.next(); return; }
+        return look(v, true).then(function (free) { if (free) { a.handle = v; nav.next(); } });
+      }
+    });
+    if (a.handle) look(a.handle, false);
+  }
+
+  // How many days that month has (29 for a February with no year yet, so a leap day can be picked).
+  function sgDays(y, m) { return m ? new Date(y || 2000, m, 0).getDate() : 31; }
+  function sgBirth(host, a, nav) {
+    var row = sgEl('div', 'sg-field sg-picks');
+    var lab = sgEl('span', 'sg-label', 'Birthday');
+    var line = sgEl('div', 'sg-date');
+    function part(word, open) {
+      var b = sgEl('button', 'sg-pickb empty', word);
+      b.type = 'button';
+      b.setAttribute('aria-haspopup', 'listbox');
+      b.addEventListener('click', open);
+      line.appendChild(b);
+      return b;
+    }
+    var bM = part('Month', openM), bD = part('Day', openD), bY = part('Year', openY);
+    row.appendChild(lab); row.appendChild(line); row.appendChild(sgTick());
+    // Anywhere else on the box: whichever part is still missing.
+    row.addEventListener('click', function (e) {
+      if (e.target && e.target.closest && e.target.closest('.sg-pickb')) return;
+      if (!a.month) openM(); else if (!a.day) openD(); else if (!a.year) openY(); else openM();
+    });
+    function set(b, text, word) { b.textContent = text || word; b.classList.toggle('empty', !text); }
+    function draw() {
+      var whole = !!(a.month && a.day && a.year);
+      set(bM, a.month ? SG_MONTHS[a.month - 1] : '', 'Month');
+      set(bD, a.day ? String(a.day) + (whole ? ',' : '') : '', 'Day');
+      set(bY, a.year ? String(a.year) : '', 'Year');
+      var age = whole ? yearsOld(a.year, a.month, a.day) : 0;
+      // Greenroom's terms say 18 (the database refuses anyone younger: save_birth_date).
+      var young = whole && age < 18;
+      lab.textContent = whole && age >= 0 ? 'Birthday (' + age + (age === 1 ? ' year old)' : ' years old)') : 'Birthday';
+      a.birth = whole && !young ? a.year + '-' + ('0' + a.month).slice(-2) + '-' + ('0' + a.day).slice(-2) : '';
+      row.classList.toggle('ok', !!a.birth);
+      ui.stop(young);
+      ui.say(young ? 'Greenroom is for people 18 and older.' : '');
+    }
+    // A day the month does not have (the 31st, then February) shows as its last day. The day they
+    // actually picked is kept (a.dayPicked), so going on to March shows the 31st again.
+    function fit() {
+      var want = a.dayPicked || a.day;
+      if (want) a.day = Math.min(want, sgDays(a.year, a.month));
+    }
+    // Picking one part opens the next one still missing, so a birthday is three taps in a row.
+    function openM() {
+      sgPick('Month', SG_MONTHS.map(function (n, i) { return { value: i + 1, label: n }; }), a.month, 3, 0, function (v) {
+        a.month = v; fit(); draw();
+        if (!a.day) openD(); else if (!a.year) openY();
+      }, bM);
+    }
+    function openD() {
+      var opts = [];
+      for (var d = 1; d <= sgDays(a.year, a.month); d++) opts.push({ value: d, label: String(d) });
+      sgPick('Day', opts, a.day, 7, 0, function (v) {
+        a.day = v; a.dayPicked = v; draw();
+        if (!a.month) openM(); else if (!a.year) openY();
+      }, bD);
+    }
+    function openY() {
+      var now = new Date().getFullYear(), opts = [];
+      for (var y = now; y >= now - 110; y--) opts.push({ value: y, label: String(y) });
+      sgPick('Year', opts, a.year, 4, now - 25, function (v) {
+        a.year = v; fit(); draw();
+        if (!a.month) openM(); else if (!a.day) openD();
+      }, bY);
+    }
+    var ui = sgScreen(host, {
+      first: nav.first, onBack: nav.back,
+      title: 'What’s your birthday?',
+      sub: 'Use your own birthday. Only you can see it.',
+      body: row, focus: bM,
+      onNext: function () {
+        if (!a.birth) { ui.say('Pick your birthday: the month, the day and the year.'); return; }
+        nav.next();
+      }
+    });
+    draw();
+  }
+
+  /* nav.label: the button's word. nav.email: whose password this is, said
+     in a grey line ("You'll sign in with ...") and given to the phone's
+     password keeper (it files a new password under the email in the same
+     form; that box is there for it alone, out of sight).
+     nav.next(ui) does the saving and hands back its promise. */
+  function sgPass(host, a, nav) {
+    var ui = sgScreen(host, {
+      first: nav.first, onBack: nav.back,
+      title: 'Create a password',
+      sub: 'At least 6 letters or numbers. Something others can’t guess.',
+      fields: [{ label: 'Password', type: 'password', value: a.pass, attrs: { autocomplete: 'new-password',
+        autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' } }],
+      next: nav.label,
+      onInput: function (u, inp) { a.pass = String(inp.value || ''); ui.ok(0, a.pass.length >= 6); },
+      onNext: function () {
+        a.pass = String(ui.inputs[0].value || '');
+        if (a.pass.length < 6) { ui.say('Password needs at least 6 characters.'); ui.inputs[0].focus(); return; }
+        return nav.next(ui);
+      }
+    });
+    if (nav.email) {
+      // The address, in plain sight before the account is made: a slip in it is
+      // caught here, not after an email that never comes.
+      ui.form.parentNode.insertBefore(sgEl('p', 'sg-sub', 'You’ll sign in with ' + nav.email + '.'), ui.form);
+      var who = sgEl('input', 'sg-ghost');
+      who.type = 'email';
+      who.setAttribute('autocomplete', 'username');
+      who.setAttribute('tabindex', '-1');
+      who.setAttribute('aria-hidden', 'true');
+      who.readOnly = true;
+      who.value = nav.email;
+      ui.form.insertBefore(who, ui.form.firstChild);
+    }
+    ui.ok(0, a.pass.length >= 6);
+  }
+
   function gate(note, code) {
     // From an email's button: straight to the code, already filled in.
     var mode = code ? 'code' : 'signin';
@@ -1796,79 +2605,360 @@
     wrap.id = 'gr-gate';
     document.body.appendChild(wrap);
 
-    /* "I have a code": the emails carry a code as well as a button, because
-       an iPhone always opens email links in Safari, never in the home-screen
-       app. Typing the code here signs in without leaving the app. The code
-       could be from an invite, a password reset or a sign-in email, so each
-       kind is tried in turn. */
-    function renderCode() {
-      wrap.innerHTML =
-        '<div class="gate-card">' +
-        '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-        '<form id="gr-code-form" novalidate>' +
-        '<input class="input" type="email" id="gr-gate-email" placeholder="Your email address" ' +
-          'autocomplete="email" inputmode="email" aria-label="Email">' +
-        '<div class="gate-codewrap">' +
-        '<input class="input gate-code" type="text" id="gr-gate-code" placeholder="Code" ' +
-          'autocomplete="one-time-code" inputmode="numeric" maxlength="12" aria-label="Code from the email">' +
-        '<button class="btn quiet gate-paste" id="gr-code-paste" type="button">Paste</button>' +
-        '</div>' +
-        '<div class="gate-err" id="gr-gate-err" role="alert"></div>' +
-        '<button class="btn primary block" type="submit">Continue</button>' +
-        '</form>' +
-        '<button class="linkbtn" id="gr-code-back" type="button">Back to sign in</button>' +
-        '</div>';
-      var form = wrap.querySelector('#gr-code-form');
-      var emailI = wrap.querySelector('#gr-gate-email');
-      var codeI = wrap.querySelector('#gr-gate-code');
-      var errEl = wrap.querySelector('#gr-gate-err');
-      var btn = form.querySelector('button');
-      if (code) codeI.value = code;
-      // Copied the code from the email? One tap puts it in.
-      wrap.querySelector('#gr-code-paste').addEventListener('click', async function () {
-        try {
-          var got = String(await navigator.clipboard.readText() || '').replace(/\D/g, '');
-          if (got.length >= 6) { codeI.value = got; errEl.textContent = ''; return; }
-          errEl.textContent = 'Nothing to paste yet. In the email, press and hold the code and tap Copy.';
-        } catch (e) {
-          codeI.focus();
-          errEl.textContent = 'Press and hold in the code box and tap Paste.';
+    /* "I have a code": the way in for someone new, one question a screen.
+       A Greenroom code (it has letters in it, like GR-7KQ2-M4XD) starts the
+       sign-up: name, username, birthday, email, password. A code with no
+       letter in it came in an email (a tour invite, a password reset): the
+       emails carry a code as well as a button, because an iPhone always
+       opens email links in Safari, never in the home-screen app. That one
+       only needs the email it was sent to, and since it could be any of
+       those kinds, each is tried in turn. */
+    // What they have typed so far, kept while they go back and forth.
+    // kinds: what the code was made for. made: the address an account was
+    // made for that is still waiting on its emailed code (madePass: with which
+    // password; sentAt: when a code last went out to it). tried: an address
+    // whose sign-up got no answer, so the account may be there all the same.
+    var a = { code: code || '', codeOk: '', kinds: [], codeEmail: '', first: '', last: '', handle: '', handleMine: false,
+      month: 0, day: 0, dayPicked: 0, year: 0, birth: '', email: '', pass: '', made: '', madePass: '', sentAt: 0,
+      tried: '', triedPass: '' };
+    // An address to put in the sign-in card's email box ("That email already has an account").
+    var signinEmail = '';
+    function toSignin(email) {
+      // Whatever was typed for a new account is not for the one about to sign in.
+      pendingAnswers = null;
+      signinEmail = email || '';
+      mode = 'signin';
+      wrap.classList.remove('sg-host');
+      render();
+    }
+    // The answers that can only be saved once signed in wait here (see savePending).
+    function hold(email) {
+      // The password the account for this address was made with, when one was (or may have been).
+      var sent = a.made === email ? a.madePass : a.tried === email ? a.triedPass : a.pass;
+      pendingAnswers = { email: email, first: a.first, last: a.last, handle: a.handle, birth: a.birth,
+        // Back from "Check your email" and a different password typed: that is the one they will remember.
+        pass: sent !== a.pass ? a.pass : '' };
+    }
+    function sayWhy(ui, why, email) {
+      if (why === 'exists') {
+        ui.say('That email already has an account.');
+        ui.act('Back to sign in', function () { toSignin(email); });
+      } else if (why === 'invited') {
+        // The invite made their account already. Its code has often run out by now, so the other
+        // way in is named too.
+        ui.say('That address already has a tour invite. Use the code from the invite email, or tap Forgot password on the sign-in screen.');
+        ui.act('Back to sign in', function () { toSignin(email); });
+      } else if (why === 'slow') {
+        ui.say(SG_SLOW);
+      } else if (why === 'bad') {
+        // Good when it was checked, not any more (used up, or run out): the code screen asks afresh.
+        a.codeOk = '';
+        ui.say(SG_BADCODE);
+        ui.act('Change the code', askCode);
+      } else if (why === 'email') {
+        ui.say('That email address doesn\u2019t look right. Go back and check it.');
+      } else {
+        ui.say(SG_AGAIN);
+      }
+    }
+    function renderCode() { askCode(); }
+
+    function askCode() {
+      var ui = sgScreen(wrap, {
+        first: true, onBack: function () { toSignin(''); },
+        title: 'Enter your code',
+        sub: 'Greenroom is invite-only. Type the code you were given.',
+        fields: [{ label: 'Code', value: a.code, attrs: { maxlength: '40', autocomplete: 'one-time-code',
+          autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false' } }],
+        onInput: function (u, inp) {
+          var v = String(inp.value || '').toUpperCase();
+          if (v !== inp.value) inp.value = v;
+          a.code = v.trim();
+          ui.ok(0, !!a.code && a.codeOk === a.code);
+          ui.say('');
+        },
+        onNext: async function () {
+          var c = String(ui.inputs[0].value || '').toUpperCase().trim();
+          a.code = c;
+          if (!c) { ui.say('Type your code.'); ui.inputs[0].focus(); return; }
+          // No letter in it: it came in an email, and which email is the next
+          // question. Only its digits count, so "123456." pasted from the
+          // email works. (It never goes to the database as a Greenroom code,
+          // where it would count as a wrong try.)
+          if (!/[A-Z]/.test(c)) {
+            var digits = c.replace(/\D/g, '');
+            if (digits.length < 6) { ui.say('That code is too short. Check it and try again. ' + SG_LETTERS); return; }
+            a.code = digits;
+            askCodeEmail();
+            return;
+          }
+          // Already checked a moment ago (they came Back): no need to ask twice.
+          if (a.codeOk === c) { askName(); return; }
+          ui.say('Checking\u2026', true);
+          var q = await sgLimit(sb.rpc('signup_code_check', { c: c }));
+          if (q.error || !isObj(q.data)) { ui.say(sgNoData(q)); return; }
+          if (q.data.ok !== true) { ui.say(q.data.why === 'slow' ? SG_SLOW : SG_NOCODE); return; }
+          // A good code, but would the account at the end be refused? Better
+          // said now than after five more questions. (No answer: carry on.)
+          var set = await signupSettings();
+          if (set && (!set.open || !set.confirm)) {
+            ui.say('Your code is good, but sign-up isn\u2019t switched on yet. Ask the person who gave you the code.');
+            return;
+          }
+          a.codeOk = c;
+          a.kinds = cleanKinds(q.data.kinds);
+          askName();
         }
       });
-      form.addEventListener('submit', async function (e) {
-        e.preventDefault();
-        var email = String(emailI.value || '').trim();
-        var code = String(codeI.value || '').replace(/\D/g, '');
-        // The code typed into the email box: move it where it goes, ask for the email.
-        if (email.indexOf('@') < 0 && /^[\d\s]{6,}$/.test(email)) {
-          if (!code) codeI.value = email.replace(/\D/g, '');
-          emailI.value = '';
-          errEl.textContent = 'That\u2019s the code \u2014 it\u2019s in the second box now. Type your email address in the first box.';
-          emailI.focus();
+      ui.ok(0, !!a.code && a.codeOk === a.code);
+    }
+
+    // The emailed code: an invite, a password reset or a sign-in email.
+    function askCodeEmail() {
+      var ui = sgScreen(wrap, {
+        onBack: askCode,
+        title: 'Which email did it come to?',
+        sub: 'Type the email address the code was sent to.',
+        fields: [{ label: 'Email', type: 'email', value: a.codeEmail, attrs: { autocomplete: 'email', inputmode: 'email',
+          autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' } }],
+        onInput: function (u, inp) {
+          a.codeEmail = String(inp.value || '').trim();
+          ui.ok(0, SG_EMAIL.test(a.codeEmail));
+        },
+        onNext: async function () {
+          var email = String(ui.inputs[0].value || '').trim();
+          a.codeEmail = email;
+          if (!SG_EMAIL.test(email)) { ui.say('Type your email address.'); ui.inputs[0].focus(); return; }
+          // Answers typed for a new account ride along only into the account they just made.
+          // (a.tried: its sign-up got no answer, yet the email with the code came.)
+          var mine = email.toLowerCase();
+          var startedHere = mine === a.made || mine === a.tried;
+          if (startedHere) hold(mine); else pendingAnswers = null;
+          ui.say('Checking\u2026', true);
+          var kinds = ['invite', 'recovery', 'email', 'signup'];
+          var ok = false;
+          for (var i = 0; i < kinds.length && !ok; i++) {
+            // Set before the check: signing in runs the rest of the start-up
+            // straight away, and a reset code should land on "new password".
+            resetting = kinds[i] === 'recovery';
+            var r;
+            try { r = await sgLimit(sb.auth.verifyOtp({ email: email, token: a.code, type: kinds[i] })); }
+            catch (e2) { r = { error: e2 }; }
+            // No answer is not a wrong code: stop and say so (the screen's own
+            // offline line), not try the other kinds one slow request after another.
+            if (r && r.error && sgNoAnswer(r.error)) { resetting = false; throw r.error; }
+            ok = !!r && !r.error && !!(r.data && r.data.session);
+            // The code proves the mailbox, not who chose the password: a sign-up
+            // somebody else started for this address is confirmed by its owner
+            // typing the code here. They choose the password themselves before
+            // anything else (saving one signs every other device out).
+            if (ok && !startedHere && (kinds[i] === 'email' || kinds[i] === 'signup')) {
+              var who = r.data.user || r.data.session.user || {};
+              var conf = Date.parse(who.email_confirmed_at || who.confirmed_at || '');
+              if ((who.user_metadata || {}).invited !== true && conf && Math.abs(Date.now() - conf) < 36e5) mustPassSet(who.id);
+            }
+          }
+          if (ok) return 'wait'; // signed in: the start-up takes it from here
+          resetting = false;
+          // Not "Forgot password": someone here may have no account at all (a
+          // Greenroom code typed without its letters lands on this screen).
+          ui.say('That code didn\u2019t work with that email. Emailed codes last an hour and work once. ' + SG_LETTERS);
+          ui.act('Back to sign in', function () { toSignin(email); });
+        }
+      });
+      ui.ok(0, SG_EMAIL.test(a.codeEmail));
+    }
+
+    function askName() { sgName(wrap, a, { back: askCode, next: askHandle }); }
+    function askHandle() {
+      sgHandle(wrap, a, { back: askName, next: askBirth,
+        // Signed out, so the code vouches for the question.
+        check: async function (h) {
+          var q = await sgLimit(sb.rpc('signup_handle_free', { c: a.code, h: h }));
+          if (q.error || !isObj(q.data)) throw (q.error || new Error('no answer'));
+          if (q.data.ok !== true && q.data.why === 'bad') a.codeOk = ''; // the code ran out since it was checked
+          return q.data.ok === true ? { free: q.data.free === true } : { why: String(q.data.why || '') };
+        } });
+    }
+    function askBirth() { sgBirth(wrap, a, { back: askHandle, next: askEmail }); }
+    function askEmail() {
+      var ui = sgScreen(wrap, {
+        onBack: askBirth,
+        title: 'What\u2019s your email?',
+        sub: 'This is how you sign in. The people you tour with can see it.',
+        fields: [{ label: 'Email', type: 'email', value: a.email, attrs: { autocomplete: 'email', inputmode: 'email',
+          autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false' } }],
+        onInput: function (u, inp) {
+          a.email = String(inp.value || '').trim().toLowerCase();
+          ui.ok(0, SG_EMAIL.test(a.email));
+        },
+        onNext: function () {
+          a.email = String(ui.inputs[0].value || '').trim().toLowerCase();
+          if (!SG_EMAIL.test(a.email)) { ui.say('That doesn\u2019t look like an email address. Check it and try again.'); ui.inputs[0].focus(); return; }
+          askPass();
+        }
+      });
+      ui.ok(0, SG_EMAIL.test(a.email));
+    }
+    function askPass() {
+      sgPass(wrap, a, { back: askEmail, label: 'Create account', email: a.email, next: makeAccount });
+    }
+    /* The code lets this one address in (signup_code_redeem), then the
+       account is made. The database has the last word both times. */
+    async function makeAccount(ui) {
+      var email = a.email;
+      var full = (a.first + ' ' + a.last).trim();
+      // Already made for this address and waiting on the emailed code (they came Back): on to that.
+      if (a.made === email) { askConfirm(); return; }
+      ui.say('Creating your account\u2026', true);
+      // An account this sign-up made a moment ago for another address (a typo,
+      // seen on "Check your email") is named to the database: it takes that
+      // never-confirmed account away and gives the code its use back, so the
+      // right address can have it.
+      var was = a.made || a.tried;
+      if (was === email) was = '';
+      var q = await sgLimit(sb.rpc('signup_code_redeem', { c: a.code, addr: email, instead_of: was || null }));
+      if (q.error || !isObj(q.data)) { ui.say(sgNoData(q)); return; }
+      var why = q.data.ok === true ? '' : String(q.data.why || 'no');
+      // The database got as far as looking at the new address, so the earlier account is gone.
+      if (was && (!why || why === 'exists' || why === 'invited')) {
+        if (a.made === was) { a.made = ''; a.madePass = ''; }
+        if (a.tried === was) { a.tried = ''; a.triedPass = ''; }
+      }
+      // A moment ago this address's sign-up got no answer, and now it "already
+      // has an account" (or the code, good seconds ago, has no use left: a
+      // one-use code this very sign-up spent). That try got through after
+      // all. On to its emailed code.
+      if ((why === 'exists' || why === 'bad') && a.tried === email) {
+        a.made = email; a.madePass = a.triedPass; a.tried = ''; a.triedPass = '';
+        suggestSave(email, a.kinds);
+        askConfirm();
+        return;
+      }
+      if (why) { sayWhy(ui, why, email); return; }
+      // Before the account is made: signing in starts the rest of the start-up at once.
+      hold(email);
+      suggestSave(email, a.kinds);
+      var res;
+      try {
+        res = await sgLimit(sb.auth.signUp({ email: email, password: a.pass, options: { data: {
+          first_name: a.first.slice(0, 30), last_name: a.last.slice(0, 30),
+          full_name: full.slice(0, 60), username: full.slice(0, 40) } } }), 30000);
+      } catch (e2) { res = { error: e2 }; }
+      if (res.error) {
+        pendingAnswers = null;
+        var msg = String(res.error.message || ''), kind = String(res.error.code || '');
+        if (/already registered|already exists/i.test(msg) || kind === 'user_already_exists' || kind === 'email_exists') {
+          sayWhy(ui, 'exists', email);
+        } else if (/email address .*invalid|validate email|invalid format/i.test(msg) || kind === 'email_address_invalid') {
+          ui.say('That email address doesn\u2019t look right.');
+        } else if (/password/i.test(msg) && /at least|short|weak|characters|guess/i.test(msg)) {
+          ui.say(sgPassSay(msg));
+        } else if (/signups? (are )?(not allowed|disabled)|confirm email first|database error/i.test(msg) ||
+            kind === 'signup_disabled' || kind === 'email_provider_disabled') {
+          // Sign-ups are switched off, or the database turned the account
+          // down because "Confirm email" is off (that reaches here as a bare
+          // "Database error"). The code just passed, so it is not the code.
+          ui.say(SG_OFF);
+        } else if (/sending .*mail|email rate limit|only request this after/i.test(msg) || kind === 'over_email_send_rate_limit') {
+          ui.say(SG_MAIL);
+        } else if (/rate limit|too many/i.test(msg)) {
+          ui.say(SG_SLOW);
+        } else if (sgNoAnswer(res.error)) {
+          // No answer is not a "no": the account may have been made all the
+          // same. Remembered, so the next try can tell (see a.tried above).
+          a.tried = email; a.triedPass = a.pass; a.sentAt = Date.now();
+          ui.say(SG_OFFLINE);
           return;
+        } else {
+          ui.say(SG_AGAIN);
         }
-        if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email address in the first box.'; emailI.focus(); return; }
-        if (code.length < 6) { errEl.textContent = 'Type the code from the email.'; codeI.focus(); return; }
-        btn.disabled = true;
-        errEl.textContent = 'Checking\u2026';
-        var kinds = ['invite', 'recovery', 'email', 'signup'];
-        var ok = false;
-        for (var i = 0; i < kinds.length && !ok; i++) {
-          // Set before the check: signing in runs the rest of the start-up
-          // straight away, and a reset code should land on "new password".
-          resetting = kinds[i] === 'recovery';
-          try {
-            var r = await sb.auth.verifyOtp({ email: email, token: code, type: kinds[i] });
-            ok = !r.error && !!(r.data && r.data.session);
-          } catch (e2) { ok = false; }
+        suggestClear();
+        return;
+      }
+      if (res.data && res.data.session) return 'wait'; // signed in: the start-up takes it from here
+      // An address that already has an account comes back looking like a new one with nothing in it.
+      var made = res.data && res.data.user;
+      if (made && Array.isArray(made.identities) && !made.identities.length) {
+        pendingAnswers = null;
+        suggestClear();
+        sayWhy(ui, 'exists', email);
+        return;
+      }
+      // The project wants the email confirmed first: one more screen, for the code it just sent.
+      a.made = email; a.madePass = a.pass; a.sentAt = Date.now();
+      a.tried = ''; a.triedPass = '';
+      askConfirm();
+    }
+    /* The account is made and a code has gone to the address to prove it is
+       theirs. Two ways on are always there under the button: a new code (one
+       a minute: the link counts the seconds down) and back to the address,
+       for someone who sees here that they mistyped it. */
+    function askConfirm() {
+      var email = a.made;
+      var more = sgEl('div', 'sg-more');
+      var againB = sgEl('button', 'linkbtn', 'Send a new code');
+      againB.type = 'button';
+      var wrongB = sgEl('button', 'linkbtn', 'Wrong address? Go back');
+      wrongB.type = 'button';
+      more.appendChild(againB); more.appendChild(wrongB);
+      var timer = 0, sending = false;
+      function count() {
+        // The screen has gone (signed in, or they went back): nothing left to count for.
+        if (!document.body.contains(more)) { clearInterval(timer); return; }
+        var left = Math.min(60, 60 - Math.floor((Date.now() - a.sentAt) / 1000));
+        againB.disabled = sending || left > 0;
+        againB.textContent = left > 0 ? 'Send a new code in ' + left + (left === 1 ? ' second' : ' seconds') : 'Send a new code';
+        if (left <= 0) clearInterval(timer);
+      }
+      function countdown() { clearInterval(timer); timer = setInterval(count, 1000); count(); }
+      async function again() {
+        sending = true; againB.disabled = true;
+        ui.say('Sending\u2026', true);
+        try {
+          var r = await sgLimit(sb.auth.resend({ type: 'signup', email: email }));
+          if (r && r.error) throw r.error;
+          a.sentAt = Date.now();
+          ui.say('Sent. Check your email for the new code.', true);
+        } catch (e3) {
+          ui.say(sgNoAnswer(e3) ? SG_OFFLINE : SG_MAIL);
         }
-        if (ok) return; // signed in: the start-up takes it from here
-        resetting = false;
-        btn.disabled = false;
-        errEl.textContent = 'That code didn\u2019t work. Codes last an hour and work once. Tap \u201cBack to sign in\u201d, then \u201cForgot password?\u201d for a fresh one.';
+        sending = false;
+        countdown();
+      }
+      againB.addEventListener('click', again);
+      wrongB.addEventListener('click', askEmail);
+      var ui = sgScreen(wrap, {
+        onBack: askPass,
+        title: 'Check your email',
+        sub: 'We sent a code to ' + email + '. Type it here.',
+        fields: [{ label: 'Code', value: '', attrs: { maxlength: '12', autocomplete: 'one-time-code', inputmode: 'numeric',
+          enterkeyhint: 'done' } }],
+        onInput: function (u, inp) {
+          ui.ok(0, String(inp.value || '').replace(/\D/g, '').length >= 6);
+          ui.say('');
+        },
+        onNext: async function () {
+          var token = String(ui.inputs[0].value || '').replace(/\D/g, '');
+          if (token.length < 6) { ui.say('Type the code from the email.'); ui.inputs[0].focus(); return; }
+          hold(email);
+          ui.say('Checking\u2026', true);
+          var kinds = ['signup', 'email'];
+          var ok = false;
+          for (var i = 0; i < kinds.length && !ok; i++) {
+            var r;
+            try { r = await sgLimit(sb.auth.verifyOtp({ email: email, token: token, type: kinds[i] })); }
+            catch (e2) { r = { error: e2 }; }
+            // No answer is not a wrong code: the screen's own offline line says so.
+            if (r && r.error && sgNoAnswer(r.error)) throw r.error;
+            ok = !!r && !r.error && !!(r.data && r.data.session);
+          }
+          if (ok) return 'wait'; // signed in: the start-up takes it from here
+          ui.say('That code didn\u2019t work. Check it, or send a new one.');
+        }
       });
-      wrap.querySelector('#gr-code-back').addEventListener('click', function () { mode = 'signin'; render(); });
-      emailI.focus();
+      ui.form.appendChild(more);
+      countdown();
     }
 
     function render() {
@@ -1885,7 +2975,7 @@
           '<input class="input" type="text" id="gr-gate-last" placeholder="Last name" ' +
             'maxlength="30" autocomplete="family-name" aria-label="Last name">' +
           '</div>') +
-        '<input class="input" type="email" id="gr-gate-email" placeholder="' + (signin ? 'you@band.com' : 'Email') +
+        '<input class="input" type="email" id="gr-gate-email" placeholder="' + (signin ? 'you@email.com' : 'Email') +
           '" autocomplete="email" inputmode="email" aria-label="Email">' +
         (signin ? '' :
           '<input class="input" type="tel" id="gr-gate-phone" placeholder="Phone number" ' +
@@ -1899,9 +2989,10 @@
         '</form>' +
         '<button class="linkbtn quiet" id="gr-gate-forgot" type="button">Forgot password?</button>' +
         '<button class="linkbtn quiet" id="gr-gate-code-link" type="button">I have a code</button>' +
-        // Invite-only: there is no sign-up here. The database refuses any
-        // account that nobody who runs a tour has sent for (signup_gate).
-        '<p class="gate-note">Greenroom is invite-only. Your tour manager sends the invite; the code in it gets you in.</p>' +
+        // Invite-only: making an account starts with a code ("I have a code"
+        // above). The database refuses any account whose address no code or
+        // invite has let in (signup_gate).
+        '<p class="gate-note">Greenroom is invite-only. You need a code to make an account.</p>' +
         '</div>';
 
       var form = wrap.querySelector('#gr-gate-form');
@@ -1911,6 +3002,8 @@
       var errEl = wrap.querySelector('#gr-gate-err');
       var btn = form.querySelector('button');
       if (note) { errEl.textContent = note; note = ''; }
+      // Sent back from the sign-up ("That email already has an account"): the address is already in.
+      if (signinEmail) { emailI.value = signinEmail; signinEmail = ''; }
 
       // Email a link to set a password. Works for a forgotten password and for
       // anyone invited who never got to pick one.
@@ -1919,7 +3012,7 @@
         if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email above, then tap it again.'; emailI.focus(); return; }
         errEl.textContent = 'Sending\u2026';
         try {
-          await sendPasswordLink(email);
+          await sgLimit(sendPasswordLink(email));
           errEl.textContent = 'Check your email. Tap the button in it, or come back here, tap \u201cI have a code\u201d and type the code from it.';
         } catch (e3) {
           var m3 = String(e3 && e3.message || '');
@@ -1954,13 +3047,14 @@
         if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
         btn.disabled = true;
         try {
+          // With a limit (sgLimit): no answer in time lands in the catch below, and the button comes back.
           var res = signin
-            ? await sb.auth.signInWithPassword({ email: email, password: pass })
-            : await sb.auth.signUp({ email: email, password: pass, options: { data: {
+            ? await sgLimit(sb.auth.signInWithPassword({ email: email, password: pass }))
+            : await sgLimit(sb.auth.signUp({ email: email, password: pass, options: { data: {
                 first_name: first.slice(0, 30), last_name: last.slice(0, 30),
                 full_name: (first + ' ' + last).slice(0, 60),
                 username: (first + ' ' + last).slice(0, 40),
-                phone: phone.slice(0, 30), tour_role: tourRole } } });
+                phone: phone.slice(0, 30), tour_role: tourRole } } }), 30000);
           if (res.error) throw res.error;
           if (!res.data || !res.data.session) throw new Error('no session');
           // onAuthStateChange finishes the job
@@ -2024,7 +3118,11 @@
 
   async function boot() {
     // Pinned to one exact version: a library that could change under the app is not one to trust.
-    var mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm');
+    // (window.GR_SUPABASE is the seam for trying the gate with no real project:
+    // tools/gate_test.html sets it to a stand-in. It is honoured only on a
+    // developer's own machine; on the live site it is ignored, so nothing
+    // that got onto the page could swap the server for one of its own.)
+    var mod = (localHost() && window.GR_SUPABASE) || await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm');
     sbMod = mod;
     var link = readEmailLink();
     sb = mod.createClient(cfg.url, cfg.anonKey, {
@@ -2096,94 +3194,147 @@
     try { await refetch(); } catch (e) { /* realtime will catch up */ }
   }
 
-  /* Someone arriving from an invite email is signed in but has no password
-     yet. One card: pick the password and go. */
-  /* Invited crew land here from the email. The tour manager already typed
-     their name, role and access, so all that's left is a username (what the
-     chat calls them) and a password. Anything the invite didn't carry (an
-     older invite) is asked for here too, so the card is never left short. */
+  /* Invited crew land here from the email: signed in by its code, with no
+     password yet. The tour manager already typed their name and role, so
+     what is left is asked one question a screen, over the app, the same way
+     the sign-up asks: a username (their @name), a birthday, a password.
+     Anything the invite didn't carry (an older invite: the name, the role)
+     is asked first. There is no way out of the first screen on purpose: an
+     account with no password could never sign in again. */
   function passwordGate() {
     if (document.getElementById('gr-pass-gate')) return;
     var wrap = document.createElement('div');
     wrap.id = 'gr-pass-gate';
     wrap.className = 'gr-gate-like';
+    document.body.appendChild(wrap);
     var m0 = session.user.user_metadata || {};
     var typed = String(m0.full_name || m0.username || '').trim();
-    var first0 = String(m0.first_name || typed.split(/\s+/)[0] || '').trim();
-    var last0 = String(m0.last_name || typed.split(/\s+/).slice(1).join(' ') || '').trim();
-    var needName = !first0 || !last0;
-    var needRole = !m0.tour_role;
-    var tourName = String(m0.tour_name || '').trim();
-    // Two levels on a tour now: a Manager, or crew (the invite still carries the old 'editor' / 'viewer').
-    var access = m0.access === 'editor' ? 'MANAGER' : (m0.access === 'viewer' ? 'CREW' : '');
-    var who = [roleName(m0.tour_role), access].filter(Boolean).join(' \u00b7 ');
-    wrap.innerHTML =
-      '<div class="gate-card">' +
-      '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-      '<p class="gate-hi">' + (first0 ? 'Welcome, ' + esc(first0) + '.' : 'Welcome.') +
-        (tourName ? ' You\u2019re on ' + esc(tourName) + '.' : ' You\u2019re on the tour.') + '</p>' +
-      (who ? '<p class="gate-who">' + esc(who) + '</p>' : '') +
-      '<p class="gate-hi quiet">Make a username and a password and you\u2019re in.</p>' +
-      '<form id="gr-pass-form" novalidate>' +
-      (needName ? '<div class="gate-pair">' +
-        '<input class="input" type="text" id="gr-pass-first" placeholder="First name" value="' + esc(first0) + '" ' +
-          'maxlength="30" autocomplete="given-name" aria-label="First name">' +
-        '<input class="input" type="text" id="gr-pass-last" placeholder="Last name" value="' + esc(last0) + '" ' +
-          'maxlength="30" autocomplete="family-name" aria-label="Last name">' +
-        '</div>' : '') +
-      (needRole ? rolePickerHtml('gr-pass-role', '') : '') +
-      '<input class="input" type="text" id="gr-pass-user" placeholder="Username" ' +
-        'maxlength="24" autocomplete="username" autocapitalize="none" aria-label="Username">' +
-      '<input class="input" type="password" id="gr-pass-new" placeholder="Password" ' +
-        'autocomplete="new-password" aria-label="Password">' +
-      '<div class="gate-err" id="gr-pass-err" role="alert"></div>' +
-      '<button class="btn primary block" type="submit">Join the tour</button>' +
-      '</form></div>';
-    document.body.appendChild(wrap);
-    var form = wrap.querySelector('#gr-pass-form');
-    if (needRole) wireRolePicker(wrap, 'gr-pass-role');
-    var userI = wrap.querySelector('#gr-pass-user');
-    var passI = wrap.querySelector('#gr-pass-new');
-    var errEl = wrap.querySelector('#gr-pass-err');
-    form.addEventListener('submit', async function (e) {
-      e.preventDefault();
-      var fI = wrap.querySelector('#gr-pass-first'), lI = wrap.querySelector('#gr-pass-last');
-      var rI = wrap.querySelector('#gr-pass-role');
-      var first = fI ? String(fI.value || '').trim() : first0;
-      var last = lI ? String(lI.value || '').trim() : last0;
-      var tourRole = rI ? String(rI.value || '') : roleName(m0.tour_role);
-      var uname = String(userI.value || '').trim();
-      var pass = String(passI.value || '');
-      if (fI && !first) { errEl.textContent = 'Type your first name.'; fI.focus(); return; }
-      if (lI && !last) { errEl.textContent = 'Type your last name.'; lI.focus(); return; }
-      if (rI && !tourRole) { errEl.textContent = 'Pick your role on the tour.'; wrap.querySelector('#gr-pass-role-btn').focus(); return; }
-      if (!uname) { errEl.textContent = 'Pick a username. It\u2019s what the chat calls you.'; userI.focus(); return; }
-      if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
-      form.querySelector('button').disabled = true;
-      try {
-        var full = (first + ' ' + last).trim();
-        var meta = Object.assign({}, m0, {
-          invited: false, first_name: first.slice(0, 30), last_name: last.slice(0, 30),
-          full_name: full.slice(0, 60), username: uname.slice(0, 24),
-          phone: String(m0.phone || '').slice(0, 30), tour_role: tourRole });
-        var q = await sb.auth.updateUser({ password: pass, data: meta });
-        if (q.error) throw q.error;
-        if (q.data && q.data.user) session.user = q.data.user;
-        pushProfile();
-        wrap.querySelector('.gate-card').innerHTML =
-          '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-          '<p class="gate-hi">You\u2019re in.</p>' +
-          '<button class="btn primary block" id="gr-pass-done" type="button">Let\u2019s go</button>';
-        wrap.querySelector('#gr-pass-done').addEventListener('click', function () { wrap.remove(); });
-      } catch (e2) {
-        form.querySelector('button').disabled = false;
-        errEl.textContent = 'Couldn\u2019t save it. Try again.';
+    var a = { first: String(m0.first_name || typed.split(/\s+/)[0] || '').trim(),
+      last: String(m0.last_name || typed.split(/\s+/).slice(1).join(' ') || '').trim(),
+      role: roleName(m0.tour_role), handle: '', handleMine: false, month: 0, day: 0, year: 0, birth: '', pass: '' };
+    var steps = [];
+    if (!a.first || !a.last) steps.push(askName);
+    if (!m0.tour_role) steps.push(askRole);
+    steps.push(askHandle, askBirth, askPass);
+    function go(i) { steps[i](i); }
+    function nav(i) {
+      return { back: i > 0 ? function () { go(i - 1); } : null, next: function () { go(i + 1); } };
+    }
+    function askName(i) { sgName(wrap, a, nav(i)); }
+    // The job title for the crew list, from the same list the old card offered.
+    function askRole(i) {
+      var n = nav(i);
+      var row = sgEl('div', 'sg-field sg-picks' + (a.role ? ' ok' : ''));
+      var pick = sgEl('button', 'sg-pickb' + (a.role ? '' : ' empty'), a.role || 'Your role on the tour');
+      pick.type = 'button';
+      pick.setAttribute('aria-haspopup', 'listbox');
+      var line = sgEl('div', 'sg-date');
+      line.appendChild(pick);
+      row.appendChild(sgEl('span', 'sg-label', 'Role')); row.appendChild(line); row.appendChild(sgTick());
+      row.addEventListener('click', function () {
+        openRolePicker(a.role, function (role) {
+          a.role = role;
+          pick.textContent = role;
+          pick.classList.remove('empty');
+          row.classList.add('ok');
+          ui.say('');
+        });
+      });
+      var ui = sgScreen(wrap, {
+        onBack: n.back,
+        title: 'What\u2019s your role on the tour?',
+        sub: 'Your job on this run. It shows next to your name on the crew list.',
+        body: row, focus: pick,
+        onNext: function () {
+          if (!a.role) { ui.say('Pick your role on the tour.'); return; }
+          n.next();
+        }
+      });
+    }
+    function askHandle(i) {
+      var n = nav(i);
+      // Signed in now, so the ordinary question does.
+      n.check = function (h) { return sgLimit(window.GR_BACKEND.handleFree(h)).then(function (free) { return { free: free }; }); };
+      n.skip = true;
+      sgHandle(wrap, a, n);
+    }
+    function askBirth(i) { sgBirth(wrap, a, nav(i)); }
+    function askPass(i) {
+      var n = nav(i);
+      n.label = 'Join the tour';
+      n.email = session.user.email || '';
+      n.next = finish;
+      sgPass(wrap, a, n);
+    }
+    async function finish(ui) {
+      var full = (a.first + ' ' + a.last).trim();
+      // The name in chat is simply the person's name (as saveProfile has it); the @name goes on the profile.
+      var meta = Object.assign({}, m0, {
+        invited: false, first_name: a.first.slice(0, 30), last_name: a.last.slice(0, 30),
+        full_name: full.slice(0, 60), username: full.slice(0, 40),
+        phone: String(m0.phone || '').slice(0, 30), tour_role: a.role });
+      // Said on the button the moment it is tapped: the saves below can take several seconds.
+      var btn = ui.form.querySelector('.sg-next'), word = btn ? btn.textContent : '';
+      if (btn) btn.textContent = 'Saving\u2026';
+      var q;
+      try { q = await sgLimit(sb.auth.updateUser({ password: a.pass, data: meta })); } catch (e2) { q = { error: e2 }; }
+      // An earlier try that seemed to get no answer did save the password, and
+      // the server will not take the same one twice: only the rest is sent.
+      if (q.error && /different from the old/i.test(String(q.error.message || ''))) {
+        try { q = await sgLimit(sb.auth.updateUser({ data: meta })); } catch (e5) { q = { error: e5 }; }
       }
-    });
+      if (q.error) {
+        if (btn) btn.textContent = word;
+        var msg = String(q.error.message || '');
+        ui.say(/password/i.test(msg) && /at least|short|weak|characters|guess/i.test(msg) ? sgPassSay(msg)
+          : sgNoAnswer(q.error) ? SG_OFFLINE : 'Couldn\u2019t save it. Try again.');
+        return;
+      }
+      // (Always "not invited" on this phone from here, whatever came back: firstRun reads it.)
+      session.user = q.data && q.data.user ? q.data.user : Object.assign({}, session.user, { user_metadata: meta });
+      // The password is in: from here nothing may keep them out. What does
+      // not stick (the username went to someone else a moment ago) the
+      // first run asks again.
+      var landed = false;
+      var saves = (async function () {
+        await pushProfile();
+        if (a.handle) { try { await window.GR_BACKEND.setHandle(a.handle); } catch (e3) { /* asked again */ } }
+        if (a.birth) { try { await window.GR_BACKEND.saveBirthDate(a.birth); } catch (e4) { /* asked again */ } }
+        landed = true;
+      })();
+      await soon(saves, 10000);
+      // The first run was held back while this overlay was up (see firstRun).
+      // What it still has to ask is read from the server again, now that the
+      // answers given here are saved there, and then the app is told.
+      await rereadFirstRun();
+      wrap.remove();
+      emit('tours'); // the app redraws with what it now knows about this account
+      // Still out when the wait ran out: the app hears again when they land.
+      if (!landed) saves.then(function () { emit('tours'); });
+      return 'wait';
+    }
+    go(0);
   }
 
   /* A reset link: signed in by the link, now pick the new password. */
-  function newPasswordGate() {
+  /* "This account must choose its own password": kept on the phone until one
+     is saved, so closing the app does not get round it. */
+  var MUST_PASS = 'gr-must-pass';
+  var mustPassNow = '';
+  function mustPassSet(id) {
+    try { localStorage.setItem(MUST_PASS, String(id || '')); } catch (e) { /* asked this once, then */ }
+    mustPassNow = String(id || '');
+  }
+  function mustPassDue() {
+    var id = mustPassNow;
+    if (!id) { try { id = localStorage.getItem(MUST_PASS) || ''; } catch (e) { id = ''; } }
+    return !!id && !!session && !!session.user && session.user.id === id;
+  }
+  function mustPassDone() {
+    mustPassNow = '';
+    try { localStorage.removeItem(MUST_PASS); } catch (e) { /* nothing kept */ }
+  }
+  function newPasswordGate(must) {
     resetting = false;
     if (document.getElementById('gr-pass-gate')) return;
     var wrap = document.createElement('div');
@@ -2192,17 +3343,18 @@
     wrap.innerHTML =
       '<div class="gate-card">' +
       '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
-      '<p class="gate-hi">Pick a new password.</p>' +
+      '<p class="gate-hi">' + (must ? 'Choose your password.' : 'Pick a new password.') + '</p>' +
+      (must ? '<p class="gate-hi quiet">This account was started for your email. Set a password only you know.</p>' : '') +
       '<form id="gr-pass-form" novalidate>' +
       '<input class="input" type="password" id="gr-pass-new" placeholder="New password" ' +
         'autocomplete="new-password" aria-label="New password">' +
       '<div class="gate-err" id="gr-pass-err" role="alert"></div>' +
       '<button class="btn primary block" type="submit">Save</button>' +
       '</form>' +
-      '<button class="linkbtn quiet" id="gr-pass-keep" type="button">Keep my current password</button>' +
+      (must ? '' : '<button class="linkbtn quiet" id="gr-pass-keep" type="button">Keep my current password</button>') +
       '</div>';
     document.body.appendChild(wrap);
-    wrap.querySelector('#gr-pass-keep').addEventListener('click', function () { wrap.remove(); });
+    if (!must) wrap.querySelector('#gr-pass-keep').addEventListener('click', function () { wrap.remove(); });
     var form = wrap.querySelector('#gr-pass-form');
     var passI = wrap.querySelector('#gr-pass-new');
     var errEl = wrap.querySelector('#gr-pass-err');
@@ -2215,6 +3367,7 @@
         var q = await sb.auth.updateUser({ password: pass });
         if (q.error) throw q.error;
         if (q.data && q.data.user) session.user = q.data.user;
+        mustPassDone();
         wrap.querySelector('.gate-card').innerHTML =
           '<span class="logo-mark gate-mark" role="img" aria-label="Greenroom"></span>' +
           '<p class="gate-hi">Password saved.</p>' +
@@ -2223,7 +3376,8 @@
       } catch (e2) {
         form.querySelector('button').disabled = false;
         errEl.textContent = /different from the old/i.test(String(e2 && e2.message || ''))
-          ? 'That\u2019s the password you already had. Pick a new one, or just keep going.'
+          ? (must ? 'Pick a different password from the one this account started with.'
+                  : 'That\u2019s the password you already had. Pick a new one, or just keep going.')
           : 'Couldn\u2019t save it. Try again.';
       }
     });
@@ -2248,11 +3402,95 @@
     } catch (e) { /* the phone book can wait for the next sign-in */ }
   }
 
+  /* What the sign-up asked before there was an account to keep it on: the
+     name, the @username, the birthday. Saved the moment that account is
+     signed in. Whatever does not stick here (the username went to someone
+     else in the meantime, say) the first run simply asks again. */
+  var pendingAnswers = null;
+  async function savePending() {
+    var p = pendingAnswers;
+    pendingAnswers = null;
+    if (!p || !session || !session.user) return;
+    // Only ever onto the account that sign-up just made: never one that was
+    // already there (another address, or an account older than a day).
+    if (String(session.user.email || '').toLowerCase() !== p.email) return;
+    var born = Date.parse(session.user.created_at || '');
+    if (born && Date.now() - born > 864e5) return;
+    var first = p.first.slice(0, 30), last = p.last.slice(0, 30), full = (p.first + ' ' + p.last).trim();
+    try {
+      var m = session.user.user_metadata || {};
+      var change = {};
+      if (String(m.first_name || '') !== first || String(m.last_name || '') !== last) {
+        change.data = { first_name: first, last_name: last, full_name: full.slice(0, 60), username: full.slice(0, 40) };
+      }
+      if (p.pass) change.password = p.pass;
+      if (change.data || change.password) {
+        var q = await sb.auth.updateUser(change);
+        if (!q.error && q.data && q.data.user) session.user = q.data.user;
+      }
+    } catch (e) { /* the name went onto the account with the sign-up itself */ }
+    await pushProfile();
+    if (p.handle) {
+      try { await window.GR_BACKEND.setHandle(p.handle); } catch (e) { /* taken since it was checked: asked again */ }
+    }
+    if (p.birth) {
+      // (saveBirthDate is the save_birth_date call, and it keeps the first-run facts true.)
+      try { await window.GR_BACKEND.saveBirthDate(p.birth); } catch (e) { /* asked again */ }
+    }
+  }
+  // Waits for a save, but never longer than ms: a request with no answer
+  // must not hold the app's start (the save carries on behind it).
+  function soon(work, ms) {
+    return Promise.race([Promise.resolve(work).catch(function () { /* whoever asked has its own answer for a failure */ }),
+      new Promise(function (res) { setTimeout(res, ms); })]);
+  }
+
+  /* The first-run facts, read once before the app starts: has this account
+     finished the questions, what it ticked, its @username, whether it has a
+     birthday on file. If they cannot be read for ANY reason (the database
+     change not live yet, no signal, an answer that never comes) the account
+     counts as finished: better to skip the questions than to keep anyone
+     from their tours. */
+  var firstFacts = null;
+  async function loadFirstRun(ms) {
+    var got = null;
+    try {
+      var q = await Promise.race([sb.rpc('my_first_run'),
+        new Promise(function (res) { setTimeout(function () { res(null); }, ms || 8000); })]);
+      if (q && !q.error && isObj(q.data)) got = q.data;
+    } catch (e) { got = null; }
+    firstFacts = got
+      ? { onboarded: got.onboarded !== false, kinds: cleanKinds(got.kinds), handle: String(got.handle || ''),
+          hasBirth: got.hasBirth === true }
+      : { onboarded: true, kinds: [], handle: '', hasBirth: true, unknown: true };
+  }
+  /* Read again after the invited person's overlay has saved its answers, so
+     the first run asks only what the server still lacks. If the answer does
+     not come this time, what was already known stays (the saves keep it true
+     as they land): "could not be read" must not quietly cancel a first run
+     that was due. */
+  async function rereadFirstRun() {
+    var before = firstFacts;
+    await loadFirstRun(5000);
+    if (firstFacts.unknown && before && !before.unknown) firstFacts = before;
+  }
+
   async function online() {
+    // An ordinary sign-in has nothing waiting to be saved, so the first-run
+    // facts are asked for alongside the invites: the app starts no later than
+    // it used to. (loadFirstRun never throws: no answer counts as "finished".)
+    var facts = pendingAnswers ? null : loadFirstRun();
     try { await sb.rpc('claim_invites'); } catch (e) { /* nothing to claim */ }
+    if (facts) await facts;
+    else {
+      // Fresh from the sign-up: its answers first, then the facts they change.
+      await soon(savePending(), 10000); // what does not get saved, the first run asks again
+      await loadFirstRun();
+    }
     pushProfile();
     if (session && session.user && session.user.user_metadata &&
         session.user.user_metadata.invited === true) passwordGate();
+    else if (mustPassDue()) newPasswordGate(true);
     else if (resetting) newPasswordGate();
     try { await refetch(); } catch (e) { /* the app shows local mode */ }
     try { await importLocalTours(); } catch (e) { /* local copies stay put */ }
