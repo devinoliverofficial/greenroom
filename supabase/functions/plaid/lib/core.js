@@ -763,6 +763,17 @@
     if (p && !p.payTyped && rate > 0 && n > 0) return round(rate * n * 100) / 100;
     return num(p && p.pay);
   }
+  /* Band or crew. Everyone on a tour sits in doc.crew; a band member is a row
+     that says so (band: true). Until someone has said either way, the title
+     decides: Artist or Band, the roles an invite offers for the band. The
+     money is counted the same for both (one line); this only says which group
+     a person is listed under, and whose payments are the band's. */
+  function isBand(p) {
+    if (!p) return false;
+    if (p.band === true) return true;
+    if (p.band === false) return false;
+    return /^\s*(artist|band|band member)\s*$/i.test(String(p.title || ''));
+  }
   function crewProjection(tour) {
     return rows(tour && tour.crew).reduce(function (t, p) { return t + crewPay(tour, p); }, 0);
   }
@@ -2069,7 +2080,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, merchTips: merchTips, merchTipsOwed: merchTipsOwed, merchTipsPaidCash: merchTipsPaidCash, isDerived: isDerived, DERIVED: DERIVED, crewProjection: crewProjection, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, merchTips: merchTips, merchTipsOwed: merchTipsOwed, merchTipsPaidCash: merchTipsPaidCash, isDerived: isDerived, DERIVED: DERIVED, crewProjection: crewProjection, isBand: isBand, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

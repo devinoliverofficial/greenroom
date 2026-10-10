@@ -473,6 +473,8 @@
     var key = G.crewKey(person.name);
     if (key === 'crew:') return;
     var rec = { kind: 'crew', name: person.name, title: person.title || '', pay: G.num(person.pay) };
+    // (Band or Crew, when someone has said which; else the title goes on deciding.)
+    if (person.band === true || person.band === false) rec.band = person.band;
     S.labels[key] = rec;
     if (S.mode === 'db' && store.db) {
       try { await store.db.doc('labels/' + key).set(rec); } catch (e) { /* roster is a convenience */ }
@@ -7332,13 +7334,16 @@
         card: cardLabelFor(t, ch.account),
         // name: exactly as stored (what a vendor group is read from); how: its Expenses column.
         name: ch.merchant || '', how: ch.cash ? 'cash' : ch.paid ? 'debit' : 'credit',
-        source: chargeSource(t, ch), chargeId: ch.id, counts: !ch.accounted });
+        source: chargeSource(t, ch), chargeId: ch.id, counts: !ch.accounted,
+        // Who it was for (Crew only): the person on this tour's list, if still there.
+        crewId: key === 'crew' && crewPerson(t, ch.crewId) ? ch.crewId : null });
     });
     G.rows(t && t.cashLog).forEach(function (x) {
       if (x.category !== key) return;
       out.push({ date: x.date || '', label: x.note || x.label || 'Merch cash', amount: G.num(x.amount),
         name: x.note || x.label || '', how: 'cash',
-        detail: 'Merch cash', source: 'MANUAL', cashId: x.id, counts: true });
+        detail: 'Merch cash', source: 'MANUAL', cashId: x.id, counts: true,
+        crewId: key === 'crew' && crewPerson(t, x.crewId) ? x.crewId : null });
     });
     (G.cardPaidDetail(t)[key] || []).forEach(function (r) {
       out.push({ date: '', label: r.label + (r.feed ? ' balance' : r.leftover ? ' (left over going in)' : ' going in'),
@@ -7590,7 +7595,8 @@
     var was = ch.category === 'offdebt' ? ch.offCategory : ch.category;
     var row = { feedId: String(ch.id).replace(/^p/, ''), date: ch.date, posted: ch.posted || ch.date, merchant: ch.merchant,
       amount: G.num(ch.amount), account: ch.account || '', category: was && valid[was] && was !== 'offdebt' ? was : '',
-      source: null, why: '', duplicate: false, preCutoff: false, keep: G.num(ch.amount) > 0 };
+      source: null, why: '', duplicate: false, preCutoff: false, keep: G.num(ch.amount) > 0,
+      crewId: was === 'crew' && ch.crewId ? ch.crewId : null };
     closeSheet();
     render(true);
     setTimeout(function () { openImportReview(home, [row], 'Card feed', { feed: true, card: row.account || 'Card' }); }, 340);
@@ -7629,9 +7635,11 @@
             patch = { charges: {} };
             patch.charges[r.chargeId] = { amount: f.amount, merchant: f.what.trim() || ch.merchant || 'Charge', date: f.date,
               category: f.category, paid: f.how !== 'spent', cash: f.how === 'cash' };
+            if (f.category !== 'crew' && ch.crewId) patch.charges[r.chargeId].crewId = null;
           } else {
             patch = { cashLog: {} };
             patch.cashLog[r.cashId] = { amount: f.amount, label: f.what.trim() || cl.label || 'Cash', date: f.date, category: f.category };
+            if (f.category !== 'crew' && cl.crewId) patch.cashLog[r.cashId].crewId = null;
           }
         }
         if (await api.update(id, patch)) {
@@ -7676,6 +7684,17 @@
       // The one group asked for (if a move just emptied it, the whole category shows instead).
       var only = groups && o && o.group != null ? groups.filter(function (g) { return g.key === o.group; })[0] || null : null;
       var list = only ? only.entries.map(function (e) { return e.row; }) : categoryEntries(t, key);
+      // One person's (Devin: "in the crew member section ... you should be able
+      // to go to logged transactions"): everything under Crew that was for them.
+      var person = key === 'crew' && o && o.crewId ? crewPerson(t, o.crewId) : null;
+      if (key === 'crew' && o && o.crewId) list = list.filter(function (r) { return r.crewId === o.crewId; });
+      // Crew entries that are nobody's yet (sorted before people could be picked, or filed by a learned merchant).
+      var loose = key === 'crew' && !person ? list.filter(function (r) { return (r.chargeId || r.cashId) && !r.crewId; }).length : 0;
+      var canWho = function (r) { return key === 'crew' && canWrite() && canEditTour(id) && !!(r.chargeId || r.cashId) && G.rows(t.crew).length > 0; };
+      var whoBtn = function (r) {
+        return h('button', { class: 'sw-edit sw-group', type: 'button', 'aria-label': 'Say who ' + r.label + ' was for',
+          onclick: function () { openCrewAssign(id, r, function () { reopen(); }); } }, icon('people', 16), 'Who');
+      };
       var total = list.reduce(function (a, r) { return r.counts ? a + r.amount : a; }, 0);
       // (Even when everything sits in Other: that's how a charge gets out of it.)
       var canGroup = function (r) { return !!VENDOR_CATS[key] && canWrite() && canEditTour(id) && !!(r.chargeId || r.cashId); };
@@ -7688,10 +7707,10 @@
       // Logged by hand (a payment, a merch cash entry, a typed-in total): Edit or Delete.
       var mine = function (r) { return canWrite() && canEditTour(id) && (r.typed || r.cashId || (r.chargeId && r.source === 'MANUAL')); };
       var anySlide = list.some(function (r) { return slides(r) || mine(r); });
-      var anyGroup = list.some(canGroup);
+      var anyGroup = list.some(canGroup), anyWho = list.some(canWho);
       var entryNode = function (r) {
           var line = logRow(r);
-          var first = canGroup(r) ? [groupBtn(r)] : [];
+          var first = canGroup(r) ? [groupBtn(r)] : canWho(r) ? [whoBtn(r)] : [];
           if (mine(r)) {
             return swipeRow(line, first.concat([
               h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Edit ' + r.label,
@@ -7729,10 +7748,13 @@
           }))
         : h('div', { class: 'ledger logged' }, list.map(entryNode));
       return [
-        h('h2', { class: 'sh-title' }, only ? only.label : 'Logged Card Transactions'),
-        h('p', { class: 'sh-sub' }, cat.label + ' \u00b7 ' + entryCount(list.length) + ' \u00b7 ' + money(total)),
-        anySlide || anyGroup ? h('p', { class: 'note sw-hint' }, anyGroup
+        h('h2', { class: 'sh-title' }, person ? 'Logged transactions' : only ? only.label : 'Logged Card Transactions'),
+        h('p', { class: 'sh-sub' }, (person ? (person.name || 'This person') : cat.label) + ' \u00b7 ' + entryCount(list.length) + ' \u00b7 ' + money(total)),
+        loose ? h('p', { class: 'note' }, plural(loose, 'entry').replace('entrys', 'entries') + ' under Crew ' + (loose === 1 ? 'isn\u2019t' : 'aren\u2019t') + ' anyone\u2019s yet.' +
+          (anyWho ? ' Swipe one left and tap Who.' : '')) : null,
+        anySlide || anyGroup || anyWho ? h('p', { class: 'note sw-hint' }, anyGroup
           ? 'Swipe one left to move it to another group' + (anySlide ? ', or to fix it.' : '.')
+          : anyWho ? 'Swipe one left to say who it was for' + (anySlide ? ', or to fix it.' : '.')
           : 'Logged one wrong? Swipe it left to fix it.') : null,
         body,
         h('div', { class: 'stack' },
@@ -7740,13 +7762,17 @@
             onclick: function () { openVendorRename(id, key, only, function (gk) { reopen(gk); }); } }, icon('edit', 18), 'Rename this group') : null,
           only ? h('button', { class: 'btn quiet block', type: 'button', onclick: function () { reopen(null); } },
             'All of ' + cat.label) : null,
+          person ? h('button', { class: 'btn quiet block', type: 'button', onclick: function () { openLoggedSheet(id, key, back, null); } },
+            'Everything under ' + cat.label) : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { if (back) back(); else closeSheet(); } },
             back ? 'Back' : 'Close'))
       ];
       function logRow(r) {
         return h('div', { class: 'row' },
           h('div', { class: 'row-label' }, r.label,
-            h('span', { class: 'hint' }, [r.date ? dayMD(r.date) : '', r.detail].filter(Boolean).join(' \u00b7 '))),
+            h('span', { class: 'hint' }, [r.date ? dayMD(r.date) : '', r.detail,
+              // (Under Crew: whose it was, unless the whole list is one person's.)
+              r.crewId && !person ? 'for ' + ((crewPerson(t, r.crewId) || {}).name || 'someone') : ''].filter(Boolean).join(' \u00b7 '))),
           // How it was logged, and under it the card it came from.
           h('span', { class: 'src-col' },
             h('span', { class: 'src-tag src-' + r.source.toLowerCase() }, r.source),
@@ -7770,6 +7796,48 @@
       }
     }
     openSheet(build, { label: 'Logged Card Transactions', cls: 'cat-sheet' });
+  }
+  /* Who one Crew entry was for, said after the fact: a card charge sorted before
+     the person could be picked, one a learned merchant filed by itself, or a
+     wrong pick. The band first, then the crew, then "no one person". */
+  function openCrewAssign(id, r, done) {
+    openSheet(function () {
+      var t = getTour(id), g = crewGroups(t);
+      var now = r.crewId || null, busy = false;
+      var pick = async function (crewId) {
+        if (busy) return;
+        // (Deleted on another phone since this list was drawn: nothing is made out of a tag.)
+        var nowT = getTour(id) || {};
+        if (r.cashId ? !G.isObj((nowT.cashLog || {})[r.cashId]) : !G.isObj((nowT.charges || {})[r.chargeId])) {
+          toast('That entry isn\u2019t there anymore.'); setTimeout(done, 260); return;
+        }
+        busy = true;
+        var ok;
+        if (r.cashId) { var cp = { cashLog: {} }; cp.cashLog[r.cashId] = { crewId: crewId || null }; ok = await api.update(id, cp); }
+        else { var tg = {}; tg[r.chargeId] = crewId || null; ok = await tagChargesCrew(id, tg); }
+        busy = false;
+        if (!ok) { toast('That didn\u2019t save. Try again.'); return; }
+        toast(crewId ? 'Logged to ' + ((crewPerson(getTour(id), crewId) || {}).name || 'them') : 'No one person now');
+        render(true);
+        setTimeout(done, 260);
+      };
+      var btn = function (p) {
+        return h('button', { class: 'row rowbtn', type: 'button', onclick: function () { pick(p.id); } },
+          h('div', { class: 'row-label' }, p.name || 'No name', h('span', { class: 'hint' }, p.title || 'No title')),
+          now === p.id ? h('span', { class: 'src-tag' }, 'NOW') : icon('chevron', 16));
+      };
+      var head = function (label) { return h('div', { class: 'row head cw-head' }, h('span', { class: 'lg-name' }, label)); };
+      return [
+        h('h2', { class: 'sh-title' }, 'Who was it for?'),
+        h('p', { class: 'sh-sub' }, r.label + ' \u00b7 ' + money(r.amount)),
+        h('div', { class: 'ledger' },
+          g.band.length ? [head('Band')].concat(g.band.map(btn)) : null,
+          g.crew.length ? [g.band.length ? head('Crew') : null].concat(g.crew.map(btn)) : null),
+        h('div', { class: 'stack' },
+          now ? h('button', { class: 'btn quiet block', type: 'button', onclick: function () { pick(null); } }, 'No one person') : null,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: done }, 'Back'))
+      ];
+    }, { label: 'Who was it for?', cls: 'cat-sheet' });
   }
   function loggedButton(id, key, back) {
     var n = categoryEntries(getTour(id), key).length;
@@ -8058,11 +8126,64 @@
   /* ============================== Crew ============================== */
 
   // What's been logged as paid to one crew member (their Pay button).
+  /* Band and crew (Devin, 2026-10-09: "people that are in the band should be
+     separate from crew and we should be able to log payments paid to band
+     members"). Everyone is still one list on the tour and one line of money;
+     G.isBand says which group a person is shown under. */
+  function crewGroups(t) {
+    var all = G.rows(t && t.crew).sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
+    return { all: all, band: all.filter(G.isBand), crew: all.filter(function (p) { return !G.isBand(p); }) };
+  }
+  function crewPerson(t, crewId) {
+    var p = crewId && t && G.isObj(t.crew) ? t.crew[crewId] : null;
+    return G.isObj(p) ? Object.assign({ id: crewId }, p) : null;
+  }
+  // "Which crew member?": the band first, then the crew. o: { value, onPick, aria }.
+  function crewSelect(tourId, o) {
+    var g = crewGroups(getTour(tourId));
+    if (!g.all.length) return null;
+    var opt = function (p) { return h('option', { value: p.id }, (p.name || 'No name') + (p.title ? ' \u00b7 ' + p.title : '')); };
+    var sel = h('select', { class: o.cls || 'input sm', 'aria-label': o.aria || 'Which crew member it was for',
+      onchange: function (e) { o.onPick(e.target.value || null); } },
+      h('option', { value: '' }, o.none || 'Which crew member?'),
+      g.band.length ? h('optgroup', { label: 'Band' }, g.band.map(opt)) : null,
+      g.crew.length ? h('optgroup', { label: 'Crew' }, g.crew.map(opt)) : null);
+    sel.value = o.value && g.all.some(function (p) { return p.id === o.value; }) ? o.value : '';
+    return sel;
+  }
+  /* Says who charges were for. tags: { <charge key>: <crew id> | null }. On the
+     live app the database does it, and only for a charge that is really there
+     and filed under Crew (a card charge is filed by the bank feed first, which
+     keeps no extra fields, and someone else may have sorted it another way in
+     the meantime). */
+  // keep: never over a person someone else already put on the charge (the
+  // filing path, where two phones can sort the same card charge).
+  async function tagChargesCrew(tourId, tags, keep) {
+    var keys = Object.keys(tags || {});
+    if (!keys.length) return true;
+    var B = window.GR_BACKEND;
+    if (S.mode === 'db' && B && B.setChargeCrew) {
+      // (ok with fewer tagged than asked: a charge was not there, or not under Crew any more.)
+      try { var r = await B.setChargeCrew(tourId, tags, !!keep); return !!(r && r.ok && !(G.num(r.tagged) < G.num(r.asked))); } catch (e) { return false; }
+    }
+    // The live app without that call (an older file still cached beside this one): not done, and said so.
+    if (S.mode === 'db') return false;
+    var t = getTour(tourId) || {}, patch = {}, missed = false;
+    keys.forEach(function (k) {
+      var ch = (t.charges || {})[k];
+      if (!G.isObj(ch) || (keep && ch.crewId && ch.crewId !== tags[k])) { missed = true; return; }
+      patch[k] = { crewId: tags[k] || null };
+    });
+    if (Object.keys(patch).length && !(await api.update(tourId, { charges: patch }))) return false;
+    return !missed;
+  }
   function crewPayments(t, p) {
     var out = [];
     G.rows(t && t.charges).forEach(function (ch) {
+      // (How it got on the books decides what can be done to it: a card charge is undone through the card, never deleted by hand.)
       if (ch.crewId === p.id && !ch.accounted) out.push({ chargeId: ch.id, date: ch.date || '', amount: G.num(ch.amount),
-        how: ch.cash ? 'Cash' : ch.paid ? 'Debit' : 'Credit', label: ch.merchant || 'Pay', source: 'MANUAL', counts: true });
+        how: ch.cash ? 'Cash' : ch.paid ? 'Debit' : 'Credit', label: ch.merchant || 'Pay', source: chargeSource(t, ch),
+        card: cardLabelFor(t, ch.account), counts: true });
     });
     G.rows(t && t.cashLog).forEach(function (x) {
       if (x.crewId === p.id) out.push({ cashId: x.id, date: x.date || '', amount: G.num(x.amount),
@@ -8084,20 +8205,29 @@
       var paid = G.num(exp.crew.paid);
       var paidCrew = linePaid(G.calc(t), 'crew');
 
+      var rowOf = function (p) {
+        var got = crewPaidTo(t, p), pay = G.crewPay(t, p);
+        var sub = [p.title || 'No title', got > 0 ? money(got) + ' of ' + money(pay) + ' paid' : ''].filter(Boolean).join(' \u00b7 ');
+        return h('div', { class: 'row cw-row' },
+          h('div', { class: 'row-label' }, p.name || 'Crew',
+            h('span', { class: 'hint' + (got >= pay && got > 0 ? ' done' : '') }, sub)),
+          canWrite() ? h('button', { class: 'btn sm quiet cw-edit', type: 'button', 'aria-label': 'Edit ' + (p.name || 'crew'),
+            onclick: function () { openCrewPayEdit(id, p.id); } }, 'Edit') : null,
+          h('span', { class: 'amt num' }, pay > 0 ? money(pay) : '\u2014'));
+      };
+      // The band under its own heading, then the crew, each with what it adds up to.
+      var grp = crewGroups(t);
+      var sumOf = function (xs) { return xs.reduce(function (n, p) { return n + G.crewPay(t, p); }, 0); };
+      var headOf = function (label, xs) {
+        return h('div', { class: 'row head cw-head' }, h('span', { class: 'lg-name' }, label + ' \u00b7 ' + xs.length),
+          h('span', { class: 'amt num' }, money(sumOf(xs))));
+      };
       var list = crew.length
         ? h('div', { class: 'ledger cw-list' },
-            crew.map(function (p) {
-              var got = crewPaidTo(t, p), pay = G.crewPay(t, p);
-              var sub = [p.title || 'No title', got > 0 ? money(got) + ' of ' + money(pay) + ' paid' : ''].filter(Boolean).join(' \u00b7 ');
-              return h('div', { class: 'row cw-row' },
-                h('div', { class: 'row-label' }, p.name || 'Crew',
-                  h('span', { class: 'hint' + (got >= pay && got > 0 ? ' done' : '') }, sub)),
-                canWrite() ? h('button', { class: 'btn sm quiet cw-edit', type: 'button', 'aria-label': 'Edit ' + (p.name || 'crew'),
-                  onclick: function () { openCrewPayEdit(id, p.id); } }, 'Edit') : null,
-                h('span', { class: 'amt num' }, pay > 0 ? money(pay) : '\u2014'));
-            }),
+            grp.band.length ? [headOf('Band', grp.band)].concat(grp.band.map(rowOf)) : null,
+            grp.crew.length ? [grp.band.length ? headOf('Crew', grp.crew) : null].concat(grp.crew.map(rowOf)) : null,
             h('div', { class: 'row total' },
-              h('span', null, 'Crew projection'), h('strong', { class: 'amt num' }, money(total))))
+              h('span', null, grp.band.length ? 'Band & crew projection' : 'Crew projection'), h('strong', { class: 'amt num' }, money(total))))
         : emptyState('No crew yet', canWrite()
             ? 'Add everyone out with you. What each one is paid adds up to your crew projection.'
             : 'No crew has been added.');
@@ -8113,7 +8243,8 @@
             return h('button', { class: 'chip', type: 'button',
               onclick: async function () {
                 var patch = {};
-                patch[newId()] = { name: r.name, title: r.title || '', pay: G.num(r.pay), createdAt: Date.now() };
+                patch[newId()] = Object.assign({ name: r.name, title: r.title || '', pay: G.num(r.pay), createdAt: Date.now() },
+                  r.band === true || r.band === false ? { band: r.band } : {});
                 if (await api.update(id, { crew: patch })) {
                   delete S.drafts['exp:' + id];
                   toast(r.name + ' added' + (r.pay ? ' at ' + money(G.num(r.pay)) : ''));
@@ -8139,7 +8270,7 @@
           setTimeout(function () { openCrewSheet(id); }, 250);
         } }, icon('plus', 18), 'Add ' + onTour.map(function (m) { return (m.name || m.username).split(' ')[0]; }).join(', ') + ' from the tour') : null;
       return [
-        h('h2', { class: 'sh-title' }, 'Crew'),
+        h('h2', { class: 'sh-title' }, grp.band.length ? 'Band & Crew' : 'Crew'),
         h('p', { class: 'sh-sub' }, paidCrew > 0 ? 'Paid so far: ' + money(paidCrew) + ' of ' + money(total) + '.'
           : 'Everyone on the tour and what they\u2019re paid. Tap Edit to set someone\u2019s pay and log payments.'),
         list,
@@ -8184,7 +8315,10 @@
   function openCrewPerson(id, person) {
     var f = {
       name: person ? person.name || '' : '',
-      title: person ? person.title || '' : ''
+      title: person ? person.title || '' : '',
+      // Which group they are listed under. Until the switch is touched it goes
+      // by what the row already says, else by the title as it is typed.
+      band: person ? G.isBand(person) : false, bandSaid: false
     };
     var backTo = function () { if (person) openCrewPayEdit(id, person.id); else openCrewSheet(id); };
     openSheet(function () {
@@ -8197,9 +8331,23 @@
       titleInput = h('input', {
         class: 'input', type: 'text', value: f.title, maxlength: 60, autocomplete: 'off',
         placeholder: 'What they do', enterkeyhint: 'next',
-        oninput: function (e) { f.title = e.target.value; if (chips) chips.sync(f.title); }
+        oninput: function (e) { f.title = e.target.value; if (chips) chips.sync(f.title); followTitle(); }
       });
-      var chips = chipRow(G.CREW_TITLES, f.title, function (v) { f.title = v; titleInput.value = v; });
+      var chips = chipRow(G.CREW_TITLES, f.title, function (v) { f.title = v; titleInput.value = v; followTitle(); });
+      // Crew or Band. A plain row (not a label: a tap on its caption must not press a button).
+      var submitBtn = h('button', { class: 'btn primary block', type: 'submit' }, '');
+      var bandSeg = h('div');
+      var drawBand = function () {
+        bandSeg.replaceChildren(segmented(['Crew', 'Band'], f.band ? 1 : 0, function (k) { f.band = k === 1; f.bandSaid = true; drawBand(); }, 'Band or crew'));
+        submitBtn.textContent = person ? 'Save' : f.band ? 'Add to the band' : 'Add to crew';
+      };
+      // While nobody has said, the title decides (Artist or Band), as it does for people invited.
+      var followTitle = function () {
+        if (f.bandSaid || (person && (person.band === true || person.band === false))) return;
+        var by = G.isBand({ title: f.title });
+        if (by !== f.band) { f.band = by; drawBand(); }
+      };
+      drawBand();
 
       var submit = async function (e) {
         e.preventDefault();
@@ -8207,6 +8355,8 @@
         if (!name) { toast('Add a name so you know who this is'); nameInput.focus(); return; }
         blurActive();
         var row = { name: name, title: f.title.trim() };
+        // Stored only when it is a choice someone made (now, or before).
+        if (f.bandSaid || (person && (person.band === true || person.band === false))) row.band = !!f.band;
         if (!person) row.pay = 0;
         var patch = {};
         if (person) patch[person.id] = row;
@@ -8244,8 +8394,11 @@
           field('Name', nameInput),
           field('Title', titleInput),
           chips,
+          h('div', { class: 'field' },
+            h('span', { class: 'field-label' }, 'Listed under'), bandSeg,
+            h('span', { class: 'hint' }, 'Band members are listed apart from the crew. Their pay and payments work the same way.')),
           h('div', { class: 'stack' },
-            h('button', { class: 'btn primary block', type: 'submit' }, person ? 'Save' : 'Add to crew'),
+            submitBtn,
             h('button', { class: 'btn ghost block', type: 'button', onclick: backTo }, 'Back'),
             person ? h('button', {
               class: 'btn danger block', type: 'button',
@@ -8323,6 +8476,10 @@
         h('div', { class: 'stack cw-more' },
           h('button', { class: 'btn quiet block', type: 'button', onclick: function () { openCrewPayments(id, pid); } },
             icon('cash', 18), 'Payments'),
+          // Everything logged to this person: card charges sorted to them, and payments logged by hand.
+          h('button', { class: 'btn quiet block', type: 'button',
+            onclick: function () { openLoggedSheet(id, 'crew', function () { openCrewPayEdit(id, pid); }, { crewId: pid }); } },
+            icon('card', 18), 'Logged transactions' + (crewPayments(t, p).length ? ' (' + crewPayments(t, p).length + ')' : '')),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewPerson(id, p); } }, 'Name & role'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } }, 'Back to crew'))
       ];
@@ -8430,9 +8587,13 @@
 
         h('h3', { class: 'sh-h3 cw-h' }, 'Payments so far'),
         paid.length ? h('div', { class: 'ledger logged' }, paid.map(function (r) {
+          var byHand = !!r.cashId || r.source === 'MANUAL';
           var line = h('div', { class: 'row' },
-            h('div', { class: 'row-label' }, r.date ? dayLong(r.date) : 'No date', h('span', { class: 'hint' }, r.how)),
+            h('div', { class: 'row-label' }, r.date ? dayLong(r.date) : 'No date',
+              h('span', { class: 'hint' }, byHand ? r.how : [r.how, r.label, 'from the card'].filter(Boolean).join(' \u00b7 '))),
             h('span', { class: 'amt num' }, money(r.amount)));
+          // (From the card or a statement: it is fixed or undone under Logged transactions, not deleted here.)
+          if (!byHand) return line;
           return swipeRow(line, [
             h('button', { class: 'sw-edit', type: 'button', onclick: function () { openManualEdit(id, 'crew', r, null, again); } },
               icon('edit', 16), 'Edit'),
@@ -8448,7 +8609,10 @@
                 } });
             } }, icon('trash', 16), 'Delete')]);
         })) : h('p', { class: 'note' }, 'No payments logged yet.'),
-        paid.length ? h('p', { class: 'note sw-hint', style: 'margin-top:8px' }, 'Swipe a payment left to edit or delete it.') : null,
+        paid.some(function (r) { return !!r.cashId || r.source === 'MANUAL'; })
+          ? h('p', { class: 'note sw-hint', style: 'margin-top:8px' }, 'Swipe a payment you logged by hand left to edit or delete it.') : null,
+        paid.some(function (r) { return !r.cashId && r.source !== 'MANUAL'; })
+          ? h('p', { class: 'note', style: 'margin-top:8px' }, 'A payment from the card is changed or undone under Logged transactions.') : null,
 
         h('div', { class: 'stack', style: 'margin-top:16px' },
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewPayEdit(id, pid); } }, 'Back'))
@@ -16512,6 +16676,22 @@
             else saveFailed('cards:file', r);
             return;
           }
+          // Who each Crew charge was for. The bank feed's own filing keeps no
+          // extra field, so it is said in a second step, by the database, and only
+          // onto a charge that is really there under Crew.
+          var whoMissed = false;
+          if (keep) {
+            var tags = {};
+            list.forEach(function (x) {
+              var to = crewTourOf(x);
+              if (to && x.category === 'crew' && x.crewId) (tags[to] = tags[to] || {})['p' + x.feedId] = x.crewId;
+            });
+            var tks = Object.keys(tags);
+            // keep: a charge someone else sorted a moment earlier keeps the person they gave it.
+            for (var w = 0; w < tks.length; w++) { if (!(await tagChargesCrew(tks[w], tags[tks[w]], true))) whoMissed = true; }
+            // (Charges this call did not file are already reported as sorted by someone else.)
+            if (r.already && !r.retried) whoMissed = false;
+          }
           if (S.pile && S.pile[tourId] && S.pile[tourId].lead) await loadPile(tourId);
           var bits = [];
           if (r.retried && keep && !r.filed && r.already) {
@@ -16524,6 +16704,7 @@
           if (r.already) bits.push(plural(r.already, 'charge') + ' already sorted by someone else');
           if (r.offTour) bits.push(r.offTour + ' to Off Tour');
           if (r.upcoming) bits.push(r.upcoming + ' to ' + (list.length === 1 && landsOn(list[0]) ? nameOf(landsOn(list[0])) : 'another tour'));
+          if (whoMissed) bits.push('the crew member didn\u2019t save: set it under Crew, Logged Card Transactions');
           said = bits.join(' \u00b7 ');
         } else {
           // A statement: each charge goes where it was pointed.
@@ -16539,7 +16720,10 @@
             xs.forEach(function (x, k) {
               // Only ever these fields: no card numbers, no raw text, no file names.
               patch[newId() + k] = Object.assign({ date: x.date, merchant: x.merchant, amount: G.num(x.amount), category: x.category,
-                accounted: false, importId: importId, createdAt: Date.now() + k }, extra ? extra(x) : {});
+                accounted: false, importId: importId, createdAt: Date.now() + k },
+                // (Who a Crew charge was for, on the tour that person is on.)
+                !extra && x.category === 'crew' && x.crewId && crewPerson(getTour(where), x.crewId) ? { crewId: x.crewId } : {},
+                extra ? extra(x) : {});
               sum += G.num(x.amount);
             });
             var wt = getTour(where) || {};
@@ -16686,10 +16870,13 @@
 
     // Under the category: Log to Off Tour, Current Tour or Upcoming Tour (and
     // which one, when the band has more than one coming up).
+    // The tour whose people a Crew charge can be for: where it lands, and from
+    // the Off Tour book, the book itself (it keeps its own list).
+    function crewTourOf(x) { return x.dest === 'off' ? (baseOff ? tourId : null) : landsOn(x); }
     function destRow(r) {
       if (!dests.length) return null;
       var upSel = ups.length ? h('select', { class: 'input sm rv-upsel', 'aria-label': 'Which upcoming tour',
-        onchange: function (e) { r.upTo = e.target.value; } },
+        onchange: function (e) { r.upTo = e.target.value; if (r.drawWho) r.drawWho(); } },
         ups.map(function (u) { return h('option', { value: u.id }, u.name + ' \u00b7 starts ' + dayMD(u.start)); })) : null;
       if (upSel) { upSel.value = r.upTo || ''; upSel.hidden = r.dest !== 'up'; }
       return h('div', { class: 'rv-dwrap' },
@@ -16705,6 +16892,7 @@
                   b.classList.toggle('on', b === e.currentTarget);
                 });
                 if (upSel) upSel.hidden = r.dest !== 'up';
+                if (r.drawWho) r.drawWho();
               } }, d[1]);
           })),
         upSel);
@@ -16714,10 +16902,31 @@
       var cb = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check ' + r.merchant,
         onchange: function (e) { r.pick = e.target.checked; wrap.classList.toggle('on', r.pick); refreshBar(); } });
       cb.checked = !!r.pick;
+      // Devin: "if you hit crew a drop down menu should come up where you can
+      // select which crew member". Under the category, for a charge going onto a
+      // tour (crew are listed per tour): the band first, then the crew. Left on
+      // "Which crew member?" it is a crew expense that is nobody's pay.
+      var whoHost = h('div', { class: 'rv-who' });
+      var drawWho = function () {
+        var to = r.category === 'crew' ? crewTourOf(r) : null;
+        var who = to ? crewSelect(to, { value: r.crewId, aria: 'Which crew member ' + r.merchant + ' was for',
+          onPick: function (v) { r.crewId = v; } }) : null;
+        // (A person on another tour's list is not this tour's person.)
+        if (!who || !crewPerson(getTour(to), r.crewId)) r.crewId = null;
+        // (Said plainly, so a wrong pick is seen before Add: it becomes that person's pay.)
+        var note = h('span', { class: 'hint rv-who-n' });
+        var sayWho = function () { var p = crewPerson(getTour(to), r.crewId); note.textContent = p ? 'Counts as pay to ' + (p.name || 'them') + '.' : ''; };
+        if (who) who.addEventListener('change', sayWho);
+        sayWho();
+        whoHost.replaceChildren.apply(whoHost, who ? [who, note] : []);
+        whoHost.hidden = !who;
+      };
+      r.drawWho = drawWho;
       var sel = categorySelect(tourId, {
         value: r.category || '', aria: 'Category for ' + r.merchant,
-        onPick: function (v) { r.category = v; r.source = v ? 'chosen' : null; var f = $('.rv-flag.learned', wrap); if (f) f.remove(); }
+        onPick: function (v) { r.category = v; r.source = v ? 'chosen' : null; var f = $('.rv-flag.learned', wrap); if (f) f.remove(); drawWho(); }
       });
+      drawWho();
       wrap.append(cb, h('div', { class: 'rv-fields' },
         h('div', { class: 'rv-head' },
           h('span', { class: 'rv-name' }, r.merchant),
@@ -16731,6 +16940,7 @@
             var b = h('button', { class: 'btn sm primary rv-add1', type: 'button' }, 'Add');
             return pressable(b, function () { file([r], true, b); });
           })()),
+        whoHost,
         destRow(r),
         feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false); } },
           'Not a tour charge — set it aside') : null));

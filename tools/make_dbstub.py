@@ -512,6 +512,22 @@ shim = r"""<script>
         return { id: d.id, date: d.date, amount: d.amount, atvenu: d.atvenu, watch: d.watch || '' };
       }));
     },
+    /* Who charges under Crew were for (set_charge_crew, 0126): only onto a
+       charge that is there, under Crew, for a person on the tour's list. */
+    setChargeCrew: async function (tourId, tags, keep) {
+      var H = window.__harness, tdoc = tours[tourId] || {}, patch = {}, n = 0;
+      H.crewTags = (H.crewTags || []).concat([{ tourId: tourId, tags: JSON.parse(JSON.stringify(tags || {})), keep: !!keep }]);
+      Object.keys(tags || {}).forEach(function (k) {
+        var ch = (tdoc.charges || {})[k], who = tags[k];
+        if (!ch || typeof ch !== 'object') return;
+        if (who == null) { patch[k] = { crewId: null }; n += 1; return; }
+        if (ch.category !== 'crew' || !(tdoc.crew || {})[who]) return;
+        if (keep && ch.crewId && ch.crewId !== who) return;
+        patch[k] = { crewId: who }; n += 1;
+      });
+      if (n) await db.doc('tours/' + tourId).update({ charges: patch });
+      return { ok: true, tagged: n, asked: Object.keys(tags || {}).length };
+    },
     /* One night's guarantee met by bank money (catalog_guarantee_night, 0121
        restated in 0124). A night not yet received takes what the bank shows
        and is received on it, whatever Deposit Amount was expected. A night

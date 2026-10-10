@@ -3,7 +3,7 @@
    deploy is picked up on the next open, and a tour bus with no signal still
    gets the app shell. The cache name carries the build stamp; installing a new
    version clears the old cache. */
-var CACHE = 'greenroom-20261009-231302';
+var CACHE = 'greenroom-20261009-233626';
 var SHELL = ['./', 'index.html', 'core.js', 'statements.js', 'app.js',
   'manifest.webmanifest', 'icon-180.png', 'icon-512.png', 'logo-full.png'];
 
@@ -36,6 +36,9 @@ function isShell(url) {
 self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
+  // This file is never answered from the cache: the app reads it to learn
+  // whether a newer build is out, and a cached copy would say "no" for good.
+  if (/(^|\/)sw\.js$/.test(url.pathname)) return;
   var fresh = fetch(e.request, { cache: 'no-store' }).then(function (res) {
     if (res && res.ok) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(e.request, copy); }); }
     return res;

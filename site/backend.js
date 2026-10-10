@@ -932,6 +932,16 @@
       if (out.ok && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
       return out;
     },
+    // Who charges under Crew were for: tags is { <charge key>: <crew id> | null }.
+    // The database sets it only on a charge that is there, filed under Crew,
+    // for a person on that tour's list.
+    setChargeCrew: async function (tourId, tags, keep) {
+      var q = await sb.rpc('set_charge_crew', { t_id: String(tourId), tags: isObj(tags) ? tags : {}, keep: !!keep });
+      if (q.error) throw mapError(q.error);
+      var out = isObj(q.data) ? q.data : { ok: false };
+      if (out.ok) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
+      return out;
+    },
     // A guarantee logged "Sort later" finds its show(s): parts is
     // [{ show, amount, agent? }], all of it or part of it (the rest stays to
     // sort); whole keeps what is left on the tour as money that belongs to no

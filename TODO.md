@@ -50,6 +50,7 @@ what is left to automate in PIPELINE.md, every platform checked in SOURCES.md.
 - [x] Listed is not played: old lists still showing, the 2020–21 shutdown months, and shows the band marked cancelled are kept off
 - [x] I See Stars accounted for in ISS-ROAD-STORY.md: 1,347 shows · 57 tours · 49 festivals · 400 cities · 34 countries
 - [x] One deposit, several guarantees (a lump sum from the agency): under Guarantee the New income sheet is a tick list of nights; every ticked night is marked received; the sheet shows what's logged for the ticked nights against what the card says, and says when they don't add up (migration 0121)
+- [x] Crew on card charges: picking Crew for a card charge asks "Which crew member?" (band first, then crew); each person has "Logged transactions"; the crew sheet lists Band and Crew apart with their own subtotals (a person is band by the title Artist or Band, or by the Crew / Band switch under Name & role); a Crew entry can be given a person, or another person, afterwards ("Who") (migration 0126)
 - [x] Guarantees to sort: part of a deposit can be placed now ("What's logged", less the agent's cut, all of it, or an amount typed) and the rest stays to sort; the tour's creator or any Manager can sort (migration 0125). "Not sure which show yet" is now first in the list of shows and in the "What was it?" menu
 - [x] Profile no longer scrolls with nothing to scroll to (the tab area was forced a screen tall; the page was a notch taller than the screen; the Today spacer was 2px too big)
 - [x] Guarantees as Devin runs them. The Guarantee Total is what the promoter owes; the Deposit Amount is what's coming (typed from a check or settlement) and no longer ticks Received by itself. Received is ticked by an approved bank deposit, or by hand when he chose "manually". The two questions ("log received guarantees / merch deposits manually or through card") are asked at account set-up and once in New income; "through card" locks the Received box. A guarantee deposit with no show yet is logged "Sort later": it counts as guarantee income and waits under Tonight in "Guarantees to sort" until he says which show(s) it paid for (migration 0124)
@@ -75,6 +76,12 @@ Choices made while building, for him to confirm or change:
 - "Who received?" is who has been handed their buyout (the tick list that already existed); it is passed over until a buyouts total is logged.
 - A skipped question stays on today's list (the card says how many are left); tomorrow the card is tomorrow's show.
 - A guarantee or merch total already logged is shown with a tick and a way into Log income, not overwritten from here (its deposit, taxes and reasons live there).
+
+## Band and crew: left open after 2026-10-09
+- [ ] Band and Crew are two groups inside one Crew line. A separate "Band" line on the Expenses tab itself is not built: each Expenses line counts the larger of projected and paid, so two lines can move the tour's net. Devin to say whether band pay is its own budget line or part of crew
+- [ ] One card charge that paid several people (one Venmo run, a payroll batch) can only be given to one person. Splitting a charge across people is not built
+- [ ] A learned merchant filed under Crew by itself has no person: it shows as "not anyone's yet" under Crew, Logged Card Transactions
+- [ ] The merch cash log's own Crew entry does not ask who (the Payments sheet's cash payment does)
 
 ## Deposits: left open after 2026-10-09
 - [ ] Devin to confirm the names: "Sort later" (the answer) and "Guarantees to sort" (the section). Alternates offered: "Don't know yet" / "Guarantees with no show yet"

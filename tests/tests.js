@@ -1814,6 +1814,18 @@
       eq(none.lines.some(function (l) { return l.key === 'merchTips'; }), false, 'no line when nothing is owed');
       eq(G.isDerived('merchTips') && G.isDerived('commission') && !G.isDerived('crew'), true);
     });
+    test('isBand: the row says so, else the title Artist or Band does', function () {
+      eq(G.isBand({ title: 'Artist' }), true, 'the invite role for the band');
+      eq(G.isBand({ title: ' band ' }), true);
+      eq(G.isBand({ title: 'Guitar Tech' }), false);
+      eq(G.isBand({ title: 'Artist Relations' }), false, 'only the whole title');
+      eq(G.isBand({ title: 'Guitar Tech', band: true }), true, 'said by hand wins');
+      eq(G.isBand({ title: 'Artist', band: false }), false, 'said by hand wins the other way');
+      eq(G.isBand(null), false);
+      // One line of money either way: the projection does not care which group a row is in.
+      var t = { crew: { a: { name: 'A', title: 'Artist', pay: 1000 }, b: { name: 'B', title: 'FOH', pay: 500, band: true }, c: { name: 'C', title: 'TM', pay: 250 } } };
+      eq(G.crewProjection(t), 1750);
+    });
     test('etaText says the finder’s time left the way a person would', function () {
       eq(G.etaText(0), '', 'nothing left, nothing said');
       eq(G.etaText(45), 'Almost done.');

@@ -101,8 +101,25 @@ def build_web():
                     '<link rel="apple-touch-icon" href="' + icon_name + '">',
                     html, count=1)
 
+    # A newer Greenroom is picked up on THIS open, not the one after. The shell
+    # opens from the cache (fast), the browser fetches the new worker behind it,
+    # and when that worker has stored the new shell and taken over the page
+    # ('controllerchange'), the page reloads itself once: only when nothing is
+    # open or being typed, at most once per build, and never on a first install.
+    # (Devin, 2026-10-09: "I am not seeing the not sure option": his phone was a
+    # build behind, because a new build used to take two opens to show.)
     sw = ('<script>\n'
           "if ('serviceWorker' in navigator && location.protocol === 'https:') {\n"
+          "  var grHad = !!navigator.serviceWorker.controller, grWait = 0;\n"
+          "  var grFresh = function () {\n"
+          "    var a = document.activeElement;\n"
+          "    var typing = !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable));\n"
+          "    var busy = typing || !!document.querySelector('#sheet-root .sheet') || document.visibilityState === 'hidden';\n"
+          "    if (busy) { if (grWait++ < 90) setTimeout(grFresh, 4000); return; }\n"
+          "    try { if (sessionStorage.getItem('gr-fresh') === String(window.GREENROOM_BUILD)) return; sessionStorage.setItem('gr-fresh', String(window.GREENROOM_BUILD)); } catch (e) { return; }\n"
+          "    location.reload();\n"
+          "  };\n"
+          "  navigator.serviceWorker.addEventListener('controllerchange', function () { if (grHad) grFresh(); });\n"
           "  addEventListener('load', function () { navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }); });\n"
           '}\n</script>\n</body>')
     html = html.replace('<script src="core.js"></script>',
