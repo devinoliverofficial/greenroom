@@ -958,6 +958,41 @@
       if ((out.ok || out.why === 'changed') && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
       return out;
     },
+    // One merch deposit that paid for several nights: parts is [{ show, amount }],
+    // the shares adding up to the deposit. Its own call (never a guarantee
+    // split with a word added), so a phone running this file's older copy
+    // has no way to file merch as guarantees.
+    catalogMerchSplit: async function (depId, opts) {
+      var o = opts || {};
+      var q = await sb.rpc('catalog_merch_split', {
+        dep_id: String(depId), t_id: o.tourId || null, parts: Array.isArray(o.parts) ? o.parts : [] });
+      if (q.error) throw mapError(q.error);
+      var out = isObj(q.data) ? q.data : { ok: false };
+      if (out.ok && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
+      return out;
+    },
+    // A merch deposit logged "Not sure which show yet" finds its show(s):
+    // parts is [{ show, amount }], all of it or part of it (the rest stays to
+    // sort). The tour's creator or a Manager.
+    sortMerch: async function (depId, opts) {
+      var o = opts || {};
+      var q = await sb.rpc('sort_merch', {
+        dep_id: String(depId), t_id: o.tourId || null, parts: Array.isArray(o.parts) ? o.parts : [],
+        expect: typeof o.expect === 'number' ? o.expect : null });
+      if (q.error) throw mapError(q.error);
+      var out = isObj(q.data) ? q.data : { ok: false };
+      if ((out.ok || out.why === 'changed') && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
+      return out;
+    },
+    // Set aside by mistake: off the tour's list and back into New income.
+    unparkMerch: async function (depId, opts) {
+      var o = opts || {};
+      var q = await sb.rpc('unpark_merch', { dep_id: String(depId), t_id: o.tourId || null });
+      if (q.error) throw mapError(q.error);
+      var out = isObj(q.data) ? q.data : { ok: false };
+      if (out.ok && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
+      return out;
+    },
     // Logged "Sort later" by mistake: off the tour and back into New income.
     unparkGuarantee: async function (depId, opts) {
       var o = opts || {};

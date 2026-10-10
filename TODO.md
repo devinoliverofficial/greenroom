@@ -84,12 +84,21 @@ Choices made while building, for him to confirm or change:
 - [ ] The merch cash log's own Crew entry does not ask who (the Payments sheet's cash payment does)
 
 ## Deposits: left open after 2026-10-09
-- [ ] Devin to confirm the names: "Sort later" (the answer) and "Guarantees to sort" (the section). Alternates offered: "Don't know yet" / "Guarantees with no show yet"
+- [ ] Devin to confirm the names: "Not sure which show yet" (the answer), "Guarantees to sort" and "Merch to sort" (the sections on the Income tab)
 - [ ] A phone still on the old build (until the app is reopened) can wipe a Deposit Amount typed on a show that is not received, or hand-tick Received on a "through card" tour, if it saves Log income on that show. Small window; a "new version, reload" gate before saving would close it
 - [ ] No undo for a logged deposit: a wrong city has to be fixed by hand in Log income and the deposit never returns to the list. Build an "Undo" (the deposit remembers what the night looked like before)
-- [ ] One merch deposit that paid for several nights cannot be split (guarantees can). The bank feed's matcher used to do this by itself; say if it ever happens
+- [x] One merch deposit over several nights (2026-10-10, migration 0127): Merch has the same show list as Guarantees, with "Not sure which show yet" (it waits in "Merch to sort" and does not count as income: merch counts on its night). "Whole tour" is gone from the list
+- [ ] Merch money that belongs to no show at all (an online store payout) has no home on a tour now that "Whole tour" is gone: today it goes on the Off Tour book, or waits in Merch to sort. Ask Devin if he gets any
+- [ ] A parked guarantee can still be dropped by "Take it off the book" on a phone running a build from before 2026-10-09 (its entry sits in Other income there). The merch list is guarded in the database (tours_merch_to_sort_gate); the guarantee one is not
+- [ ] The rest of a part-placed deposit that turns out to belong to no show has no exit (put-back is refused once part is placed): it waits in the list. Rare; add "this part is not for a show" if it ever happens
 - [ ] When the bank feed function is next redeployed from the Supabase dashboard, take settleMerch and settleGuarantees out of it: today they still try on every Refresh and are refused by the database (harmless, but noisy in the logs)
 - [ ] Deposits matched automatically before 2026-10-09 (by the bank feed) were never approved by hand: list them for Devin if he wants to confirm them
+
+## Cities and countries: left open after 2026-10-10
+- [ ] Devin to say whether a district counts as its own city: Hollywood (3 nights) beside Los Angeles, Brooklyn (3) and Queens (1) beside New York, Ancol (1) beside Jakarta. Today each counts. Folding them would be 4 fewer cities for I See Stars
+- [ ] 2012-03-21 (Asking Alexandria / Trivium tour) is on the I See Stars page as "South Carolina, TBA": it no longer counts as a city, but the real city and room are unknown. Ask Devin
+- [ ] Crew (not band) still see only the tours an artist confirmed for them, counted from their claim; festivals and loose shows are a band-member thing for now
+- [ ] `countriesList` on the artist page (not shown anywhere yet) still groups by the raw country name
 
 ## Smaller
 - [ ] Artist photo for search-made pages (MusicBrainz → Wikidata → Wikimedia Commons; Concert Archives photos are not available to us)

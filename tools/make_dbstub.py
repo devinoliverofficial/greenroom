@@ -196,7 +196,7 @@ shim = r"""<script>
       creditExpand(rows[k].approved).forEach(function (g) {
         var y = parseInt(g.first.slice(0, 4), 10);
         if (!out.first || y < out.first) out.first = y;
-        if (!g.year) out.list.push({ artistId: aid, artist: iss ? iss.name : 'Artist', key: g.key, name: g.name, n: g.n, first: g.first, last: g.last });
+        if (!g.year) out.list.push({ artistId: aid, artist: iss ? iss.name : 'Artist', key: g.key, name: g.name, n: g.n, first: g.first, last: g.last, kind: 'tour' });
       });
     });
     return out;
@@ -554,6 +554,29 @@ shim = r"""<script>
       if (seen >= had - 1) return { guaranteeReceivedAt: date, guaranteeDeposit: seen, guaranteeSeen: seen };
       return { guaranteeSeen: seen };
     },
+    /* One night's merch met by bank money (catalog_merch_night, 0127): received
+       on what lands; a second deposit adds to what the bank has shown. */
+    __merchNight: function (cur, amount, date) {
+      cur = cur || {};
+      var had = Number(cur.merchDeposit) > 0 ? Number(cur.merchDeposit) : 0;
+      if (cur.merchReceivedAt && had > 0) {
+        return { merchReceived: true, merchReceivedAt: cur.merchReceivedAt > date ? cur.merchReceivedAt : date, merchDeposit: Math.round((had + amount) * 100) / 100 };
+      }
+      return { merchReceived: true, merchReceivedAt: date, merchDeposit: Math.round(amount * 100) / 100 };
+    },
+    /* Shares over nights' merch (catalog_merch_parts): checked whole, then filed. */
+    __merchParts: function (tourId, parts, total, date) {
+      var tdoc = tours[tourId] || {}, sum = 0, seenIds = {}, sh = {}, self = this;
+      if (!Array.isArray(parts) || !parts.length) throw new Error('which nights');
+      parts.forEach(function (p) {
+        var cur = (tdoc.shows || {})[p.show];
+        if (!cur || seenIds[p.show] || !(Number(cur.income && cur.income.merch) > 0) || !(Number(p.amount) > 0)) throw new Error('bad part');
+        seenIds[p.show] = 1; sum += Number(p.amount);
+      });
+      if (Math.abs(sum - total) > 0.02) throw new Error('does not add up');
+      parts.forEach(function (p) { sh[p.show] = self.__merchNight((tdoc.shows || {})[p.show], Number(p.amount), date); });
+      return sh;
+    },
     /* Shares over nights (catalog_guarantee_parts): checked whole, then filed. */
     __parts: function (tourId, parts, total, date) {
       var tdoc = tours[tourId] || {}, sum = 0, seenIds = {}, sh = {}, self = this;
@@ -581,14 +604,24 @@ shim = r"""<script>
       var dep = (H.deposits || []).filter(function (d) { return d.id === depId; })[0];
       if (!dep) return { ok: false, why: 'gone' };
       if (dep.matched) return { ok: false, why: 'done' };
-      if (o.kind === 'guarantee_later' && o.showId) throw new Error('not show money');
+      if (['merch', 'merch_later', 'guarantee', 'guarantee_later', 'royalties', 'advance', 'skip'].indexOf(o.kind) < 0) throw new Error('what kind');
+      if (o.showId && o.kind !== 'merch' && o.kind !== 'guarantee' && o.kind !== 'skip') throw new Error('not show money');
+      if (o.showId && o.kind !== 'skip' && !(((tours[o.tourId] || {}).shows || {})[o.showId] && typeof tours[o.tourId].shows[o.showId] === 'object')) throw new Error('no such show');
+      if (/_later$/.test(o.kind) && (tours[o.tourId] || {}).kind === 'offtour') throw new Error('no nights on this book');
       dep.matched = true;
       if (o.kind === 'skip') return { ok: true };
       if (o.showId && (o.kind === 'merch' || o.kind === 'guarantee')) {
         var sh = {};
-        if (o.kind === 'merch') sh[o.showId] = { merchReceived: true, merchReceivedAt: dep.date, merchDeposit: dep.amount };
+        if (o.kind === 'merch') sh[o.showId] = this.__merchNight(((tours[o.tourId] || {}).shows || {})[o.showId], dep.amount, dep.date);
         else sh[o.showId] = this.__nightPatch(((tours[o.tourId] || {}).shows || {})[o.showId], dep.amount, dep.date);
         await db.doc('tours/' + o.tourId).update({ shows: sh });
+        return { ok: true };
+      }
+      // Merch with no show yet: set aside on the tour, apart from income (0127).
+      if (o.kind === 'merch_later') {
+        var ms = {};
+        ms[depId] = { date: dep.date, amount: dep.amount, at: Date.now() };
+        await db.doc('tours/' + o.tourId).update({ merchToSort: ms });
         return { ok: true };
       }
       // The whole tour's money; "Sort later" is a guarantee flagged unsorted (0124).
@@ -606,6 +639,18 @@ shim = r"""<script>
       if (!dep) return { ok: false, why: 'gone' };
       if (dep.matched) return { ok: false, why: 'done' };
       var sh = this.__parts(o.tourId, parts, dep.amount, dep.date);
+      dep.matched = true;
+      await db.doc('tours/' + o.tourId).update({ shows: sh });
+      return { ok: true, nights: parts.length };
+    },
+    /* One merch deposit over several nights (catalog_merch_split, 0127). */
+    catalogMerchSplit: async function (depId, opts) {
+      var H = window.__harness, o = opts || {}, parts = Array.isArray(o.parts) ? o.parts : [];
+      H.catalogued = (H.catalogued || []).concat([{ id: depId, tourId: o.tourId || null, parts: parts, kind: 'merch' }]);
+      var dep = (H.deposits || []).filter(function (d) { return d.id === depId; })[0];
+      if (!dep) return { ok: false, why: 'gone' };
+      if (dep.matched) return { ok: false, why: 'done' };
+      var sh = this.__merchParts(o.tourId, parts, dep.amount, dep.date);
       dep.matched = true;
       await db.doc('tours/' + o.tourId).update({ shows: sh });
       return { ok: true, nights: parts.length };
@@ -648,6 +693,59 @@ shim = r"""<script>
       var oi = {}; oi[depId] = null;
       await db.doc('tours/' + o.tourId).update({ otherIncome: oi });
       return { ok: true };
+    },
+    /* A parked merch deposit finds its show(s), all of it or part of it
+       (sort_merch, 0127); and back into New income (unpark_merch). */
+    sortMerch: async function (depId, opts) {
+      var H = window.__harness, o = opts || {}, parts = Array.isArray(o.parts) ? o.parts : [];
+      H.sorted = (H.sorted || []).concat([{ id: depId, tourId: o.tourId, parts: parts, expect: o.expect, kind: 'merch' }]);
+      var entry = ((tours[o.tourId] || {}).merchToSort || {})[depId];
+      if (!entry) return { ok: false, why: 'done' };
+      var amt = Number(entry.amount);
+      if (typeof o.expect === 'number' && Math.abs(o.expect - amt) > 0.02) return { ok: false, why: 'changed', left: amt };
+      var placing = parts.reduce(function (n, p) { return n + (Number(p.amount) || 0); }, 0);
+      if (!(placing > 0)) throw new Error('bad share');
+      if (placing > amt + 0.02) throw new Error('more than is left');
+      var rest = Math.round((amt - placing) * 100) / 100, ms = {};
+      var sh = this.__merchParts(o.tourId, parts, placing, entry.date);
+      if (rest < 0.01) { rest = 0; ms[depId] = null; }
+      else ms[depId] = { amount: rest, of: Number(entry.of) > 0 ? Number(entry.of) : amt };
+      await db.doc('tours/' + o.tourId).update({ merchToSort: ms, shows: sh });
+      return { ok: true, nights: parts.length, left: rest };
+    },
+    unparkMerch: async function (depId, opts) {
+      var H = window.__harness, o = opts || {};
+      var entry = ((tours[o.tourId] || {}).merchToSort || {})[depId];
+      if (!entry) return { ok: false, why: 'done' };
+      if (entry.of != null) return { ok: false, why: 'partly' };
+      var dep = (H.deposits || []).filter(function (d) { return d.id === depId; })[0];
+      if (!dep || !dep.matched) return { ok: false, why: 'gone' };
+      dep.matched = false;
+      var ms = {}; ms[depId] = null;
+      await db.doc('tours/' + o.tourId).update({ merchToSort: ms });
+      return { ok: true };
+    },
+    /* Opt-in seed for merch deposits answered like guarantees (0127): three
+       nights with merch logged and not seen in the bank (one with a card
+       estimate, one with cash kept, one ticked by hand), one night the bank
+       has already shown, and four deposits: one night's merch to the dollar,
+       two nights' together, one that fits nothing, and one more for the night
+       already shown. */
+    seedMerch: async function () {
+      var H = window.__harness;
+      var day = function (daysAgo) { var d = new Date(Date.now() - daysAgo * 864e5); return d.toISOString().slice(0, 10); };
+      await db.doc('tours/t1').update({ shows: {
+        m1: { id: 'm1', date: day(9), city: 'Detroit, MI', venue: 'Saint Andrew\u2019s Hall', loggedAt: 1, income: { merch: 2400, guarantee: 2500 }, merchReceived: false, merchCardDeposit: 1810.55, guaranteeReceived: false },
+        m2: { id: 'm2', date: day(8), city: 'Chicago, IL', venue: 'Bottom Lounge', loggedAt: 1, income: { merch: 1900 }, merchCash: 300, merchReceived: false },
+        m3: { id: 'm3', date: day(7), city: 'Milwaukee, WI', venue: 'The Rave', loggedAt: 1, income: { merch: 1200 }, merchReceived: true },
+        m4: { id: 'm4', date: day(6), city: 'Cleveland, OH', venue: 'House of Blues', loggedAt: 1, income: { merch: 1500 }, merchReceived: true, merchReceivedAt: day(4), merchDeposit: 1500 } } });
+      H.deposits = [
+        { id: 'md1', date: day(2), amount: 1200, atvenu: false, matched: false, watch: 'merch' },
+        { id: 'md2', date: day(2), amount: 3410.55, atvenu: false, matched: false, watch: 'merch' },
+        { id: 'md3', date: day(2), amount: 777, atvenu: false, matched: false, watch: 'merch' },
+        { id: 'md4', date: day(1), amount: 88.5, atvenu: false, matched: false, watch: 'both' }
+      ];
+      return true;
     },
     /* Opt-in seed for guarantees as Devin runs them: a night with the
        Guarantee Total set and a Deposit Amount typed from the settlement (not
