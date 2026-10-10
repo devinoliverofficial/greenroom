@@ -14777,10 +14777,19 @@
       function draw() {
         if (!how) { box.replaceChildren(); return; }
         var deposit = how === 'deposit';
-        var f = { amount: 0, category: '', what: '', date: G.tourToday() };
+        var f = { amount: 0, category: '', what: '', date: G.tourToday(), crewId: null };
         var sel = null;
+        // Pay out of the merch cash asks who it paid, the way a card charge does
+        // (Band and Crew are two lines: with a name on it, it counts on the right one).
+        var whoHost = h('div');
+        var drawWho = function () {
+          var pickWho = f.category === 'crew' ? crewSelect(id, { cls: 'input', value: f.crewId, onPick: function (v) { f.crewId = v; } }) : null;
+          if (f.category !== 'crew') f.crewId = null;
+          whoHost.replaceChildren.apply(whoHost, pickWho ? [field('Who was it for?', h('div', { class: 'sel-wrap' }, pickWho, icon('chevron', 16)),
+            'Leave it and it sits under Crew with no name on it.')] : []);
+        };
         if (!deposit) {
-          sel = h('select', { class: 'input', 'aria-label': 'Category', onchange: function (e) { f.category = e.target.value; } },
+          sel = h('select', { class: 'input', 'aria-label': 'Category', onchange: function (e) { f.category = e.target.value; drawWho(); } },
             h('option', { value: '' }, 'Pick a category'),
             cashCats(t).map(function (c) { return h('option', { value: c.key }, c.label); }));
         }
@@ -14793,12 +14802,13 @@
             if (!deposit && !f.category) { toast('Pick a category'); return; }
             if (deposit && !G.parseDay(f.date)) { toast('Pick the day it was deposited'); return; }
             var patch = {};
-            patch[newId()] = { date: deposit ? f.date : G.tourToday(), amount: f.amount, showId: sh.id,
-              label: deposit ? G.CASH_MOVES.deposit : (f.what.trim() || (f.category === 'crew' ? 'Crew' : catLabel[f.category]) || 'Cash'),
-              category: deposit ? 'deposit' : f.category, createdAt: Date.now() };
+            var who = !deposit && f.category === 'crew' ? crewPerson(getTour(id), f.crewId) : null;
+            patch[newId()] = Object.assign({ date: deposit ? f.date : G.tourToday(), amount: f.amount, showId: sh.id,
+              label: deposit ? G.CASH_MOVES.deposit : (f.what.trim() || (who ? 'Pay: ' + (who.name || 'crew') : f.category === 'crew' ? 'Crew' : catLabel[f.category]) || 'Cash'),
+              category: deposit ? 'deposit' : f.category, createdAt: Date.now() }, who ? { crewId: who.id } : {});
             if (await api.update(id, { cashLog: patch })) {
               var leftNow = Math.round((left - f.amount) * 100) / 100;
-              toast(cashMoney(f.amount) + (deposit ? ' deposit logged' : ' logged under ' + catLabel[f.category]) +
+              toast(cashMoney(f.amount) + (deposit ? ' deposit logged' : who ? ' paid to ' + (who.name || 'crew') : ' logged under ' + catLabel[f.category]) +
                 (leftNow > 0.004 ? ' · ' + cashMoney(leftNow) + ' of ' + place + ' left' : ' · ' + place + ' is all accounted for'));
               render(true);
               if (leftNow > 0.004) openCashNight(id, showId); else closeSheet();
@@ -14811,6 +14821,7 @@
               onchange: function (e) { f.date = e.target.value; } }))
             : [field('Category', h('div', { class: 'sel-wrap' }, sel, icon('chevron', 16)),
                 'It shows up under this category on Expenses, in the Cash column.'),
+               whoHost,
                field('Expense details', h('input', { class: 'input', type: 'text', id: 'cl-what', maxlength: 60, autocomplete: 'off',
                  placeholder: 'Optional, e.g. per diems', oninput: function (e) { f.what = e.target.value; } }))],
           h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'submit' },

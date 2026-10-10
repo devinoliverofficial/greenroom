@@ -83,7 +83,7 @@ Choices made while building, for him to confirm or change:
 - [ ] Changing someone between Band and Crew, or retitling them to or from Artist / Band, moves their pay and payments to the other line and can change the tour's total. Said nowhere in the app yet
 - [ ] One card charge that paid several people (one Venmo run, a payroll batch) can only be given to one person. Splitting a charge across people is not built
 - [ ] A learned merchant filed under Crew by itself has no person: it shows as "not anyone's yet" under Crew, Logged Card Transactions
-- [ ] The merch cash log's own Crew entry does not ask who (the Payments sheet's cash payment does)
+- [x] The merch cash log's "Spent" asks "Who was it for?" when the category is Band & Crew (2026-10-10), so cash pay lands on the right line with a name on it
 
 ## Deposits: left open after 2026-10-09
 - [ ] Devin to confirm the names: "Not sure which show yet" (the answer), "Guarantees to sort" and "Merch to sort" (the sections on the Income tab)
