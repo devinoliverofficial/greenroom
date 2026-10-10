@@ -50,6 +50,7 @@ what is left to automate in PIPELINE.md, every platform checked in SOURCES.md.
 - [x] Listed is not played: old lists still showing, the 2020–21 shutdown months, and shows the band marked cancelled are kept off
 - [x] I See Stars accounted for in ISS-ROAD-STORY.md: 1,347 shows · 57 tours · 49 festivals · 400 cities · 34 countries
 - [x] One deposit, several guarantees (a lump sum from the agency): under Guarantee the New income sheet is a tick list of nights; every ticked night is marked received; the sheet shows what's logged for the ticked nights against what the card says, and says when they don't add up (migration 0121)
+- [x] Guarantees as Devin runs them. The Guarantee Total is what the promoter owes; the Deposit Amount is what's coming (typed from a check or settlement) and no longer ticks Received by itself. Received is ticked by an approved bank deposit, or by hand when he chose "manually". The two questions ("log received guarantees / merch deposits manually or through card") are asked at account set-up and once in New income; "through card" locks the Received box. A guarantee deposit with no show yet is logged "Sort later": it counts as guarantee income and waits under Tonight in "Guarantees to sort" until he says which show(s) it paid for (migration 0124)
 - [x] Deposits say what they match and wait for approval (Devin: "it should say this number matches whatever city it is. For now we should have to still see and approve and log"). In New income a number that matches a merch number or a guarantee deposit amount names the city; Approve fills it in, Log puts it on the books; two nights with the same number are both named; matches are listed first with a count. Nothing is logged from a deposit by itself any more: the bank feed's two matchers, the hourly matcher and the to-the-dollar pass are all stopped in the database (migration 0123). The six merch deposits the app had logged by itself earlier the same day went back to the list for him to approve
 
 ## 3. MERCHROOM
@@ -74,6 +75,10 @@ Choices made while building, for him to confirm or change:
 - A guarantee or merch total already logged is shown with a tick and a way into Log income, not overwritten from here (its deposit, taxes and reasons live there).
 
 ## Deposits: left open after 2026-10-09
+- [ ] Devin to confirm the names: "Sort later" (the answer) and "Guarantees to sort" (the section). Alternates offered: "Don't know yet" / "Guarantees with no show yet"
+- [ ] A guarantee to sort can only be placed whole (shared over the ticked shows). Placing part of it now and leaving the rest to sort is not built
+- [ ] Guarantees to sort: owner only (it is his bank). Say if the tour manager should be able to place them too
+- [ ] A phone still on the old build (until the app is reopened) can wipe a Deposit Amount typed on a show that is not received, or hand-tick Received on a "through card" tour, if it saves Log income on that show. Small window; a "new version, reload" gate before saving would close it
 - [ ] No undo for a logged deposit: a wrong city has to be fixed by hand in Log income and the deposit never returns to the list. Build an "Undo" (the deposit remembers what the night looked like before)
 - [ ] One merch deposit that paid for several nights cannot be split (guarantees can). The bank feed's matcher used to do this by itself; say if it ever happens
 - [ ] When the bank feed function is next redeployed from the Supabase dashboard, take settleMerch and settleGuarantees out of it: today they still try on every Refresh and are refused by the database (harmless, but noisy in the logs)

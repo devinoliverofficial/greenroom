@@ -512,103 +512,138 @@ shim = r"""<script>
         return { id: d.id, date: d.date, amount: d.amount, atvenu: d.atvenu, watch: d.watch || '' };
       }));
     },
+    /* One night's guarantee met by bank money (catalog_guarantee_night, 0121
+       restated in 0124). A night not yet received takes what the bank shows
+       and is received on it, whatever Deposit Amount was expected. A night
+       already received with a Deposit Amount is compared with it: confirmed,
+       added to (the extra comes off what's owed), or only "seen so far". */
+    __nightPatch: function (cur, amount, date) {
+      cur = cur || {};
+      var had = Number(cur.guaranteeDeposit) > 0 ? Number(cur.guaranteeDeposit) : 0;
+      if (!(cur.guaranteeReceived === true && had > 0)) {
+        // (A part payment seen earlier on a night whose tick was taken off is part of it; a full sighting is not counted again.)
+        var prior = had > 0 && cur.guaranteeSeen != null ? Number(cur.guaranteeSeen) : 0;
+        if (prior >= had - 1) prior = 0;
+        var tot = Math.round((prior + amount) * 100) / 100;
+        return { guaranteeReceived: true, guaranteeReceivedAt: date, guaranteeDeposit: tot, guaranteeSeen: tot };
+      }
+      var seen = cur.guaranteeSeen != null ? Number(cur.guaranteeSeen) : (cur.guaranteeReceivedAt ? had : 0);
+      seen = Math.round((Math.min(seen, had) + amount) * 100) / 100;
+      if (seen > had + 1) {
+        var gw = Object.assign({}, cur.guaranteeWhy || {});
+        var owed = Math.max(0, (Number(gw.owed) || 0) - (seen - had));
+        gw.owed = owed > 0 ? owed : null;
+        return { guaranteeReceived: true, guaranteeReceivedAt: date, guaranteeDeposit: seen, guaranteeSeen: seen, guaranteeWhy: gw };
+      }
+      if (seen >= had - 1) return { guaranteeReceivedAt: date, guaranteeDeposit: seen, guaranteeSeen: seen };
+      return { guaranteeSeen: seen };
+    },
+    /* Shares over nights (catalog_guarantee_parts): checked whole, then filed. */
+    __parts: function (tourId, parts, total, date) {
+      var tdoc = tours[tourId] || {}, sum = 0, seenIds = {}, sh = {}, self = this;
+      if (!Array.isArray(parts) || !parts.length) throw new Error('which nights');
+      parts.forEach(function (p) {
+        var cur = (tdoc.shows || {})[p.show];
+        if (!cur || seenIds[p.show] || !(Number(cur.income && cur.income.guarantee) > 0) || !(Number(p.amount) > 0)) throw new Error('bad part');
+        seenIds[p.show] = 1; sum += Number(p.amount);
+      });
+      if (Math.abs(sum - total) > 0.02) throw new Error('does not add up');
+      parts.forEach(function (p) {
+        var cur = (tdoc.shows || {})[p.show] || {}, out = self.__nightPatch(cur, Number(p.amount), date);
+        var g = Number(cur.income.guarantee), had = Number(cur.guaranteeDeposit) > 0 ? Number(cur.guaranteeDeposit) : 0;
+        var depNow = out.guaranteeDeposit != null ? out.guaranteeDeposit : had;
+        var agent = Math.min(Number(p.agent) || 0, Math.max(0, g - depNow));
+        var hasWhy = cur.guaranteeWhy && Object.keys(cur.guaranteeWhy).some(function (k) { return Number(cur.guaranteeWhy[k]) > 0; });
+        if (agent > 0 && !hasWhy && cur.guaranteePaidBy !== 'agency') { out.guaranteeWhy = { agent: Math.round(agent * 100) / 100 }; out.guaranteeWhyAsked = true; }
+        sh[p.show] = out;
+      });
+      return sh;
+    },
     catalogIncome: async function (depId, opts) {
       var H = window.__harness, o = opts || {};
       H.catalogued = (H.catalogued || []).concat([{ id: depId, tourId: o.tourId || null, showId: o.showId || null, kind: o.kind }]);
       var dep = (H.deposits || []).filter(function (d) { return d.id === depId; })[0];
       if (!dep) return { ok: false, why: 'gone' };
       if (dep.matched) return { ok: false, why: 'done' };
+      if (o.kind === 'guarantee_later' && o.showId) throw new Error('not show money');
       dep.matched = true;
       if (o.kind === 'skip') return { ok: true };
       if (o.showId && (o.kind === 'merch' || o.kind === 'guarantee')) {
         var sh = {};
         if (o.kind === 'merch') sh[o.showId] = { merchReceived: true, merchReceivedAt: dep.date, merchDeposit: dep.amount };
-        else {
-          // Same rule as migrations 0072 + 0074: only bank money beyond what's on the show is new.
-          var tdoc = tours[o.tourId] || {};
-          var cur = (tdoc.shows || {})[o.showId] || {};
-          var had = Number(cur.guaranteeDeposit) > 0 ? Number(cur.guaranteeDeposit) : 0;
-          if (cur.guaranteeReceived === true && had > 0) {
-            var seen = Math.min(cur.guaranteeSeen != null ? Number(cur.guaranteeSeen) : cur.guaranteeReceivedAt ? had : 0, had) + dep.amount;
-            if (seen > had + 1) {
-              var gw = Object.assign({}, cur.guaranteeWhy || {});
-              var owed = Math.max(0, (Number(gw.owed) || 0) - (seen - had));
-              gw.owed = owed > 0 ? owed : null;
-              sh[o.showId] = { guaranteeReceived: true, guaranteeReceivedAt: dep.date, guaranteeDeposit: seen, guaranteeSeen: seen, guaranteeWhy: gw };
-            } else if (seen >= had - 1) sh[o.showId] = { guaranteeReceivedAt: dep.date, guaranteeDeposit: seen, guaranteeSeen: seen };
-            else sh[o.showId] = { guaranteeSeen: seen };
-          } else sh[o.showId] = { guaranteeReceived: true, guaranteeReceivedAt: dep.date, guaranteeDeposit: dep.amount, guaranteeSeen: dep.amount };
-        }
+        else sh[o.showId] = this.__nightPatch(((tours[o.tourId] || {}).shows || {})[o.showId], dep.amount, dep.date);
         await db.doc('tours/' + o.tourId).update({ shows: sh });
         return { ok: true };
       }
+      // The whole tour's money; "Sort later" is a guarantee flagged unsorted (0124).
       var oi = {};
-      oi[depId] = { date: dep.date, amount: dep.amount, kind: o.kind, at: Date.now() };
+      oi[depId] = { date: dep.date, amount: dep.amount, kind: o.kind === 'guarantee_later' ? 'guarantee' : o.kind, at: Date.now() };
+      if (o.kind === 'guarantee_later') oi[depId].unsorted = true;
       await db.doc('tours/' + o.tourId).update({ otherIncome: oi });
       return { ok: true };
     },
-    /* Opt-in seed: a night ticked Received by hand whose merch was typed to the
-       cent, carrying an older card estimate that is a little off, the bank
-       deposit of exactly the typed amount four days later, a guarantee deposit
-       amount typed on another night with its bank deposit, and one deposit
-       that matches nothing. Nothing is matched for him: the sheet says which
-       city each number matches and he approves. */
-    seedMerchExact: async function () {
-      var H = window.__harness;
-      var day = function (daysAgo) { var d = new Date(Date.now() - daysAgo * 864e5); return d.toISOString().slice(0, 10); };
-      await db.doc('tours/t1').update({ shows: {
-        m1: { id: 'm1', date: day(6), city: 'Milwaukee, WI', venue: 'The Rave', loggedAt: 1, income: { merch: 4721.48 }, merchCardDeposit: 4698.2, merchReceived: true } } });
-      await db.doc('tours/t1').update({ shows: {
-        m2: { id: 'm2', date: day(5), city: 'Grand Rapids, MI', venue: 'The Intersection', loggedAt: 1, income: { guarantee: 5000 }, guaranteeReceived: true, guaranteeDeposit: 4500 },
-        // Two nights with the same guarantee: a deposit that size names both.
-        m3: { id: 'm3', date: day(9), city: 'Chicago, IL', venue: 'Bottom Lounge', loggedAt: 1, income: { guarantee: 2750 }, guaranteeReceived: false },
-        m4: { id: 'm4', date: day(8), city: 'Columbus, OH', venue: 'Newport', loggedAt: 1, income: { guarantee: 2750 }, guaranteeReceived: false },
-        // An atVenu payout a few per cent over the estimate: a weaker "could be" line.
-        m5: { id: 'm5', date: day(7), city: 'Cleveland, OH', venue: 'House of Blues', loggedAt: 1, income: { merch: 1000 }, merchCardDeposit: 950, merchReceived: false } } });
-      H.deposits = [
-        { id: 'mx0', date: day(1), amount: 318.07, atvenu: false, matched: false, watch: 'both' },
-        { id: 'mx1', date: day(2), amount: 4721.48, atvenu: false, matched: false, watch: 'both' },
-        { id: 'mx2', date: day(3), amount: 4500, atvenu: false, matched: false, watch: 'both' },
-        { id: 'mx3', date: day(3), amount: 2750, atvenu: false, matched: false, watch: 'both' },
-        { id: 'mx4', date: day(4), amount: 990, atvenu: true, matched: false, watch: 'both' }
-      ];
-      return true;
-    },
-    /* One guarantee deposit over several nights (migration 0121): every part
-       is a night and its share; the shares must add up to the deposit, or
-       nothing is written. Each night is filed by the single-night rule. */
+    /* One guarantee deposit over several nights (0121, 0124). */
     catalogIncomeSplit: async function (depId, opts) {
       var H = window.__harness, o = opts || {}, parts = Array.isArray(o.parts) ? o.parts : [];
       H.catalogued = (H.catalogued || []).concat([{ id: depId, tourId: o.tourId || null, parts: parts, kind: 'guarantee' }]);
       var dep = (H.deposits || []).filter(function (d) { return d.id === depId; })[0];
       if (!dep) return { ok: false, why: 'gone' };
       if (dep.matched) return { ok: false, why: 'done' };
-      var tdoc = tours[o.tourId] || {}, sum = 0, seenIds = {};
-      parts.forEach(function (p) {
-        var cur = (tdoc.shows || {})[p.show];
-        if (!cur || seenIds[p.show] || !(Number(cur.income && cur.income.guarantee) > 0) || !(Number(p.amount) > 0)) throw new Error('bad part');
-        seenIds[p.show] = 1; sum += Number(p.amount);
-      });
-      if (!parts.length || Math.abs(sum - dep.amount) > 0.02) throw new Error('does not add up');
+      var sh = this.__parts(o.tourId, parts, dep.amount, dep.date);
       dep.matched = true;
-      var sh = {};
-      parts.forEach(function (p) {
-        var cur = (tdoc.shows || {})[p.show] || {}, amt = Number(p.amount);
-        var had = Number(cur.guaranteeDeposit) > 0 ? Number(cur.guaranteeDeposit) : 0, out;
-        if (cur.guaranteeReceived === true && had > 0) {
-          var seen = Math.min(cur.guaranteeSeen != null ? Number(cur.guaranteeSeen) : cur.guaranteeReceivedAt ? had : 0, had) + amt;
-          if (seen > had + 1) out = { guaranteeReceived: true, guaranteeReceivedAt: dep.date, guaranteeDeposit: seen, guaranteeSeen: seen };
-          else if (seen >= had - 1) out = { guaranteeReceivedAt: dep.date, guaranteeDeposit: seen, guaranteeSeen: seen };
-          else out = { guaranteeSeen: seen };
-        } else out = { guaranteeReceived: true, guaranteeReceivedAt: dep.date, guaranteeDeposit: amt, guaranteeSeen: amt };
-        var g = Number(cur.income.guarantee), depNow = out.guaranteeDeposit != null ? out.guaranteeDeposit : had;
-        var agent = Math.min(Number(p.agent) || 0, Math.max(0, g - depNow));
-        var hasWhy = cur.guaranteeWhy && Object.keys(cur.guaranteeWhy).some(function (k) { return Number(cur.guaranteeWhy[k]) > 0; });
-        if (agent > 0 && !hasWhy && cur.guaranteePaidBy !== 'agency') { out.guaranteeWhy = { agent: Math.round(agent * 100) / 100 }; out.guaranteeWhyAsked = true; }
-        sh[p.show] = out;
-      });
       await db.doc('tours/' + o.tourId).update({ shows: sh });
       return { ok: true, nights: parts.length };
+    },
+    /* "Sort later" money finds its show(s), or stays on the whole tour (sort_guarantee, 0124). */
+    sortGuarantee: async function (depId, opts) {
+      var H = window.__harness, o = opts || {}, parts = Array.isArray(o.parts) ? o.parts : [];
+      H.sorted = (H.sorted || []).concat([{ id: depId, tourId: o.tourId, parts: parts, whole: !!o.whole }]);
+      var entry = ((tours[o.tourId] || {}).otherIncome || {})[depId];
+      if (!entry || entry.unsorted !== true) return { ok: false, why: 'done' };
+      var oi = {};
+      if (o.whole) {
+        oi[depId] = { unsorted: null };
+        await db.doc('tours/' + o.tourId).update({ otherIncome: oi });
+        return { ok: true, nights: 0 };
+      }
+      var sh = this.__parts(o.tourId, parts, Number(entry.amount), entry.date);
+      oi[depId] = null;
+      await db.doc('tours/' + o.tourId).update({ otherIncome: oi, shows: sh });
+      return { ok: true, nights: parts.length };
+    },
+    /* Logged "Sort later" by mistake: back into New income (unpark_guarantee, 0124). */
+    unparkGuarantee: async function (depId, opts) {
+      var H = window.__harness, o = opts || {};
+      var entry = ((tours[o.tourId] || {}).otherIncome || {})[depId];
+      if (!entry || entry.unsorted !== true) return { ok: false, why: 'done' };
+      var dep = (H.deposits || []).filter(function (d) { return d.id === depId; })[0];
+      if (!dep || !dep.matched) return { ok: false, why: 'gone' };
+      dep.matched = false;
+      var oi = {}; oi[depId] = null;
+      await db.doc('tours/' + o.tourId).update({ otherIncome: oi });
+      return { ok: true };
+    },
+    /* Opt-in seed for guarantees as Devin runs them: a night with the
+       Guarantee Total set and a Deposit Amount typed from the settlement (not
+       received), two nights with only the total, a guarantee and a merch night
+       ticked Received by hand, and three deposits: one that is the typed
+       Deposit Amount, one that matches nothing (to log "Sort later"), one that
+       is the merch. */
+    seedGuarantees: async function () {
+      var H = window.__harness;
+      var day = function (daysAgo) { var d = new Date(Date.now() - daysAgo * 864e5); return d.toISOString().slice(0, 10); };
+      await db.doc('tours/t1').update({ commission: { agent: { mode: 'pct', value: 10 } }, shows: {
+        g1: { id: 'g1', date: day(9), city: 'Detroit, MI', venue: 'Saint Andrew\u2019s Hall', loggedAt: 1, income: { guarantee: 5000 }, guaranteeReceived: false, guaranteeDeposit: 4500 },
+        g2: { id: 'g2', date: day(8), city: 'Chicago, IL', venue: 'Bottom Lounge', loggedAt: 1, income: { guarantee: 3000 }, guaranteeReceived: false },
+        g3: { id: 'g3', date: day(7), city: 'Columbus, OH', venue: 'Newport', loggedAt: 1, income: { guarantee: 2000 }, guaranteeReceived: false },
+        g4: { id: 'g4', date: day(6), city: 'Milwaukee, WI', venue: 'The Rave', loggedAt: 1, income: { merch: 1200 }, merchReceived: true },
+        g5: { id: 'g5', date: day(5), city: 'Cleveland, OH', venue: 'House of Blues', loggedAt: 1, income: { guarantee: 4100 }, guaranteeReceived: true } } });
+      H.deposits = [
+        { id: 'gd1', date: day(2), amount: 4500, atvenu: false, matched: false, watch: 'both' },
+        { id: 'gd2', date: day(2), amount: 7777, atvenu: false, matched: false, watch: 'both' },
+        { id: 'gd3', date: day(2), amount: 1200, atvenu: false, matched: false, watch: 'both' }
+      ];
+      return true;
     },
     /* Opt-in seed for the lump-sum sheet (the default harness books stay as
        they are): three nights with guarantees logged and not received, a 10%
