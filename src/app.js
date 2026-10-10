@@ -474,7 +474,9 @@
     if (key === 'crew:') return;
     var rec = { kind: 'crew', name: person.name, title: person.title || '', pay: G.num(person.pay) };
     // (Band or Crew, when someone has said which; else the title goes on deciding.)
-    if (person.band === true || person.band === false) rec.band = person.band;
+    // (Member or crew is kept with them; "band" is the same flag as it was first written.)
+    if (person.member === true || person.member === false) rec.member = person.member;
+    else if (person.band === true || person.band === false) rec.member = person.band;
     S.labels[key] = rec;
     if (S.mode === 'db' && store.db) {
       try { await store.db.doc('labels/' + key).set(rec); } catch (e) { /* roster is a convenience */ }
@@ -600,7 +602,6 @@
     S.loaded = true;
     if (first) restoreLastTour();
     render(first);
-    if (first && canWrite()) setTimeout(function () { purgeTrash(); }, 4000);
   }
   function loadLocal() {
     var data = null;
@@ -1584,31 +1585,25 @@
     return entries;
   }
 
-  var TRASH_DAYS = 30;
-
+  /* Nothing is ever erased (Devin, 2026-10-10: "The greenroom app is an
+     archive. A history book. There is no deleting tours or deleting artist
+     pages ever."). A tour can still be taken down by its creator, which only
+     moves it out of sight into Recently deleted, where Restore puts it back
+     for as long as the app exists. The 30-day clear-out and "Delete forever"
+     are gone, and the database refuses the delete as well (0131). */
   function trashedEntries() {
     return allTourEntries(true).filter(function (e) { return e[1].deletedAt; });
   }
   async function softDeleteTour(id) {
-    if (S.mode === 'db' && !createdTour(id)) { toast('Only the tour\u2019s creator can delete it.'); return false; }
+    if (S.mode === 'db' && !createdTour(id)) { toast('Only the tour\u2019s creator can take it down.'); return false; }
     if (await api.update(id, { deletedAt: Date.now() })) {
-      toast('Deleted — it sits in Recently deleted for ' + TRASH_DAYS + ' days');
+      toast('Taken down. It waits in Recently deleted; Restore brings it back.');
       return true;
     }
     return false;
   }
   async function restoreTour(id) {
     return api.update(id, { deletedAt: null });
-  }
-  // Old enough trash takes itself out, once per session.
-  async function purgeTrash() {
-    if (S.purged) return;
-    S.purged = true;
-    var cutoff = Date.now() - TRASH_DAYS * 86400e3;
-    var old = trashedEntries().filter(function (e) { return e[1].deletedAt < cutoff; });
-    for (var i = 0; i < old.length; i++) {
-      try { await api.remove(old[i][0]); } catch (e) { /* not ours to purge */ }
-    }
   }
 
   function artistOf(t) { return String(t && t.artist || '').trim(); }
@@ -2361,9 +2356,9 @@
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title' }, a.name),
           // The role the artist gave them leads; then what the artist confirmed.
-          a.past ? h('span', { class: 'lr-sub' }, [a.role, a.kind === 'band' ? 'Former band member' : 'Former crew',
+          a.past ? h('span', { class: 'lr-sub' }, [a.role, a.kind === 'band' ? 'Former member' : 'Former crew',
               conf ? tallyText(conf) + ' confirmed' : (n ? plural(n, 'tour') : '')].filter(Boolean).join(' \u00b7 '))
-            : h('span', { class: 'lr-sub vp-vouch' }, a.role || (a.kind === 'band' ? 'Band member' : 'Crew'), verifiedBadge('sm'),
+            : h('span', { class: 'lr-sub vp-vouch' }, a.role || (a.kind === 'band' ? 'Member' : 'Crew'), verifiedBadge('sm'),
               conf ? ' \u00b7 ' + tallyText(conf) + ' confirmed' : (n ? ' \u00b7 ' + plural(n, 'tour') : ''))),
         // Endorsed by this artist: the trophy on the right, the word under it.
         a.endorsed ? h('span', { class: 'vp-endorsed', 'aria-label': 'Endorsed by ' + a.name },
@@ -2930,7 +2925,7 @@
           personPhoto(x, 'xs'),
           h('span', { class: 'lr-text' },
             h('span', { class: 'lr-title' }, machineHandle(x.handle) ? x.name : x.handle),
-            h('span', { class: 'lr-sub' }, x.name + (x.mine ? '' : x.kind === 'band' ? ' \u00b7 Band member' : ' \u00b7 Crew'))),
+            h('span', { class: 'lr-sub' }, x.name + (x.mine ? '' : x.kind === 'band' ? ' \u00b7 Member' : ' \u00b7 Crew'))),
           x.mine && on === x.id ? h('span', { class: 'acct-on', 'aria-label': 'You are here' }, icon('check', 14)) : icon('chevron', 16));
       }));
       var can = list ? claimable() : [];
@@ -3093,7 +3088,7 @@
     var row = function (p) {
       var roles = personRoles(p);
       var has = on[p.userId];
-      var btn = h('button', { class: 'am-add' + (has ? ' on' : ''), type: 'button' }, has === kind ? 'Added' : has ? (has === 'band' ? 'In the band' : 'On the crew') : 'Add');
+      var btn = h('button', { class: 'am-add' + (has ? ' on' : ''), type: 'button' }, has === kind ? 'Added' : has ? (has === 'band' ? 'A member' : 'On the crew') : 'Add');
       btn.onclick = async function () {
         btn.disabled = true;
         try {
@@ -3135,7 +3130,7 @@
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title ca-title' }, band ? 'Add band members' : 'Add crew members'),
-        h('p', { class: 'sh-sub' }, (band ? 'Who\u2019s in the band?' : 'Who\u2019s on the crew?') + ' Search for their Greenroom account.'),
+        h('p', { class: 'sh-sub' }, (band ? 'Who are the members? The people actually in the band; a hired player goes under Crew.' : 'Who\u2019s on the crew? Hired players on stage too.') + ' Search for their Greenroom account.'),
         h('div', { class: 'rv-find am-find' }, icon('search', 17),
           h('input', { class: 'input rv-search', type: 'search', placeholder: 'Search name or @username', autocomplete: 'off',
             autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', 'aria-label': 'Search accounts',
@@ -3246,8 +3241,8 @@
     var people = function (list, kind) {
       return [
         list.length ? h('ul', { class: 'tour-list rows vp-list am-list' }, list.map(memberRow))
-          : unclaimed ? emptyState('Nobody runs this page yet', 'Once ' + card.name + ' claims it, their ' + (kind === 'band' ? 'band' : 'crew') + ' shows up here.')
-          : emptyState(kind === 'band' ? 'No band members yet' : 'No crew yet',
+          : unclaimed ? emptyState('Nobody runs this page yet', 'Once ' + card.name + ' claims it, their ' + (kind === 'band' ? 'members' : 'crew') + ' show up here.')
+          : emptyState(kind === 'band' ? 'No members yet' : 'No crew yet',
               manage ? 'Search for their Greenroom account to add them.' : card.name + ' hasn\u2019t added anyone here yet.'),
         manage ? h('div', { class: 'am-more' },
           h('button', { class: 'add-pill', type: 'button', onclick: function () { openAddMembers(id, kind); } },
@@ -3315,7 +3310,7 @@
                  pfStat(tours.reduce(function (n, x) { return n + G.num(x.shows); }, 0), tours.reduce(function (n, x) { return n + G.num(x.shows); }, 0) === 1 ? 'show' : 'shows')],
             right: synced ? [pfStat(G.num(hsum.countries) + '/195', 'countries'),
                              pfStat(G.num(hsum.cities), G.num(hsum.cities) === 1 ? 'city' : 'cities')]
-              : [pfStat(bandList.length, 'band', function () { pickTab('band'); }),
+              : [pfStat(bandList.length, bandList.length === 1 ? 'member' : 'members', function () { pickTab('band'); }),
                  pfStat(crewList.length, 'crew', function () { pickTab('crew'); })],
             under: h('p', { class: 'hist-fans' }, h('span', { class: 'hf-txt' }, plural(G.num(card.followers), 'fan')))
           });
@@ -3334,7 +3329,7 @@
       manage ? creditQueueCards(id) : null,
       // For a Greenroom admin: whoever is asking to run this page.
       unclaimed ? claimQueueCards(id) : null,
-      h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Band', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
+      h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Members', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
       tab === 'band' ? people(bandList, 'band')
         : tab === 'crew' ? people(crewList, 'crew')
         : [tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
@@ -4934,20 +4929,7 @@
                 oninput: function (e) { f.bio = e.target.value; count.textContent = f.bio.length + ' / ' + BIO_MAX; } }), count))),
           h('div', { class: 'stack' },
             save,
-            h('button', { class: 'btn danger block', type: 'button', onclick: function () {
-              confirmSheet({ title: 'Delete ' + card.name + '\u2019s profile?',
-                body: 'The artist profile and its band and crew lists go. Anyone it endorsed keeps the endorsement. Your tours are not touched.',
-                action: 'Delete artist profile', danger: true,
-                onConfirm: async function () {
-                  try {
-                    await B.deleteArtist(id); delete S.actCards[id];
-                    if (S.actAs === id) setActingAs(null); // back on your own account
-                    if (S.acts && S.acts.list) S.acts.list = S.acts.list.filter(function (x) { return x.id !== id; });
-                    myActs(true); go({ name: 'home' }); toast('Artist profile deleted'); return true;
-                  }
-                  catch (x) { saveFailed('artist', x); return false; }
-                } });
-            } }, icon('trash', 18), 'Delete artist profile'),
+            // (An artist page is never deleted: the app is an archive.)
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
       ];
     }, { label: 'Edit artist', cls: 'pe-sheet' });
@@ -5416,11 +5398,11 @@
     if (!canWrite() || (S.mode === 'db' && !entries.every(function (e) { return createdTour(e[0]); }))) return cardEl;
     return swipeable(cardEl, function () {
       confirmSheet({
-        title: 'Delete everything for ' + name + '?',
+        title: 'Take down every tour for ' + name + '?',
         body: entries.length
-          ? plural(entries.length, 'tour') + ' move to Recently deleted for ' + TRASH_DAYS + ' days.'
+          ? plural(entries.length, 'tour') + ' move to Recently deleted. Nothing is erased: each can be restored.'
           : 'They have no runs yet, so nothing else goes with them.',
-        action: entries.length ? 'Delete ' + plural(entries.length, 'tour') : 'Delete ' + name,
+        action: entries.length ? 'Take down ' + plural(entries.length, 'tour') : 'Remove ' + name,
         danger: true,
         onConfirm: async function () {
           for (var i = 0; i < entries.length; i++) {
@@ -6715,11 +6697,11 @@
   function crewRow(id, t) {
     var crew = G.rows(t && t.crew);
     var total = G.crewProjection(t);
-    var cc = G.calc(t), paid = linePaid(cc, 'crew') + linePaid(cc, 'band');
+    var cc = G.calc(t), paid = linePaid(cc, 'crew') + linePaid(cc, 'members');
     return h('button', {
       class: 'row rowbtn', type: 'button', onclick: function () { openCrewSheet(id, true); }
     },
-      h('div', { class: 'row-label' }, crew.some(G.isBand) ? 'Band & Crew' : 'Crew',
+      h('div', { class: 'row-label' }, crew.some(G.isMember) ? 'Members & Crew' : 'Crew',
         h('span', { class: 'hint' }, crew.length
           ? plural(crew.length, 'person').replace('persons', 'people') +
             (paid > 0 ? ' · ' + money(paid) + ' spent' : '')
@@ -6759,7 +6741,7 @@
   function lineHint(l) {
     // Pay on the Crew line that says nobody's name (a tour with a band): it is
     // counted against whatever the band's plan and the crew's still have left,
-    // and the line asks for the names (Band & Crew, Logged Card Transactions, Who).
+    // and the line asks for the names (Members & Crew, Logged Card Transactions, Who).
     if (l.loose > 0.004) {
       var base = lineHint(Object.assign({}, l, { loose: 0 }));
       return { text: [base.text, money(l.loose) + ' with no name on it'].filter(Boolean).join(' \u00b7 '), cls: base.cls };
@@ -7235,7 +7217,7 @@
       return h('button', {
         class: 'row rowbtn ex-row', type: 'button',
         onclick: function () {
-          if (l.key === 'crew' || l.key === 'band') openCrewSheet(id, true);
+          if (l.key === 'crew' || l.key === 'members') openCrewSheet(id, true);
           else if (l.key === 'commission') openCommissionSheet(id);
           else openCategorySheet(id, l.key);
         }
@@ -7282,7 +7264,7 @@
     });
     // The bars' Expenses segments: band, crew, bus, each linked card by its
     // name, commission, the merch bill, and everything else together.
-    var named = (c.lines.some(function (l) { return l.key === 'band'; }) ? [['Band', 'band', 'band']] : []).concat([['Crew', 'crew', 'crew'], ['Bus', 'bus', 'bus']])
+    var named = (c.lines.some(function (l) { return l.key === 'members'; }) ? [['Members', 'members', 'members']] : []).concat([['Crew', 'crew', 'crew'], ['Bus', 'bus', 'bus']])
       .concat(feedCards.map(function (card) { return [cardShort(card.feed.name || card.label, cardBank(card)), 'feed:' + card.id, 'lcard']; }))
       .concat([['Commission', 'commission', 'comm'], ['Merch bill', 'merch', 'mbill']]);
     var spentAll = Object.keys(byRow).reduce(function (n, k) { return n + Math.max(0, byRow[k]); }, 0);
@@ -7860,8 +7842,8 @@
         h('h2', { class: 'sh-title' }, 'Who was it for?'),
         h('p', { class: 'sh-sub' }, r.label + ' \u00b7 ' + money(r.amount)),
         h('div', { class: 'ledger' },
-          g.band.length ? [head('Band')].concat(g.band.map(btn)) : null,
-          g.crew.length ? [g.band.length ? head('Crew') : null].concat(g.crew.map(btn)) : null),
+          g.members.length ? [head('Members')].concat(g.members.map(btn)) : null,
+          g.crew.length ? [g.members.length ? head('Crew') : null].concat(g.crew.map(btn)) : null),
         h('div', { class: 'stack' },
           now ? h('button', { class: 'btn quiet block', type: 'button', onclick: function () { pick(null); } }, 'No one person') : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: done }, 'Back'))
@@ -8157,18 +8139,20 @@
   // What's been logged as paid to one crew member (their Pay button).
   /* Band and crew (Devin, 2026-10-09: "people that are in the band should be
      separate from crew and we should be able to log payments paid to band
-     members"). Everyone is still one list on the tour; G.isBand says which
-     group a person is shown under, and (2026-10-10: "band and crew should be
-     a separate line in the expense tab") which of the two lines their pay and
-     their payments count on (G.crewSplit, G.chargeLine). */
+     members"). Everyone is still one list on the tour; G.isMember says
+     which group a person is shown under, and (2026-10-10: "band and crew
+     should be a separate line in the expense tab") which of the two lines
+     their pay and their payments count on (G.crewSplit, G.chargeLine). The
+     words are his, fixed the same day: a Member is IN the band; a hired
+     player on stage ("Band", "Touring Musician") is crew. */
   // A name someone might type for the category everyone's pay is filed under
-  // (it reads "Crew", or "Band & Crew" on a tour with a band): never a new category.
+  // (it reads "Crew", or "Members & Crew" on a tour with members): never a new category.
   function payName(label) {
-    return /^(crew|band|band\s*(&|and)\s*crew|crew\s*(&|and)\s*band)$/i.test(String(label || '').trim());
+    return /^(crew|band|members?|(band|members?)\s*(&|and)\s*crew|crew\s*(&|and)\s*(band|members?))$/i.test(String(label || '').trim());
   }
   function crewGroups(t) {
     var all = G.rows(t && t.crew).sort(function (a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
-    return { all: all, band: all.filter(G.isBand), crew: all.filter(function (p) { return !G.isBand(p); }) };
+    return { all: all, members: all.filter(G.isMember), crew: all.filter(function (p) { return !G.isMember(p); }) };
   }
   function crewPerson(t, crewId) {
     var p = crewId && t && G.isObj(t.crew) ? t.crew[crewId] : null;
@@ -8182,7 +8166,7 @@
     var sel = h('select', { class: o.cls || 'input sm', 'aria-label': o.aria || 'Which crew member it was for',
       onchange: function (e) { o.onPick(e.target.value || null); } },
       h('option', { value: '' }, o.none || 'Which crew member?'),
-      g.band.length ? h('optgroup', { label: 'Band' }, g.band.map(opt)) : null,
+      g.members.length ? h('optgroup', { label: 'Members' }, g.members.map(opt)) : null,
       g.crew.length ? h('optgroup', { label: 'Crew' }, g.crew.map(opt)) : null);
     sel.value = o.value && g.all.some(function (p) { return p.id === o.value; }) ? o.value : '';
     return sel;
@@ -8239,7 +8223,7 @@
       var total = G.crewProjection(t);
       var exp = G.normExpenses(t && t.expenses);
       var paid = G.num(exp.crew.paid);
-      var cNow = G.calc(t), paidBand = linePaid(cNow, 'band');
+      var cNow = G.calc(t), paidBand = linePaid(cNow, 'members');
       var paidCrew = linePaid(cNow, 'crew') + paidBand;
 
       var rowOf = function (p) {
@@ -8257,16 +8241,16 @@
       var sumOf = function (xs) { return xs.reduce(function (n, p) { return n + G.crewPay(t, p); }, 0); };
       // (Each is a line of its own on the Expenses tab: its heading says what that line has paid.)
       var headOf = function (label, xs) {
-        var got = label === 'Band' ? paidBand : paidCrew - paidBand;
+        var got = label === 'Members' ? paidBand : paidCrew - paidBand;
         return h('div', { class: 'row head cw-head' }, h('span', { class: 'lg-name' }, label + ' \u00b7 ' + xs.length + (got > 0 ? ' \u00b7 ' + money(got) + ' paid' : '')),
           h('span', { class: 'amt num' }, money(sumOf(xs))));
       };
       var list = crew.length
         ? h('div', { class: 'ledger cw-list' },
-            grp.band.length ? [headOf('Band', grp.band)].concat(grp.band.map(rowOf)) : null,
-            grp.crew.length ? [grp.band.length ? headOf('Crew', grp.crew) : null].concat(grp.crew.map(rowOf)) : null,
+            grp.members.length ? [headOf('Members', grp.members)].concat(grp.members.map(rowOf)) : null,
+            grp.crew.length ? [grp.members.length ? headOf('Crew', grp.crew) : null].concat(grp.crew.map(rowOf)) : null,
             h('div', { class: 'row total' },
-              h('span', null, grp.band.length ? 'Band and crew together' : 'Crew projection'), h('strong', { class: 'amt num' }, money(total))))
+              h('span', null, grp.members.length ? 'Members and crew together' : 'Crew projection'), h('strong', { class: 'amt num' }, money(total))))
         : emptyState('No crew yet', canWrite()
             ? 'Add everyone out with you. What each one is paid adds up to your crew projection.'
             : 'No crew has been added.');
@@ -8283,7 +8267,7 @@
               onclick: async function () {
                 var patch = {};
                 patch[newId()] = Object.assign({ name: r.name, title: r.title || '', pay: G.num(r.pay), createdAt: Date.now() },
-                  r.band === true || r.band === false ? { band: r.band } : {});
+                  r.member === true || r.member === false ? { member: r.member } : r.band === true || r.band === false ? { member: r.band } : {});
                 if (await api.update(id, { crew: patch })) {
                   delete S.drafts['exp:' + id];
                   toast(r.name + ' added' + (r.pay ? ' at ' + money(G.num(r.pay)) : ''));
@@ -8309,7 +8293,7 @@
           setTimeout(function () { openCrewSheet(id); }, 250);
         } }, icon('plus', 18), 'Add ' + onTour.map(function (m) { return (m.name || m.username).split(' ')[0]; }).join(', ') + ' from the tour') : null;
       return [
-        h('h2', { class: 'sh-title' }, grp.band.length ? 'Band & Crew' : 'Crew'),
+        h('h2', { class: 'sh-title' }, grp.members.length ? 'Members & Crew' : 'Crew'),
         h('p', { class: 'sh-sub' }, paidCrew > 0 ? 'Paid so far: ' + money(paidCrew) + ' of ' + money(total) + '.'
           : 'Everyone on the tour and what they\u2019re paid. Tap Edit to set someone\u2019s pay and log payments.'),
         list,
@@ -8357,7 +8341,7 @@
       title: person ? person.title || '' : '',
       // Which group they are listed under. Until the switch is touched it goes
       // by what the row already says, else by the title as it is typed.
-      band: person ? G.isBand(person) : false, bandSaid: false
+      band: person ? G.isMember(person) : false, bandSaid: false
     };
     var backTo = function () { if (person) openCrewPayEdit(id, person.id); else openCrewSheet(id); };
     openSheet(function () {
@@ -8377,8 +8361,8 @@
       var submitBtn = h('button', { class: 'btn primary block', type: 'submit' }, '');
       var bandSeg = h('div');
       var drawBand = function () {
-        bandSeg.replaceChildren(segmented(['Crew', 'Band'], f.band ? 1 : 0, function (k) { f.band = k === 1; f.bandSaid = true; drawBand(); }, 'Band or crew'));
-        submitBtn.textContent = person ? 'Save' : f.band ? 'Add to the band' : 'Add to crew';
+        bandSeg.replaceChildren(segmented(['Crew', 'Member'], f.band ? 1 : 0, function (k) { f.band = k === 1; f.bandSaid = true; drawBand(); }, 'Member or crew'));
+        submitBtn.textContent = person ? 'Save' : f.band ? 'Add as a member' : 'Add to crew';
       };
       // For someone being ADDED, while nobody has said, the title decides (Artist
       // or Band), as it does for people invited. Someone already on the list
@@ -8387,7 +8371,7 @@
       // from one to the other.
       var followTitle = function () {
         if (f.bandSaid || person) return;
-        var by = G.isBand({ title: f.title });
+        var by = G.isMember({ title: f.title });
         if (by !== f.band) { f.band = by; drawBand(); }
       };
       drawBand();
@@ -8399,7 +8383,7 @@
         blurActive();
         // The group is written down with the person (the one they were in when the
         // sheet opened, unless the switch was touched), so it no longer depends on the title.
-        var row = { name: name, title: f.title.trim(), band: !!f.band };
+        var row = { name: name, title: f.title.trim(), member: !!f.band };
         if (!person) row.pay = 0;
         var patch = {};
         if (person) patch[person.id] = row;
@@ -8439,7 +8423,7 @@
           chips,
           h('div', { class: 'field' },
             h('span', { class: 'field-label' }, 'Listed under'), bandSeg,
-            h('span', { class: 'hint' }, 'Band members have their own line on the Expenses tab, apart from the crew. Their pay and payments work the same way.')),
+            h('span', { class: 'hint' }, 'A member is IN the band. Members have their own line on the Expenses tab. A hired player on stage (Band, Touring Musician) is crew.')),
           h('div', { class: 'stack' },
             submitBtn,
             h('button', { class: 'btn ghost block', type: 'button', onclick: backTo }, 'Back'),
@@ -8448,7 +8432,7 @@
               onclick: function () {
                 confirmSheet({
                   title: 'Remove ' + (person.name || 'this person') + '?',
-                  body: money(G.crewPay(getTour(id), person)) + ' comes off the ' + (G.isBand(person) ? 'band' : 'crew') + ' projection.' +
+                  body: money(G.crewPay(getTour(id), person)) + ' comes off the ' + (G.isMember(person) ? 'members\u2019' : 'crew') + ' projection.' +
                     (crewPaidTo(getTour(id), person) > 0 ? ' What they were paid (' + money(crewPaidTo(getTour(id), person)) + ') stays on the books under Crew, with no name on it.' : ''),
                   action: 'Remove', danger: true,
                   onConfirm: async function () {
@@ -15238,34 +15222,18 @@
         return [
           h('h2', { class: 'sh-title' }, 'Recently deleted'),
           h('p', { class: 'hint', style: 'margin:-4px 0 10px;opacity:.7' }, 'Version ' + (window.GREENROOM_BUILD || 'dev')),
-          h('p', { class: 'sh-sub' }, 'Deleted tours wait here for ' + TRASH_DAYS +
-            ' days, then clear out on their own.'),
+          h('p', { class: 'sh-sub' }, 'Tours that were taken down wait here. Nothing is ever erased: Restore puts one back.'),
           list.length ? h('div', { class: 'ledger' }, list.map(function (e) {
             var id = e[0], t = e[1];
-            var days = Math.max(0, TRASH_DAYS - Math.floor((Date.now() - t.deletedAt) / 86400e3));
             return h('div', { class: 'row' },
               h('div', { class: 'row-label' },
-                (t.artist ? t.artist + ' — ' : '') + (t.name || 'Untitled tour'),
-                h('span', { class: 'hint' }, days ? 'Clears in ' + plural(days, 'day') : 'Clearing soon')),
+                (t.artist ? t.artist + ' \u2014 ' : '') + (t.name || 'Untitled tour'),
+                h('span', { class: 'hint' }, 'Taken down ' + dayMD(G.ymd(new Date(t.deletedAt))))),
               h('button', { class: 'btn sm quiet', type: 'button',
                 onclick: async function () {
                   if (await restoreTour(id)) { toast('Restored'); build(); render(); }
-                } }, 'Restore'),
-              h('button', { class: 'iconbtn sm', type: 'button',
-                'aria-label': 'Delete forever',
-                onclick: function () {
-                  confirmSheet({
-                    title: 'Delete ' + (t.name || 'this tour') + ' forever?',
-                    body: 'No coming back from this one.',
-                    action: 'Delete forever', danger: true,
-                    onConfirm: async function () {
-                      var ok = await api.remove(id);
-                      if (ok) { toast('Gone for good'); setTimeout(build, 200); }
-                      return ok;
-                    }
-                  });
-                } }, icon('trash', 18)));
-          })) : emptyState('Nothing here', 'Deleted tours land here before they’re gone for good.')
+                } }, 'Restore'));
+          })) : emptyState('Nothing here', 'A tour that is taken down waits here, and can always be restored.')
         ];
       }, { label: 'Recently deleted' });
     }
@@ -15723,10 +15691,10 @@
             class: 'btn danger block', type: 'button',
             onclick: function () {
               confirmSheet({
-                title: 'Delete ' + name + '?',
-                body: 'It moves to Recently deleted for ' + TRASH_DAYS + ' days, then it’s gone for good' +
-                  (S.mode === 'db' ? ' — for everyone it’s shared with.' : '.'),
-                action: 'Delete tour', danger: true,
+                title: 'Take ' + name + ' down?',
+                body: 'It moves to Recently deleted, out of sight' +
+                  (S.mode === 'db' ? ' for everyone it’s shared with.' : '.') + ' Nothing is erased: Restore brings it back.',
+                action: 'Take tour down', danger: true,
                 onConfirm: async function () {
                   var ok = await api.update(id, { deletedAt: Date.now() });
                   if (ok) { delete S.lastNet[id]; delete S.lastState[id]; go({ name: 'home' }); toast('Moved to Recently deleted'); }
@@ -15734,7 +15702,7 @@
                 }
               });
             }
-          }, icon('trash', 18), 'Delete tour') : null)
+          }, icon('trash', 18), 'Take tour down') : null)
       ];
     }, { label: 'Tour options' });
   }

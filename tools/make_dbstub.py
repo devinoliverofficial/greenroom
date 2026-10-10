@@ -725,8 +725,8 @@ shim = r"""<script>
       await db.doc('tours/' + o.tourId).update({ merchToSort: ms });
       return { ok: true };
     },
-    /* Opt-in seed for Band and Crew as two lines: two band members and two
-       crew with pay set, a card payment and a merch-cash payment to the band (over
+    /* Opt-in seed for Members and Crew as two lines: two members (one of them
+       the tour manager) and two crew (one a hired player titled Band) with pay set, a card payment and a merch-cash payment to the band (over
        its plan), one payment to the crew (under its plan), and a Crew charge
        with no person on it. */
     seedBand: async function () {
@@ -734,9 +734,9 @@ shim = r"""<script>
       await db.doc('tours/t1').update({
         crew: {
           b1: { name: 'Devin Oliver', title: 'Artist', pay: 600, payTyped: true, createdAt: 1 },
-          b2: { name: 'Brent Allen', title: 'Band', pay: 400, payTyped: true, createdAt: 2 },
+          b2: { name: 'Brent Allen', title: 'Tour Manager', member: true, pay: 400, payTyped: true, createdAt: 2 },
           c1: { name: 'Tasha Reed', title: 'Tour Manager', pay: 700, payTyped: true, createdAt: 3 },
-          c2: { name: 'Sam Ortiz', title: 'FOH', pay: 300, payTyped: true, createdAt: 4 } },
+          c2: { name: 'Connor Reyes', title: 'Band', pay: 300, payTyped: true, createdAt: 4 } },
         charges: {
           bp1: { date: day(4), merchant: 'Pay: Devin', amount: 900, category: 'crew', crewId: 'b1', paid: true, manual: true },
           cp1: { date: day(3), merchant: 'Pay: Tasha', amount: 500, category: 'crew', crewId: 'c1', paid: true, manual: true },

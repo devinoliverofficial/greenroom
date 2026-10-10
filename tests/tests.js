@@ -1224,8 +1224,9 @@
         if (rnd() < 0.5) t.expenses[k] = { projected: rnd() < 0.6 ? amt(4000) : null, paid: rnd() < 0.3 ? amt(800) : 0 };
       });
       for (var c = 0; c < 3; c++) if (rnd() < 0.6) {
-        t.crew['c' + c] = { name: 'Crew ' + c, pay: amt(3000), title: pick(['Artist', 'Band', 'TM', 'FOH', '']) };
-        if (rnd() < 0.25) t.crew['c' + c].band = rnd() < 0.5;
+        t.crew['c' + c] = { name: 'Crew ' + c, pay: amt(3000), title: pick(['Artist', 'Band', 'Member', 'TM', 'FOH', '']) };
+        if (rnd() < 0.25) t.crew['c' + c].member = rnd() < 0.5;
+        if (rnd() < 0.1) t.crew['c' + c].band = rnd() < 0.5;
       }
       var accts = ['Gold ··1008', 'Amex ··2222', ''];
       for (var j = 0; j < 12; j++) {
@@ -1282,7 +1283,7 @@
       var paidIn = {};
       var add = function (k, v) { paidIn[k] = (paidIn[k] || 0) + v; };
       // Band or crew, written out again: said by hand, else the title Artist / Band.
-      var inBand = function (p) { return !!p && (p.band === true || (p.band !== false && /^(artist|band|band member)$/i.test(String(p.title || '').trim()))); };
+      var inBand = function (p) { return !!p && (p.member === true || (p.member !== false && (p.band === true || (p.band !== false && /^(artist|member|band member)$/i.test(String(p.title || '').trim()))))); };
       var toBand = 0, toCrewNamed = 0, noName = 0;
       var crewMoney = function (x, v) {
         var p = x.crewId ? t.crew[x.crewId] : null;
@@ -1326,7 +1327,7 @@
           var unnamed = paid - toBand - toCrewNamed;
           var bandCounts = Math.max(bandPlan, toBand), crewCounts = Math.max(crewPlan, toCrewNamed);
           var stillToPay = (bandCounts - toBand) + (crewCounts - toCrewNamed);
-          lines.band = toBand; lines.crew = paid - toBand;
+          lines.members = toBand; lines.crew = paid - toBand;
           fixed += bandCounts + crewCounts + Math.max(0, unnamed - stillToPay);
           return;
         }
@@ -1843,19 +1844,27 @@
       eq(none.lines.some(function (l) { return l.key === 'merchTips'; }), false, 'no line when nothing is owed');
       eq(G.isDerived('merchTips') && G.isDerived('commission') && !G.isDerived('crew'), true);
     });
-    test('isBand: the row says so, else the title Artist or Band does', function () {
-      eq(G.isBand({ title: 'Artist' }), true, 'the invite role for the band');
-      eq(G.isBand({ title: ' band ' }), true);
-      eq(G.isBand({ title: 'Guitar Tech' }), false);
-      eq(G.isBand({ title: 'Artist Relations' }), false, 'only the whole title');
-      eq(G.isBand({ title: 'Guitar Tech', band: true }), true, 'said by hand wins');
-      eq(G.isBand({ title: 'Artist', band: false }), false, 'said by hand wins the other way');
-      eq(G.isBand(null), false);
+    test('isMember: the row says so, else only the title Artist (or Member) does; a hired "Band" player is crew', function () {
+      eq(G.isMember({ title: 'Artist' }), true, 'the invite role for the people in the band');
+      eq(G.isMember({ title: ' member ' }), true);
+      eq(G.isMember({ title: 'Band member' }), true);
+      eq(G.isMember({ title: 'Band' }), false, 'Band is a hired player on stage: crew');
+      eq(G.isMember({ title: 'Touring Musician' }), false);
+      eq(G.isMember({ title: 'Guitar Tech' }), false);
+      eq(G.isMember({ title: 'Artist Relations' }), false, 'only the whole title');
+      eq(G.isMember({ title: 'Tour Manager', member: true }), true, 'a tour manager who is in the band');
+      eq(G.isMember({ title: 'Artist', member: false }), false, 'said by hand wins the other way');
+      eq(G.isMember({ title: 'Drums', band: true }), true, 'the flag as it was first written is still read');
+      eq(G.isMember({ title: 'Artist', band: true, member: false }), false, 'member wins over the old flag');
+      eq(G.isMember(null), false);
       // The whole list still adds up to one projection (the wizard and the sheet's footer use it).
-      var t = { crew: { a: { name: 'A', title: 'Artist', pay: 1000 }, b: { name: 'B', title: 'FOH', pay: 500, band: true }, c: { name: 'C', title: 'TM', pay: 250 } } };
+      var t = { crew: { a: { name: 'A', title: 'Artist', pay: 1000 }, b: { name: 'B', title: 'FOH', pay: 500, member: true }, c: { name: 'C', title: 'TM', pay: 250 } } };
       eq(G.crewProjection(t), 1750);
+      // His crew list, in his order, with the two words for a hired player at the end.
+      eq(G.CREW_ROLES.slice(0, 5).join('|'), 'Tour manager|FOH engineer|Merch manager|Driver|Backline tech');
+      eq(G.CREW_ROLES.length, 22); eq(G.CREW_ROLES.indexOf('Touring Musician') > 0, true); eq(G.CREW_TITLES, G.CREW_ROLES); eq(G.ARTIST_CREW_ROLES, G.CREW_ROLES);
     });
-    test('Band and Crew are two lines, each counting the bigger of planned and paid', function () {
+    test('Members and Crew are two lines, each counting the bigger of planned and paid', function () {
       var line = function (c, k) { return c.lines.filter(function (l) { return l.key === k; })[0]; };
       // Devin's own example: planned $1,000 each; paid the band $1,200 and the crew $700.
       var t = {
@@ -1866,37 +1875,37 @@
         },
         cashLog: { k1: { amount: 200, category: 'crew', crewId: 'c', date: '2026-10-02' } }
       };
-      var c = G.calc(t), band = line(c, 'band'), crew = line(c, 'crew');
-      eq(band.label, 'Band'); eq(band.projected, 1000); eq(band.paid, 1200); eq(band.effective, 1200); eq(band.over, 200);
+      var c = G.calc(t), band = line(c, 'members'), crew = line(c, 'crew');
+      eq(band.label, 'Members'); eq(band.projected, 1000); eq(band.paid, 1200); eq(band.effective, 1200); eq(band.over, 200);
       eq(crew.projected, 1000); eq(crew.paid, 700); eq(crew.effective, 1000); eq(crew.left, 300);
       eq(c.fixed, 2200, 'two lines count $1,200 + $1,000');
-      eq(c.lines.map(function (l) { return l.key; }).indexOf('band') + 1, c.lines.map(function (l) { return l.key; }).indexOf('crew'), 'Band sits just above Crew');
+      eq(c.lines.map(function (l) { return l.key; }).indexOf('members') + 1, c.lines.map(function (l) { return l.key; }).indexOf('crew'), 'Members sit just above Crew');
       // Money under Crew with no person, or for someone no longer listed, stays the crew's.
       var t2 = JSON.parse(JSON.stringify(t));
       t2.charges.x3 = { amount: 50, category: 'crew', date: '2026-10-03' };
       t2.charges.x4 = { amount: 25, category: 'crew', crewId: 'gone', date: '2026-10-03' };
-      eq(line(G.calc(t2), 'crew').paid, 775); eq(line(G.calc(t2), 'band').paid, 1200);
-      eq(G.chargeLine(t2, t2.charges.x1), 'band'); eq(G.chargeLine(t2, t2.charges.x3), 'crew'); eq(G.chargeLine(t2, { category: 'gas', crewId: 'a' }), 'gas');
+      eq(line(G.calc(t2), 'crew').paid, 775); eq(line(G.calc(t2), 'members').paid, 1200);
+      eq(G.chargeLine(t2, t2.charges.x1), 'members'); eq(G.chargeLine(t2, t2.charges.x3), 'crew'); eq(G.chargeLine(t2, { category: 'gas', crewId: 'a' }), 'gas');
       // An "already accounted for" charge counts on neither, as on every line.
       t2.charges.x5 = { amount: 999, category: 'crew', crewId: 'a', accounted: true };
-      eq(line(G.calc(t2), 'band').paid, 1200);
+      eq(line(G.calc(t2), 'members').paid, 1200);
       // A tour with no band member is exactly as it was: one Crew line, no Band line.
       var t3 = { crew: { c: { name: 'C', title: 'TM', pay: 1000 } }, charges: { x: { amount: 300, category: 'crew', crewId: 'c' } } };
       var c3 = G.calc(t3);
-      eq(line(c3, 'band'), undefined); eq(line(c3, 'crew').projected, 1000); eq(line(c3, 'crew').paid, 300); eq(c3.fixed, 1000);
+      eq(line(c3, 'members'), undefined); eq(line(c3, 'crew').projected, 1000); eq(line(c3, 'crew').paid, 300); eq(c3.fixed, 1000);
       // A band with nothing planned yet: the line is there, unset, and counts what was paid.
-      var t4 = { crew: { a: { name: 'A', title: 'Band' } }, charges: { x: { amount: 80, category: 'crew', crewId: 'a' } } };
-      eq(line(G.calc(t4), 'band').projected, null); eq(line(G.calc(t4), 'band').effective, 80); eq(line(G.calc(t4), 'crew').paid, 0);
+      var t4 = { crew: { a: { name: 'A', title: 'Member' } }, charges: { x: { amount: 80, category: 'crew', crewId: 'a' } } };
+      eq(line(G.calc(t4), 'members').projected, null); eq(line(G.calc(t4), 'members').effective, 80); eq(line(G.calc(t4), 'crew').paid, 0);
       // Up to a date (the chart): each line only has what was paid by then.
       eq(line(G.calc(t, { upTo: '2026-10-01' }), 'crew').paid, 500);
-      eq(G.crewSplit(t).band, 1000); eq(G.crewSplit(t).crew, 1000); eq(G.crewSplit(t3).hasBand, false);
+      eq(G.crewSplit(t).members, 1000); eq(G.crewSplit(t).crew, 1000); eq(G.crewSplit(t3).hasMembers, false);
       // What's spent so far (the paid side of every line) is the same money either way.
       eq(G.spentOf(c), 1900);
       // Pay with NO name on it never makes the tour cost more than it did as one line.
       var plain = function (extra) { return Object.assign({ crew: { a: { name: 'A', title: 'Artist', pay: 1000 }, c: { name: 'C', title: 'TM', pay: 1000 } } }, extra); };
       var u1 = G.calc(plain({ charges: { v1: { amount: 1000, category: 'crew' }, v2: { amount: 1000, category: 'crew' } } }));
       eq(u1.fixed, 2000, 'two unnamed Venmos for $2,000 against $2,000 planned: still $2,000');
-      eq(line(u1, 'crew').paid, 2000); eq(line(u1, 'crew').over, 0); eq(line(u1, 'crew').loose, 2000); eq(line(u1, 'band').paid, 0); eq(line(u1, 'band').left, 1000);
+      eq(line(u1, 'crew').paid, 2000); eq(line(u1, 'crew').over, 0); eq(line(u1, 'crew').loose, 2000); eq(line(u1, 'members').paid, 0); eq(line(u1, 'members').left, 1000);
       eq(G.calc(plain({ charges: { v1: { amount: 2500, category: 'crew' } } })).fixed, 2500, 'past both plans, the rest is extra');
       eq(G.calc(plain({ charges: { v1: { amount: 500, category: 'crew' } } })).fixed, 2000);
       eq(G.calc(plain({ expenses: { crew: { paid: 2000 } } })).fixed, 2000, 'a total typed in on an older tour');
@@ -1906,12 +1915,15 @@
       eq(mix(200).fixed, 2200); eq(mix(400).fixed, 2300); eq(line(mix(400), 'crew').over, 100); eq(line(mix(400), 'crew').paid, 1100);
       // A payment in merch cash to a band member is the band's.
       var tb = JSON.parse(JSON.stringify(t)); tb.cashLog.kb = { amount: 40, category: 'crew', crewId: 'a', date: '2026-10-02' };
-      eq(line(G.calc(tb), 'band').paid, 1240); eq(G.chargeLine(tb, tb.cashLog.kb), 'band'); eq(G.crewOf(tb, { category: 'crew', crewId: 'gone' }), null);
+      eq(line(G.calc(tb), 'members').paid, 1240); eq(G.chargeLine(tb, tb.cashLog.kb), 'members'); eq(G.crewOf(tb, { category: 'crew', crewId: 'gone' }), null);
       // Where a category is picked, the one both are filed under says so; the lines keep their own names.
       var lab = function (list) { return list.filter(function (x) { return x.key === 'crew'; })[0].label; };
-      eq(lab(G.typedCategoriesFor(t)), 'Band & Crew'); eq(lab(G.chargeCategoriesFor(t)), 'Band & Crew');
+      eq(lab(G.typedCategoriesFor(t)), 'Members & Crew'); eq(lab(G.chargeCategoriesFor(t)), 'Members & Crew');
       eq(lab(G.typedCategoriesFor(t3)), 'Crew'); eq(crew.label, 'Crew'); eq(line(c3, 'crew').label, 'Crew');
-      eq(G.normExpenses({}).band, undefined, 'no band key is ever stored');
+      eq(G.normExpenses({}).members, undefined, 'no members key is ever stored');
+      // A hired drummer titled Band is crew: his pay and his payments are the crew's.
+      var hired = { crew: { a: { name: 'A', title: 'Artist', pay: 1000 }, d: { name: 'Connor', title: 'Band', pay: 800 } }, charges: { h: { amount: 300, category: 'crew', crewId: 'd' } } };
+      eq(line(G.calc(hired), 'crew').projected, 800); eq(line(G.calc(hired), 'crew').paid, 300); eq(line(G.calc(hired), 'members').projected, 1000); eq(G.chargeLine(hired, hired.charges.h), 'crew');
     });
     test('etaText says the finder’s time left the way a person would', function () {
       eq(G.etaText(0), '', 'nothing left, nothing said');

@@ -74,10 +74,24 @@
 
   // The titles an artist's page can give its people (or it types its own):
   // what the public sees there, whatever they are behind the scenes.
+  /* The words for who is who (Devin, 2026-10-10):
+       Artist: the act itself ("I See Stars").
+       Member: "a person who is actually an owner of the artist entity". IN the band.
+       Band / Touring Musician: "hired guns. They are not in the band but they
+         are on stage. They are a part of the crew."
+       Crew: everyone else out with the tour.
+     So "band" never means the members: the people in the band are Members. */
+  // What a Member does (the chips offered when a member's role is set).
   var BAND_ROLES = ['Vocals', 'Guitar', 'Bass', 'Drums', 'Keys', 'DJ', 'Programming'];
-  var ARTIST_CREW_ROLES = ['Tour Manager', 'Production Manager', 'Stage Manager', 'FOH Engineer',
-    'Monitor Engineer', 'Lighting Director', 'Guitar Tech', 'Drum Tech', 'Merch Manager', 'Driver',
-    'Photographer', 'Videographer'];
+  // The crew, in his order: the first hires, then as a tour grows, then the
+  // bigger tours; and the two words for a hired player on stage.
+  var CREW_ROLES = ['Tour manager', 'FOH engineer', 'Merch manager', 'Driver', 'Backline tech',
+    'Monitor engineer', 'Drum tech', 'Lighting director', 'Photographer / videographer', 'Playback tech',
+    'Production manager', 'Stage manager',
+    'Assistant TM / production coordinator', 'Truck driver', 'Head of security / personal security',
+    'VIP coordinator', 'Wardrobe / stylist', 'Hair & makeup artist', 'Head rigger', 'Tour accountant',
+    'Band', 'Touring Musician'];
+  var ARTIST_CREW_ROLES = CREW_ROLES;
 
   /* Tour credits. On the confirm page a selection is
      { all: bool, picks: { groupKey: { mode: 'all' | 'shows', shows: { nightId: true } } } }
@@ -202,8 +216,7 @@
     return null;
   }
 
-  var CREW_TITLES = ['Tour manager', 'FOH engineer', 'Monitor engineer', 'Lighting director',
-    'Guitar tech', 'Drum tech', 'Merch manager', 'Driver'];
+  var CREW_TITLES = CREW_ROLES;
   var DEBT_CHIPS = ['Credit card', 'Loan', 'Gear payment'];
   var DAILY_CHIPS = ['Food', 'Parking', 'Tolls', 'Repairs', 'Laundry', 'Gear'];
 
@@ -221,15 +234,16 @@
       .sort(function (a, b) { return String(src[a]).localeCompare(String(src[b])); })
       .map(function (k) { return { key: k, label: String(src[k]).trim().slice(0, 30) }; });
   }
-  // On a tour with a band, the one category everyone's pay is filed under is
-  // named for both groups wherever a category is picked or printed ("Band &
-  // Crew"). The two LINES it becomes on the Expenses tab are named in calc.
-  function withBandLabel(tour, list) {
-    if (!rows(tour && tour.crew).some(isBand)) return list;
-    return list.map(function (c) { return c.key === 'crew' ? { key: 'crew', label: 'Band & Crew' } : c; });
+  // On a tour with members on its list, the one category everyone's pay is
+  // filed under is named for both groups wherever a category is picked or
+  // printed ("Members & Crew"). The two LINES it becomes on the Expenses tab
+  // are named in calc.
+  function withMemberLabel(tour, list) {
+    if (!rows(tour && tour.crew).some(isMember)) return list;
+    return list.map(function (c) { return c.key === 'crew' ? { key: 'crew', label: 'Members & Crew' } : c; });
   }
-  function typedCategoriesFor(tour) { return withBandLabel(tour, TYPED_CATEGORIES).concat(extraCategories(tour)); }
-  function chargeCategoriesFor(tour) { return withBandLabel(tour, CHARGE_CATEGORIES).concat(extraCategories(tour)); }
+  function typedCategoriesFor(tour) { return withMemberLabel(tour, TYPED_CATEGORIES).concat(extraCategories(tour)); }
+  function chargeCategoriesFor(tour) { return withMemberLabel(tour, CHARGE_CATEGORIES).concat(extraCategories(tour)); }
   function slugCategory(label) {
     var s = String(label == null ? '' : label).toLowerCase()
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
@@ -770,41 +784,49 @@
     if (p && !p.payTyped && rate > 0 && n > 0) return round(rate * n * 100) / 100;
     return num(p && p.pay);
   }
-  /* Band or crew. Everyone on a tour sits in doc.crew; a band member is a row
-     that says so (band: true). Until someone has said either way, the title
-     decides: Artist or Band, the roles an invite offers for the band. It says
-     which group a person is listed under and, since 2026-10-10, which of the
-     two lines (Band, Crew) their pay and their payments count on. */
-  function isBand(p) {
+  /* Member or crew. Everyone paid on a tour sits in doc.crew. A Member is IN
+     the band (an owner of the artist); anyone else is crew, a hired player on
+     stage included ("Band", "Touring Musician": Connor on drums). The row says
+     which (member: true / false, set with the Member / Crew switch; a tour
+     manager who is in the band is a Member whose job is tour manager). Until
+     someone has said, the title decides: only "Artist" (the role a tour invite
+     offers for the people in the band), "Member" or "Band member". The title
+     "Band" is a hired player, so it is crew. (band: true / false is the same
+     flag as it was written on 2026-10-09 and 10, still read.) */
+  function isMember(p) {
     if (!p) return false;
+    if (p.member === true) return true;
+    if (p.member === false) return false;
     if (p.band === true) return true;
     if (p.band === false) return false;
-    return /^\s*(artist|band|band member)\s*$/i.test(String(p.title || ''));
+    return /^\s*(artist|member|band member)\s*$/i.test(String(p.title || ''));
   }
   function crewProjection(tour) {
     return rows(tour && tour.crew).reduce(function (t, p) { return t + crewPay(tour, p); }, 0);
   }
-  /* Band and crew are two lines of money (Devin, 2026-10-10: "band and crew
-     should be a separate line in the expense tab"). Nothing about how it is
-     stored changes: everyone is still in doc.crew, and every payment is still
-     filed under the one category 'crew', with who it paid (crewId). The split
-     is made here, when the tour is added up. */
-  // What each group is owed for the tour, and whether the tour has a band at all.
+  /* Members and crew are two lines of money (Devin, 2026-10-10: "band and
+     crew should be a separate line in the expense tab", then: "Member should
+     mean IN the band ... Anything that is not a Member isn't a part of the
+     band"). Nothing about how it is stored changes: everyone is still in
+     doc.crew, and every payment is still filed under the one category 'crew',
+     with who it paid (crewId). The split is made here, when the tour is
+     added up. */
+  // What each group is owed for the tour, and whether the tour lists a member at all.
   function crewSplit(tour) {
-    var out = { band: 0, crew: 0, hasBand: false };
+    var out = { members: 0, crew: 0, hasMembers: false };
     rows(tour && tour.crew).forEach(function (p) {
-      if (isBand(p)) { out.hasBand = true; out.band += crewPay(tour, p); } else out.crew += crewPay(tour, p);
+      if (isMember(p)) { out.hasMembers = true; out.members += crewPay(tour, p); } else out.crew += crewPay(tour, p);
     });
     return out;
   }
   // The line a charge (or a merch-cash entry) counts on: its category, except
-  // that money filed under Crew for a band member is the band's. With no
-  // person on it, or a person no longer on the list, it stays the crew's.
+  // that money filed under Crew for a member is the members'. With no person
+  // on it, or a person no longer on the list, it stays the crew's.
   function chargeLine(tour, x) {
     var k = x && x.category ? x.category : null;
     if (k !== 'crew') return k;
     var p = crewOf(tour, x);
-    return p && isBand(p) ? 'band' : 'crew';
+    return p && isMember(p) ? 'members' : 'crew';
   }
   // Who a Crew-category charge paid: the person on this tour's list, or null
   // (no name on it, or a name that is no longer on the list).
@@ -1423,7 +1445,7 @@
     typedCategoriesFor(tour).forEach(function (c) {
       var rec = expenses[c.key] || { projected: null, paid: 0 };
       if (c.key === 'crew') {
-        /* Band and crew: two lines from one list of people. A payment with a
+        /* Members and crew: two lines from one list of people. A payment with a
            name on it counts on that person's line. Money with NO name on it
            (the pay above, a total typed in on an older tour, a card balance
            carried in) is shown on the Crew line, because that is where it was
@@ -1432,13 +1454,13 @@
            plans counts as extra. So pay that was filed before people could be
            picked never makes a tour cost more than it did as one line, and
            the two lines only pull apart on payments that say who they paid
-           (the catch Devin was shown: planned $1,000 each, paid the band
+           (the catch Devin was shown: planned $1,000 each, paid the members
            $1,200 and the crew $700, counts $2,200). */
-        var hasBand = split.hasBand || (chargedTo.band || 0) > 0;
+        var hasMembers = split.hasMembers || (chargedTo.members || 0) > 0;
         var loose = num(rec.paid) + crewLoose + (cardTo.crew || 0);
         var cProj = split.crew || null, cNamed = chargedTo.crew || 0, cPaid = cNamed + loose;
-        if (!hasBand) {
-          // No band on this tour: one Crew line, exactly as it always was.
+        if (!hasMembers) {
+          // No member on this tour's list: one Crew line, exactly as it always was.
           var cEff0 = cProj == null ? cPaid : Math.max(cProj, cPaid);
           fixed += cEff0;
           lines.push({
@@ -1448,21 +1470,21 @@
           });
           return;
         }
-        var bProj = split.band || null, bPaid = chargedTo.band || 0;
+        var bProj = split.members || null, bPaid = chargedTo.members || 0;
         var bEff = Math.max(num(bProj), bPaid), cBase = Math.max(num(cProj), cNamed);
         // What both plans still have left to pay, and what of the no-name money is past it.
         var room = (bEff - bPaid) + (cBase - cNamed);
         var cEff = cBase + Math.max(0, loose - room);
         fixed += bEff + cEff;
         lines.push({
-          key: 'band', label: 'Band', projected: bProj, paid: bPaid, effective: bEff, cards: [],
+          key: 'members', label: 'Members', projected: bProj, paid: bPaid, effective: bEff, cards: [],
           left: bProj == null ? null : Math.max(0, bProj - bPaid),
           over: bProj == null ? 0 : Math.max(0, bPaid - bProj)
         });
         lines.push({
           key: 'crew', label: 'Crew', projected: cProj, paid: cPaid, effective: cEff, cards: cardDetail.crew || [],
           left: cProj == null ? null : Math.max(0, cProj - cPaid),
-          // (Over only by what is counted as over: no-name money that fits the band's plan is not.)
+          // (Over only by what is counted as over: no-name money that fits the members' plan is not.)
           over: cProj == null ? 0 : Math.max(0, cEff - cProj),
           // What on this line has no name on it yet (the app asks for one: "Who").
           loose: round(loose * 100) / 100
@@ -2066,7 +2088,7 @@
     var chargeRows = [['Date', 'Merchant', 'Amount', 'Category']];
     rows(tour && tour.charges).sort(byDate).forEach(function (ch) {
       chargeRows.push([ch.date || '', ch.merchant || '', num(ch.amount),
-        chargeLine(tour, ch) === 'band' ? 'Band' : catLabel[ch.category] || ch.category || '']);
+        chargeLine(tour, ch) === 'members' ? 'Members' : catLabel[ch.category] || ch.category || '']);
     });
 
     var dayRows = [['Date', 'Label', 'Amount', 'Source', 'Meals flag']];
@@ -2149,7 +2171,7 @@
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
     OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
     HISTORY_TIERS: HISTORY_TIERS, LEGACY_BAR: LEGACY_BAR, historyTier: historyTier,
-    BAND_ROLES: BAND_ROLES, ARTIST_CREW_ROLES: ARTIST_CREW_ROLES,
+    BAND_ROLES: BAND_ROLES, ARTIST_CREW_ROLES: ARTIST_CREW_ROLES, CREW_ROLES: CREW_ROLES,
     creditGroupName: creditGroupName, creditTally: creditTally, creditClaim: creditClaim,
     creditSelection: creditSelection, tourTimeline: tourTimeline,
     CHARGE_CATEGORIES: CHARGE_CATEGORIES,
@@ -2169,7 +2191,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, merchTips: merchTips, merchTipsOwed: merchTipsOwed, merchTipsPaidCash: merchTipsPaidCash, isDerived: isDerived, DERIVED: DERIVED, crewProjection: crewProjection, isBand: isBand, crewSplit: crewSplit, chargeLine: chargeLine, crewOf: crewOf, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, merchTips: merchTips, merchTipsOwed: merchTipsOwed, merchTipsPaidCash: merchTipsPaidCash, isDerived: isDerived, DERIVED: DERIVED, crewProjection: crewProjection, isMember: isMember, crewSplit: crewSplit, chargeLine: chargeLine, crewOf: crewOf, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

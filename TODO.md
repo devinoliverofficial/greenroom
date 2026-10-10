@@ -77,7 +77,12 @@ Choices made while building, for him to confirm or change:
 - A skipped question stays on today's list (the card says how many are left); tomorrow the card is tomorrow's show.
 - A guarantee or merch total already logged is shown with a tick and a way into Log income, not overwritten from here (its deposit, taxes and reasons live there).
 
-## Band and crew: left open after 2026-10-09
+## Roles, pages, sign-up, NDAs, fans (Devin's definitions, 2026-10-10): see ROLES.md
+- [x] The words on tours: a Members line and a Crew line on the Expenses tab; a hired player (Band, Touring Musician) is crew; his 20 crew roles in his order; Member / Crew switch on each person
+- [x] Nothing is erased: no 30-day clear-out, no "Delete forever", no "Delete artist profile"; the database refuses deleting a tour or an artist page (0131). A tour can be taken down and restored
+- [ ] Build order and open decisions are in ROLES.md sections 4 and 6. Next: sign-up with the NDA step and a way for Devin to test every kind of login
+
+## Members and crew on a tour: left open after 2026-10-09
 - [x] Band and Crew are two lines on the Expenses tab (2026-10-10; Devin: "band and crew should be a separate line in the expense tab", knowing each line counts the bigger of planned and paid). Nothing stored changes: pay is still filed under the one category (named "Band & Crew" in the pickers on a tour with a band) with who it paid; the split is made when the tour is added up (G.crewSplit, G.chargeLine)
 - [ ] Money under Crew with no person on it counts on the Crew line until someone taps Who (Devin's current tour had 2 such card charges on 2026-10-10)
 - [ ] Changing someone between Band and Crew, or retitling them to or from Artist / Band, moves their pay and payments to the other line and can change the tour's total. Said nowhere in the app yet
