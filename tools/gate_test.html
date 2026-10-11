@@ -36,7 +36,9 @@
 
   EVERY ADDRESS THE FAKE KNOWS
     anyone@example.com   signs in with the password  greenroom  (an account
-                         that finished its first run long ago)
+                         that finished its first run long ago; it has not
+                         agreed to the documents yet, so they come first:
+                         add ?agreed=1 or ?docs=0 to go straight in)
     taken@example.com    already has an account (at "Create account")
     invited@example.com  has a tour invite waiting (at "Create account");
                          with the emailed code 123456 it is Ana Reyes, invited
@@ -61,6 +63,89 @@
     ?mail=0         no email can be sent (the confirmation, a new code)
     ?old=1          the database change is not live yet
     ?code=123456    arriving from an email's button
+
+  THE DOCUMENTS (three pages, one box, "I Agree")
+  Three short invented documents stand in for the real ones (which are in
+  no file of this project). Each is shown on its own page; the third ends
+  with the one box and "I Agree", which stays off until the box is ticked.
+  Where they turn up:
+    a Greenroom code   GR-TEST-0001, Next: the three pages, then "What's
+                       your name?". Back on the first page goes to the code.
+                       What was agreed is sent when the account signs in
+                       (the emailed code 123456): look for "rpc legal_accept"
+                       with via "code" in the calls, before claim_invites.
+    an invited person  123456 then invited@example.com: the three pages
+                       first (no Back on the first), saved at once with via
+                       "invite", then the username, birthday and password.
+                       Nothing of the tour is read, and the panel under the
+                       pages does not appear, until "I Agree" has saved.
+    already in         sign in as anyone@example.com / greenroom: the three
+                       pages over everything, saved with via "inside". The
+                       panel under them does not appear until that is saved.
+    left open          signed in and past the pages, then the documents
+                       change: press "A document changes now" on the panel,
+                       switch to another tab or app for more than 30 seconds
+                       and come back. The pages come up over the panel.
+  Signed in (invited, already in), every page and the "Try again" screen
+  have a quiet "Sign out" under the button. It leaves; it is not a way past.
+  There is none at the Greenroom-code door (nobody is signed in; Back is there).
+  SWITCHES FOR THE DOCUMENTS (join several with &)
+    ?docs=0            no documents are loaded: nothing is asked anywhere,
+                       every flow is exactly as it was before them
+    ?docs=fail         loading fails (the server answers with an error). With
+                       a Greenroom code: the code screen says "Couldn't load
+                       the documents. Try again." and nobody goes on. Invited:
+                       a screen that says the same, with Try again (the grey
+                       "Loading the documents" line goes). Already in: they
+                       carry on (the next start asks)
+    ?docs=hang         loading never answers (12 seconds). The same, except
+                       the words: no answer is the connection, so it says the
+                       ordinary "Couldn't reach the server. Check your
+                       connection and try again."
+    ?docs=failin       loading works with a code and fails once signed in:
+                       a new account that still has to agree (it agreed on
+                       another phone, say) waits at "Try again"; someone
+                       already in carries on
+    ?accept=fail       saving fails every time: "I Agree" says so and stays.
+                       After a sign-up with a code, the three pages come
+                       back over everything, saying "We couldn't save your
+                       agreement. Please read and agree again." over the
+                       first title, and nothing gets past them
+    ?accept=email      saving is refused because the address was never
+                       confirmed: "Confirm your email first: use the code we
+                       emailed you."
+    ?accept=lost       saving gets no answer at all (the signal dropped while
+                       the pages were read). anyone@ (already in) is let on:
+                       what they agreed to is kept on the phone and sent when
+                       a call gets through ("The signal is back" on the
+                       panel, then come back from another tab after 30
+                       seconds, or wait for the next read). Someone new or
+                       invited stays on the page with the offline line
+    ?accept=lostonce   no answer the first time, saved the second
+    ?accept=once       saving fails the first time and works the second
+    ?accept=stale      the Terms change while they are read: the pages start
+                       again with version 1.1 and a line saying why
+    ?changed=privacy   a version changed (several: ?changed=terms,privacy):
+                       anyone@ and reset@ agreed to 1.0, and the first page
+                       says "Updated: Privacy Policy" over its title
+    ?agreed=1          anyone@example.com has agreed already: not asked
+    ?status=fail       legal_status errors: no "Updated:" line, all else works
+    ?facts=fail        the first-run facts cannot be read: someone already in
+                       is not asked (the next start asks); an invited person
+                       still is, and so is a brand-new account (made, or its
+                       address confirmed, within the last day): both wait at
+                       the documents before anything is read
+    ?keep=1            the sign-in survives a reload (this tab only), to try
+                       "reload half way": the pages come back until agreed
+  Agreed with a code, then Back and the same code again in the same visit:
+  straight on to the name. After a reload, or for the next person on the
+  same phone, the three pages are shown again and the new "I Agree" replaces
+  what was kept. What was agreed is kept on the phone only to be sent when
+  that sign-up's own account signs in (30 minutes with no address yet, a
+  day once it has one, and only ever for that address). "Forget what this
+  browser agreed to" in Test notes clears it, and so does Start over.
+  Two tabs cannot be tried here: each tab of this page is its own pretend
+  server.
 -->
 <style>
   /* Only this page's own bits. The gate's look comes from src/index.html. */
@@ -92,6 +177,8 @@
   <pre id="gt-me"></pre>
   <h2>B.signupSettings()</h2>
   <pre id="gt-set">reading</pre>
+  <h2>B.legal(): the documents, as Settings is told</h2>
+  <pre id="gt-legal">reading</pre>
   <h2>What the pretend database holds</h2>
   <pre id="gt-account"></pre>
   <h2>What was sent: codes, sign-in, sign-up, saves</h2>
@@ -100,6 +187,12 @@
     <summary id="gt-all">Every call (window.__gate.calls)</summary>
     <pre id="gt-calls"></pre>
   </details>
+  <h2>While the app is open</h2>
+  <p>For "Greenroom was left open". Press one, then switch to another tab or app for more than 30 seconds and come back: that is when the app looks again.</p>
+  <button type="button" id="gt-publish">A document changes now</button>
+  <button type="button" id="gt-lost">The signal drops (saves get no answer)</button>
+  <button type="button" id="gt-found">The signal is back</button>
+  <p id="gt-live"></p>
   <button type="button" id="gt-again">Start over</button>
 </div>
 <p id="gt-fail" hidden></p>
@@ -111,7 +204,8 @@
     <li>The username <code>brent</code> is taken. The password <code>password</code> is too easy to guess. A birthday under 18 is refused.</li>
     <li>At "Create account": <code>taken@example.com</code> already has an account. <code>invited@example.com</code> has a tour invite waiting. <code>bad@example.com</code> is not a real address. <code>slow@example.com</code> never answers (30 seconds), yet the account is made: tap again.</li>
     <li>An emailed code has no letter in it: <code>123456</code> with <code>invited@example.com</code> is an invited person (Ana Reyes). With <code>bare@example.com</code> the invite carried no name or role. With <code>reset@example.com</code> it is a password reset.</li>
-    <li>Sign in: <code>anyone@example.com</code> with the password <code>greenroom</code> (first run done long ago).</li>
+    <li>Sign in: <code>anyone@example.com</code> with the password <code>greenroom</code> (first run done long ago; the documents come first unless <a href="?agreed=1">?agreed=1</a> or <a href="?docs=0">?docs=0</a>).</li>
+    <li>The documents: three invented ones, a page each, after a Greenroom code is found good, before an invited person's questions, and over everything for <code>anyone@example.com</code>. The third page's "I Agree" is off until the box is ticked. <a href="?docs=0">?docs=0</a>: none loaded, nothing is asked. <a href="?docs=fail">?docs=fail</a>: loading fails. <a href="?docs=hang">?docs=hang</a>: loading never answers. <a href="?accept=fail">?accept=fail</a>: saving fails. <a href="?accept=once">?accept=once</a>: saving fails once. <a href="?accept=stale">?accept=stale</a>: the Terms change while they are read. <a href="?changed=privacy">?changed=privacy</a>: a version changed ("Updated: Privacy Policy"). <a href="?agreed=1">?agreed=1</a>: anyone@ has agreed. <a href="?status=fail">?status=fail</a>, <a href="?facts=fail">?facts=fail</a>: those reads fail. <a href="?keep=1">?keep=1</a>: the sign-in survives a reload. <a href="?accept=email">?accept=email</a>: saving is refused (address not confirmed). <a href="?accept=lost">?accept=lost</a>: saving gets no answer; anyone@ is let on with the agreement kept, to be sent later. Agreed with a code and reloaded, the pages are shown again; what is kept on the phone waits for that sign-up's own account: <a href="#" id="gt-forget">forget what this browser agreed to</a>.</li>
     <li><a href="?closed=1">?closed=1</a>: sign-ups are off. <a href="?confirm=0">?confirm=0</a>: "Confirm email" is off. <a href="?settings=0&amp;closed=1">?settings=0&amp;closed=1</a>: off, and the settings cannot be read. <a href="?settings=hang">?settings=hang</a>: the settings never answer. <a href="?mail=0">?mail=0</a>: no email can be sent. <a href="?old=1">?old=1</a>: the database change is not live yet. <a href="?code=123456">?code=123456</a>: arriving from an email's button. <a href="?">Plain</a>.</li>
   </ul>
 </details>
@@ -124,6 +218,12 @@
     p.textContent = text;
     p.hidden = false;
   }
+  // What a sign-up agreed to and a kept sign-in (?keep=1), both gone: the next load starts clean.
+  function forget() {
+    try { localStorage.removeItem('gr-legal-held'); } catch (e) { /* nothing kept */ }
+    try { sessionStorage.removeItem('gr-fake-keep'); } catch (e) { /* nothing kept */ }
+  }
+  document.getElementById('gt-forget').addEventListener('click', function (e) { e.preventDefault(); forget(); location.reload(); });
   function show(id, value) {
     var el = document.getElementById(id), text;
     try { text = JSON.stringify(value, null, 2); } catch (e) { text = String(value); }
@@ -134,7 +234,18 @@
     if (!db) { fail('The backend did not start (boot failed). Look at the browser console.'); return; }
     var B = window.GR_BACKEND;
     document.getElementById('gt-panel').hidden = false;
-    document.getElementById('gt-again').addEventListener('click', function () { location.reload(); });
+    document.getElementById('gt-again').addEventListener('click', function () { forget(); location.reload(); });
+    // The pretend server changes under an app that is already open.
+    var live = document.getElementById('gt-live');
+    document.getElementById('gt-publish').addEventListener('click', function () {
+      live.textContent = 'The Privacy Policy is now version ' + window.__gate.publish('privacy') + '. Come back after 30 seconds away.';
+    });
+    document.getElementById('gt-lost').addEventListener('click', function () {
+      window.__gate.accept = 'lost'; live.textContent = 'Saving an agreement now gets no answer.';
+    });
+    document.getElementById('gt-found').addEventListener('click', function () {
+      window.__gate.accept = 'on'; live.textContent = 'Saving works again. A kept agreement is sent at the next read, or when you come back after 30 seconds away.';
+    });
     // Reads and plumbing (the tours being fetched, the live line) are in the full list only.
     var QUIET = /^createClient$|^auth\.(getSession|refreshSession|onAuthStateChange)$|\.select$|^channel\(|^removeChannel$/;
     function draw() {
@@ -145,6 +256,16 @@
       show('gt-sent', calls.filter(function (c) { return !QUIET.test(c.fn); }));
       show('gt-calls', calls);
       document.getElementById('gt-all').textContent = 'Every call (window.__gate.calls): ' + calls.length;
+      legal();
+    }
+    // What Settings would be told about the documents. Asked once, and again whenever an acceptance is
+    // recorded (an invited person agrees after the hand-over), so the list above is not filled with it.
+    var agreedSeen = -1;
+    function legal() {
+      var n = (window.__gate.account.acceptances || []).length;
+      if (!B.legal || n === agreedSeen) return;
+      agreedSeen = n;
+      B.legal().then(function (st) { show('gt-legal', st); }, function () { show('gt-legal', 'failed'); });
     }
     draw();
     setInterval(draw, 700); // an invited person's screens save after the hand-over

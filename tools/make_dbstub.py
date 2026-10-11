@@ -4,6 +4,15 @@ signing anything into the live Supabase project. Run after build.py."""
 import pathlib
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 page = (ROOT / 'src/index.html').read_text(encoding='utf-8')
+# The gate's own screens (the role picker, the one-question screens, the pages
+# for the documents) are not copied here: the stretch of site/backend.js
+# between its two marks is lifted in as it stands, so the harness tries the
+# real code. It goes where the shim says /*SHARED-SCREENS*/.
+backend = (ROOT / 'site/backend.js').read_text(encoding='utf-8')
+MARK_A, MARK_B = '/* <shared-screens>', '/* </shared-screens> */'
+assert backend.count(MARK_A) == 1 and backend.count(MARK_B) == 1, 'the shared-screens marks are missing from site/backend.js'
+shared = backend[backend.index(MARK_A):backend.index(MARK_B) + len(MARK_B)]
+assert '</script' not in shared.lower(), 'the shared screens cannot be put inside a script tag as they stand'
 shim = r"""<script>
 /* ---- fake signed-in backend (dev only) ---- */
 (function () {
@@ -144,7 +153,10 @@ shim = r"""<script>
     return Promise.resolve([]);
   };
   fakeSample.limits = function () { return Promise.resolve({ images: { mediaTypes: ['image/png', 'image/jpeg'], maxInputBytes: 5000000 } }); };
-  window.claude = { use: function (n) { return Promise.resolve(n === 'db' ? db : (n === 'sample' ? fakeSample : null)); } };
+  // (With ?legal in the address the documents come first, as at a real start-up: nothing is handed over until
+  // they are agreed to. gateDone is called further down, once __harness exists.)
+  var gateDone, gatePassed = new Promise(function (res) { gateDone = res; });
+  window.claude = { use: function (n) { return gatePassed.then(function () { return n === 'db' ? db : (n === 'sample' ? fakeSample : null); }); } };
   var me = { first_name: 'Devin', last_name: 'Oliver', full_name: 'Devin Oliver', username: 'Devin Oliver',
     phone: '555-0100', tour_role: 'Artist' };
   // The artists that endorsed the test Devin: one still on Greenroom, one whose page is gone.
@@ -553,9 +565,157 @@ shim = r"""<script>
     ]);
     emit(); H.feedPush();
   };
+  /* The gate's own screens, as site/backend.js has them (lifted in by this
+     script, not copied): the role list and its picker, the one-question
+     screens, the pages for the documents and the markdown they are written
+     in. The few names that stretch leans on from the rest of backend.js are
+     stood in for here; nothing in the harness reaches a server. */
+  var shared = (function () {
+    'use strict';
+    function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+    function err(code) { var e = new Error(code); e.code = code; return e; }
+    function fnMissing() { return false; }
+    function yearsOld(y, m, d) {
+      var now = new Date(), n = now.getUTCFullYear() - y;
+      if (now.getUTCMonth() + 1 < m || (now.getUTCMonth() + 1 === m && now.getUTCDate() < d)) n -= 1;
+      return n;
+    }
+    var cfg = {}, sbMod = null;
+  /*SHARED-SCREENS*/
+    return { tourRoles: tourRoles, openRolePicker: openRolePicker, sgStyle: sgStyle, mdNodes: mdNodes,
+      legalRun: legalRun, legalPages: legalPages, LEGAL_NAMES: LEGAL_NAMES, LEGAL_SAID: LEGAL_SAID,
+      used: [err, fnMissing, yearsOld, cfg, sbMod] };
+  })();
+  /* THE DOCUMENTS (0137), in memory: three short invented documents (the real
+     ones are in no file of this project), the gate that asks for them, and
+     the Settings row.
+     TO SEE THE GATE (the three pages over everything, as at a real start-up):
+       open the page with  ?legal            someone already in who never agreed
+                           ?legal=privacy    a version changed: "Updated: Privacy Policy" over page one
+                                             (several: ?legal=terms,privacy)
+       The app is handed nothing until "I Agree" has saved. Or, at any time, in the console:
+         __harness.legal = { needs: true, changed: ['privacy'] };  __harness.legalGate()
+       (legalGate() resolves 'agreed', 'none' or 'unread'; what it asked is in __harness.legalCalls.)
+     TO SEE THE SETTINGS ROW: the three lines, Settings. "Documents you agreed to" sits last, with
+       "You accepted on <date>" under it; it opens the three documents to read again.
+     SWITCHES (all inside __harness.legal; set them, then open Settings or call legalGate() again):
+       needs: true          this account has yet to agree to the current documents
+       changed: ['terms']   which changed since it last agreed
+       acceptedAt: null     it has never agreed (the Settings row is hidden); else an ISO time
+       ready: false         no documents are loaded: the gate asks nothing, the row is hidden
+       versions: { nda: '1.0', terms: '0.9', privacy: '1.0' }   what it agreed to (Settings says when one is older)
+       docsFail: true       the documents cannot be loaded (gate: carries on unless must; Settings: says so)
+       docsFail: 'offline'  loading them gets no answer at all: with must, the screen says the ordinary
+                            "Couldn't reach the server" line, not a sentence about documents
+       must: true           someone new or invited: the gate waits with "Try again" when the documents cannot
+                            be loaded, and is never let on with an agreement that could not be sent
+       acceptFail: true     saving the acceptance fails: "I Agree" says so and nobody gets past
+       acceptWhy: 'email'   saving is refused for that reason: "Confirm your email first: use the code we emailed you."
+       acceptLost: true     saving gets NO ANSWER (the signal dropped while they read). Someone already in
+                            (no must) is let on: legalGate() resolves 'held', and what they agreed to is in
+                            __harness.legalHeld until it is sent. With must they stay on the page
+       stale: true          the Terms change while they are read: once, then version 1.1 is shown
+       again: true          the pages are back because an agreement could not be saved: said over the first title
+       blind: true          nobody knows yet whether documents are loaded: the waiting screen does not speak of them
+       statusFail: true     where the account stands cannot be read (the row stays hidden; no "Updated" line)
+     "Sign out" sits under the button of every page and of the "Try again" screen (people signed in only). Here
+     it signs nobody out: it sets __harness.legalSignedOut and takes the pages down. */
+  var LEGAL_DOCS = [
+    { doc: 'nda', title: 'Harness Non-Disclosure Agreement', version: '1.0', body:
+      '# Harness Non-Disclosure Agreement\n\n**Version 1.0.** An invented stand-in. It is not a real agreement.\n\n## What stays in the room\n\n' +
+      'What you see in the harness is not finished.  \nThis line follows two spaces, so it starts on a new line.\n\n' +
+      '- Do not post **screenshots**.\n- Do tell whoever invited you what broke.\n\n### A smaller heading\n\n' +
+      'This must show exactly as typed and run nothing: <img src=x onerror="window.__harness.ran = true"> <b>not bold</b>\n\n' +
+      'A last paragraph, long enough to wrap on a phone, so there is something to scroll through before the button at the foot of the page.' },
+    { doc: 'terms', title: 'Harness Terms of Use', version: '1.0', body:
+      '# Harness Terms of Use\n\nThese are **pretend terms**.\n\n## Who may use it\n\n- People who are 18 or older.\n- People holding a code.\n\n## What it is for\n\nTrying the screens.' },
+    { doc: 'privacy', title: 'Harness Privacy Policy', version: '1.0', body:
+      'This one does not repeat its title.\n\n## What is recorded when you agree\n\n- Who you are.\n- The **versions** you agreed to.\n- When, and from which address.' }
+  ];
+  function legalNow() {
+    var H = window.__harness, L = H.legal || (H.legal = {}), cur = {};
+    LEGAL_DOCS.forEach(function (d) { cur[d.doc] = d.version; });
+    var ready = L.ready !== false, changed = Array.isArray(L.changed) ? L.changed : [];
+    // (Unless told otherwise the account agreed twenty days ago, to the versions before any that "changed".)
+    var at = L.acceptedAt === undefined ? new Date(Date.now() - 20 * 864e5).toISOString() : L.acceptedAt;
+    var had = L.versions || (at ? { nda: cur.nda, terms: cur.terms, privacy: cur.privacy } : null);
+    if (had && !L.versions) changed.forEach(function (k) { if (had[k]) had[k] = '0.9'; });
+    return { L: L, cur: cur, ready: ready, at: at || null, had: had, changed: ready ? changed : [], needs: ready && !!L.needs };
+  }
+  var legalApi = {
+    docs: function () {
+      var H = window.__harness, n = legalNow();
+      (H.legalCalls = H.legalCalls || []).push({ fn: 'legal_docs_for', args: [] });
+      // (true: the server answered with an error. 'offline': no answer at all.)
+      if (n.L.docsFail) return Promise.reject(n.L.docsFail === 'offline' ? Object.assign(new Error('offline'), { code: 'offline' })
+        : Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      return Promise.resolve(n.ready ? { ok: true, ready: true, docs: JSON.parse(JSON.stringify(LEGAL_DOCS)) } : { ok: true, ready: false, docs: [] });
+    },
+    status: function () {
+      var H = window.__harness, n = legalNow();
+      (H.legalCalls = H.legalCalls || []).push({ fn: 'legal_status', args: [] });
+      if (n.L.statusFail) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      return Promise.resolve({ ready: n.ready, needs: n.needs, accepted_at: n.at, versions: n.had, current: n.ready ? n.cur : null, changed: n.changed });
+    },
+    accept: function (v, said, via) {
+      var H = window.__harness, n = legalNow();
+      (H.legalCalls = H.legalCalls || []).push({ fn: 'legal_accept', args: [v, said, via] });
+      // (No answer at all is thrown, as site/backend.js's own legalApi.accept does; a refusal is an answer.)
+      if (n.L.acceptLost) return Promise.reject(Object.assign(new Error('offline'), { code: 'offline' }));
+      if (n.L.acceptFail) return Promise.resolve({ ok: false, why: 'failed' });
+      if (n.L.acceptWhy) return Promise.resolve({ ok: false, why: String(n.L.acceptWhy) });
+      if (n.L.stale) {
+        n.L.stale = false;
+        LEGAL_DOCS[1].version = '1.1'; LEGAL_DOCS[1].body += '\n\n**New in version 1.1:** this paragraph arrived while you were reading.';
+        return Promise.resolve({ ok: false, why: 'stale' });
+      }
+      if (!n.ready) return Promise.resolve({ ok: false, why: 'not ready' });
+      if (!v || v.nda !== n.cur.nda || v.terms !== n.cur.terms || v.privacy !== n.cur.privacy) return Promise.resolve({ ok: false, why: 'stale' });
+      n.L.needs = false; n.L.changed = []; n.L.acceptedAt = new Date().toISOString(); n.L.versions = n.cur;
+      return Promise.resolve({ ok: true, at: n.L.acceptedAt, versions: n.cur });
+    }
+  };
+  // The inside gate, as site/backend.js draws it (legalInside): over everything, under the overlay's own name.
+  window.__harness.legalGate = function () {
+    var H = window.__harness, L = H.legal || (H.legal = {});
+    if (document.getElementById('gr-pass-gate')) return Promise.resolve('busy');
+    var wrap = document.createElement('div');
+    wrap.id = 'gr-pass-gate'; wrap.className = 'gr-gate-like';
+    document.body.appendChild(wrap);
+    return shared.legalRun(wrap, { api: legalApi, via: 'inside', must: !!L.must, again: !!L.again, blind: !!L.blind,
+      signOut: function () { H.legalSignedOut = true; wrap.remove(); },
+      // As site/backend.js has it: only someone who was already in is let on with an agreement still to be sent.
+      hold: L.must ? null : function (v, said) { H.legalHeld = { v: v, said: said, via: 'inside' }; return true; }
+    }).then(function (how) {
+      wrap.remove(); H.legalHow = how;
+      return how;
+    });
+  };
+  (function () {
+    var m = /[?&]legal(?:=([a-z,]*))?(?:&|$)/.exec(String(location.search || ''));
+    if (!m) { gateDone(); return; }
+    var changed = String(m[1] || '').split(',').filter(function (k) { return k === 'nda' || k === 'terms' || k === 'privacy'; });
+    window.__harness.legal = changed.length ? { needs: true, changed: changed } : { needs: true, acceptedAt: null };
+    // (Whatever goes wrong with the gate itself, the harness still starts: it is the gate that is being tried.)
+    try { window.__harness.legalGate().then(gateDone, gateDone); } catch (e) { gateDone(); throw e; }
+  })();
   window.GR_BACKEND = {
-    tourRoles: ['Artist', 'Band', 'Tour Manager', 'Production Manager', 'Stage Manager', 'Merch',
-      'Guitar Tech', 'Drum Tech', 'Assistant', 'FOH Engineer', 'Monitors', 'Friend', 'Family Member', 'Liaison', 'Dancer'],
+    // (The crew roles, from the lifted stretch of backend.js: GR.CREW_ROLES once core.js has loaded.)
+    tourRoles: shared.tourRoles(),
+    legal: function () {
+      return legalApi.status().then(function (d) {
+        return { ready: d.ready === true, needs: d.needs === true, acceptedAt: d.accepted_at || null, versions: d.versions || null,
+          current: d.current || null, changed: (d.changed || []).slice() };
+      }, function () { return null; });
+    },
+    legalDocs: function () {
+      return legalApi.docs().then(function (d) {
+        return (d.docs || []).map(function (x) {
+          return { doc: x.doc, name: shared.LEGAL_NAMES[x.doc], title: x.title, version: x.version, body: x.body, publishedAt: null };
+        });
+      }, function () { return null; });
+    },
+    legalBody: function (text, title) { shared.sgStyle(); return shared.mdNodes(text, title); },
     email: function () { return 'devin@example.com'; },
     uid: function () { return 'u-devin'; },
     // Flowers, in memory. Devin (you), Brent and Jeff are on the tour; Brent
@@ -1999,6 +2159,8 @@ shim = r"""<script>
     },
     // __harness.inviteFails = 'page-first' (the account came in on a code and its artist page is not
     // confirmed yet) or 'too-many' (the day's limit) refuses the invite the way the real one does.
+    // __harness.inviteStatus = 'existing' (that address already has an account) or 'nomail' (the email did
+    // not go out): what the invite answers in place of 'sent'.
     invite: function (tourId, email, role, name, phone, extra) {
       var why = window.__harness.inviteFails;
       if (why) return Promise.reject(Object.assign(new Error(String(why)), { code: String(why) }));
@@ -2010,7 +2172,7 @@ shim = r"""<script>
       // Like the real crew list, which reads the same members table.
       window.__harness.crew = window.__harness.crew.concat([{ owner: false, role: role, manager: mgr, name: name || '', email: email,
         invitedEmail: email, phone: phone || '', tourRole: (extra || {}).tourRole || '', joined: false }]);
-      return Promise.resolve('sent');
+      return Promise.resolve(window.__harness.inviteStatus || 'sent');
     },
     uninvite: function (tourId, email) {
       window.__harness.kicked = (window.__harness.kicked || []).concat([email]);
@@ -2285,23 +2447,14 @@ shim = r"""<script>
         changed: out.filter(function (r) { return r.bank_amount != null && Math.round(r.bank_amount * 100) !== Math.round(r.amount * 100); }),
         filed: wantFiled ? filed : null })));
     },
-    // same markup as backend.js's picker, so the contact card can be exercised here
-    openRolePicker: function (current, onPick) {
-      var ov = document.createElement('div'); ov.className = 'role-picker';
-      ov.innerHTML = '<div class="rp-card"><div class="rp-head">Your role on the tour</div><div class="rp-list">' +
-        window.GR_BACKEND.tourRoles.map(function (r) {
-          return '<button type="button" class="rp-opt' + (r === current ? ' on' : '') + '" data-r="' + r + '">' + r + '</button>';
-        }).join('') + '</div></div>';
-      ov.addEventListener('click', function (e) {
-        var b = e.target.closest('.rp-opt');
-        if (b) { onPick(b.getAttribute('data-r')); ov.remove(); } else if (e.target === ov) ov.remove();
-      });
-      document.body.appendChild(ov);
-    }
+    // backend.js's own picker (lifted in above, not a copy): the crew roles, "Other" and its line to type in.
+    openRolePicker: shared.openRolePicker
   };
 })();
 </script>
 """
+assert shim.count('/*SHARED-SCREENS*/') == 1, 'the place for the shared screens is missing from the shim'
+shim = shim.replace('/*SHARED-SCREENS*/', shared)
 out = page.replace('<script src="core.js"></script>', shim + '<script src="core.js"></script>')
 assert out != page, 'core.js tag not found'
 (ROOT / 'src/_dbstub.html').write_text(out, encoding='utf-8')

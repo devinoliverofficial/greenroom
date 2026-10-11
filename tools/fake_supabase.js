@@ -39,7 +39,8 @@
      person whose invite carried no name and no role; with reset@example.com
      someone resetting a password;
    - anyone@example.com signs in with the password "greenroom": an account
-     that answered the first-run questions long ago;
+     that answered the first-run questions long ago (and has yet to agree to
+     the documents: see THE DOCUMENTS below);
    - the settings read (GET <project>/auth/v1/settings, which the gate asks
      for with fetch, not through supabase-js) says sign-ups are open and
      addresses are confirmed, unless the page address says otherwise:
@@ -49,11 +50,74 @@
                         with either switch above the refusal comes at the end
        ?settings=hang   the settings read never answers (5 s, then carry on)
        ?mail=0          no email can be sent (the confirmation, a new code)
-       ?old=1           a database that has no sign-up functions yet
+       ?old=1           a database that has no sign-up functions yet (nor the
+                        documents' functions)
+
+   THE DOCUMENTS (migration 0137): three short invented documents stand in
+   for the real ones, which are in no file of this project. Each has a
+   heading, bold words, a list, a line broken by two spaces, and a line of
+   HTML that must show as plain text and run nothing. The rules:
+   - legal_docs_for hands them to anyone signed in, and to anyone holding a
+     live Greenroom code (GR-USED-0001 and a made-up code get { ok: false });
+   - legal_accept records an acceptance only for someone signed in and only
+     of the current versions ('stale' otherwise); a second call for the same
+     versions answers with the first row and adds nothing;
+   - legal_status and my_first_run's needs_legal say whether this account
+     still has to agree; while it does, claim_invites links nothing
+     (account.seat stays "waiting for the documents") and finish_first_run
+     answers that it did not finish;
+   - a new account (a sign-up, an invited person) has agreed to nothing;
+     anyone@example.com has agreed to nothing either (someone who was
+     already in: asked once at start-up); reset@example.com agreed to the
+     current versions.
+   Switches, added to the address like the ones above:
+       ?docs=0          no documents are loaded: nothing is asked anywhere,
+                        and every flow is exactly as it was before them
+       ?docs=fail       loading the documents fails (legal_docs_for errors)
+       ?docs=hang       loading them never answers (the gate gives up: 12 s)
+       ?docs=failin     loading works at the door (with a code) and fails for
+                        anyone signed in
+       ?accept=fail     saving the acceptance fails every time
+       ?accept=once     saving fails the first time, works the second
+       ?accept=stale    the Terms change while they are being read: the
+                        first save answers 'stale', version 1.1 is then shown
+       ?accept=email    saving is REFUSED with why 'email' (an address nobody
+                        has confirmed): "I Agree" says so and stays
+       ?accept=lost     saving gets NO ANSWER, every time (the signal dropped
+                        while the pages were read). Someone already in
+                        (anyone@) is let on with the agreement kept on the
+                        phone, to be sent when a call gets through; someone
+                        new or invited stays on the page
+       ?accept=lostonce no answer the first time, saved the second
+                        (Any of these can be changed while the page is open:
+                        window.__gate.accept = 'on' | 'fail' | 'email' | 'lost'.
+                        "The signal is back": set it to 'on', then bring the
+                        tab back from the background, or wait for the next
+                        read of the tours.)
+       ?changed=privacy a version changed since the known accounts agreed
+                        (several: ?changed=terms,privacy): anyone@ and reset@
+                        agreed to version 1.0, and that document is now 1.1
+       ?agreed=1        anyone@example.com has agreed to the current versions
+       ?status=fail     legal_status errors (the "Updated:" line is then left
+                        out; nothing else changes)
+       ?facts=fail      my_first_run errors: the first-run facts cannot be read
+       ?keep=1          the sign-in and what the pretend database holds for it
+                        survive a reload of the page (kept in this tab only),
+                        so "reload half way" can be tried; Start over signs out
+   What it recorded is in window.__gate.account.acceptances.
+   While the page is open (for "the app was left open and the documents
+   changed"): window.__gate.publish('privacy') moves that document on a
+   version, so the signed-in account owes it again. The app only asks when
+   it comes back from the background after more than 30 seconds.
+   How old an account is: anyone@ and reset@ were made (and their addresses
+   confirmed) 400 days ago; a sign-up is made when "Create account" is
+   pressed and confirmed when its emailed code is typed; an invited person
+   is made and confirmed as their code is typed.
 
    THE CARD FEED (migration 0136), so backend.js's own reads of it can be
    tried with no project behind them. Sign in on tools/gate_test.html
-   (anyone@example.com / greenroom), then in the console:
+   (anyone@example.com / greenroom; open the page with ?agreed=1 so the
+   documents are not asked first), then in the console:
      GR_BACKEND.feedWatch(function (s) { console.log(s); })   the feed row and the pile, read a page at a time
      await GR_BACKEND.feedRead()                               the same read again (what Try again does)
      await GR_BACKEND.feedAccount()                            rpc feed_account
@@ -93,6 +157,16 @@
   var SETTINGS = flag('settings', '0') ? 'off' : flag('settings', 'hang') ? 'hang' : 'on';
   var MAIL = !flag('mail', '0');
   var OLD = flag('old', '1');
+  var DOCS = flag('docs', '0') ? 'none' : flag('docs', 'fail') ? 'fail' : flag('docs', 'hang') ? 'hang' : flag('docs', 'failin') ? 'failin' : 'on';
+  var ACCEPT = flag('accept', 'fail') ? 'fail' : flag('accept', 'once') ? 'once' : flag('accept', 'stale') ? 'stale'
+    : flag('accept', 'email') ? 'email' : flag('accept', 'lostonce') ? 'lostonce' : flag('accept', 'lost') ? 'lost' : 'on';
+  var CHANGED = ((/[?&]changed=([a-z,]+)/.exec(qs) || [])[1] || '').split(',').filter(function (k) {
+    return k === 'nda' || k === 'terms' || k === 'privacy';
+  });
+  var AGREED = flag('agreed', '1');
+  var STATUS_FAIL = flag('status', 'fail');
+  var FACTS_FAIL = flag('facts', 'fail');
+  var KEEP = flag('keep', '1');
   var OTP = '123456';
   // left: accounts it can still make. made: what it was made for. late: good until the account is about to be made.
   var CODES = {
@@ -107,15 +181,28 @@
   var HANDLE = /^[a-z0-9._]{3,24}$/;
   var EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
   var NEW_FNS = ['signup_code_check', 'signup_handle_free', 'signup_code_redeem', 'my_first_run', 'save_birth_date',
-    'finish_first_run', 'save_kinds'];
+    'finish_first_run', 'save_kinds', 'legal_docs_for', 'legal_accept', 'legal_status'];
 
   var session = null;      // who is signed in
   var listeners = [];      // onAuthStateChange callbacks
   var allowed = {};        // address -> the code that let it in (a redeemed code holds the door for it)
   var waiting = {};        // address -> { user, code }: an account made, waiting on its emailed code
   // What "the database" holds for the signed-in account.
-  var account = gate.account = { handle: '', birth: '', onboarded: false, kinds: [] };
+  // legal: the last acceptance ({ at, versions }) or null. acceptances: every row "legal_acceptances" holds for
+  // this account. seat: an invited person's place on the tour ('' when there is none to link).
+  var account = gate.account = { handle: '', birth: '', onboarded: false, kinds: [], legal: null, acceptances: [], seat: '' };
   var n = 0;
+  /* ?keep=1: who is signed in, and what is held for them, survive a reload
+     (this tab only), so a reload half way through can be tried. */
+  var KEEP_KEY = 'gr-fake-keep';
+  function keep() {
+    if (!KEEP) return;
+    try {
+      if (session) sessionStorage.setItem(KEEP_KEY, JSON.stringify({ user: session.user, account: account }));
+      else sessionStorage.removeItem(KEEP_KEY);
+    } catch (e) { /* not kept */ }
+  }
+  function keepLater() { if (KEEP) setTimeout(keep, 0); }
 
   // A copy safe to show: no password is ever written into the log.
   function hide(v) {
@@ -125,7 +212,7 @@
       }));
     } catch (e) { return String(v); }
   }
-  function log(fn, args) { gate.calls.push({ fn: fn, args: hide(args) }); }
+  function log(fn, args) { gate.calls.push({ fn: fn, args: hide(args) }); keepLater(); }
   // A short wait, like a real answer coming back.
   function later(v) { return new Promise(function (res) { setTimeout(function () { res(v); }, 120); }); }
   // An answer that never comes, like a request lost on a weak signal.
@@ -135,10 +222,17 @@
   function authNo(message) { return { data: { user: null, session: null }, error: { message: message } }; }
   function lower(v) { return String(v || '').trim().toLowerCase(); }
 
-  function makeUser(email, meta) {
+  // daysOld: how long ago the account was made and its address confirmed (an account that was already there).
+  // Without it the account is made now, and its address is confirmed when its emailed code is typed (confirm).
+  function makeUser(email, meta, daysOld) {
     n += 1;
-    return { id: '00000000-0000-4000-8000-00000000000' + (n % 10), email: email, created_at: new Date().toISOString(),
-      user_metadata: meta || {}, identities: [{ provider: 'email' }] };
+    var then = new Date(Date.now() - (daysOld || 0) * 864e5).toISOString();
+    return { id: '00000000-0000-4000-8000-00000000000' + (n % 10), email: email, created_at: then,
+      email_confirmed_at: daysOld ? then : null, user_metadata: meta || {}, identities: [{ provider: 'email' }] };
+  }
+  function confirm(user) {
+    if (!user.email_confirmed_at) user.email_confirmed_at = new Date().toISOString();
+    return user;
   }
   function tell(event) {
     var s = session;
@@ -153,8 +247,30 @@
     session = { access_token: 'fake-access', refresh_token: 'fake-refresh', token_type: 'bearer', user: user };
     account.handle = known ? known : ''; account.birth = known ? '1990-06-15' : '';
     account.onboarded = !!known; account.kinds = known ? ['crew'] : [];
+    // The documents: someone new has agreed to nothing. anyone@ has agreed to nothing either (asked once at
+    // start-up) unless ?agreed=1; reset@ agreed to the current versions. ?changed: both agreed to 1.0 of
+    // everything, and the named documents have moved on since.
+    account.acceptances = []; account.legal = null;
+    if (known && (CHANGED.length || AGREED || known !== 'anyone')) {
+      var then = new Date(Date.now() - 20 * 864e5).toISOString();
+      account.legal = { at: then, versions: CHANGED.length ? { nda: '1.0', terms: '1.0', privacy: '1.0' } : legalCurrent() };
+      account.acceptances.push({ id: 1, user_id: user.id, email_lc: lower(user.email), accepted_at: then, ip: '203.0.113.7',
+        agent: 'fake', nda_version: account.legal.versions.nda, terms_version: account.legal.versions.terms,
+        privacy_version: account.legal.versions.privacy, said: '(what the box said then)', via: 'code' });
+    }
+    account.seat = user.user_metadata && user.user_metadata.invited === true ? 'waiting' : '';
     tell('SIGNED_IN');
     return session;
+  }
+  // (?keep=1) Signed in before this reload: the same account, as it was left.
+  if (KEEP) {
+    try {
+      var kept = JSON.parse(sessionStorage.getItem(KEEP_KEY) || 'null');
+      if (kept && kept.user) {
+        session = { access_token: 'fake-access', refresh_token: 'fake-refresh', token_type: 'bearer', user: kept.user };
+        Object.keys(kept.account || {}).forEach(function (k) { account[k] = kept.account[k]; });
+      }
+    } catch (e) { /* starts signed out */ }
   }
 
   var auth = {
@@ -175,7 +291,7 @@
     signInWithPassword: function (c) {
       log('auth.signInWithPassword', [c]);
       if (lower(c && c.email) === 'anyone@example.com' && String(c.password) === 'greenroom') {
-        var s = signIn(makeUser('anyone@example.com', { first_name: 'Any', last_name: 'One', full_name: 'Any One', username: 'Any One' }), 'anyone');
+        var s = signIn(makeUser('anyone@example.com', { first_name: 'Any', last_name: 'One', full_name: 'Any One', username: 'Any One' }, 400), 'anyone');
         return later({ data: { user: s.user, session: s }, error: null });
       }
       return later(authNo('Invalid login credentials'));
@@ -217,12 +333,12 @@
         } else if (email === 'bare@example.com' && type === 'invite') {
           user = makeUser(email, { invited: true, access: 'viewer', tour_name: 'The Test Tour' });
         } else if (email === 'reset@example.com' && type === 'recovery') {
-          user = makeUser(email, { first_name: 'Rae', last_name: 'Set', full_name: 'Rae Set', username: 'Rae Set' });
+          user = makeUser(email, { first_name: 'Rae', last_name: 'Set', full_name: 'Rae Set', username: 'Rae Set' }, 400);
           known = 'rae';
         }
       }
       if (!user) return later(authNo('Token has expired or is invalid'));
-      var s = signIn(user, known);
+      var s = signIn(confirm(user), known);
       return later({ data: { user: user, session: s }, error: null });
     },
     updateUser: function (c) {
@@ -250,6 +366,7 @@
     signOut: function (o) {
       log('auth.signOut', [o]);
       session = null;
+      keep();
       tell('SIGNED_OUT');
       return later({ error: null });
     }
@@ -271,6 +388,144 @@
     if (now.getUTCMonth() + 1 < Number(m[2]) || (now.getUTCMonth() + 1 === Number(m[2]) && now.getUTCDate() < Number(m[3]))) y -= 1;
     return y;
   }
+  /* ---- The documents (0137). Invented, and short on purpose: the real ones are in no file here. ---- */
+  var LEGAL = [
+    { doc: 'nda', title: 'Test Non-Disclosure Agreement', version: '1.0', body: [
+      '# Test Non-Disclosure Agreement',
+      '',
+      '**Version 1.0.** This is a stand-in written for the test page. It is not a real agreement.',
+      '',
+      '## 1. What stays in the room',
+      '',
+      'While you try the pretend app you may see things that are not finished.  ',
+      'This line follows a line that ended in two spaces, so it starts on a new line.',
+      '',
+      '- Do not post screenshots of the **pretend** app.',
+      '- Do not describe it to people outside the test.',
+      '- Do tell the person who invited you what broke.',
+      '',
+      '### 1.1 A smaller heading',
+      '',
+      'A document is only ever shown as text. This must appear exactly as typed and run nothing: <img src=x onerror="window.__gate.ran = true"> <b>not bold</b> <script>window.__gate.ran = true</script>',
+      '',
+      '1. A numbered line is shown as it was typed.',
+      '2. So is this one, on a line of its own.',
+      '',
+      '---',
+      '',
+      'The last paragraph of the first document, long enough to wrap on a phone so the page has something to scroll through before the button at its foot.'
+    ].join('\n') },
+    { doc: 'terms', title: 'Test Terms of Use', version: '1.0', body: [
+      '# Test Terms of Use',
+      '',
+      'These are **pretend terms** for the test page.',
+      '',
+      '## Who may use it',
+      '',
+      '- People who are **18 or older**.',
+      '- People holding a code.',
+      '  - A line inside a list sits a step in.',
+      '',
+      '## What it is for',
+      '',
+      'Trying the screens. Nothing here is kept:  ',
+      'reload the page and it is new.'
+    ].join('\n') },
+    { doc: 'privacy', title: 'Test Privacy Policy', version: '1.0', body: [
+      'This document does not open by repeating its title, so its first line is a paragraph.',
+      '',
+      '## What is recorded when you agree',
+      '',
+      '- Who you are (the account).',
+      '- The **versions** you agreed to.',
+      '- When, and from which address.',
+      '',
+      '## Contact',
+      '',
+      'Nobody, really. **This is a test.**'
+    ].join('\n') }
+  ];
+  LEGAL.forEach(function (d) {
+    // ?changed=privacy: that document has moved on to 1.1 since the known accounts agreed.
+    if (CHANGED.indexOf(d.doc) >= 0) { d.version = '1.1'; d.body += '\n\n**New in version 1.1:** this paragraph.'; }
+    d.sha = 'fake-sha-' + d.doc + '-' + d.version;
+    d.published_at = new Date(Date.now() - 864e5).toISOString();
+  });
+  var acceptTries = 0;
+  // A document moves on a version while the page is open (0.1 at a time): whoever agreed to the old one owes it again.
+  gate.publish = function (doc) {
+    var d = LEGAL.filter(function (x) { return x.doc === doc; })[0];
+    if (!d) return null;
+    var v = d.version.split('.');
+    d.version = v[0] + '.' + (Number(v[1] || 0) + 1);
+    d.sha = 'fake-sha-' + d.doc + '-' + d.version;
+    d.body += '\n\n**New in version ' + d.version + ':** this paragraph.';
+    d.published_at = new Date().toISOString();
+    log('(the fake database published ' + doc + ' ' + d.version + ')', []);
+    return d.version;
+  };
+  function legalReady() { return DOCS !== 'none'; }
+  function legalCurrent() {
+    var v = {};
+    LEGAL.forEach(function (d) { v[d.doc] = d.version; });
+    return v;
+  }
+  // The documents this account has yet to agree to the current version of ([] for someone who never agreed).
+  function legalChanged() {
+    var cur = legalCurrent(), had = account.legal ? account.legal.versions : null;
+    return had ? Object.keys(cur).filter(function (k) { return had[k] !== cur[k]; }) : [];
+  }
+  function legalNeeds() { return legalReady() && !!session && (!account.legal || legalChanged().length > 0); }
+  function legalRpc(name, a) {
+    if (name === 'legal_docs_for') {
+      if (DOCS === 'hang') return never();
+      if (DOCS === 'fail' || (DOCS === 'failin' && session)) return later(no('fake: legal_docs_for failed', '57014'));
+      // Signed in, or holding a live code (a wrong guess is slowed down like any other, and no use is spent).
+      if (!session) {
+        var code = CODES[codeKey(a.c)];
+        if (!code || code.slow || !(code.left > 0)) return later(ok({ ok: false }));
+      }
+      if (!legalReady()) return later(ok({ ok: true, ready: false, docs: [] }));
+      return later(ok({ ok: true, ready: true, docs: JSON.parse(JSON.stringify(LEGAL)) }));
+    }
+    if (!session) return later(no('fake: not signed in', '28000'));
+    if (name === 'legal_status') {
+      if (STATUS_FAIL) return later(no('fake: legal_status failed', '57014'));
+      return later(ok({ ready: legalReady(), needs: legalNeeds(), accepted_at: account.legal ? account.legal.at : null,
+        versions: account.legal ? account.legal.versions : null, current: legalReady() ? legalCurrent() : null,
+        changed: legalReady() ? legalChanged() : [] }));
+    }
+    // legal_accept (window.__gate.accept, when set, is the switch in force: it can be changed while the page is open)
+    acceptTries += 1;
+    var mode = gate.accept || ACCEPT;
+    // No answer at all, as a request lost on a dead signal comes back from supabase-js.
+    if (mode === 'lost' || (mode === 'lostonce' && acceptTries === 1)) {
+      return later({ data: null, error: { message: 'TypeError: Failed to fetch', code: '' }, status: 0 });
+    }
+    if (mode === 'fail' || (mode === 'once' && acceptTries === 1)) return later(no('fake: legal_accept failed', '57014'));
+    if (!legalReady()) return later(ok({ ok: false, why: 'not ready' }));
+    // Refused: the caller's address was never confirmed.
+    if (mode === 'email') return later(ok({ ok: false, why: 'email' }));
+    if (mode === 'stale' && acceptTries === 1) {
+      // The Terms change while they are being read.
+      LEGAL[1].version = '1.1'; LEGAL[1].sha = 'fake-sha-terms-1.1';
+      LEGAL[1].body += '\n\n**New in version 1.1:** this paragraph arrived while you were reading.';
+      log('(the fake database published Terms 1.1)', []);
+    }
+    var cur = legalCurrent(), sent = { nda: String(a.nda_v || ''), terms: String(a.terms_v || ''), privacy: String(a.privacy_v || '') };
+    if (sent.nda !== cur.nda || sent.terms !== cur.terms || sent.privacy !== cur.privacy) return later(ok({ ok: false, why: 'stale' }));
+    if (['code', 'invite', 'inside'].indexOf(a.via) < 0 || !String(a.said || '')) return later(no('fake: bad via or sentence', '23514'));
+    // Again for the same versions: the first row answers, and nothing is added.
+    if (!(account.legal && !legalChanged().length)) {
+      account.legal = { at: new Date().toISOString(), versions: cur };
+      account.acceptances.push({ id: account.acceptances.length + 1, user_id: session.user.id, email_lc: lower(session.user.email),
+        accepted_at: account.legal.at, ip: '203.0.113.7', agent: String(navigator.userAgent || '').slice(0, 80),
+        nda_version: cur.nda, terms_version: cur.terms, privacy_version: cur.privacy,
+        nda_sha: LEGAL[0].sha, terms_sha: LEGAL[1].sha, privacy_sha: LEGAL[2].sha, said: String(a.said), via: a.via });
+    }
+    return later(ok({ ok: true, at: account.legal.at, versions: account.legal.versions }));
+  }
+
   function rpc(name, args) {
     var a = args || {};
     log('rpc ' + name, args === undefined ? [] : [args]);
@@ -310,9 +565,17 @@
       return later(ok({ ok: true }));
     }
     if (name === 'handle_free') return later(ok(HANDLE.test(String(a.h || '')) && a.h !== 'brent'));
+    if (name === 'legal_docs_for' || name === 'legal_accept' || name === 'legal_status') return legalRpc(name, a);
     if (name === 'my_first_run') {
+      if (FACTS_FAIL) return later(no('fake: my_first_run failed', '57014'));
       return later(ok({ onboarded: account.onboarded, kinds: account.kinds.slice(), handle: account.handle,
-        hasBirth: !!account.birth }));
+        hasBirth: !!account.birth, needs_legal: legalNeeds() }));
+    }
+    // A seat on a tour waits for the documents: nothing is linked while they are owed, and it says nothing.
+    if (name === 'claim_invites') {
+      if (account.seat === 'waiting') account.seat = legalNeeds() ? 'waiting for the documents' : 'linked';
+      else if (account.seat === 'waiting for the documents' && !legalNeeds()) account.seat = 'linked';
+      return later(ok(null));
     }
     if (name === 'save_birth_date') {
       if (yearsOld(a.d) < 0) return later(no('shape', '22023'));
@@ -321,6 +584,8 @@
       return later(ok({ ok: true }));
     }
     if (name === 'finish_first_run') {
+      // It cannot finish while the documents are owed, and says that it did not.
+      if (legalNeeds()) return later(ok({ ok: false, why: 'legal' }));
       account.onboarded = true; account.kinds = Array.isArray(a.k) ? a.k.slice() : [];
       return later(ok({ ok: true }));
     }

@@ -79,14 +79,14 @@
     var asked = ++tick;
     var tours = await sb.from('tours').select('id, owner_id, doc');
     if (tours.error) throw tours.error;
-    // GA crew can't read a tour's money: the database hands them its own
+    // Crew can't read a tour's money: the database hands them its own
     // copy of those tours, without it.
     var ga = await sb.from('tour_public').select('id, owner_id, doc');
     var full = {};
     tours.data.forEach(function (r) { full[r.id] = true; });
     var rows = tours.data.concat(ga.error ? [] : ga.data.filter(function (r) { return !full[r.id]; }));
     var before = cache.tours, stale = false;
-    // The GA copies couldn't be read this time: keep the ones already here.
+    // The Crew copies couldn't be read this time: keep the ones already here.
     if (ga.error && before) before.forEach(function (doc, id) { if (!full[id]) rows.push({ id: id, owner_id: doc._ownerId, doc: doc, kept: true }); });
     cache.tours = new Map(rows.map(function (r) {
       if (r.kept) return [r.id, r.doc];
@@ -118,12 +118,14 @@
       var ci = await sb.from('crew_stats').select('tour_id, day').eq('stat', 'checkin').eq('added_by', session.user.id);
       if (!ci.error) cache.checkins = ci.data;
     }
-    // Ari's questions to the tour manager (only they and ALL ACCESS see them).
+    // Ari's questions to the tour manager (only they and Managers see them).
     var asks = await sb.from('ari_asks').select('*').order('created_at');
     if (!asks.error) cache.asks = asks.data;
     // Asks to be paid back (never stops the rest: see loadReimbursements).
     await loadReimbursements();
     emit('tours'); emit('labels');
+    // A call got through: an agreement to the documents that could not be sent goes now (nothing held: no call).
+    legalFlush();
   }
   /* Money people paid out of their own pocket for a tour and asked to be paid
      back. The database hands each account only its own asks, plus every ask
@@ -533,6 +535,34 @@
     },
     tourRoles: TOUR_ROLES,
     openRolePicker: openRolePicker,
+    /* The documents agreed to at sign-up (migration 0137), for Settings.
+       legal(): where this account stands: { ready (the documents are
+       loaded), needs (it has yet to agree to the current ones), acceptedAt,
+       versions (what it agreed to), current, changed }. legalDocs(): the
+       current documents, in order, as { doc, name, title, version, body,
+       publishedAt }; [] when none are loaded. Both answer null when they
+       could not be read. legalBody(text, title): a document's text as
+       pieces for the page; nothing in it is read as HTML. */
+    legal: async function () {
+      if (!sb || !session) return null;
+      try {
+        var d = await legalApi.status();
+        return { ready: d.ready === true, needs: d.needs === true, acceptedAt: d.accepted_at || null,
+          versions: isObj(d.versions) ? d.versions : null, current: isObj(d.current) ? d.current : null,
+          changed: Array.isArray(d.changed) ? d.changed.map(String) : [] };
+      } catch (e) { return null; }
+    },
+    legalDocs: async function () {
+      if (!sb || !session) return null;
+      try {
+        var d = legalClean(await legalApi.docs());
+        if (!d) return null;
+        return d.docs.map(function (x) {
+          return { doc: x.doc, name: LEGAL_NAMES[x.doc], title: x.title, version: x.version, body: x.body, publishedAt: x.published_at };
+        });
+      } catch (e) { return null; }
+    },
+    legalBody: function (text, title) { sgStyle(); return mdNodes(text, title); },
     myProfile: function () {
       var m = (session && session.user && session.user.user_metadata) || {};
       var full = String(m.full_name || '').trim();
@@ -1506,7 +1536,7 @@
       rows.forEach(function (r) {
         var pr = byId[r.user_id] || {};
         // Their own card once they've signed up; what the invite said until
-        // then; and over both, whatever the tour manager or ALL ACCESS edited.
+        // then; and over both, whatever the tour manager or a Manager edited.
         var base = {
           email: pr.email || r.invited_email,
           phone: pr.phone || r.phone || '',
@@ -1536,7 +1566,7 @@
     myRole: async function (tourId) {
       var doc = cache.tours.get(tourId);
       if (doc && session && doc._ownerId === session.user.id) return 'owner';
-      // A band's Off Tour book: the database only hands it to ALL ACCESS.
+      // An artist's Off Tour book: the database only hands it to Managers.
       if (doc && doc.kind === 'offtour') return 'editor';
       var q = await sb.from('members').select('role')
         .eq('tour_id', tourId).eq('user_id', session ? session.user.id : '').maybeSingle();
@@ -1553,7 +1583,7 @@
       return q.data;
     },
     /* Ari reads something and says it in the tour's chat. Only the server
-       can post as Ari, and only for the tour manager or ALL ACCESS. */
+       can post as Ari, and only for the tour manager or a Manager. */
     ariSay: async function (tourId, prompt, images) {
       var out = await callRead(prompt, { images: images || undefined, ariTour: tourId });
       scheduleRefetch();
@@ -1595,7 +1625,7 @@
       var first = String(x.first || full.split(/\s+/)[0] || '').trim();
       var last = String(x.last || full.split(/\s+/).slice(1).join(' ') || '').trim();
       var tourRole = String(x.tourRole || '').trim().slice(0, 40);
-      // A Manager is All Access with the manager mark (only the creator's mark sticks).
+      // A Manager is stored as 'editor' with the manager mark (only the creator's mark sticks).
       var mgr = role === 'manager';
       if (mgr) role = 'editor';
       var row = {
@@ -1641,7 +1671,7 @@
         return out && out.status ? out.status : 'nomail';
       } catch (e) { return 'nomail'; }
     },
-    // The tour manager and ALL ACCESS: someone's role, contact info and
+    // The tour manager and Managers: someone's role, contact info and
     // access, or off the tour. The database checks who's asking.
     editMember: async function (tourId, email, access, overrides) {
       var q = await sb.rpc('edit_member', { t_id: tourId, addr: email, new_access: access, ov: overrides || {} });
@@ -1722,7 +1752,7 @@
       if (q.error && q.error.code !== '23505') throw mapError(q.error);
       await refetch();
     },
-    // The tour manager (or ALL ACCESS) answers: 'accepted', 'denied', or back to 'pending'.
+    // The tour manager (or a Manager) answers: 'accepted', 'denied', or back to 'pending'.
     answerRequest: async function (id, status) {
       var q = await sb.from('day_requests').update({ status: status }).eq('id', id).select('id');
       if (q.error) throw mapError(q.error);
@@ -2107,6 +2137,7 @@
         });
       } catch (e) { /* nothing stored */ }
       suggestClear(); // what a sign-up code was made for is not for whoever signs in next
+      legalDrop();    // nor is what a sign-up on this phone agreed to
       location.replace(appUrl());
     }
   };
@@ -2251,11 +2282,33 @@
   /* Ordinary accounts: email + password, made right here in the app. No
      sign-in emails — on an iPhone, a home-screen app and Safari are separate
      worlds, so email links sign in the wrong one. Passwords don't care. */
-  /* What someone does on the run. A job title for the crew list — never an
-     access level; GA / ALL ACCESS are the tour manager's to hand out. */
-  var TOUR_ROLES = ['Artist', 'Band', 'Tour Manager', 'Production Manager',
-    'Stage Manager', 'Merch', 'Guitar Tech', 'Drum Tech', 'Assistant',
-    'FOH Engineer', 'Monitors', 'Friend', 'Family Member', 'Liaison', 'Dancer'];
+  /* <shared-screens>
+     From here to the matching mark further down are the pieces the gate's
+     screens are made of: the role list and its picker, the one-question
+     screens, the pages for the documents. tools/make_dbstub.py lifts this
+     stretch into the app's offline harness as it stands, so what is tried
+     there is this code and not a copy of it. Keep it liftable: a piece that
+     needs the server or the sign-in is handed it by whoever calls (the two
+     that ask the server themselves, sendPasswordLink and signupSettings, are
+     never called there), and nothing in here runs on its own. */
+  /* What someone does on the run. A job title for the crew list, never a
+     level: Manager or Crew is the level, and the tour's creator hands that
+     out. These are Devin's crew roles in his order, then the two words for a
+     hired player on stage: the list GR.CREW_ROLES in src/core.js, which is
+     the one read whenever it has loaded. (This file runs before that one,
+     and the gate's test page runs it alone, so a copy lives here. A title
+     someone already has from the older list, Artist or Guitar Tech, is left
+     as it is and still shows.) */
+  var TOUR_ROLES = ['Tour manager', 'FOH engineer', 'Merch manager', 'Driver', 'Backline tech',
+    'Monitor engineer', 'Drum tech', 'Lighting director', 'Photographer / videographer', 'Playback tech',
+    'Production manager', 'Stage manager',
+    'Assistant TM / production coordinator', 'Truck driver', 'Head of security / personal security',
+    'VIP coordinator', 'Wardrobe / stylist', 'Hair & makeup artist', 'Head rigger', 'Tour accountant',
+    'Band', 'Touring Musician'];
+  function tourRoles() {
+    var G = window.GR;
+    return (G && Array.isArray(G.CREW_ROLES) && G.CREW_ROLES.length ? G.CREW_ROLES : TOUR_ROLES).slice();
+  }
   // "Artist/Owner" is just "Artist" now; older cards read the new way.
   function roleName(r) {
     var t = String(r || '').trim();
@@ -2274,24 +2327,85 @@
       '<button type="button" class="input role-pick' + (current ? '' : ' empty') + '" id="' + id +
       '-btn" aria-haspopup="listbox">' + esc(current || 'Your role on the tour') + '</button>';
   }
-  function openRolePicker(current, onPick) {
-    var ov = document.createElement('div');
-    ov.className = 'role-picker';
+  /* o (all optional): title (the words over the list), roles (a list in
+     place of the crew roles), groups ([{ key, head, roles }]: several lists
+     under a heading each, a Member's roles over the crew's), other: false
+     (no "Other"). "Other" opens a line to type the role in. A title someone
+     already has that is on no list (one from the older list, or one typed)
+     opens in that line as it is, so nothing anyone has is lost or renamed.
+     onPick(role, { group, typed }): which list it came from, or that it was
+     typed. Built piece by piece; what was typed only goes in as text. */
+  function openRolePicker(current, onPick, o) {
+    o = o || {};
+    sgStyle();
+    var cur = String(current || '').trim();
+    var title = String(o.title || 'Your role on the tour');
+    var groups = Array.isArray(o.groups) && o.groups.length ? o.groups
+      : [{ key: '', head: '', roles: Array.isArray(o.roles) && o.roles.length ? o.roles : tourRoles() }];
+    var ov = sgEl('div', 'role-picker');
     ov.setAttribute('role', 'dialog');
-    ov.setAttribute('aria-label', 'Your role on the tour');
-    ov.innerHTML = '<div class="rp-card"><div class="rp-head">Your role on the tour</div>' +
-      '<div class="rp-list" role="listbox">' + TOUR_ROLES.map(function (r) {
-        return '<button type="button" role="option" class="rp-opt' + (r === current ? ' on' : '') +
-          '" data-r="' + esc(r) + '" aria-selected="' + (r === current) + '">' + esc(r) + '</button>';
-      }).join('') + '</div></div>';
-    ov.addEventListener('click', function (e) {
-      var b = e.target.closest ? e.target.closest('.rp-opt') : null;
-      if (b) { onPick(b.getAttribute('data-r')); ov.remove(); return; }
-      if (e.target === ov) ov.remove();   // tap outside the card to back out
+    ov.setAttribute('aria-label', title);
+    var card = sgEl('div', 'rp-card');
+    card.appendChild(sgEl('div', 'rp-head', title));
+    var list = sgEl('div', 'rp-list');
+    list.setAttribute('role', 'listbox');
+    var onEl = null;
+    function done(role, how) { ov.remove(); onPick(role, how); }
+    groups.forEach(function (g) {
+      if (!g || !Array.isArray(g.roles)) return;
+      if (g.head) list.appendChild(sgEl('div', 'rp-head rp-sub', String(g.head)));
+      g.roles.forEach(function (r) {
+        var name = String(r);
+        // (Capitals aside: "Tour Manager" from the older list is "Tour manager" here.)
+        var on = !onEl && !!cur && name.toLowerCase() === cur.toLowerCase();
+        var b = sgEl('button', 'rp-opt' + (on ? ' on' : ''), name);
+        b.type = 'button';
+        b.setAttribute('role', 'option');
+        b.setAttribute('aria-selected', String(on));
+        b.addEventListener('click', function () { done(name, { group: String(g.key || ''), typed: false }); });
+        if (on) onEl = b;
+        list.appendChild(b);
+      });
     });
+    if (o.other !== false) {
+      var mine = !!cur && !onEl;   // a title that is on no list: theirs, typed or from before
+      var otherB = sgEl('button', 'rp-opt' + (mine ? ' on' : ''), 'Other');
+      otherB.type = 'button';
+      otherB.setAttribute('role', 'option');
+      otherB.setAttribute('aria-selected', String(mine));
+      var box = sgEl('form', 'rp-other');
+      box.setAttribute('novalidate', '');
+      box.hidden = !mine;
+      var inp = sgEl('input', 'input');
+      inp.type = 'text';
+      inp.setAttribute('maxlength', '40');
+      inp.setAttribute('placeholder', 'Type the role');
+      inp.setAttribute('aria-label', 'The role, typed');
+      inp.setAttribute('autocapitalize', 'words');
+      inp.setAttribute('autocomplete', 'off');
+      inp.value = mine ? cur : '';
+      var use = sgEl('button', 'btn primary block', 'Use this role');
+      use.type = 'submit';
+      box.appendChild(inp); box.appendChild(use);
+      otherB.addEventListener('click', function () {
+        box.hidden = false;
+        try { inp.focus(); } catch (e) { /* cosmetic */ }
+        if (box.scrollIntoView) box.scrollIntoView({ block: 'nearest' });
+      });
+      box.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var v = String(inp.value || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+        if (!v) { try { inp.focus(); } catch (e2) { /* cosmetic */ } return; }
+        done(v, { group: '', typed: true });
+      });
+      list.appendChild(otherB); list.appendChild(box);
+      if (mine) onEl = otherB;
+    }
+    card.appendChild(list);
+    ov.appendChild(card);
+    ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });   // tap outside the card to back out
     document.body.appendChild(ov);
-    var on = ov.querySelector('.rp-opt.on');
-    if (on && on.scrollIntoView) on.scrollIntoView({ block: 'center' });
+    if (onEl && onEl.scrollIntoView) onEl.scrollIntoView({ block: 'center' });
   }
   function wireRolePicker(root, id) {
     var hidden = root.querySelector('#' + id), btn = root.querySelector('#' + id + '-btn');
@@ -2369,7 +2483,33 @@
     '.sg-pick-x svg { display: block; width: 22px; height: 22px; }',
     '.sg-pick-list { overflow-y: auto; -webkit-overflow-scrolling: touch; display: grid; gap: 2px; padding: 0 10px 12px; }',
     '.sg-pick-opt { -webkit-appearance: none; appearance: none; display: block; width: 100%; min-height: 48px; padding: 0 2px; border: 0; border-radius: 12px; background: none; color: var(--ink, #F1F4E3); font: inherit; font-size: 16px; font-weight: 600; text-align: center; cursor: pointer; }',
-    '.sg-pick-opt.on { color: var(--on-brand, #121500); background: var(--brand, #CCF80A); }'
+    '.sg-pick-opt.on { color: var(--on-brand, #121500); background: var(--brand, #CCF80A); }',
+    /* The documents, one a page, as they were written: the text scrolls with the page and the button waits at its foot. */
+    '.sg-doc { margin: 0 0 20px; font-size: 15.5px; line-height: 1.55; font-weight: 400; color: var(--ink, #F1F4E3); text-align: left; overflow-wrap: break-word; }',
+    '.sg-doc h2, .sg-doc h3, .sg-doc h4 { margin: 24px 0 8px; line-height: 1.25; font-weight: 800; letter-spacing: -.01em; color: var(--ink, #F1F4E3); }',
+    '.sg-doc h2 { font-size: 20px; }',
+    '.sg-doc h3 { font-size: 17px; }',
+    '.sg-doc h4 { font-size: 15.5px; }',
+    '.sg-doc p { margin: 0 0 12px; }',
+    '.sg-doc ul { margin: 0 0 12px; padding: 0 0 0 22px; list-style: disc; }',
+    '.sg-doc li { margin: 0 0 6px; }',
+    '.sg-doc li.in { margin-left: 18px; list-style: circle; }',
+    '.sg-doc hr { height: 0; margin: 20px 0; border: 0; border-top: 1px solid var(--ink-3, #626750); }',
+    '.sg-doc strong { font-weight: 800; }',
+    '.sg-doc > :first-child { margin-top: 0; }',
+    /* Which documents changed, over the first page's title. */
+    '.sg-flag { margin: 0 0 6px; font-size: 13px; line-height: 1.3; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--pos, #CCF80A); }',
+    /* Said over the first page's title when the pages are back because an agreement could not be saved. */
+    '.sg-again { margin: 0 0 10px; font-size: 14px; line-height: 1.4; font-weight: 600; color: var(--neg, #FF5F57); }',
+    /* "Sign out" under the button, for someone signed in: quiet, and never a way past the pages. */
+    '.sg-more .linkbtn.sg-out { color: var(--ink-2, #8F947B); font-weight: 600; }',
+    /* The one box to tick, under the last document. */
+    '.sg-agree { display: flex; align-items: flex-start; gap: 12px; margin: 0 0 10px; padding: 14px 16px; border: 1px solid var(--ink-3, #626750); border-radius: 16px; background: var(--surface, #0C0F02); font-size: 15px; line-height: 1.45; font-weight: 600; color: var(--ink, #F1F4E3); text-align: left; cursor: pointer; }',
+    '.sg-agree input { flex: none; width: 24px; height: 24px; margin: 0; accent-color: var(--brand, #CCF80A); }',
+    /* The role picker: a heading between two lists, and the line to type a role under "Other". */
+    '.rp-head.rp-sub { padding: 14px 20px 8px; border-top: 1px solid var(--line-2, #2A3305); }',
+    '.rp-other { display: grid; gap: 10px; padding: 4px 20px 16px; }',
+    '.rp-other[hidden] { display: none; }'
   ].join('\n');
   function sgStyle() {
     if (document.getElementById('gr-sg-style')) return;
@@ -2830,6 +2970,609 @@
     ui.ok(0, a.pass.length >= 6);
   }
 
+  /* ---------------- The documents ----------------
+     Everyone agrees to three documents before they are in: the Beta Tester
+     Non-Disclosure Agreement, the Terms of Use and the Privacy Policy. Their
+     text is in no file of the app: it lives in the database, which hands it
+     only to someone holding a live Greenroom code or to someone signed in
+     (legal_docs_for), and it shows here as it was written.
+     There are three ways to these pages, one for each way in:
+       a Greenroom code: after the code is found good, before the name;
+       a tour invite: before the invited person's own questions;
+       someone already in, or a document that changed: over everything, at
+       start-up.
+     One document a page, then one box to tick and "I Agree". There is no
+     skip and no close. What was agreed to is recorded by the database
+     (legal_accept: who, which versions, when, from which address), and
+     nobody goes on while that has not been saved. */
+  // Devin's sentence for the one box, word for word. It is sent with the
+  // acceptance, so the record holds the words the person agreed under.
+  var LEGAL_SAID = 'I am 18 or older, I agree to the Greenroom Beta Tester Non-Disclosure Agreement and Terms of Use, and I have read the Privacy Policy.';
+  var LEGAL_ORDER = ['nda', 'terms', 'privacy'];
+  // Short names, for the buttons ("Next: Terms of Use") and the "Updated:" line. A page's title is the document's own.
+  var LEGAL_NAMES = { nda: 'Non-Disclosure Agreement', terms: 'Terms of Use', privacy: 'Privacy Policy' };
+  var LEGAL_NOLOAD = 'Couldn’t load the documents. Try again.';
+  var LEGAL_NOSAVE = 'Couldn’t save that. Try again.';
+  // The pages are back because what was agreed to could not be saved: said over the first page's title.
+  var LEGAL_AGAIN = 'We couldn’t save your agreement. Please read and agree again.';
+  // The server will not record an agreement for an address nobody has proved is theirs.
+  var LEGAL_EMAIL = 'Confirm your email first: use the code we emailed you.';
+  var LEGAL_STALE = 'The documents were updated while you were reading. Please read them again.';
+  /* "Sign out", quiet, under a screen's button: for someone signed in who
+     will not agree, or who is in the wrong account. It leaves; it is never a
+     way past the pages. fn does the signing out (handed in by whoever drew
+     the screen: this stretch knows nothing of the sign-in). */
+  function sgOut(ui, fn) {
+    var more = sgEl('div', 'sg-more');
+    var b = sgEl('button', 'linkbtn sg-out', 'Sign out');
+    b.type = 'button';
+    b.addEventListener('click', function () { b.disabled = true; fn(); });
+    more.appendChild(b);
+    ui.form.appendChild(more);
+  }
+
+  /* The documents are written in markdown, and this much of it is read:
+     headings (#, ##, ###), paragraphs, **bold**, lists whose lines start
+     with "- ", and a line ending in two spaces as a line break. Anything
+     else shows as the text it is. Every piece is made with createElement
+     and its words go in as text: nothing in a document is ever read as HTML,
+     and nothing in it can run. */
+  // **bold** (and ***this***, shown bold): the stars must hug the words, so "2 ** 3" stays as typed.
+  function mdBold(into, text) {
+    var re = /(\*{2,3})([^\s*]|[^\s*][\s\S]*?[^\s*])\1(?!\*)/g, at = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > at) into.appendChild(document.createTextNode(text.slice(at, m.index)));
+      into.appendChild(sgEl('strong', '', m[2]));
+      at = m.index + m[0].length;
+    }
+    if (at < text.length) into.appendChild(document.createTextNode(text.slice(at)));
+  }
+  // A paragraph's (or a list line's) own lines: run together with a space, broken where one ended in two spaces.
+  function mdLines(into, lines) {
+    var run = '';
+    lines.forEach(function (l, i) {
+      run += (run ? ' ' : '') + l.t;
+      if (l.br && i < lines.length - 1) {
+        mdBold(into, run);
+        into.appendChild(document.createElement('br'));
+        run = '';
+      }
+    });
+    if (run) mdBold(into, run);
+  }
+  /* title: the page's own title. A document that opens by repeating it (a
+     first line "# Privacy Policy") does not show it twice. The headings come
+     out one size down (# is an h2): the page's title is the h1. */
+  function mdNodes(src, title) {
+    var frag = document.createDocumentFragment();
+    var rows = String(src == null ? '' : src).replace(/\r\n?/g, '\n').split('\n');
+    var lines = [], into = null, ul = null, gap = true, seen = false;
+    function plain(s) { return String(s || '').replace(/[^a-z0-9]+/gi, '').toLowerCase(); }
+    function flush() {
+      if (into && lines.length) mdLines(into, lines);
+      lines = []; into = null;
+    }
+    rows.forEach(function (raw) {
+      var br = / {2,}$/.test(raw);
+      var line = raw.replace(/\s+$/, '');
+      var text = line.trim(), m;
+      if (!text) { flush(); gap = true; return; }
+      var first = !seen;
+      seen = true;
+      if ((m = /^(#{1,6})\s+(.*)$/.exec(text))) {
+        flush(); ul = null; gap = true;
+        var words = m[2].replace(/\s+#+$/, '').trim();
+        if (first && m[1].length === 1 && title && plain(words) === plain(title)) return;
+        var hd = document.createElement('h' + (Math.min(m[1].length, 3) + 1));
+        mdBold(hd, words);
+        frag.appendChild(hd);
+        return;
+      }
+      // A line of nothing but dashes (or stars) is a rule across the page.
+      if (/^([-*_])(\s*\1){2,}$/.test(text)) {
+        flush(); ul = null; gap = true;
+        frag.appendChild(document.createElement('hr'));
+        return;
+      }
+      if ((m = /^[-*]\s+(.+)$/.exec(text))) {
+        flush();
+        if (!ul) { ul = document.createElement('ul'); frag.appendChild(ul); }
+        into = document.createElement('li');
+        if (/^(\t| {2,})/.test(line)) into.className = 'in';   // a list inside a list sits a step in
+        ul.appendChild(into);
+        lines = [{ t: m[1], br: br }]; gap = false;
+        return;
+      }
+      // A numbered line ("1. ...") and a table's row are not lists here: each shows as typed, on a line of its own.
+      var own = /^\d{1,3}[.)]\s+\S/.test(text) || text.charAt(0) === '|';
+      if (into && !gap && !own) { lines.push({ t: text, br: br }); return; }
+      flush(); ul = null;
+      into = document.createElement('p');
+      frag.appendChild(into);
+      lines = [{ t: text, br: br }]; gap = false;
+    });
+    flush();
+    return frag;
+  }
+
+  /* What legal_docs_for answered, checked. null: no usable answer (not let
+     in, or not the three documents it promised). { ready: false }: no
+     documents are loaded, so nothing is asked of anyone. Else the three, in
+     order: { doc, title, version, body, sha, published_at }. */
+  function legalClean(d) {
+    if (!isObj(d) || d.ok !== true) return null;
+    if (d.ready !== true) return { ready: false, docs: [] };
+    var by = {}, docs = [];
+    (Array.isArray(d.docs) ? d.docs : []).forEach(function (x) {
+      if (isObj(x) && LEGAL_ORDER.indexOf(x.doc) >= 0) by[x.doc] = x;
+    });
+    for (var i = 0; i < LEGAL_ORDER.length; i++) {
+      var k = LEGAL_ORDER[i], x = by[k];
+      if (!x || !String(x.version == null ? '' : x.version).trim() || !String(x.body == null ? '' : x.body).trim()) return null;
+      docs.push({ doc: k, title: String(x.title || '').trim() || LEGAL_NAMES[k], version: String(x.version).trim(),
+        body: String(x.body), sha: String(x.sha || ''), published_at: x.published_at || null });
+    }
+    return { ready: true, docs: docs };
+  }
+  function legalVersions(docs) {
+    var v = {};
+    docs.forEach(function (d) { v[d.doc] = d.version; });
+    return v;
+  }
+  // "Terms of Use and Privacy Policy", in the documents' own order.
+  function legalList(keys) {
+    var names = LEGAL_ORDER.filter(function (k) { return (keys || []).indexOf(k) >= 0; }).map(function (k) { return LEGAL_NAMES[k]; });
+    return names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names.join('');
+  }
+
+  /* The pages, drawn into host (the gate, or an overlay over the app).
+     o.docs: the three documents in order. o.onBack: where Back on the first
+     page goes (none: nothing is drawn there; there is never a close).
+     o.changed: the documents that changed since this person last agreed
+     (['privacy']), said over the first page's title. o.again: a sentence
+     said over the first page's title, above that (what they agreed to could
+     not be saved, so the pages are back). o.note: a grey line for the first
+     page (the documents changed while they were being read). o.signOut: for
+     someone signed in, what "Sign out" under each page's button does (none:
+     no such link; it is never a skip). o.onAgree(ui): the box is ticked and
+     "I Agree" pressed. It does the saving and hands back its promise, the
+     way a screen's onNext does. */
+  function legalPages(host, o) {
+    var docs = o.docs;
+    function show(n, note) {
+      var d = docs[n], last = n === docs.length - 1;
+      var body = sgEl('div');
+      var text = sgEl('div', 'sg-doc');
+      text.appendChild(mdNodes(d.body, d.title));
+      body.appendChild(text);
+      var tick = null;
+      if (last) {
+        // The one box, unticked every time this page is drawn.
+        var row = sgEl('label', 'sg-agree');
+        tick = sgEl('input');
+        tick.type = 'checkbox';
+        tick.checked = false;
+        row.appendChild(tick);
+        row.appendChild(sgEl('span', '', LEGAL_SAID));
+        body.appendChild(row);
+      }
+      var ui = sgScreen(host, {
+        onBack: n > 0 ? function () { show(n - 1, ''); } : (o.onBack || null),
+        title: d.title,
+        sub: 'Document ' + (n + 1) + ' of ' + docs.length + '. Version ' + d.version + '.',
+        body: body,
+        next: last ? 'I Agree' : 'Next: ' + LEGAL_NAMES[docs[n + 1].doc],
+        onNext: function () {
+          if (!last) { show(n + 1, ''); return; }
+          if (!tick.checked) return;   // (the button is off until the box is ticked: this is the belt to that brace)
+          return o.onAgree(ui);
+        }
+      });
+      var box = ui.form.parentNode;
+      if (n === 0) {
+        var changed = legalList(o.changed);
+        // (Over the title: the arrow's row is the box's first child, the title its second.)
+        var titleEl = box.firstChild.nextSibling;
+        if (o.again) {
+          var again = sgEl('p', 'sg-again', String(o.again));
+          again.setAttribute('role', 'alert');
+          box.insertBefore(again, titleEl);
+        }
+        if (changed) box.insertBefore(sgEl('p', 'sg-flag', 'Updated: ' + changed), titleEl);
+        if (note) box.insertBefore(sgEl('p', 'sg-sub', note), ui.form);
+      }
+      if (o.signOut) sgOut(ui, o.signOut);
+      if (last) {
+        ui.stop(true);
+        tick.addEventListener('change', function () { ui.stop(!tick.checked); ui.say(''); });
+      }
+    }
+    show(0, o.note || '');
+  }
+
+  /* For someone signed in: load the documents, show the pages, save the
+     acceptance. o.api is how the server is asked: docs() and status()
+     resolve what legal_docs_for and legal_status answered (docs() rejects
+     when there was no answer at all), accept(versions, said, via) what
+     legal_accept answered (it rejects when there was no answer at all: a
+     refusal is an answer). o.via: 'invite' or 'inside'. o.must: this person
+     may not go on without the documents (someone new), so when they cannot
+     be loaded the screen says so and waits to be tried again; without it
+     (someone who was already in, with no signal) they carry on and the next
+     start asks. o.before(): something to try first, each time the documents
+     are loaded (an agreement given earlier that has yet to be saved); when
+     it answers 'owed' that save failed, and the pages say so over their
+     first title ('owed-stale': a document changed since, said in the grey
+     line). o.again: the caller already knows such a save failed.
+     o.note: a grey line for the first page. o.blind: nobody knows yet
+     whether any documents are loaded (the account's facts could not be
+     read), so the waiting screen does not speak of documents. o.signOut:
+     what "Sign out" does, under the button of every page and of the "Try
+     again" screen (it leaves; it is not a way past). o.hold(versions, said):
+     only for someone who was already in. When "I Agree" gets NO ANSWER (the
+     signal dropped while they read), what they agreed to is handed here to
+     be kept and sent later, and they carry on: nobody is shut out of an app
+     they could use yesterday by a dead spot. A refusal never goes this way.
+     Resolves 'agreed' (saved; or these versions were agreed to already, a
+     moment ago or on another phone), 'none' (no documents are loaded:
+     nothing to ask), 'unread' (could not be loaded, and may carry on) or
+     'held' (agreed, kept by o.hold, still to be sent). */
+  function legalRun(host, o) {
+    return new Promise(function (done) {
+      var over = false;
+      function end(how) { if (!over) { over = true; done(how); } }
+      var LOADING = o.blind ? 'Checking your account…' : 'Loading the documents…';
+      // The grey line under "One moment": there while something is loading, gone once it has failed.
+      function grey(text) {
+        var el = host.querySelector('.sg-sub');
+        if (el) el.textContent = text;
+      }
+      // fresh: the pages are being loaded anew because a document changed mid-read, not because a save failed.
+      async function load(ui, note, fresh) {
+        var raw = null, st = null, lost = false, again = !fresh && !!o.again;
+        if (o.before) {
+          try {
+            var tried = await o.before();
+            if (tried === 'owed') again = true;
+            else if (tried === 'owed-stale' && !note) note = LEGAL_STALE;
+          } catch (e0) { /* the answer below says where things stand */ }
+        }
+        // Both asked at once; either may fail without taking the other with it.
+        var asked = [
+          Promise.resolve().then(function () { return o.api.docs(); }).then(null, function (e) { lost = sgNoAnswer(e); return null; }),
+          Promise.resolve().then(function () { return o.api.status(); }).then(null, function () { return null; })
+        ];
+        raw = await asked[0]; st = await asked[1];
+        // Nothing is owed after all: these versions were agreed to already (just now, or on another phone).
+        if (isObj(st) && st.ready === true && st.needs === false) { end('agreed'); return; }
+        var d = legalClean(raw);
+        if (d && !d.ready) { end('none'); return; }
+        if (!d) {
+          if (!o.must) { end('unread'); return; }
+          ui.stop(false);
+          grey('');
+          // No answer at all is the connection, and is said as that: whether there are any documents to
+          // speak of is not even known. A "no" or an error from the server is about the documents.
+          ui.say(lost ? SG_OFFLINE : LEGAL_NOLOAD);
+          return;
+        }
+        pages(d.docs, isObj(st) && Array.isArray(st.changed) ? st.changed : [], note, again);
+      }
+      // A plain screen while the documents come (and the place to try again from when they do not).
+      function wait(note, fresh) {
+        var ui = sgScreen(host, {
+          title: 'One moment', sub: LOADING, next: 'Try again',
+          onNext: function () { ui.stop(true); ui.say(''); grey(LOADING); return load(ui, note, fresh); }
+        });
+        if (o.signOut) sgOut(ui, o.signOut);
+        ui.stop(true);
+        load(ui, note, fresh);
+      }
+      function pages(docs, changed, note, again) {
+        legalPages(host, { docs: docs, changed: changed, note: note, again: again ? LEGAL_AGAIN : '', onBack: null,
+          signOut: o.signOut || null,
+          onAgree: async function (ui) {
+            ui.say('Saving…', true);
+            var r = null;
+            try { r = await o.api.accept(legalVersions(docs), LEGAL_SAID, o.via); } catch (e) { r = null; }
+            if (isObj(r) && r.ok === true) { end('agreed'); return 'wait'; }
+            var why = isObj(r) ? String(r.why || '') : '';
+            // A document changed while it was being read: the new one is shown, from the first page.
+            if (why === 'stale') { wait(LEGAL_STALE, true); return 'wait'; }
+            // The documents were taken down in the meantime: there is nothing left to agree to.
+            if (why === 'not ready') { end('none'); return 'wait'; }
+            if (!isObj(r)) {
+              // No answer. Someone who was already in carries on, with what they agreed to kept to be sent.
+              if (typeof o.hold === 'function') {
+                var kept = false;
+                try { kept = o.hold(legalVersions(docs), LEGAL_SAID) !== false; } catch (e2) { kept = false; }
+                if (kept) { end('held'); return 'wait'; }
+              }
+              ui.say(SG_OFFLINE);
+              return;
+            }
+            // A refusal stays on the page, with its reason when there are words for it.
+            ui.say(why === 'email' ? LEGAL_EMAIL : LEGAL_NOSAVE);
+          } });
+      }
+      wait(o.note || '');
+    });
+  }
+  /* </shared-screens> */
+
+  /* How the documents' three functions are asked (migration 0137). A
+     database that does not have them yet (a build ahead of its migration)
+     counts as "no documents loaded": nothing is asked, as before them. */
+  var legalApi = {
+    // code: a Greenroom code, for someone not signed in. Signed in, none is needed.
+    docs: async function (code) {
+      var q = await sgLimit(sb.rpc('legal_docs_for', code ? { c: code } : {}), 12000);
+      if (q.error) {
+        if (fnMissing(q.error)) return { ok: true, ready: false, docs: [] };
+        throw q.error;
+      }
+      return q.data;
+    },
+    status: async function () {
+      var q = await sgLimit(sb.rpc('legal_status'), 8000);
+      if (q.error || !isObj(q.data)) throw (q.error || new Error('no answer'));
+      return q.data;
+    },
+    accept: async function (v, said, via) {
+      var q = await sgLimit(sb.rpc('legal_accept', { nda_v: v.nda, terms_v: v.terms, privacy_v: v.privacy, said: said, via: via }));
+      if (q.error) {
+        if (fnMissing(q.error)) return { ok: false, why: 'not ready' };
+        // No answer at all is thrown (the screen then says to check the connection); an error the server sent back is a "no".
+        if (q.status === 0 || sgNoAnswer(q.error)) throw q.error;
+        return { ok: false, why: 'failed' };
+      }
+      return isObj(q.data) ? q.data : { ok: false, why: 'failed' };
+    }
+  };
+
+  /* An agreement that cannot be recorded yet waits here, in memory and on
+     the phone, until the server can be told. Two kinds:
+     via 'code': a sign-up agrees to the documents before there is an
+       account to record that on. What was agreed (which versions, the
+       sentence, when) is kept so that closing the app to fetch the emailed
+       code does not lose it. It is tied to the Greenroom code it was given
+       under (kept as a short print of the code, never the code itself) and,
+       once the sign-up has one, to the address the account is for. The
+       moment that account is signed in it is sent (legalSendHeld) and
+       forgotten.
+     via 'inside': someone who was already in tapped "I Agree" and got no
+       answer (the signal dropped while they read). It is tied to their
+       account and sent as soon as a call gets through (legalFlush).
+     The rules that keep the record true:
+     - It never lets a NEW visit past the pages. Only the visit that made it
+       may skip them (the person pressed Back and typed the same code
+       again): legalHere says the record in hand was made by this page load.
+       After a reload, or for the next person on the same phone, the three
+       pages are shown again, and a fresh "I Agree" replaces what was kept.
+     - It is never re-pointed. An address is put on it only by the visit that
+       made it (a mistyped address corrected on "Check your email" is the
+       same person in the same sitting); one kept from an earlier visit is
+       only ever sent for the address it already has, or not at all.
+     - With no address yet it lives 30 minutes; with one, a day. After that
+       it is forgotten unsent, and the documents are simply shown again. */
+  var LEGAL_KEY = 'gr-legal-held';
+  var legalHeld = null;
+  var legalHere = false;   // the record in hand was made in this visit, by whoever is at the screen now
+  function legalTag(code) {
+    var s = String(code || '').toUpperCase().replace(/[\s-]/g, ''), n = 5381;
+    for (var i = 0; i < s.length; i++) n = ((n << 5) + n + s.charCodeAt(i)) >>> 0;
+    return s ? n.toString(36) + '.' + s.length : '';
+  }
+  function legalHeldRead() {
+    if (!legalHeld) {
+      try {
+        var h = JSON.parse(localStorage.getItem(LEGAL_KEY) || 'null');
+        if (isObj(h) && isObj(h.v) && h.said === LEGAL_SAID && (h.via === 'inside' ? !!h.uid && !!h.email : !!h.tag)) legalHeld = h;
+      } catch (e) { /* nothing kept */ }
+    }
+    if (legalHeld && !(Date.now() - Date.parse(legalHeld.at) < (legalHeld.email ? 864e5 : 18e5))) legalDrop();
+    return legalHeld;
+  }
+  function legalKeep() {
+    try { localStorage.setItem(LEGAL_KEY, JSON.stringify(legalHeld)); } catch (e) { /* kept for this visit only */ }
+  }
+  function legalDrop() {
+    legalHeld = null;
+    legalHere = false;
+    try { localStorage.removeItem(LEGAL_KEY); } catch (e) { /* nothing kept */ }
+  }
+  // "I Agree" at the Greenroom-code door: whatever was kept before is replaced by this.
+  function legalHold(code, docs) {
+    legalHeld = { via: 'code', tag: legalTag(code), email: '', at: new Date().toISOString(), said: LEGAL_SAID, v: legalVersions(docs) };
+    legalHere = true;
+    legalKeep();
+  }
+  /* Did THIS visit agree, with this code (and, when docs are given, to
+     exactly these versions)? Never true for a record a page load found
+     waiting on the phone. */
+  function legalHeldHere(code, docs) {
+    var h = legalHeldRead();
+    if (!h || !legalHere || h.via === 'inside' || !h.tag || h.tag !== legalTag(code)) return false;
+    // (Half an hour, however long the app is left open: a phone handed to the next person shows them the pages.)
+    if (!(Date.now() - Date.parse(h.at) < 18e5)) return false;
+    if (!docs) return true;
+    var v = legalVersions(docs);
+    return LEGAL_ORDER.every(function (k) { return !!v[k] && String(h.v[k] || '') === v[k]; });
+  }
+  /* The address the sign-up is making its account for: from here on the
+     agreement is that account's alone. Only the visit that agreed may say
+     so; a record from an earlier visit keeps the address it has. */
+  function legalMine(code, email) {
+    if (!legalHeldHere(code)) return;
+    legalHeld.email = String(email || '').trim().toLowerCase();
+    legalKeep();
+  }
+  /* Someone already in agreed and the save got no answer: kept for their
+     account, to be sent when a call gets through. false when there is nobody
+     to keep it for (then they stay on the page). */
+  function legalHoldInside(v, said) {
+    if (!session || !session.user || !session.user.id || said !== LEGAL_SAID) return false;
+    legalHeld = { via: 'inside', tag: '', uid: String(session.user.id), email: String(session.user.email || '').toLowerCase() || '-',
+      at: new Date().toISOString(), said: said, v: v };
+    legalHere = true;
+    legalKeep();
+    return true;
+  }
+  // Is an agreement of the signed-in account's own waiting to be sent?
+  function legalHeldInside() {
+    var h = legalHeldRead();
+    return !!h && h.via === 'inside' && !!session && !!session.user && h.uid === session.user.id;
+  }
+  /* Signed in: send what is waiting for this account, if anything is.
+     ''       nothing was waiting for it (or the documents were taken down
+              since: nothing to record, nothing owed);
+     'saved'  its agreement is recorded.
+     A sign-up's own (via 'code'):
+     'owed'   the save did not go through: the start-up shows the documents
+              again and nobody gets past them. It is kept, to be tried again;
+     'owed-stale'  the same, because a document changed since it was read:
+              that agreement will never be taken, so it is forgotten.
+     Someone already in (via 'inside'):
+     'held'   still no answer: kept, and tried again at the next chance;
+     'stale'  a document changed since they read it: forgotten, and the pages
+              are shown again;
+     'again'  the server refused it: forgotten, and the pages are shown
+              again, saying the agreement could not be saved. */
+  async function legalSendHeld() {
+    var h = legalHeldRead();
+    if (!h || !session || !session.user) return '';
+    var r = null;
+    if (h.via === 'inside') {
+      if (h.uid !== session.user.id) return '';
+      try { r = await legalApi.accept(h.v, h.said, 'inside'); } catch (e0) { r = null; }
+      if (!isObj(r)) return 'held';
+      // (Whatever the answer, it is an answer: nothing is left waiting.)
+      if (legalHeld === h) legalDrop();
+      if (r.ok === true) return 'saved';
+      if (r.why === 'not ready') return '';
+      return r.why === 'stale' ? 'stale' : 'again';
+    }
+    if (!h.email) return '';
+    if (String(session.user.email || '').toLowerCase() !== h.email) return '';
+    // Only ever onto the account that sign-up just made (as savePending has it).
+    var born = Date.parse(session.user.created_at || '');
+    if (born && Date.now() - born > 864e5) { legalDrop(); return ''; }
+    try { r = await legalApi.accept(h.v, h.said, 'code'); } catch (e) { r = null; }
+    if (isObj(r) && r.ok === true) { legalDrop(); return 'saved'; }
+    // The documents were taken down since: there is nothing to record, and nothing owed.
+    if (isObj(r) && r.why === 'not ready') { legalDrop(); return ''; }
+    // A document changed since it was read: that agreement will never be taken, so the pages are shown afresh.
+    if (isObj(r) && r.why === 'stale') { legalDrop(); return 'owed-stale'; }
+    // Anything else (no answer, or the save failed): it is kept, and tried again from the screen that follows
+    // (see legalInside).
+    return 'owed';
+  }
+  // This visit has seen the documents settled for the signed-in account: agreed and saved, or none are loaded.
+  var legalPassed = false;
+  /* Agreed and saved, for someone signed in. A seat on a tour waits for the
+     documents (claim_invites links nothing while they are owed), so it is
+     claimed again now. */
+  async function legalDone() {
+    legalDrop();
+    legalPassed = true;
+    if (firstFacts) firstFacts.needsLegal = false;
+    try { await sgLimit(sb.rpc('claim_invites'), 10000); } catch (e) { /* the next start claims it */ }
+  }
+  function legalSignOut() { window.GR_BACKEND.signOut(); }
+  /* The documents over everything. For someone already in (they have never
+     agreed, or a document changed): via 'inside', and a failure to load
+     them does not keep them out. For someone new, or invited to a tour, or
+     whose agreement could not be saved (must): they do not get past a
+     failure to load the documents either, and via is 'invite' for an
+     invited person. o: { again, note, blind } as legalRun takes them.
+     Resolves when whoever called may carry on, with how it ended: 'agreed',
+     'none', 'unread', 'held' (see legalRun), or '' when nothing was shown
+     because another question is already up. */
+  async function legalInside(must, via, o) {
+    if (document.getElementById('gr-pass-gate')) return '';
+    o = o || {};
+    var wrap = document.createElement('div');
+    wrap.id = 'gr-pass-gate';   // the overlay's own name: one at a time, and the app knows a question is up
+    wrap.className = 'gr-gate-like';
+    // Over a running app (back from the background): a box being typed in underneath lets go of the keyboard.
+    // Nothing typed is lost: the app is as it was when the pages lift.
+    try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e0) { /* cosmetic */ }
+    document.body.appendChild(wrap);
+    var how = '';
+    try {
+      how = await legalRun(wrap, { api: legalApi, via: via === 'invite' ? 'invite' : 'inside', must: !!must,
+        again: !!o.again, note: o.note || '', blind: !!o.blind, signOut: legalSignOut,
+        // What the sign-up agreed to and could not save is tried again first: saved, there is nothing to read twice.
+        before: must ? legalSendHeld : null,
+        // Only someone who was already in is let on with an agreement still to be sent: never someone new or invited.
+        hold: !must && via !== 'invite' ? legalHoldInside : null });
+    } catch (e) { how = must ? 'broken' : ''; }
+    if (how === 'broken') {
+      // Someone who must agree is never waved through by a fault in the pages: the app behind stays shut.
+      try {
+        wrap.textContent = '';
+        var p = document.createElement('p');
+        p.className = 'gate-hi quiet';
+        p.textContent = 'Couldn\u2019t show the documents. Close Greenroom and open it again.';
+        wrap.appendChild(p);
+      } catch (e2) { /* the overlay stays as it is */ }
+      return new Promise(function () {});
+    }
+    if (how === 'agreed') await legalDone();
+    else if (how === 'none') legalPassed = true;
+    wrap.remove();
+    return how;
+  }
+  /* An agreement someone already in gave with no signal (via 'inside') is
+     sent the moment a call gets through: after every read of the tours, on
+     coming back online, on returning from the background. Nothing is held:
+     nothing is asked, and no call is made. If the server says the documents
+     changed since, or refuses it, the pages are shown again. */
+  var legalFlushing = false;
+  async function legalFlush() {
+    if (legalFlushing || !legalHeldInside()) return '';
+    legalFlushing = true;
+    var how = '';
+    try { how = await legalSendHeld(); } catch (e) { how = 'held'; }
+    legalFlushing = false;
+    try {
+      if (how === 'saved') { await legalDone(); refetchTries = 0; scheduleRefetch(); }
+      else if (how === 'stale' || how === 'again') {
+        if (firstFacts) firstFacts.needsLegal = true;
+        var then = await legalInside(false, 'inside', how === 'stale' ? { note: LEGAL_STALE } : { again: true });
+        if (then === 'agreed') { refetchTries = 0; scheduleRefetch(); }
+      }
+    } catch (e2) { /* the next start asks */ }
+    return how;
+  }
+  /* People who keep Greenroom open are asked too. The start-up only runs
+     when the page loads, and a phone can keep the app alive for days: so
+     when it comes back from the background (after more than 30 seconds: see
+     boot) the documents' status is read, and when it says this account has
+     yet to agree (they were loaded, or one changed, while the app sat open)
+     the same pages come up over the app, recorded with via 'inside'; then
+     the tours are read again. Never before the start-up has had its own
+     turn, and never while another question is up.
+     legalStarted: the start-up is past the documents (see online). Until
+     then nothing reads the tours either: not a return from the background,
+     not the signal coming back. */
+  var legalStarted = false, legalWaking = false;
+  async function legalWake() {
+    if (!legalStarted || legalWaking || !session || !session.user) return;
+    if (document.getElementById('gr-pass-gate') || document.getElementById('gr-gate')) return;
+    legalWaking = true;
+    try {
+      // An agreement already given and still to be sent goes first; nobody is asked for it twice.
+      if (legalHeldInside()) { await legalFlush(); return; }
+      var st = null;
+      try { st = await legalApi.status(); } catch (e) { st = null; }
+      if (!isObj(st) || st.ready !== true || st.needs !== true) return;
+      if (firstFacts) firstFacts.needsLegal = true;
+      var how = await legalInside(false, 'inside');
+      if (how === 'agreed') { refetchTries = 0; scheduleRefetch(); }
+    } catch (e2) { /* the next start asks */ } finally { legalWaking = false; }
+  }
+
   function gate(note, code) {
     // From an email's button: straight to the code, already filled in.
     var mode = code ? 'code' : 'signin';
@@ -2850,7 +3593,9 @@
     // made for that is still waiting on its emailed code (madePass: with which
     // password; sentAt: when a code last went out to it). tried: an address
     // whose sign-up got no answer, so the account may be there all the same.
-    var a = { code: code || '', codeOk: '', kinds: [], codeEmail: '', first: '', last: '', handle: '', handleMine: false,
+    // legalOk: the Greenroom code the documents step has been passed with in
+    // this visit (agreed to, or there was nothing to ask: legalFree).
+    var a = { code: code || '', codeOk: '', legalOk: '', legalFree: false, kinds: [], codeEmail: '', first: '', last: '', handle: '', handleMine: false,
       month: 0, day: 0, dayPicked: 0, year: 0, birth: '', email: '', pass: '', made: '', madePass: '', sentAt: 0,
       tried: '', triedPass: '' };
     // An address to put in the sign-in card's email box ("That email already has an account").
@@ -2865,6 +3610,8 @@
     }
     // The answers that can only be saved once signed in wait here (see savePending).
     function hold(email) {
+      // What this sign-up agreed to (the documents) in this visit is recorded on this address's account and no other.
+      if (a.legalOk && !a.legalFree) legalMine(a.legalOk, email);
       // The password the account for this address was made with, when one was (or may have been).
       var sent = a.made === email ? a.madePass : a.tried === email ? a.triedPass : a.pass;
       pendingAnswers = { email: email, first: a.first, last: a.last, handle: a.handle, birth: a.birth,
@@ -2924,25 +3671,66 @@
             askCodeEmail();
             return;
           }
-          // Already checked a moment ago (they came Back): no need to ask twice.
-          if (a.codeOk === c) { askName(); return; }
+          // Already checked a moment ago, and past the documents in this very visit (they came Back): no need
+          // to ask twice. (What they agreed to must still be in hand: with no address yet it lasts 30 minutes.)
+          if (a.codeOk === c && a.legalOk === c && (a.legalFree || legalHeldHere(c))) { askName(); return; }
           ui.say('Checking\u2026', true);
-          var q = await sgLimit(sb.rpc('signup_code_check', { c: c }));
-          if (q.error || !isObj(q.data)) { ui.say(sgNoData(q)); return; }
-          if (q.data.ok !== true) { ui.say(q.data.why === 'slow' ? SG_SLOW : SG_NOCODE); return; }
-          // A good code, but would the account at the end be refused? Better
-          // said now than after five more questions. (No answer: carry on.)
-          var set = await signupSettings();
-          if (set && (!set.open || !set.confirm)) {
-            ui.say('Your code is good, but sign-up isn\u2019t switched on yet. Ask the person who gave you the code.');
-            return;
+          var kinds = a.kinds;
+          if (a.codeOk !== c) {
+            var q = await sgLimit(sb.rpc('signup_code_check', { c: c }));
+            if (q.error || !isObj(q.data)) { ui.say(sgNoData(q)); return; }
+            if (q.data.ok !== true) { ui.say(q.data.why === 'slow' ? SG_SLOW : SG_NOCODE); return; }
+            // A good code, but would the account at the end be refused? Better
+            // said now than after five more questions. (No answer: carry on.)
+            var set = await signupSettings();
+            if (set && (!set.open || !set.confirm)) {
+              ui.say('Your code is good, but sign-up isn\u2019t switched on yet. Ask the person who gave you the code.');
+              return;
+            }
+            kinds = cleanKinds(q.data.kinds);
           }
           a.codeOk = c;
-          a.kinds = cleanKinds(q.data.kinds);
-          askName();
+          a.kinds = kinds;
+          /* The documents come next, before the name. The code is what lets
+             them be read (it is not spent by that). No answer, or a "no":
+             said here, and nobody goes on. None loaded: on to the name, and
+             nothing is recorded. Only an agreement given in THIS visit, to
+             these very versions, lets the pages be passed without reading
+             (the code had to be checked again after a Back). What a page
+             load finds kept on the phone never does: after a reload, or for
+             the next person to pick the phone up, the three pages are shown
+             again, and their "I Agree" replaces what was kept. */
+          var raw = null, answered = true, lost = false;
+          try { raw = await legalApi.docs(c); } catch (e) { answered = false; lost = sgNoAnswer(e); }
+          var d = legalClean(raw);
+          if (!d) {
+            // A "no" (the code ran out since it was checked): the next press checks the code again, and says so.
+            if (answered) a.codeOk = '';
+            // No answer at all is the connection (whether any documents are loaded is not even known): the
+            // gate's ordinary offline line. Anything the server did answer is about the documents.
+            ui.say(lost ? SG_OFFLINE : LEGAL_NOLOAD);
+            return;
+          }
+          if (!d.ready) { a.legalOk = c; a.legalFree = true; askName(); return; }
+          a.legalFree = false;
+          if (a.legalOk === c && legalHeldHere(c, d.docs)) { askName(); return; }
+          a.legalOk = '';
+          askLegal(d.docs);
         }
       });
       ui.ok(0, !!a.code && a.codeOk === a.code);
+    }
+    /* One document a page; Back on the first goes to the code. "I Agree"
+       cannot record anything yet (there is no account), so what was agreed
+       is remembered for this sign-up and sent the moment its account is
+       signed in (see legalSendHeld). */
+    function askLegal(docs) {
+      legalPages(wrap, { docs: docs, onBack: askCode,
+        onAgree: function () {
+          legalHold(a.codeOk, docs);
+          a.legalOk = a.codeOk;
+          askName();
+        } });
     }
 
     // The emailed code: an invite, a password reset or a sign-in email.
@@ -3373,12 +4161,20 @@
       if (hiddenAt && Date.now() - hiddenAt > 30e3) {
         freshToken(false).then(function () { flushErrors(); }).catch(function () { /* next tap tries */ });
         flowersChanged(); // gifts while the phone slept never came down the live line
-        if (session) { refetchTries = 0; scheduleRefetch(); feedChanged(); } // nor did anyone's changes to the tours, or new bank lines
+        // Nor did anyone's changes to the tours, or new bank lines. (Not while the start-up is still waiting at
+        // the documents: someone reading them who looks away and comes back has agreed to nothing yet, and
+        // nothing of a tour is read for them until they have. The start-up reads everything when it carries on.)
+        if (session && legalStarted) { refetchTries = 0; scheduleRefetch(); feedChanged(); }
         newBuildCheck();
+        // The documents may have been loaded, or one changed, while the app sat open: asked here too (see legalWake).
+        if (session) legalWake();
       } else if (refetchOwed && session) { refetchTries = 0; scheduleRefetch(); }
       hiddenAt = 0;
     });
-    window.addEventListener('online', function () { flushErrors(); if (session) { refetchTries = 0; scheduleRefetch(); feedChanged(); } });
+    window.addEventListener('online', function () {
+      flushErrors();
+      if (session && legalStarted) { refetchTries = 0; scheduleRefetch(); feedChanged(); legalFlush(); }
+    });
     var got = await sb.auth.getSession();
     session = got.data ? got.data.session : null;
     var note = '';
@@ -3432,8 +4228,18 @@
      the sign-up asks: a username (their @name), a birthday, a password.
      Anything the invite didn't carry (an older invite: the name, the role)
      is asked first. There is no way out of the first screen on purpose: an
-     account with no password could never sign in again. */
-  function passwordGate() {
+     account with no password could never sign in again.
+     Before any of it come the documents (see "The documents"): the three
+     pages, recorded at once (they are signed in). There is no Back from the
+     first of them and no way round: when they cannot be loaded the screen
+     says so and waits. The start-up shows them itself and waits there,
+     BEFORE the tours are read and the app is started (see online), so by the
+     time this overlay is drawn they are normally settled and it goes
+     straight to its questions. Its own check below stays as a second lock:
+     should it ever be reached with the documents still owed, they are asked
+     here, as the first step. owed: this start-up already tried to record an
+     agreement and could not. */
+  function passwordGate(owed) {
     if (document.getElementById('gr-pass-gate')) return;
     var wrap = document.createElement('div');
     wrap.id = 'gr-pass-gate';
@@ -3545,7 +4351,20 @@
       if (!landed) saves.then(function () { emit('tours'); });
       return 'wait';
     }
-    go(0);
+    /* The documents are owed when the first-run facts say so. When those
+       could not be read at all, the documents' own functions are asked
+       (someone new must not slip past on a weak signal); they answer "none
+       loaded" on a database that has no documents, and then nothing is
+       asked, as before. */
+    var f = firstFacts || { unknown: true };
+    // (legalPassed: the start-up already waited at the documents in this visit, and they are agreed to or there are none.)
+    if (legalPassed || (!owed && !f.needsLegal && !f.unknown)) { go(0); return; }
+    legalRun(wrap, { api: legalApi, via: 'invite', must: true, blind: !owed && !f.needsLegal, signOut: legalSignOut,
+      before: owed ? legalSendHeld : null }).then(function (how) {
+      if (how !== 'agreed') return;
+      // Their seat on the tour was waiting for this: claimed now, and the tours are read again.
+      return legalDone().then(function () { refetchTries = 0; scheduleRefetch(); });
+    }).then(function () { go(0); }, function () { go(0); });
   }
 
   /* A reset link: signed in by the link, now pick the new password. */
@@ -3691,9 +4510,12 @@
         new Promise(function (res) { setTimeout(function () { res(null); }, ms || 8000); })]);
       if (q && !q.error && isObj(q.data)) got = q.data;
     } catch (e) { got = null; }
+    // needsLegal: the documents are loaded and this account has not agreed to
+    // the current ones (my_first_run's needs_legal; a database from before
+    // the documents never says so).
     firstFacts = got
       ? { onboarded: got.onboarded !== false, kinds: cleanKinds(got.kinds), handle: String(got.handle || ''),
-          hasBirth: got.hasBirth === true }
+          hasBirth: got.hasBirth === true, needsLegal: got.needs_legal === true }
       : { onboarded: true, kinds: [], handle: '', hasBirth: true, unknown: true };
   }
   /* Read again after the invited person's overlay has saved its answers, so
@@ -3708,6 +4530,15 @@
   }
 
   async function online() {
+    /* Fresh from a sign-up that agreed to the documents before it had an
+       account: that is recorded first, before anything else is asked of the
+       server (a seat on a tour and the first run both wait for it). The same
+       goes for an agreement someone already in gave with no signal. Anyone
+       else has nothing waiting, and this costs them nothing. owed: a
+       sign-up's could not be saved, so the documents are shown again below
+       and nobody gets past them. */
+    var sent = await legalSendHeld();
+    var owed = sent === 'owed' || sent === 'owed-stale';
     // An ordinary sign-in has nothing waiting to be saved, so the first-run
     // facts are asked for alongside the invites: the app starts no later than
     // it used to. (loadFirstRun never throws: no answer counts as "finished".)
@@ -3720,8 +4551,44 @@
       await loadFirstRun();
     }
     pushProfile();
-    if (session && session.user && session.user.user_metadata &&
-        session.user.user_metadata.invited === true) passwordGate();
+    var invited = !!(session && session.user && session.user.user_metadata &&
+      session.user.user_metadata.invited === true);
+    /* THE DOCUMENTS, before anything of a tour is read and before the app
+       is told the database is ready. Nothing below this block runs until
+       whoever must agree has agreed and that is saved.
+       needs: the facts say the documents are owed, or a sign-up's agreement
+         could not be saved. blind: the facts could not be read at all.
+       Someone invited to a tour (needs or blind): waits here, recorded with
+         via 'invite'. Their own questions (passwordGate) come after, over an
+         app that is only started once they have agreed.
+       A brand-new account (needs or blind): waits here too. With the facts
+         unread it must not walk in with nothing agreed; the documents' own
+         status is asked, and it passes at once when the account has already
+         agreed or no documents are loaded. Brand new: made within the last
+         day, or its address proved within the last day (a sign-up that sat
+         longer than that before its emailed code was typed is just as new).
+       Someone already in (an account that finished its first run; with the
+         facts unread, one older than a day): asked once, and again whenever
+         a document changes, but never kept out by a weak signal: when the
+         facts or the documents cannot be read they carry on, and the next
+         start (or the next return to the app) asks. An agreement of theirs
+         that is still waiting to be sent is not asked for twice. */
+    var who = (session && session.user) || {};
+    var born = Date.parse(who.created_at || ''), proved = Date.parse(who.email_confirmed_at || who.confirmed_at || '');
+    var fresh = (!!born && Date.now() - born < 864e5) || (!!proved && Date.now() - proved < 864e5);
+    // (Saved a moment ago: the server has just taken the current versions, so unread facts are no reason to ask twice.)
+    var blind = !!firstFacts.unknown && sent !== 'saved';
+    var needs = owed || firstFacts.needsLegal === true;
+    // (What the pages say when they are back because of what was just tried: see legalSendHeld.)
+    var said = sent === 'again' ? { again: true } : (sent === 'stale' || sent === 'owed-stale') ? { note: LEGAL_STALE } : {};
+    if (invited) {
+      if (needs || blind) await legalInside(true, 'invite', { again: !!said.again, note: said.note || '', blind: !needs });
+    } else if (needs || (blind && fresh)) {
+      var must = owed || firstFacts.onboarded === false || (blind && fresh);
+      if (must || !legalHeldInside()) await legalInside(must, 'inside', { again: !!said.again, note: said.note || '', blind: !needs });
+    }
+    legalStarted = true;   // from here the return-from-background check may ask (see legalWake)
+    if (invited) passwordGate(owed);
     else if (mustPassDue()) newPasswordGate(true);
     else if (resetting) newPasswordGate();
     try { await refetch(); } catch (e) { /* the app shows local mode */ }

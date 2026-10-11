@@ -1635,7 +1635,7 @@
      Each band's book of expenses between tours: a tour-shaped record
      (kind 'offtour') with the band's name and no shows, so the Expenses
      screens, the card feed and the money rules all work on it as they are.
-     The owner runs it; ALL ACCESS on any of the band's tours can see it. */
+     The owner runs it; a Manager on any of the band's tours can see it. */
   function isOffTour(t) { return !!(t && t.kind === 'offtour'); }
   function offTourOf(artist) {
     var key = String(artist || '').trim().toLowerCase(), hit = null;
@@ -1651,7 +1651,7 @@
     if (S.mode !== 'db') return canWrite();
     return bandTours(artist).some(function (e) { return tourRole(e[0]) === 'owner'; });
   }
-  // Only the owner and ALL ACCESS see OFF TOUR; GA never does.
+  // Only the owner and Managers see OFF TOUR; Crew never do.
   function canSeeOffTour(artist) {
     if (S.mode !== 'db') return true;
     if (offTourOf(artist)) return true;
@@ -1825,11 +1825,42 @@
     var B = window.GR_BACKEND, me = S.mode === 'db' && B && B.myProfile ? B.myProfile() : null;
     return me && me.tourRole ? [me.tourRole] : [];
   }
+  /* The job titles offered wherever one is picked for a person on a tour
+     (Devin, 2026-10-11: "The job titles offered when you invite are the old
+     list (Artist, Band, Friend), not your 20 crew roles. - lets update
+     this"): his crew roles in his order, then Band and Touring Musician for
+     a hired player on stage (askCrewRoles, the list the sign-up's CREW
+     question uses). Someone the artist's own page lists as a Member is
+     offered a Member's roles first. A title somebody already has from the
+     older list (Artist, Guitar Tech) is never rewritten: it keeps showing,
+     and the pickers open with it in the line under Other. */
+  // The artists whose page lists you as a Member (in the band, not hired), by name.
+  function memberOf() {
+    return (myActs().list || []).filter(function (x) { return x && x.kind === 'band' && !x.past && x.name; })
+      .map(function (x) { return x.name; });
+  }
   function roleChoices() {
-    var B = window.GR_BACKEND;
-    return (B && B.tourRoles ? B.tourRoles : ['Artist', 'Band', 'Tour Manager', 'Production Manager', 'Stage Manager',
-      'Merch', 'Guitar Tech', 'Drum Tech', 'Assistant', 'FOH Engineer', 'Monitors', 'Liaison', 'Dancer'])
-      .filter(function (r) { return !NOT_CREW.test(r); });
+    return (memberOf().length ? G.BAND_ROLES : []).concat(askCrewRoles());
+  }
+  // The same, as the role picker takes it (B.openRolePicker's third argument).
+  function rolePickLists(title) {
+    var of = memberOf();
+    if (!of.length) return { title: title, roles: askCrewRoles() };
+    return { title: title, groups: [
+      { key: 'member', head: of.length === 1 ? 'Member of ' + of[0] : 'Member', roles: G.BAND_ROLES },
+      { key: 'crew', head: 'Crew', roles: askCrewRoles() }] };
+  }
+  /* The same picker for someone ELSE on a tour (the invite form, the crew
+     list's Edit sheet): two headed lists, a Member's roles under "Member of"
+     and the tour's artist ("Member of the artist" on a tour with no artist
+     typed), then his crew roles with Band and Touring Musician, then Other
+     with a line to type. The picker says which list a role came from (group
+     'member' or 'crew'; '' when it was typed). */
+  function tourRoleLists(tourId) {
+    var t = getTour(tourId), artist = String((t && t.artist) || '').trim();
+    return { title: 'Their role on the tour', groups: [
+      { key: 'member', head: artist ? 'Member of ' + artist : 'Member of the artist', roles: G.BAND_ROLES },
+      { key: 'crew', head: 'Crew', roles: askCrewRoles() }] };
   }
   /* A new profile photo is sized before it's kept: the picture sits behind a
      round window; drag it to move, pinch or slide to zoom, and what's inside
@@ -2744,7 +2775,7 @@
   }
   /* The tour's flyer: kept when it's uploaded, so the people on the tour, and
      anyone looking at a tour-mate's profile, can see it. The tour manager and
-     ALL ACCESS put it up or take it down. */
+     Managers put it up or take it down. */
   function shrinkFlyer(file, cb) {
     var url = URL.createObjectURL(file);
     var img = new Image();
@@ -8497,6 +8528,19 @@
       var codesRow = signedIn && B.inviteCodes ? h('button', { class: 'btn ghost block', type: 'button', hidden: true,
         onclick: function () { openInviteCodes(); } }, icon('tag', 18), 'Invite codes') : null;
       if (codesRow) inviteCodesKnown(function (list) { codesRow.hidden = !Array.isArray(list); });
+      // The documents agreed to at sign-up: shown once the server says there is an acceptance on file, and
+      // last in the list, so nothing under a finger moves when it appears.
+      var legalSaid = h('p', { class: 'hint', style: 'margin:-4px 0 0;text-align:center' }, '');
+      var legalRow = signedIn && typeof B.legal === 'function' && typeof B.legalDocs === 'function'
+        ? h('div', { style: 'display:grid;gap:10px', hidden: true },
+            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLegalDocs(); } },
+              icon('tabsheet', 18), 'Documents you agreed to'),
+            legalSaid) : null;
+      if (legalRow) legalKnown(function (st) {
+        var day = st && st.ready && st.acceptedAt ? legalDay(st.acceptedAt) : '';
+        legalRow.hidden = !day;
+        legalSaid.textContent = day ? 'You accepted on ' + day : '';
+      });
       return [
         h('h2', { class: 'sh-title' }, 'Settings'),
         who ? h('p', { class: 'sh-sub' }, 'Signed in as ' + who) : null,
@@ -8537,10 +8581,89 @@
             } }, icon('back', 18), 'Sign out') : null,
           // (An artist's account is never deleted: "Those just exist". Yours can be, from your own account.)
           signedIn && B.deleteAccount && !asArtist ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { openDeleteAccount(); } }, icon('trash', 18), 'Delete my account') : null),
+            onclick: function () { openDeleteAccount(); } }, icon('trash', 18), 'Delete my account') : null,
+          legalRow),
         h('p', { class: 'hint', style: 'margin:14px 0 0;opacity:.7;text-align:center' }, 'Version ' + (window.GREENROOM_BUILD || 'dev'))
       ];
     }, { label: 'Settings' });
+  }
+  /* The documents everyone agrees to on the way in (Devin, 2026-10-10:
+     Settings shows "You accepted on [date]"). The gate that asks for them is
+     the backend's (it runs before the app does); Settings only says when
+     this account agreed and lets the three be read again, with their
+     versions. Nothing shows while no documents are loaded or nothing has
+     been agreed to. */
+  // Where this account stands (B.legal), asked when Settings opens and kept a minute. No answer: nothing changes.
+  function legalKnown(then) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || typeof B.legal !== 'function') return;
+    var c = S.legal || (S.legal = { st: undefined, at: 0 });
+    if (c.st !== undefined) then(c.st);
+    if (c.st !== undefined && Date.now() - c.at < 60e3) return;
+    Promise.resolve().then(function () { return B.legal(); }).then(function (st) {
+      if (!G.isObj(st)) return;
+      c.st = st; c.at = Date.now(); then(st);
+    }, function () { /* no answer: the row stays as it was */ });
+  }
+  // "Oct 11, 2026", by the phone's own calendar.
+  function legalDay(at) {
+    var d = new Date(at);
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function openLegalDocs() {
+    var B = window.GR_BACKEND;
+    if (!B || typeof B.legalDocs !== 'function') return;
+    var st = (S.legal && S.legal.st) || null;
+    var day = st && st.acceptedAt ? legalDay(st.acceptedAt) : '';
+    var host = h('div', null, h('p', { class: 'note' }, 'Loading…'));
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Documents you agreed to'),
+        h('p', { class: 'sh-sub' }, (day ? 'You accepted on ' + day + '. ' : '') + 'Tap one to read it again.'),
+        host,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openSettingsSheet(); } }, 'Back to Settings'))
+      ];
+    }, { label: 'Documents you agreed to' });
+    var failed = function () {
+      if (!host.isConnected) return;
+      fillEl(host, [h('p', { class: 'note' }, 'Couldn\u2019t load the documents.'),
+        h('div', { class: 'stack' }, h('button', { class: 'btn quiet block', type: 'button', onclick: function () { load(); } }, 'Try again'))]);
+    };
+    var load = function () {
+      fillEl(host, h('p', { class: 'note' }, 'Loading\u2026'));
+      Promise.resolve().then(function () { return B.legalDocs(); }).then(function (docs) {
+        if (!host.isConnected) return;
+        if (!Array.isArray(docs)) { failed(); return; }
+        if (!docs.length) { fillEl(host, h('p', { class: 'note' }, 'There are no documents to show right now.')); return; }
+        fillEl(host, h('div', { class: 'ledger' }, docs.map(function (d) {
+          // The version on file for this account, when it is not the one shown.
+          var had = st && G.isObj(st.versions) ? String(st.versions[d.doc] || '') : '';
+          return h('button', { class: 'row rowbtn', type: 'button', onclick: function () { openLegalDoc(d, had); } },
+            h('div', { class: 'row-label' }, d.title || d.name,
+              h('span', { class: 'hint' }, 'Version ' + d.version + (had && had !== d.version ? ' \u00b7 you agreed to version ' + had : ''))),
+            icon('chevron', 18));
+        })));
+      }, failed);
+    };
+    load();
+  }
+  // One document, to read. Its text is laid out by the backend (B.legalBody): only ever as text, never as HTML.
+  function openLegalDoc(d, had) {
+    var B = window.GR_BACKEND;
+    var body = h('div', { class: 'sg-doc' });
+    try { body.appendChild(B.legalBody(d.body, d.title)); }
+    catch (e) { body.style.whiteSpace = 'pre-wrap'; body.textContent = String(d.body || ''); }
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, d.title || d.name),
+        h('p', { class: 'sh-sub' }, 'Version ' + d.version + '.' + (had && had !== d.version
+          ? ' You agreed to version ' + had + '. This one is newer, and Greenroom asks you to agree to it the next time you open the app.' : '')),
+        body,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLegalDocs(); } }, 'Back to the documents'))
+      ];
+    }, { label: d.title || d.name || 'Document' });
   }
   /* Deleting your account: everything that is yours alone goes for good,
      tours you had deleted included. A tour you still run has to be deleted
@@ -10813,13 +10936,27 @@
         placeholder: 'What they do', enterkeyhint: 'next',
         oninput: function (e) { f.title = e.target.value; if (chips) chips.sync(f.title); followTitle(); }
       });
-      var chips = chipRow(G.CREW_TITLES, f.title, function (v) { f.title = v; titleInput.value = v; followTitle(); });
+      /* The titles offered follow the group this form already knows the
+         person is in: a Member's roles (G.BAND_ROLES) for a Member, his crew
+         roles for crew. Picking one of a Member's roles is as good as saying
+         "Member", so the title typed next cannot move them back to crew. */
+      var chips = null, chipsBox = h('div');
+      var drawChips = function () {
+        var member = f.band;
+        chips = chipRow(member ? G.BAND_ROLES : G.CREW_TITLES, f.title, function (v) {
+          f.title = v; titleInput.value = v;
+          if (member) f.bandSaid = true;
+          followTitle();
+        });
+        chipsBox.replaceChildren(chips);
+      };
       // Crew or Band. A plain row (not a label: a tap on its caption must not press a button).
       var submitBtn = h('button', { class: 'btn primary block', type: 'submit' }, '');
       var bandSeg = h('div');
       var drawBand = function () {
         bandSeg.replaceChildren(segmented(['Crew', 'Member'], f.band ? 1 : 0, function (k) { f.band = k === 1; f.bandSaid = true; drawBand(); }, 'Member or crew'));
         submitBtn.textContent = person ? 'Save' : f.band ? 'Add as a member' : 'Add to crew';
+        drawChips();
       };
       // For someone being ADDED, while nobody has said, the title decides (Artist
       // or Band), as it does for people invited. Someone already on the list
@@ -10877,7 +11014,7 @@
         h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
           field('Name', nameInput),
           field('Title', titleInput),
-          chips,
+          chipsBox,
           h('div', { class: 'field' },
             h('span', { class: 'field-label' }, 'Listed under'), bandSeg,
             h('span', { class: 'hint' }, 'A member is IN the band. Members have their own line on the Expenses tab. A hired player on stage (Band, Touring Musician) is crew.')),
@@ -11434,10 +11571,10 @@
   /* ============================== My Pay ==============================
      Devin (2026-10-07): the Budget tab is for everyone on the tour. Up top,
      the tour's name and MY PAY sit side by side, two equal tabs. The tour's
-     own book is ALL ACCESS only; MY PAY is each person's own: their pay for
+     own book is for Managers only; MY PAY is each person's own: their pay for
      the tour, what's been paid to them, and the spending they keep for
      themselves, laid out like Expenses. The server hands each person only
-     their own crew row, so GA never sees anyone else's line. */
+     their own crew row, so Crew never see anyone else's line. */
   /* Who sees what under Budget (Devin, 2026-10-10): "Crew ... in the budget
      section they only see MY PAY NOT the band's income/expenses/card
      information." Whoever can see the tour's money gets its name beside MY
@@ -12294,8 +12431,8 @@
     { view: 'money', label: 'Income', icon: 'tabmoney' }];
   var BUDGET_TAB = { view: 'costs', label: 'Budget', icon: 'tabmoney', book: true };
   function tourTabs(id, current) {
-    // Everyone gets the Budget tab now (Devin, 2026-10-07): GA opens it to
-    // MY PAY; the tour's own book inside stays ALL ACCESS only.
+    // Everyone gets the Budget tab now (Devin, 2026-10-07): Crew open it to
+    // MY PAY; the tour's own book inside stays for Managers only.
     var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
     tabs.splice(1, 0, BUDGET_TAB);
     var buttons = tabs.map(function (t) {
@@ -12332,7 +12469,7 @@
           onclick: goThere
         }, face || icon(iconName, 23), h('span', null, label));
   }
-  // The band page's two tabs either side of your photo: TOUR and OFF TOUR (the owner and ALL ACCESS only).
+  // The band page's two tabs either side of your photo: TOUR and OFF TOUR (the owner and Managers only).
   function artistTabs(name, current) {
     if (!canSeeOffTour(name)) return dock([], [], '', 'band|' + name);
     var tabs = [{ view: 'tours', label: 'TOUR', icon: 'tabmap' }, { view: 'off', label: 'OFF TOUR', icon: 'tabcost' }].map(function (t) {
@@ -12344,7 +12481,7 @@
 
 
   /* The bus group chat: one thread for the whole run, riding the notes
-     store under the 'chat' day so GA can talk too and RLS stays the judge. */
+     store under the 'chat' day so Crew can talk too and RLS stays the judge. */
   /* The bus group chat: the crew and the team talking, nothing else. Ari's
      merch and settlement readings live on her own page (the ARI button),
      so nothing the crew says gets buried under paperwork. */
@@ -12420,8 +12557,8 @@
 
   /* ================================ Ari ================================
      Ari's own page: her merch and settlement readings, her questions ("Would
-     you like me to correct this?") and her answers. ALL ACCESS only (the
-     database never hands her messages to GA). The ARI button glows green
+     you like me to correct this?") and her answers. Managers only (the
+     database never hands her messages to Crew). The ARI button glows green
      while there's something you haven't read, and greys out once you have;
      each person's reading is their own. */
   function ariSeenKey(tourId) { return 'seen-ari-' + tourId; }
@@ -12659,8 +12796,9 @@
     }, { label: 'Alert' });
   }
 
-  /* Devin's spec: only the tour manager edits. ALL ACCESS sees everything
-     and changes nothing; GA sees Overview, Day sheet, Guest list and Chat. */
+  /* Two levels on a tour (0133): a Manager sees and edits everything on it
+     (the level that used to be called ALL ACCESS); Crew (it used to be GA)
+     see Overview, Day sheet, Guest list and Chat. */
   function tourRole(id) {
     if (S.mode !== 'db') return canWrite() ? 'owner' : 'viewer';
     var B = window.GR_BACKEND;
@@ -12682,12 +12820,12 @@
     var B = window.GR_BACKEND;
     return !!((B && B.ownsTour && B.ownsTour(id)) || S.roles[id] || !(B && B.myRole));
   }
-  // ALL ACCESS edits a tour like its creator does (Devin, 2026-09-30).
+  // A Manager edits a tour like its creator does (Devin, 2026-09-30).
   function canEditTour(id) { var r = tourRole(id); return r === 'owner' || r === 'editor'; }
   // What stays the creator's: deleting the tour, the bank and card settings,
   // Crew Stats' tour-manager stats, starting the band's Off Tour book.
   function createdTour(id) { return tourRole(id) === 'owner'; }
-  // The tour manager and ALL ACCESS: polls, and marking requests done.
+  // The tour manager and Managers: polls, and marking requests done.
   function leadsTour(id) { return tourRole(id) === 'owner' || tourRole(id) === 'editor'; }
   function canSeeMoney(id) { return tourRole(id) !== 'viewer'; }
 
@@ -12841,7 +12979,7 @@
     }
     if (view === 'addshows' && canEditTour(id)) return viewAddShows(id, t);
     if (view === 'menu' || view === 'addshows') view = 'details';
-    // GA never sees money: only the screens named here open for them; anything
+    // Crew never see money: only the screens named here open for them; anything
     // else (Budget, Expenses and their sub-pages, or a name nobody recognises,
     // which would otherwise fall through to Budget) is Overview.
     if (!canSeeMoney(id) && ['details', 'day', 'guests', 'chat', 'calendar', 'stats', 'costs', 'mypay'].indexOf(view) < 0) {
@@ -13062,7 +13200,7 @@
   function crewSection(tourId) {
     var B = window.GR_BACKEND;
     var owns = B.ownsTour && B.ownsTour(tourId);
-    // The tour manager and ALL ACCESS can edit someone or kick them off.
+    // The tour manager and Managers can edit someone or kick them off.
     var manages = owns || tourRole(tourId) === 'editor';
     S.crewCache = S.crewCache || {};
     var cached = S.crewCache[tourId] || null;
@@ -13087,7 +13225,7 @@
       }
       list.replaceChildren.apply(list, rows.map(function (m) {
         var row = crewRow(m);
-        // The tour manager and ALL ACCESS, never on the Creator's row: swipe
+        // The tour manager and Managers, never on the Creator's row: swipe
         // left to edit someone or kick them off the tour.
         if (!manages || m.owner || !m.invitedEmail) return row;
         // A Manager is the creator's to edit or take off the tour.
@@ -13204,7 +13342,7 @@
     }
   }
   /* The tour's managers: the creator, and anyone the creator made a Manager
-     (All Access plus the card refresh, the polls, Ari's questions, alerts
+     (everything on the tour, plus the card refresh, the polls, Ari's questions, alerts
      and New tour tasks). Read from the crew list, asked once per tour. */
   function isMe(m) {
     var B = window.GR_BACKEND;
@@ -13918,6 +14056,27 @@
     var f = { tourRole: m.tourRole || '', phone: m.phone || '', email: m.email || '', access: (m.manager || m.role === 'editor') ? 'manager' : 'viewer' };
     var levels = ['viewer', 'manager'], grants = createdTour(tourId);
     openSheet(function () {
+      /* Their role is picked from the same lists the invite form offers (a
+         Member's roles, his crew roles, Other with a line to type), so a
+         typed "TM" or a misspelling can no longer stand where the title
+         "Tour manager" is what the server goes by. A title they already
+         have that is on neither list opens under Other as it is. Only the
+         title changes here: whether someone already on the tour is listed
+         as a Member or as Crew is said with the switch under Budget, Crew,
+         as it always was. (No picker to be had: the old line to type in.) */
+      var B = window.GR_BACKEND;
+      var roleSel = B && typeof B.openRolePicker === 'function'
+        ? h('button', { class: 'input role-pick' + (f.tourRole ? '' : ' empty'), type: 'button',
+            'aria-haspopup': 'listbox', 'aria-label': 'Their role on the tour',
+            onclick: function () {
+              B.openRolePicker(f.tourRole, function (r) {
+                f.tourRole = r;
+                roleSel.textContent = r;
+                roleSel.classList.remove('empty');
+              }, tourRoleLists(tourId));
+            } }, f.tourRole || 'Role')
+        : h('input', { class: 'input', type: 'text', value: f.tourRole, maxlength: 40, autocomplete: 'off',
+            placeholder: 'Role', oninput: function (e) { f.tourRole = e.target.value; } });
       var submit = async function (e) {
         e.preventDefault();
         blurActive();
@@ -13937,8 +14096,7 @@
         h('h2', { class: 'sh-title' }, who),
         h('p', { class: 'sh-sub' }, 'Their login stays ' + m.invitedEmail + '.'),
         h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
-          field('Role', h('input', { class: 'input', type: 'text', value: f.tourRole, maxlength: 40, autocomplete: 'off',
-            placeholder: 'Role', oninput: function (e) { f.tourRole = e.target.value; } })),
+          field('Role', roleSel),
           field('Phone number', h('input', { class: 'input', type: 'tel', value: f.phone, maxlength: 40, autocomplete: 'off',
             placeholder: 'Phone number', oninput: function (e) { f.phone = e.target.value; } })),
           field('Email', h('input', { class: 'input', type: 'email', value: f.email, maxlength: 120, autocomplete: 'off',
@@ -14991,7 +15149,7 @@
           if (!body) { input.focus(); return; }
           try { await B.addRequest(id, s.date, body); }
           catch (x) { toast('Couldn’t add that. Try again.'); return; }
-          // The tour manager and ALL ACCESS hear about it on their phones.
+          // The tour manager and Managers hear about it on their phones.
           sendNotify(id, 'request', { city: s.city || '', date: s.date, text: body });
           text = ''; input.value = '';
           toast('Request added'); draw(); render(true);
@@ -15638,7 +15796,7 @@
     }, { label: 'Rehearsals' });
   }
 
-  /* Guests live in their own table on the real backend (so GA can add names
+  /* Guests live in their own table on the real backend (so Crew can add names
      without being able to touch the money); on-device they ride the tour doc. */
   function guestsFor(t, tourId, showId) {
     if (window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.guestsFor) {
@@ -15765,7 +15923,7 @@
             f.tourRole = r;
             roleSel.textContent = r;
             roleSel.classList.remove('empty');
-          });
+          }, rolePickLists('Your role on the tour'));
         } }, f.tourRole || 'Your role on the tour');
       return [
         h('h2', { class: 'sh-title' }, cur.tourRole ? 'Your contact card' : 'Add your details'),
@@ -16410,13 +16568,22 @@
     Object.keys(before).forEach(function (k) { if (G.isObj(before[k])) cur.paid[k] = before[k]; });
     var people = [];
     var seen = {};
-    function add(name, role, key) {
+    /* Whose buyout is income: the people in the band. member: the tour's own
+       list says so (the Member / Crew switch under Expenses). Without that,
+       a title that says "artist" does, as it always has (Artist, the role
+       older invites offered) but not a crew role that merely contains the
+       word: "Hair & makeup artist" is one of the crew roles now. */
+    function artistTitle(role) {
+      var r = String(role || '').trim().toLowerCase();
+      return /artist/.test(r) && !G.CREW_ROLES.some(function (c) { return c.toLowerCase() === r; });
+    }
+    function add(name, role, key, member) {
       name = String(name || '').trim();
       if (!name) return;
       var k = key || 'n:' + name.toLowerCase();
       if (seen[k] || seen['n:' + name.toLowerCase()]) return;
       seen[k] = true; seen['n:' + name.toLowerCase()] = true;
-      people.push({ key: k, name: name, role: String(role || ''), artist: /artist/i.test(String(role || '')) });
+      people.push({ key: k, name: name, role: String(role || ''), artist: member === true || artistTitle(role) });
     }
     // Anyone already ticked stays on the list, even if they've left the tour.
     Object.keys(cur.paid).forEach(function (k) {
@@ -16473,7 +16640,7 @@
     document.body.appendChild(pop);
     requestAnimationFrame(function () { pop.classList.add('on'); });
     // The crew on the Overview (with their roles), then crew listed under Expenses.
-    G.rows(t && t.crew).forEach(function (c) { add(c.name, c.title); });
+    G.rows(t && t.crew).forEach(function (c) { add(c.name, c.title, null, G.isMember(c)); });
     drawList();
     var cached = S.crewCache && S.crewCache[id];
     function fromMembers(rows) {
@@ -17927,13 +18094,22 @@
       return (nm && String(c.name || '').trim().toLowerCase() === nm) || (em && String(c.email || '').trim().toLowerCase() === em);
     });
   }
-  async function addToCrewExpenses(tourId, name, tourRole, email) {
+  /* member (optional): true or false when whoever added them said which
+     group they are in (the invite form: a role picked from the Member list,
+     or from the crew list or typed). It is written on the row as
+     member: true / false, the very flag the Member / Crew switch under
+     Budget, Crew writes, so their pay lands on the Members line or the Crew
+     line from the start. Left out, nothing is written and the title decides,
+     as before (G.isMember). */
+  async function addToCrewExpenses(tourId, name, tourRole, email, member) {
     var t = getTour(tourId);
     var nm = String(name || '').trim();
     if (!t || !nm || NOT_CREW.test(String(tourRole || '')) || crewListed(t, nm, email)) return false;
     var patch = { crew: {}, crewSeen: {} };
-    patch.crew[newId()] = { name: nm, title: String(tourRole || '').trim(), pay: 0,
+    var row = { name: nm, title: String(tourRole || '').trim(), pay: 0,
       email: String(email || '').trim().toLowerCase(), createdAt: Date.now() };
+    if (member === true || member === false) row.member = member;
+    patch.crew[newId()] = row;
     patch.crewSeen[crewSeenKey(nm, email)] = true;
     return api.update(tourId, patch);
   }
@@ -18135,7 +18311,7 @@
               try {
                 var status = await inviteOne(p, asLevel(p));
                 invited(who);
-                if (status === 'existing') setTimeout(function () { toast(who + ' already has an account — the tour is in it now'); }, 1700);
+                if (status === 'existing') setTimeout(function () { toast(who + ' already has an account. The tour shows up the next time they open Greenroom.'); }, 1700);
               } catch (e) { addBtn.disabled = false; if (!inviteRefused(e)) toast('Couldn’t invite them. Try again.'); }
             } }, 'Invite');
           return h('div', { class: 'row people-row past-row' },
@@ -18173,6 +18349,8 @@
       // username and a password: name, email, their role, and their level.
       var role = 'viewer';
       var tourRole = '';
+      // Which list the role was picked from: true (a Member of the artist), false (crew, or typed under Other).
+      var asMember = false;
       var inp = function (type, ph, max, extra) {
         return h('input', Object.assign({ class: 'input', type: type, placeholder: ph, maxlength: max,
           autocomplete: 'off', 'aria-label': ph }, extra || {}));
@@ -18188,11 +18366,18 @@
       };
       var roleBtn = h('button', { class: 'input role-pick empty', type: 'button', 'aria-haspopup': 'listbox',
         onclick: function () {
-          B.openRolePicker(tourRole, function (r) {
+          /* Two headed lists and Other. A role from the first list says the
+             person is IN the band: they go under Budget, Crew as a Member
+             (member: true, what the Member / Crew switch there writes), so
+             their pay is on the Members line from the start. A crew role, or
+             one typed under Other, makes them crew (member: false). */
+          B.openRolePicker(tourRole, function (r, how) {
             tourRole = r; roleBtn.textContent = r; roleBtn.classList.remove('empty');
+            asMember = !!how && how.group === 'member';
             // A tour manager is almost always meant as a Manager: start there (it can be switched back).
+            // (Capitals aside: the list says "Tour manager", older invites said "Tour Manager".)
             if (owns && /tour manager/i.test(String(r)) && role !== 'manager') { role = 'manager'; drawLevel(); }
-          });
+          }, tourRoleLists(tourId));
         } }, 'Role');
       var form = h('form', {
         class: 'card addform invite-form', novalidate: true, style: 'margin-top:14px',
@@ -18211,9 +18396,10 @@
           try {
             var status = await B.invite(tourId, email, owns ? role : 'viewer', name, String(phoneI.value || '').trim(),
               { first: first, last: last, tourRole: tourRole });
-            await addToCrewExpenses(tourId, name, tourRole, email);
+            await addToCrewExpenses(tourId, name, tourRole, email, asMember);
             invited(name);
-            if (status === 'existing') setTimeout(function () { toast(first + ' already has an account — the tour is in it now'); }, 1700);
+            // (True whether or not they have agreed to the documents yet: their seat on the tour waits for that.)
+            if (status === 'existing') setTimeout(function () { toast(first + ' already has an account. The tour shows up the next time they open Greenroom.'); }, 1700);
             else if (status !== 'sent') setTimeout(function () { toast('The email didn’t go out, but ' + first + ' can still sign up in Greenroom with ' + email); }, 1700);
           } catch (e2) { sendBtn.disabled = false; if (!inviteRefused(e2)) toast('Couldn’t send that invite. Try again.'); }
         }
@@ -22981,7 +23167,7 @@
     ];
   }
 
-  /* The tour manager (ALL ACCESS, tour role Tour Manager) works the owner's
+  /* The tour manager (a Manager whose tour role is Tour manager) works the owner's
      card charges: the same Refresh, the same pile. Whoever sorts a charge
      first files it, and it's gone from the other one's pile. */
   async function loadPile(tourId) {
