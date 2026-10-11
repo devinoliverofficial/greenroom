@@ -95,7 +95,7 @@ Choices made while building, for him to confirm or change:
 
 ## Sign-up with a code: left open after 2026-10-10 (migration 0134)
 **Before any code is handed out (Devin, in the Supabase dashboard, one step at a time):**
-- [ ] 1. A real mail sender (custom SMTP). The built-in one sends a couple of emails an hour and only to the project's own team, so a tester's confirmation code would never arrive
+- [ ] 1. Check the mail sender is still on. Devin connected Brevo on Sep 27 (sender GREENROOM, greenroom.tourbook@gmail.com, limit raised to 100 an hour, test emails accepted); later lists wrongly said there was none. One look at Supabase, Authentication, Emails, SMTP Settings. Without a sender a tester's confirmation code never arrives (the built-in one sends a couple of emails an hour and only to the project's own team)
 - [ ] 2. Authentication, Email: "Confirm email" ON and "Secure email change" ON; paste supabase/email/confirmation.html as the Confirm signup template; code length 6, expiry one hour
 - [ ] 3. ONLY THEN "Allow new users to sign up" ON. Never the other way round: with sign-ups on and Confirm email off, anyone could take over a pending tour invite. The Invite codes sheet (Settings) warns when it finds them that way, and the sign-up screen stops at "sign-up isn't switched on yet"
 - [ ] 4. Make a code in Settings, Invite codes, and try it on a second phone
@@ -131,6 +131,14 @@ Choices made while building, for him to confirm or change:
 - [ ] Someone under 18 who was invited to a tour is stuck on the birthday screen (the terms say 18). Decide with the legal screen
 - [ ] A mistyped email that is never corrected leaves a never-confirmed account behind; it is cleared the next time someone signs up or is invited with that address
 - [ ] The database refuses a user made "confirmed" by hand in the Supabase dashboard, an admin's edit of someone's address, and Apple or Google sign-in (signup_proof). Lift it before adding any of those
+
+## More info on a charge or deposit: left open after 2026-10-10
+Devin: "is it possible when sorting through deposits and charges to add kinda discretely a 'more info' next to each charge where claude could actually look into the charge and help you figure out what it was for?" Built: a quiet More info link on new card charges, bank deposits and the MY PAY inbox; the reader says what the line most likely was, why, and (for a charge) which category it would file under, with a "Use ..." button that only sets the picker; "Look it up online" searches the web. Nothing is ever filed, ticked or logged by it.
+- [ ] The bank's own line is not kept (only the cleaned-up name; for deposits only date and amount), so it cannot decode a store number or city, or say who paid a deposit. Keeping it needs the bank feed function pasted again and a line in the privacy page. Devin to choose
+- [ ] Not on lists of charges already filed (Logged Card Transactions): a tap there also opens the swipe tray. Could be one more tray button
+- [ ] No allowance on the server: the app holds online look-ups to 25 a day a phone and remembers answers for the session only. A per-person allowance comes with the read function's next paste
+- [ ] In the MY PAY inbox, filing or skipping one item resets the pickers on the other cards, so a category taken with "Use ..." on another card is lost
+- [ ] The deposit row's More info was checked by a scripted run and two code reviews, not yet seen on a real deposit on a phone
 
 ## Who sees what: left open after 2026-10-10 (from the map of every tab by role)
 - [ ] **The notification function sends the band's money to crew phones.** "MERCH NUMBERS! city: $X" and "You're in the green" went to every phone that had them on, whatever the role. The app no longer sends "in the green" and no longer offers MERCH NUMBERS to crew, but the server function (supabase/functions/notify, and ari for merch) still would if asked: it should send both only to people who can see the tour's money. Needs a function deploy; then turn "in the green" back on

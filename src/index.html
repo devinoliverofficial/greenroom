@@ -3203,6 +3203,30 @@ button.fl-row { cursor: pointer; }
 .mpc-item .tf-run-t { display: flex; justify-content: space-between; gap: 10px; }
 .mpc-amt { font-weight: 700; }
 .mpc-item .segmented, .mpc-item .seg { margin-bottom: 10px; }
+/* More info on a bank or card line being sorted (new charges, new deposits,
+   the MY PAY inbox): a quiet link at the end of the line under the name, and
+   its answer under that line. Words only, so it is kept apart from the green
+   "this number matches" box: a hairline down the side and no fill. (The
+   check-in button's .ci-wrap, .ci-btn and .ci-room are older and unrelated.) */
+.linkbtn.ci-link { flex: none; min-height: 0; margin: -6px 0 -6px 2px; padding: 6px; font-size: 12px; font-weight: 500; line-height: 1.2;
+  color: var(--ink-3); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.tf-sub .linkbtn.ci-link { margin: -6px 0 -6px 4px; }
+.ci-box { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; margin: 2px 0; padding: 1px 0 1px 10px;
+  border-left: 2px solid var(--line); font-size: 12px; font-weight: 400; line-height: 1.4; color: var(--ink-2); text-align: left; overflow-wrap: anywhere; }
+.ci-box p { margin: 0; }
+.ci-what { font-size: 12.5px; color: var(--ink); }
+.ci-why { position: relative; padding-left: 10px; }
+.ci-why::before { content: ''; position: absolute; left: 1px; top: .6em; width: 3px; height: 3px; border-radius: 50%; background: var(--ink-3); }
+.ci-sure { font-size: 11px; font-weight: 600; color: var(--ink-3); }
+.ci-file { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 2px 0; }
+.ci-file-t { font-weight: 600; color: var(--ink); }
+.ci-picked { color: var(--ink-3); }
+.btn.sm.ci-use { min-height: 32px; height: auto; padding: 0 11px; font-size: 12px; font-weight: 600; border-radius: 9px; }
+.ci-wait, .ci-err { color: var(--ink-3); }
+.ci-box .linkbtn.ci-link.ci-online { justify-self: start; margin: 0 0 0 -6px; padding: 7px 6px; }
+.ci-foot { font-size: 11px; color: var(--ink-3); }
+.mpc-item .ci-box { margin: 8px 0 10px; }
+.iv-sheet .ci-box { margin: -4px 0 0; }
 .pay-sum .neg { color: var(--neg); }
 .pay-head { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 2px 16px; }
 .pay-fig { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

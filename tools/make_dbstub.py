@@ -106,6 +106,37 @@ shim = r"""<script>
       var v = window.__harness.venue || { address: null, phone: null };
       return new Promise(function (res) { setTimeout(function () { res(v); }, 300); });
     }
+    /* More info on one bank or card line. Every prompt is kept, with its
+       options, in __harness.infoAsks, so a test can read exactly what was
+       sent. The answer is __harness.info when set; else a fixed one (for a
+       charge: under 'gas' when the prompt offers that key, else the first key
+       it offers; for a deposit: words that name no night). __harness.infoFail
+       rejects with that code; __harness.infoSlow waits that many ms first.
+       A stopped question rejects 'cancelled', as the real reader does. */
+    if (/^CHARGE INFO\./.test(String(prompt))) {
+      var H = window.__harness, o = arguments[1] || {}, text = String(prompt);
+      H.infoAsks = (H.infoAsks || []).concat([{ prompt: text, opts: o }]);
+      var isDep = /^Kind: a deposit/m.test(text);
+      var offered = (text.split('CATEGORIES IT COULD BE FILED UNDER')[1] || '').split('WHAT TO DO')[0];
+      var first = /^([a-z0-9-]+): /m.exec(offered);
+      var key = /^gas: /m.test(offered) ? 'gas' : first ? first[1] : null;
+      var ans = H.info || (isDep
+        ? { what: 'The numbers alone do not say what this deposit was for.',
+            why: ['The bank gives only the date and the amount for money coming in.'], sure: 'low' }
+        : { what: 'Most likely fuel and snacks at a highway travel stop.',
+            why: ['The name is a chain of travel stops along the interstate.', 'The tour had a show within two days of that date.',
+              'The amount is about what a van fill-up and a few snacks cost.'],
+            category: key, sure: o.search ? 'high' : 'medium' });
+      return new Promise(function (res, rej) {
+        var stopped = function () { rej(Object.assign(new Error('cancelled'), { code: 'cancelled' })); };
+        if (o.signal && o.signal.aborted) { stopped(); return; }
+        var timer = setTimeout(function () {
+          if (H.infoFail) rej(Object.assign(new Error(String(H.infoFail)), { code: H.infoFail }));
+          else res(JSON.parse(JSON.stringify(ans)));
+        }, Number(H.infoSlow) || 0);
+        if (o.signal && o.signal.addEventListener) o.signal.addEventListener('abort', function () { clearTimeout(timer); stopped(); });
+      });
+    }
     return Promise.resolve([]);
   };
   fakeSample.limits = function () { return Promise.resolve({ images: { mediaTypes: ['image/png', 'image/jpeg'], maxInputBytes: 5000000 } }); };

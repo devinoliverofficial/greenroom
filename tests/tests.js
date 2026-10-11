@@ -1963,6 +1963,27 @@
       eq(p, 'Dance Gavin Dance toured in 2018.\nWith Erra and I See Stars from May 26.\nUnrelated.', 'the mention and its neighbours');
       eq(G.paragraphsAbout('Nothing here.', 'I See Stars'), '');
     });
+
+    test('showsNear: the shows within so many days either side of a date, oldest first', function () {
+      var tour = { shows: {
+        c: { date: '2026-10-06', city: 'Milwaukee, WI', venue: 'The Rave' },
+        a: { date: '2026-10-01', city: 'Detroit, MI', venue: 'Saint Andrew’s Hall' },
+        b: { date: '2026-10-03', city: 'Chicago, IL', venue: 'Bottom Lounge' },
+        e: { date: '2026-09-29', city: 'Cleveland, OH', venue: 'House of Blues' },
+        x: { date: '', city: 'No date yet' }, y: { date: '2026-13-40', city: 'Not a date' } } };
+      var ids = function (list) { return list.map(function (s) { return s.id; }).join(','); };
+      eq(ids(G.showsNear(tour, '2026-10-03', 2)), 'a,b', 'two days either side, the day itself included');
+      eq(ids(G.showsNear(tour, '2026-10-04', 2)), 'b,c', 'the edge counts: Oct 6 is two days after Oct 4');
+      eq(ids(G.showsNear(tour, '2026-10-03', 0)), 'b', 'no days either side is that day alone');
+      eq(ids(G.showsNear(tour, '2026-10-02', 10)), 'e,a,b,c', 'ten days either side, across the month, oldest first');
+      eq(G.showsNear(tour, '2026-10-03', 2)[0].city, 'Detroit, MI', 'each one is the show itself');
+      eq(G.showsNear(tour, '2026-11-20', 2).length, 0, 'nothing near');
+      eq(G.showsNear(tour, 'not a date', 2).length, 0, 'a date that is not one gives none');
+      eq(G.showsNear(tour, '2026-10-03', -3).length, 1, 'a negative span is that day alone');
+      eq(G.showsNear({ kind: 'offtour', shows: {} }, '2026-10-03', 2).length, 0, 'a book with no shows');
+      eq(G.showsNear(null, '2026-10-03', 2).length, 0, 'no tour');
+      eq(Object.keys(tour.shows).length, 6, 'the tour is untouched');
+    });
   })();
 
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };

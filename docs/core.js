@@ -333,6 +333,18 @@
       (a.createdAt || 0) - (b.createdAt || 0);
   }
 
+  /* The shows near a date: every show of the tour dated within `days` days
+     either side of it (the day itself included), oldest first. It answers
+     "where was the tour when this charge landed". A date that isn't one
+     gives none, and so does a tour with no shows (the Off Tour book). */
+  function showsNear(tour, date, days) {
+    if (!parseDay(date)) return [];
+    var n = Math.max(0, Math.floor(num(days)));
+    return rows(tour && tour.shows).filter(function (s) {
+      return parseDay(s.date) && Math.abs(daysBetween(s.date, date)) <= n;
+    }).sort(byDate);
+  }
+
   /* One calendar year of an Off Tour book, for Budget History (Devin,
      2026-10-10: under each year, OFF TOUR "should take you to the summary of
      that year"). The book is one running record, so a year is the entries
@@ -2234,7 +2246,7 @@
     num: num, optNum: optNum, money: money, moneyCents: moneyCents, round: round,
     pad: pad, ymd: ymd, parseDay: parseDay, tourToday: tourToday,
     addDays: addDays, daysBetween: daysBetween,
-    isObj: isObj, rows: rows, byDate: byDate,
+    isObj: isObj, rows: rows, byDate: byDate, showsNear: showsNear,
 
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
