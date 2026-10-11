@@ -13,7 +13,9 @@ shim = r"""<script>
     t1: { name: 'Harness run', artist: 'I See Stars', setupDone: true, setupStep: 5, createdAt: 1,
       // Real-tour-sized numbers, so the Expenses Total row is tested at full width.
       expenses: { bus: { projected: 85000 }, hotels: { projected: 23400 }, food: { projected: 12500 },
-        gas: { projected: 9800 }, flights: { projected: 18250 } }, commission: {}, crew: {},
+        gas: { projected: 9800 }, flights: { projected: 18250 } }, commission: {},
+      // One person on the list, so a payment typed under Crew can say who it paid.
+      crew: { jm: { name: 'Jeff Mora', title: 'FOH Engineer', pay: 1500, payTyped: true, createdAt: 1 } },
       // A card linked to the app: its row leads the Expenses chart.
       debts: { d1: { id: 'd1', label: 'Business Gold Card \u2013 1008', amount: 3200, kind: 'card', breakdown: {},
         cutoff: ymd(new Date(today.getTime() - 20 * 864e5)), feed: { name: 'Business Gold Card \u2013 1008', bank: 'American Express' }, createdAt: 1 } },
@@ -29,7 +31,9 @@ shim = r"""<script>
         u3: { id: 'u3', date: ymd(new Date(today.getTime() - 8 * 864e5)), merchant: 'VZWRLSS*APOCC VISB', amount: 210.5, category: 'utilities', manual: true, paid: true },
         u4: { id: 'u4', date: ymd(new Date(today.getTime() - 7 * 864e5)), merchant: 'LA FITNESS 8005551234', amount: 39.99, category: 'utilities', manual: true, paid: false },
         u5: { id: 'u5', date: ymd(new Date(today.getTime() - 5 * 864e5)), merchant: 'PUBLIC STORAGE 28511', amount: 189, category: 'utilities', manual: true, paid: true },
-        u6: { id: 'u6', date: ymd(new Date(today.getTime() - 5 * 864e5)), merchant: 'Extra Space 1234', amount: 164, category: 'utilities', manual: true, paid: false } }, imports: {},
+        u6: { id: 'u6', date: ymd(new Date(today.getTime() - 5 * 864e5)), merchant: 'Extra Space 1234', amount: 164, category: 'utilities', manual: true, paid: false },
+        // Jeff's pay, typed by hand two days before the bank's Zelle of the same amount (feed row z1): a possible double, named on the row.
+        zp1: { id: 'zp1', date: ymd(new Date(today.getTime() - 3 * 864e5)), merchant: 'Pay: Jeff', amount: 500, category: 'crew', crewId: 'jm', manual: true, paid: true, createdAt: 2 } }, imports: {},
       bands: ['Opener Band', 'I See Stars'],
       shows: { s1: { id: 's1', date: ymd(today), city: 'Austin, TX', venue: 'Mohawk',
         daySheet: { doors: '7:00 PM', venueAddress: '912 Red River St, Austin, TX 78701' } },
@@ -266,7 +270,13 @@ shim = r"""<script>
       { id: 'y3', tour_id: 't1', date: d0, merchant: 'Hotel Van Zandt', amount: 212.4, category: 'hotels', account: 'Business Gold Card \u2013 1008', why: 'Maybe already in' },
       { id: 'y4', tour_id: 't1', date: d0, merchant: 'Marriott', amount: -120, category: 'hotels', account: 'Business Gold Card \u2013 1008', why: 'Refund' },
       // A bank-style name as long as they really come: the row must still show all of itself.
-      { id: 'y5', tour_id: 't1', date: d0, merchant: 'AMAZON MKTPL*2X4Y67ZQ3 AMZN.COM/BILL WA 98109', amount: 1249.37, category: null, account: 'Business Gold Card \u2013 1008', why: 'New merchant' }
+      { id: 'y5', tour_id: 't1', date: d0, merchant: 'AMAZON MKTPL*2X4Y67ZQ3 AMZN.COM/BILL WA 98109', amount: 1249.37, category: null, account: 'Business Gold Card \u2013 1008', why: 'New merchant' },
+      // Money sent from a bank account, as the catch-up brings it in: a Zelle (the same amount as
+      // Jeff's pay typed two days earlier, charge zp1), a wire, and a transfer that may be a move
+      // between his own accounts (a long reason: it must wrap inside the row).
+      { id: 'z1', tour_id: 't1', date: ymd(new Date(today.getTime() - 864e5)), merchant: 'Zelle payment to Jeff Mora', amount: 500, category: null, account: 'Merch \u2013 1885', why: 'Zelle' },
+      { id: 'w1', tour_id: 't1', date: ymd(new Date(today.getTime() - 3 * 864e5)), merchant: 'Wire to Nightliner Bus Co', amount: 4200, category: null, account: 'Merch \u2013 1885', why: 'Wire' },
+      { id: 'x1', tour_id: 't1', date: ymd(new Date(today.getTime() - 2 * 864e5)), merchant: 'Online Transfer to CHK 1885', amount: 1500, category: null, account: 'Business Adv Relationship \u2013 5370', why: 'Transfer \u00b7 may be a move to Merch \u00b7\u00b71885' }
     ]
   };
   window.__harness.calls = []; window.__harness.marked = []; window.__harness.feedFns = [];
@@ -797,8 +807,11 @@ shim = r"""<script>
           b1: { name: 'Devin Oliver', title: 'Artist', pay: 600, payTyped: true, createdAt: 1 },
           b2: { name: 'Brent Allen', title: 'Tour Manager', member: true, pay: 400, payTyped: true, createdAt: 2 },
           c1: { name: 'Tasha Reed', title: 'Tour Manager', pay: 700, payTyped: true, createdAt: 3 },
-          c2: { name: 'Connor Reyes', title: 'Band', pay: 300, payTyped: true, createdAt: 4 } },
+          c2: { name: 'Connor Reyes', title: 'Band', pay: 300, payTyped: true, createdAt: 4 },
+          // (The everyday seed's one person and his typed pay come off, so this seed's sums stay its own.)
+          jm: null },
         charges: {
+          zp1: null,
           bp1: { date: day(4), merchant: 'Pay: Devin', amount: 900, category: 'crew', crewId: 'b1', paid: true, manual: true },
           cp1: { date: day(3), merchant: 'Pay: Tasha', amount: 500, category: 'crew', crewId: 'c1', paid: true, manual: true },
           cp2: { date: day(2), merchant: 'VENMO PAYMENT', amount: 200, category: 'crew' } },
@@ -1905,6 +1918,23 @@ shim = r"""<script>
         Object.keys(body.modes || {}).forEach(function (id) { F.accounts.forEach(function (a) { if (a.id === id) a.mode = body.modes[id]; }); });
         if (body.on === true) { F.row.switched_on = true; F.row.since = body.since; }
         if (body.on === false) F.row.switched_on = false;
+      }
+      /* Catch up (sync with catchup: true): the counts of one read from the start. The three sent
+         rows it speaks of are in the pile from the beginning (z1, w1, x1). __harness.catchupOld = true
+         answers like a server that does not know the word; __harness.catchupFail = true like a request
+         that got no answer (a string instead, say 'ITEM_LOGIN_REQUIRED', like a bank that refused);
+         __harness.catchupReply, when set, is answered as it is (zeros, for a phone that asked twice);
+         __harness.catchupSlow waits that many ms first. */
+      if (action === 'sync' && body && body.catchup === true) {
+        var Hc = window.__harness, ans;
+        if (Hc.catchupFail) ans = typeof Hc.catchupFail === 'string' ? { ok: false, status: Hc.catchupFail } : { error: 'offline' };
+        else {
+          F.row.last_run = new Date().toISOString();
+          ans = Hc.catchupOld ? { ok: true, status: 'ok', filed: 0, waiting: 0 }
+            : (Hc.catchupReply || { ok: true, status: 'ok', waiting: 3, filed: 0, catchup: true,
+              found: { zelle: 1, wire: 1, transfer: 1, other: 0, maybe: 0, from: '2026-10-02', to: '2026-10-08' } });
+        }
+        return new Promise(function (res) { setTimeout(function () { Hc.feedPush(); res(ans); }, Hc.catchupSlow > 0 ? Hc.catchupSlow : 0); });
       }
       if (action === 'sync') F.row.last_run = new Date().toISOString();
       window.__harness.feedPush();

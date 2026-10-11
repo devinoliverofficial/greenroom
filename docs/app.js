@@ -20262,6 +20262,61 @@
         toast('Marked paid back. Someone else had already sorted that charge: check it isn\u2019t also filed as an expense.', 6500);
       }
     }
+    /* "It's the one I typed": this bank row is the bank's copy of an entry
+       already on the tour (r.twin, paired by feedTwins and named on the row).
+       Setting it aside cannot be undone in the app, so it takes two taps, like
+       the reimbursement match above: the first only arms the line, which then
+       asks "Set this bank copy aside? It will not be counted.", and only "Yes"
+       sets it aside, with the same call as "Not a tour charge: set it aside".
+       The typed entry is never touched. "No, it's another payment" writes
+       nothing: the row leaves the fold and is an ordinary row for the rest of
+       the visit (S.notTwin). */
+    // The typed entry changed under an open sheet (deleted, another amount, another day): look again.
+    function twinChanged(r) {
+      r.twArm = false; r.twin = null; r.duplicate = r.why === 'Maybe already in';
+      draw();
+      toast('The one you typed has changed. Take another look.', 5200);
+    }
+    function armTwin(r) {
+      if (busy) return;
+      if (!feedTwinStands(tourId, r)) { twinChanged(r); return; }
+      r.twArm = true; r.twArmAt = Date.now();
+      draw();
+    }
+    async function twinYes(r, btn) {
+      // (Not the second half of a double tap: "Yes" is drawn where the first button was.)
+      if (busy || !r.twArm || Date.now() - G.num(r.twArmAt) < 350) return;
+      if (!feedTwinStands(tourId, r)) { twinChanged(r); return; }
+      var tw = r.twin;
+      var res = await file([r], false, btn, 'Set aside. Only the one you typed is counted.');
+      // (Not set aside: file has said why. The line asks again from the start.)
+      if (live.indexOf(r) >= 0) { r.twArm = false; draw(); }
+      // (Its bank copy is set aside: that typed entry is not offered to another bank row.)
+      else if (tw && res && res.skipped) twinUsed(tourId, tw);
+    }
+    function twinNo(r) {
+      if (busy) return;
+      S.notTwin = S.notTwin || {};
+      if (r.feedId != null) S.notTwin[r.feedId] = true;
+      r.twArm = false; r.twin = null; r.duplicate = false;
+      // The typed entry is free again: pair the sheet afresh, so the next bank row it could be is asked about.
+      var fresh = {};
+      feedRows(tourId).forEach(function (x) { fresh[x.feedId] = x; });
+      live.forEach(function (x) {
+        var f = x !== r && x.feedId != null ? fresh[x.feedId] : null;
+        if (!f) return;
+        if (f.duplicate && !x.duplicate) x.pick = false;
+        x.duplicate = f.duplicate; x.twin = f.twin; x.twArm = false;
+      });
+      draw();
+    }
+    // The categories this tour has a hand-typed total on (Expenses, "paid" typed as one number).
+    function typedTotals() {
+      var t = getTour(tourId) || base, exp = G.normExpenses(t.expenses), label = {};
+      G.chargeCategoriesFor(t).forEach(function (c) { label[c.key] = c.label; });
+      return Object.keys(exp).filter(function (k) { return G.num(exp[k].paid) > 0; })
+        .map(function (k) { return label[k] || 'a category'; });
+    }
 
     var title = h('h2', { class: 'sh-title' });
     // Search: "uber" shows every Uber charge (an amount works too). Check
@@ -20282,8 +20337,9 @@
         draw();
       } });
     var found = h('p', { class: 'rv-found', 'aria-live': 'polite' });
+    // (Check all never ticks a row in the "may already be logged" fold: that one is ticked by hand, on purpose, or not at all.)
     var allBox = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check all',
-      onchange: function (e) { live.filter(shown).forEach(function (r) { r.pick = e.target.checked; }); draw(); } });
+      onchange: function (e) { live.filter(shown).forEach(function (r) { r.pick = e.target.checked && !r.duplicate && !r.preCutoff; }); draw(); } });
     var addTop = pressable(h('button', { class: 'btn primary sm rv-addall', type: 'button' }, 'ADD'),
       function () { file(live.filter(function (r) { return r.pick; }), true, addTop); });
     var topCat = null;
@@ -20354,13 +20410,24 @@
         addTop),
       chips);
     var listHost = h('div');
+    // One calm line at the top when a typed total and money sent from the bank meet (refreshBar fills it).
+    var typedLine = h('p', { class: 'note rv-typed', hidden: true });
 
     function refreshBar() {
       var picked = live.filter(function (r) { return r.pick; });
       var total = picked.reduce(function (n, r) { return n + G.num(r.amount); }, 0);
       var vis = live.filter(shown);
-      allBox.checked = vis.length > 0 && vis.every(function (r) { return r.pick; });
+      // (The rows Check all can tick: everything showing but the possible doubles.)
+      var can = vis.filter(function (r) { return !r.duplicate && !r.preCutoff; });
+      allBox.checked = can.length > 0 && can.every(function (r) { return r.pick; });
       allBox.indeterminate = picked.length > 0 && !allBox.checked;
+      // A typed total and money sent from the bank in the same sheet: say it once, at the top.
+      var totals = live.some(function (r) { return /^(Zelle|Wire|Transfer|Maybe already in)/.test(r.why || ''); }) ? typedTotals() : [];
+      typedLine.hidden = !totals.length;
+      typedLine.textContent = !totals.length ? ''
+        : totals.length === 1 ? 'You typed a total for ' + totals[0] + '. A payment that is already inside that total would be counted twice if you file it again.'
+        : 'You typed totals for ' + totals.slice(0, -1).join(', ') + ' and ' + totals[totals.length - 1] +
+          '. A payment that is already inside one of those totals would be counted twice if you file it again.';
       var m = vis.reduce(function (n, r) { return n + G.num(r.amount); }, 0);
       found.textContent = query ? (vis.length ? plural(vis.length, 'match') .replace('matchs', 'matches') + ' \u00b7 ' + G.moneyCents(m) : 'Nothing matches \u201c' + query + '\u201d') : '';
       found.hidden = !query;
@@ -20457,6 +20524,29 @@
       // Someone is owed exactly this amount: say so, under the row. Nothing is
       // picked or ticked by it; the button is the only thing that acts.
       var backs = feed && !baseOff ? reimbMatches(tourId, r) : [];
+      // A possible double that this phone paired with one typed entry: say
+      // which, and ask. Nothing is ticked or set aside by the line; the two
+      // buttons are the only things that act (armTwin / twinYes / twinNo).
+      var twinBox = null;
+      if (feed && r.duplicate && r.twin) {
+        var twLine = h('p', { class: 'iv-hit-t' }, 'Looks like the ' + G.moneyCents(r.twin.amount) + ' you typed under ' +
+          r.twin.where + ' on ' + dayMD(r.twin.date) + '.');
+        if (r.twArm) {
+          var twYes = h('button', { class: 'btn sm primary', type: 'button' }, 'Yes');
+          var twNo = h('button', { class: 'btn sm ghost', type: 'button' }, 'No');
+          pressable(twYes, function () { twinYes(r, twYes); });
+          pressable(twNo, function () { if (busy) return; r.twArm = false; draw(); });
+          twinBox = h('div', { class: 'iv-hit rb-match tw-match' }, twLine,
+            h('p', { class: 'iv-hit-t tw-ask' }, 'Set this bank copy aside? It will not be counted.'),
+            h('span', { class: 'rb-acts' }, twYes, twNo));
+        } else {
+          var twMine = h('button', { class: 'btn sm primary', type: 'button' }, 'It’s the one I typed');
+          var twOther = h('button', { class: 'btn sm ghost', type: 'button' }, 'No, it’s another payment');
+          pressable(twMine, function () { armTwin(r); });
+          pressable(twOther, function () { twinNo(r); });
+          twinBox = h('div', { class: 'iv-hit rb-match tw-match' }, twLine, h('span', { class: 'rb-acts' }, twMine, twOther));
+        }
+      }
       wrap.append(cb, h('div', { class: 'rv-fields' },
         h('div', { class: 'rv-head' },
           h('span', { class: 'rv-name' }, r.merchant),
@@ -20467,6 +20557,7 @@
           r.source === 'suggested' ? h('span', { class: 'rv-flag ci-sug' }, 'Suggested') : null,
           info ? info.link : null),
         info ? info.box : null,
+        twinBox,
         h('div', { class: 'rv-act' }, sel,
           (function () {
             var b = h('button', { class: 'btn sm primary rv-add1', type: 'button' }, 'Add');
@@ -20506,7 +20597,7 @@
         var t2 = getTour(tourId);
         var names = G.cardDebts(t2).map(function (c) { return c.label || 'your card'; });
         kids.push(h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:18px',
-          onclick: function () { openBefore = !openBefore; draw(); } },
+          onclick: function () { openBefore = !openBefore; if (!openBefore) live.forEach(function (r) { if (r.preCutoff) r.pick = false; }); draw(); } },
           (openBefore ? 'Hide ' : 'Show ') + plural(before.length, 'charge') + ' from before the tour started'));
         if (openBefore) {
           kids.push(h('p', { class: 'note' }, 'These are already inside ' + (names.length === 1 ? 'the ' + names[0] + ' balance' : 'the card balance') +
@@ -20516,13 +20607,17 @@
       }
       if (dup.length) {
         kids.push(h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:18px',
-          onclick: function () { openDup = !openDup; draw(); } },
+          // (Closing the fold unticks what is in it, so nothing out of sight gets added.)
+          onclick: function () { openDup = !openDup; if (!openDup) live.forEach(function (r) { if (r.duplicate) r.pick = false; }); draw(); } },
           (openDup ? 'Hide ' : 'Show ') + plural(dup.length, 'charge') + (feed ? ' that may already be logged' : ' already imported')));
         if (openDup) {
           if (feed) {
-            kids.push(h('p', { class: 'note' }, 'Each of these matches a charge already on the tour \u2014 same amount, within a day \u2014 ' +
-              'so it\u2019s probably the bank\u2019s copy of one you logged from a statement or by hand. Adding it would count the money twice: ' +
-              'set it aside unless it really is a second charge.'));
+            // Rows that name the entry they look like carry their own line and buttons; the rest keep the fold's words.
+            kids.push(h('p', { class: 'note' }, dup.every(function (r) { return !!r.twin; })
+              ? 'Each of these is the same amount as something you already typed on this tour, within three days. ' +
+                'Adding it would count the money twice. Each one names the entry it looks like. Say which it is.'
+              : 'Each of these is the same amount as something already on this tour, within a few days. ' +
+                'Adding it would count the money twice. Set it aside unless it really is a second payment.'));
           }
           kids.push(h('div', { class: 'review' }, dup.map(chargeRow)));
         }
@@ -20541,6 +20636,7 @@
         h('p', { class: 'sh-sub' }, feed
           ? 'Check charges and tap a category to sort them all, then ADD. Or sort and Add them one at a time. Anything you don’t add stays here for later.'
           : 'Check charges and tap a category to sort them all, then ADD. Or sort and Add them one at a time. Nothing you don’t add is saved.'),
+        typedLine,
         tools,
         listHost,
         h('div', { class: 'stack', style: 'margin-top:14px' },
@@ -20563,53 +20659,13 @@
   function feedOn() { return !!(S.feed && S.feed.row && S.feed.row.switched_on); }
   function feedSince() { return S.feed && S.feed.row && S.feed.row.since ? dayMD(S.feed.row.since) : 'the feed started'; }
 
-  /* A charge logged some other way first (a statement upload, typed by
-     hand) comes round again as the bank's copy on the next refresh. When
-     the bank's copies pair off one to one with charges already on the tour
-     (same amount, within a day), there's no doubt which they are, so they
-     are set aside by themselves and never show up as new. Where the count
-     doesn't match (three hotel rooms at one price and only two logged), the
-     extra waits in the "may already be logged" fold, because one of them is
-     real. Charges that came in through the feed itself never pair: the bank
-     never sends the same charge twice, so a look-alike of one of those is a
-     second, real charge. */
-  function autoAsideTwins(id) {
-    var B = window.GR_BACKEND, t = getTour(id);
-    if (S.mode !== 'db' || !B || !B.feedCall || !t || !canEditTour(id)) return;
-    var P = S.pile && S.pile[id];
-    if (!(createdTour(id) || (P && P.lead))) return;
-    S.asideDone = S.asideDone || {};
-    var waiting = feedWaiting(id).filter(function (it) { return G.num(it.amount) > 0 && !S.asideDone[it.id]; });
-    if (!waiting.length) return;
-    var others = G.rows(t.charges).filter(function (ch) { return chargeSource(t, ch) !== 'PLAID' && G.parseDay(ch.date); })
-      .concat(G.rows(t.extras).filter(function (x) { return G.parseDay(x.date); }));
-    if (!others.length) return;
-    var key = function (v) { return (Math.round(G.num(v) * 100) / 100).toFixed(2); };
-    var byAmt = {};
-    waiting.forEach(function (it) { (byAmt[key(it.amount)] = byAmt[key(it.amount)] || []).push(it); });
-    var picks = [];
-    Object.keys(byAmt).forEach(function (k) {
-      var items = byAmt[k];
-      var twins = others.filter(function (c) {
-        return key(c.amount) === k && items.some(function (it) { return Math.abs(G.daysBetween(String(c.date), String(it.date))) <= 1; });
-      });
-      if (twins.length && items.length <= twins.length) items.forEach(function (it) { picks.push(it); });
-    });
-    if (!picks.length) return;
-    picks.forEach(function (it) { S.asideDone[it.id] = true; });
-    B.feedCall('file', { tourId: id, picks: picks.map(function (it) {
-      return { id: it.id, keep: false, category: null, accounted: false, dest: 'tour', to: id };
-    }) }).then(function (r) {
-      if (!r || !r.ok) { picks.forEach(function (it) { delete S.asideDone[it.id]; }); return; }
-      var gone = {};
-      picks.forEach(function (it) { gone[it.id] = true; });
-      if (S.feed && S.feed.items) S.feed.items = S.feed.items.filter(function (it) { return !gone[it.id]; });
-      if (P && P.items) P.items = P.items.filter(function (it) { return !gone[it.id]; });
-      toast(picks.length === 1 ? 'A charge you\u2019d already logged came round from the bank and was set aside.'
-        : picks.length + ' charges you\u2019d already logged came round from the bank and were set aside.');
-      render(true);
-    }).catch(function () { picks.forEach(function (it) { delete S.asideDone[it.id]; }); });
-  }
+  /* A charge logged some other way first (typed by hand, a statement upload,
+     the merch cash log) comes round again as the bank's copy. The app never
+     sets one aside by itself (Devin, 2026-10-10: "I do not want to double log
+     anything"; his rule: the app suggests, a person approves). A bank row
+     that looks like one already on the tour stays in the pile, in the "may
+     already be logged" fold, unticked, naming the entry it looks like
+     (feedTwins), until he says which it is. */
   function feedWaiting(tourId) {
     var P = S.pile && S.pile[tourId];
     if (P && P.lead) return P.items || [];
@@ -20723,8 +20779,9 @@
     if (sheet) sheet.plaid = true;
   }
 
-  function feedProblem(code) {
-    return ({
+  // The words for a code the bank feed answers with; '' when the code has none of its own.
+  function feedProblemKnown(code) {
+    var words = {
       ITEM_LOGIN_REQUIRED: 'A bank needs you to sign in again. Open Settings, then Linked Cards, and tap Reconnect next to it.',
       PENDING_EXPIRATION: 'A bank connection is about to expire. Open Settings, then Linked Cards, and tap Reconnect next to it.',
       not_connected: 'No bank is connected yet. Open Settings, then Linked Cards, to connect one.',
@@ -20737,7 +20794,11 @@
       INSTITUTION_NOT_RESPONDING: 'The bank isn\u2019t answering right now. Try again later.',
       save_failed: 'Couldn\u2019t save what came in. Try again.',
       no_hosted_link: 'Plaid didn\u2019t open its connect window. Try again in a moment.'
-    })[code] || 'Couldn\u2019t reach the cards just now. Try again in a moment.';
+    };
+    return typeof code === 'string' && Object.prototype.hasOwnProperty.call(words, code) ? words[code] : '';
+  }
+  function feedProblem(code) {
+    return feedProblemKnown(code) || 'Couldn\u2019t reach the cards just now. Try again in a moment.';
   }
   function feedResult(r) {
     if (!r || !r.ok) return feedProblem(r && (r.status || r.error));
@@ -20777,7 +20838,6 @@
     // Connected but not set up yet: the one time the choices are asked.
     if (!row.switched_on) return addCard(function () { openFeedSheet(id); });
     // Set up: one button does the rest. The choices are in the tour menu.
-    autoAsideTwins(id);
     var n = feedWaiting(id).length;
     var label = h('span', null, 'Refresh Card');
     // A tour without logging dates yet gets asked for them first.
@@ -20789,8 +20849,103 @@
     if (incomeReady(id)) ensureIncomeNew(id);
     return h('div', { class: 'feed-entry' },
       h('div', { class: 'feed-bar' }, refreshBtn),
-      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run)),
+      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run), ' \u00b7 ',
+        h('button', { class: 'linkbtn feed-catchup', type: 'button', onclick: function () { openCatchUp(id); } }, 'Catch up on missed payments')),
       cardActivityButton(id));
+  }
+
+  /* Catch up (Devin, 2026-10-10): "there are expenses on the debit card that
+     are not showing up on the app. We are not seeing Zelle ... 'transfer' ...
+     wire expenses" and "We are going to have to rescan and play catch up ...
+     I do not want to double log anything". The bank feed used to throw away
+     every line the bank files under "transfer out". The server now keeps
+     money sent to someone; this asks it to read each bank again from the
+     start. What is already here is known by the bank's own id and cannot come
+     in twice; what was missed comes in waiting; nothing is filed by the read. */
+  // pile: how many charges are waiting in his card charges right now (every tour's).
+  function catchUpWords(r, pile) {
+    var f = (r && r.found) || {};
+    var kinds = [[G.num(f.zelle), 'Zelle payment'], [G.num(f.wire), 'wire'], [G.num(f.transfer), 'transfer'], [G.num(f.other), 'other charge']]
+      .filter(function (x) { return x[0] > 0; }).map(function (x) { return plural(x[0], x[1]); });
+    var maybe = G.num(f.maybe), n = G.num(r && r.waiting);
+    if (!n) {
+      // The counts are one read's. A phone that sent the request again (the
+      // first answer never arrived) hears zeros from the second read, because
+      // the first already brought everything in: say what is in the pile, not
+      // that nothing was missed.
+      var p = G.num(pile);
+      if (p > 0) {
+        return plural(p, 'charge') + (p === 1 ? ' is' : ' are') + ' waiting in your card charges to sort. This read found nothing beyond ' +
+          (p === 1 ? 'that' : 'those') + '. Nothing was added to a tour.';
+      }
+      return 'Nothing new was found.';
+    }
+    var span = f.from && f.to ? ' from ' + dayMD(f.from) + ' to ' + dayMD(f.to) : '';
+    return 'Found ' + plural(n, 'payment') + span + (kinds.length ? ': ' + kinds.join(', ') : '') + '. ' +
+      (maybe === 1 ? '1 looks like one you already typed in and waits in its own fold. '
+        : maybe > 1 ? maybe + ' look like ones you already typed in and wait in their own fold. ' : '') +
+      'They are waiting in your card charges to sort. Nothing was added to a tour.';
+  }
+  function openCatchUp(id) {
+    var B = window.GR_BACKEND;
+    if (!B || !B.feedCall || !createdTour(id)) return;
+    // done: { text, sort: offer "Sort the ones on this tour", again: offer "Check again" }
+    var st = { busy: false, done: null };
+    var pileNow = function () { return S.feed && S.feed.items ? S.feed.items.length : 0; };
+    var draw = function () {
+      var kids = [h('h2', { class: 'sh-title' }, 'Catch up on missed payments')];
+      if (!st.done) {
+        kids.push(h('p', { class: 'sh-sub' }, 'Greenroom was leaving out money sent from your bank accounts: Zelle, wires and transfers. This reads each bank again from the start, as far back as the bank gives (about six months before you linked it), and brings in what was missed.'));
+        kids.push(h('p', { class: 'sh-sub' }, 'Nothing already here comes in twice, and nothing is added to a tour until you sort it. It can take a minute.'));
+        kids.push(h('p', { class: 'hint cu-before' }, 'Before you start: every tour needs its card dates set (the tour’s menu, Card settings). Payments outside every tour’s dates are not brought in.'));
+        // While it reads, the one button says so and Not now cannot be tapped.
+        kids.push(h('div', { class: 'stack', 'aria-busy': st.busy ? 'true' : null },
+          h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || null, onclick: run },
+            st.busy ? 'Reading the bank…' : 'Read the bank again'),
+          h('button', { class: 'btn ghost block', type: 'button', disabled: st.busy || null, onclick: function () { if (!st.busy) closeSheet(); } }, 'Not now')));
+      } else {
+        kids.push(h('p', { class: 'sh-sub' }, st.done.text));
+        var n = st.done.sort ? feedWaiting(id).length : 0;
+        kids.push(h('div', { class: 'stack' },
+          n ? h('button', { class: 'btn primary block', type: 'button', onclick: function () { closeSheet(); setTimeout(function () { openFeedReview(id); }, 280); } }, 'Sort the ones on this tour') : null,
+          st.done.again ? h('button', { class: 'btn primary block', type: 'button', onclick: function () { st.done = null; run(); } }, 'Check again') : null,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')));
+      }
+      return kids;
+    };
+    var redraw = function () { if (sheet && sheet.panel && here) { var host = sheet.panel.querySelector('.cu-host'); if (host) fillEl(host, draw()); } };
+    var here = true;
+    async function run() {
+      if (st.busy) return;
+      st.busy = true; redraw();
+      var r = null;
+      try { r = await B.feedCall('sync', { catchup: true }); } catch (e) { r = null; }
+      st.busy = false;
+      var code = r && (r.status || r.error), known = feedProblemKnown(code);
+      if (!r || !r.ok) {
+        // A bank's own trouble keeps its own words. The banks that did answer are read and saved all the same.
+        if (known) {
+          var some = r.catchup === true && G.num(r.waiting) > 0;
+          st.done = { sort: some, again: false, text: known + ' ' + (some ? 'The banks that did answer were read. ' + catchUpWords(r, pileNow())
+            : 'Nothing is added twice, so it is safe to run this again.') };
+        // No answer, or one that says nothing: the read may still be going (it is finished by the next one).
+        // (An answer that names its own trouble, known or not, is not a lost answer.)
+        } else if (r && r.ok === false && r.status) st.done = { sort: false, again: false, text: feedProblem(code) + ' Nothing is added twice, so it is safe to run this again.' };
+        else st.done = { sort: false, again: true, text: 'Still reading the bank, or the answer got lost. Nothing is added twice. Check again in a minute.' };
+      }
+      // An older copy of the bank feed does not know the word and only did an ordinary check.
+      else if (r.catchup !== true) st.done = { sort: false, again: false, text: 'The bank feed\u2019s update is not in place yet, so this only did an ordinary check. The missed payments are not in yet.' };
+      // Plaid's test mode says what it would do and saves nothing.
+      else if (r.test) st.done = { sort: false, again: false, text: 'Test mode: this read would bring in ' + plural(G.num(r.waiting), 'payment') + '. Nothing was saved.' };
+      else st.done = { sort: true, again: false, text: catchUpWords(r, pileNow()) };
+      if (incomeReady(id)) { S.incomeNew = null; ensureIncomeNew(id); }
+      // (The sheet was closed while it read: the answer is still said.)
+      if (!here) toast(st.done.text, 7000);
+      redraw();
+      render();
+    }
+    openSheet(function () { return [h('div', { class: 'cu-host' }, draw())]; },
+      { label: 'Catch up on missed payments', onClose: function () { here = false; render(true); } });
   }
 
   /* CARDS, the middle tab of Budget: Refresh Card Expenses on top, then each
@@ -21980,7 +22135,6 @@
 
   function tabCards(id, t) {
     syncCards(id);
-    autoAsideTwins(id);
     var waiting = feedWaiting(id);
     var cards = tourCards(t);
     // A card with charges waiting that isn't on the list yet still shows.
@@ -22138,7 +22292,6 @@
   }
 
   function openFeedReview(tourId, done, only, after) {
-    autoAsideTwins(tourId);
     var cards = [];
     feedWaiting(tourId).slice().sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); })
       .forEach(function (it) { var k = it.account || ''; if (cards.indexOf(k) < 0 && (only == null || k === only)) cards.push(k); });
@@ -22178,21 +22331,107 @@
       onclick: function () { openCardActivity(id); } },
       icon('card', 18), h('span', { class: 'feed-new-t' }, 'All New Card Activity', bits.length ? h('span', { class: 'feed-new-n' }, bits.join(' \u00b7 ')) : null));
   }
+  /* Possible doubles, named. A waiting bank row is paired with the ONE entry
+     typed by hand on this tour that it most likely is, so the sorting sheet
+     can say which and ask; nothing is set aside or filed by the pairing.
+     Typed by hand: a charge that did not come through the card feed
+     (chargeSource), a day-by-day cost, and a merch cash log entry that is
+     real spending (not a deposit or a hand-off). Same amount to the cent,
+     dates within three days. The nearest dates pair first, then the earlier
+     bank row; a bank row takes at most one typed entry and a typed entry at
+     most one bank row, so two Zelles of $500 against one typed $500 leave
+     one of them an ordinary row. A row he has said is another payment
+     (S.notTwin, this visit only) is left out.
+     Returns { <feed id>: { kind, id, label, date, amount, where } }. */
+  // Typed entries whose bank copy has been set aside ("It's the one I typed"), kept on this phone.
+  function twinUsedMap() { try { return JSON.parse(lsGet('gr-twin-used') || '{}') || {}; } catch (e) { return {}; } }
+  function twinUsed(tourId, tw) { var m = twinUsedMap(); m[tourId + ':' + tw.kind + ':' + tw.id] = 1; lsSet('gr-twin-used', JSON.stringify(m)); }
+  function feedTwins(tourId, waiting) {
+    var t = getTour(tourId), out = {}, used = twinUsedMap();
+    if (!t || !waiting || !waiting.length) return out;
+    var cents = function (v) { return Math.round(G.num(v) * 100); };
+    var not = S.notTwin || {};
+    var catLabel = {};
+    G.chargeCategoriesFor(t).forEach(function (c) { catLabel[c.key] = c.label; });
+    var typed = {};
+    var add = function (e) {
+      if (!G.parseDay(String(e.date || '')) || !(e.amount > 0) || used[tourId + ':' + e.kind + ':' + e.id]) return;
+      var k = 'c' + cents(e.amount);
+      (typed[k] = typed[k] || []).push(e);
+    };
+    G.rows(t.charges).forEach(function (ch) {
+      if (chargeSource(t, ch) === 'PLAID') return;
+      // (A payment to someone on the tour's list says who, the way the Crew page files it.)
+      var who = ch.category === 'crew' ? crewPerson(t, ch.crewId) : null;
+      add({ kind: 'charge', id: ch.id, label: ch.merchant || 'Charge', date: ch.date, amount: G.num(ch.amount), at: G.num(ch.createdAt),
+        who: who && who.name ? String(who.name).trim().toLowerCase().split(/\s+/)[0] : '',
+        where: (catLabel[ch.category] || 'Expenses') + (who && who.name ? ' · ' + who.name : '') });
+    });
+    G.rows(t.extras).forEach(function (x) {
+      add({ kind: 'extra', id: x.id, label: x.label || 'Cost', date: x.date, amount: G.num(x.amount), at: G.num(x.createdAt),
+        where: catLabel[G.DAY_BY_DAY] || 'Day by day' });
+    });
+    G.rows(t.cashLog).forEach(function (x) {
+      if (G.CASH_MOVES[x.category]) return;
+      add({ kind: 'cash', id: x.id, label: x.note || x.label || 'Merch cash', date: x.date, amount: G.num(x.amount), at: G.num(x.createdAt),
+        where: 'Merch cash log' });
+    });
+    // Every bank row and typed entry that could be the same payment.
+    var pairs = [];
+    waiting.forEach(function (it, i) {
+      var amt = G.num(it.amount);
+      if (!(amt > 0) || it.why === 'Refund' || not[it.id] || !G.parseDay(String(it.date || ''))) return;
+      (typed['c' + cents(amt)] || []).forEach(function (e) {
+        var gap = Math.abs(G.daysBetween(String(e.date), String(it.date)));
+        // (The bank's line names the person the typed entry paid: that pair goes first.)
+        var hit = e.who && e.who.length > 1 && (' ' + String(it.merchant || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' ').indexOf(' ' + e.who + ' ') >= 0;
+        if (gap <= 3) pairs.push({ it: it, i: i, e: e, gap: gap, miss: hit ? 0 : 1 });
+      });
+    });
+    pairs.sort(function (a, b) {
+      return a.miss - b.miss || a.gap - b.gap || String(a.it.date).localeCompare(String(b.it.date)) || a.i - b.i ||
+        String(a.e.date).localeCompare(String(b.e.date)) || a.e.at - b.e.at || String(a.e.id).localeCompare(String(b.e.id));
+    });
+    var taken = {}, has = {};
+    pairs.forEach(function (p) {
+      var bk = 'b' + p.it.id, ek = p.e.kind + ':' + p.e.id;
+      if (has[bk] || taken[ek]) return;
+      has[bk] = true; taken[ek] = true;
+      out[p.it.id] = { kind: p.e.kind, id: p.e.id, label: p.e.label, date: p.e.date, amount: p.e.amount, where: p.e.where };
+    });
+    return out;
+  }
+  // Is the entry a bank row was paired with still on the tour, as it was? (Asked again before anything is set aside.)
+  function feedTwinStands(tourId, r) {
+    var tw = r && r.twin, t = getTour(tourId);
+    if (!tw || !t) return false;
+    var map = tw.kind === 'charge' ? t.charges : tw.kind === 'extra' ? t.extras : t.cashLog;
+    var x = G.isObj(map) ? map[tw.id] : null;
+    if (!G.isObj(x) || Math.round(G.num(x.amount) * 100) !== Math.round(G.num(r.amount) * 100)) return false;
+    if (tw.kind === 'charge' && chargeSource(t, Object.assign({ id: tw.id }, x)) === 'PLAID') return false;
+    if (tw.kind === 'cash' && G.CASH_MOVES[x.category]) return false;
+    return !!G.parseDay(String(x.date || '')) && Math.abs(G.daysBetween(String(x.date), String(r.date))) <= 3;
+  }
   function feedRows(tourId) {
     var valid = {};
     G.chargeCategoriesFor(getTour(tourId)).forEach(function (c) { valid[c.key] = true; });
-    return feedWaiting(tourId).map(function (it) {
+    var waiting = feedWaiting(tourId), twins = feedTwins(tourId, waiting), not = S.notTwin || {};
+    return waiting.map(function (it) {
       var cat = it.category && valid[it.category] ? it.category : '';
       var amt = G.num(it.amount);
+      // A look-alike of something already on the tour waits in its own fold,
+      // unticked, so it isn't added twice: one this phone paired with a typed
+      // entry (twin: it is named on the row), or one the server marked (no
+      // twin: the fold's own words). "No, it's another payment" lifts both
+      // for the visit.
+      var twin = Object.prototype.hasOwnProperty.call(twins, it.id) ? twins[it.id] : null;
+      var dup = !not[it.id] && (!!twin || it.why === 'Maybe already in');
       return {
         feedId: it.id, date: it.date, posted: it.posted || it.date, seq: it.seq, merchant: it.merchant, amount: amt, account: it.account || '',
         category: cat, source: cat ? 'learned' : null, why: it.why || '',
-        // A look-alike of a charge already on the tour (same amount, within a
-        // day — usually the bank's copy of one logged from a statement or by
-        // hand) waits in its own fold, unticked, so it isn't added twice.
-        duplicate: it.why === 'Maybe already in', preCutoff: false,
+        duplicate: dup, twin: dup ? twin : null, preCutoff: false,
         // Refunds and look-alikes start unticked.
-        keep: amt > 0 && it.why !== 'Maybe already in'
+        keep: amt > 0 && !dup
       };
     });
   }

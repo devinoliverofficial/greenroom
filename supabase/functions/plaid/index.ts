@@ -163,28 +163,67 @@ function incomeAccounts(accounts: Record<string, Account>): Map<string, string> 
   return out;
 }
 
+/* Money SENT from a bank account (never a card): a Zelle, a wire, a transfer
+   to someone, a payment through an app such as Venmo. The bank files all of
+   these under "transfer out", the same heading as moving money to your own
+   savings, and for a long time the feed threw the whole heading away, so pay
+   sent by Zelle never reached the app. Now these come in, named for what they
+   are, and always wait to be sorted: nothing here files itself.
+   Still kept out, because they are not spending: paying a credit card (that
+   card's own charges are already counted), money moved to savings or an
+   investment account, and cash taken from a machine. */
+const NOT_SENT = new Set(["TRANSFER_OUT_SAVINGS", "TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS", "TRANSFER_OUT_WITHDRAWAL"]);
+function sentAs(t: Obj, pfc: Obj, onCard: boolean): string {
+  if (onCard || !(Number(t.amount) > 0) || pfc.primary === "LOAN_PAYMENTS") return "";
+  const line = [t.original_description, t.name, t.merchant_name, ...((t.counterparties ?? []) as Obj[]).map((c) => c?.name)].filter(Boolean).join(" ");
+  if (/\bzelle\b/i.test(line)) return "Zelle";
+  // (A wire by the bank's label or its own wording; not a night out at the Live Wire Lounge.)
+  if (pfc.detailed === "TRANSFER_OUT_WIRE" || /\b(wire (transfer|out|type|fee)|outgoing wire|fedwire|domestic wire|international wire)\b/i.test(line) ||
+      (pfc.primary === "TRANSFER_OUT" && /\bwire\b/i.test(line))) return "Wire";
+  if (pfc.primary === "TRANSFER_OUT") return NOT_SENT.has(String(pfc.detailed ?? "")) ? "" : "Transfer";
+  // (The bank's newer labels put some transfers under "other", or give none: the line's own words decide.)
+  return (!pfc.primary || pfc.primary === "OTHER") && /^transfer\b|\btransfer (to|from)\b|online (banking )?transfer/i.test(line) ? "Transfer" : "";
+}
+/* What to call a line that was sent to someone. The bank's own description is
+   the only place that says who was paid ("Zelle payment to Brent Allen",
+   "WIRE ... BNF:NIGHTLINER BUS CO ..."), so for these lines it is kept, with
+   every long number (account, routing, confirmation) taken out. */
+function sentName(kind: string, t: Obj): string {
+  const said = String(t.original_description || t.name || t.merchant_name || "").replace(/\d{6,}/g, " ").replace(/\s+/g, " ").trim();
+  if (kind === "Wire") {
+    const to = /\bBNF:\s*(.+?)\s*(?:\bID:|\bBNF BK:|\bPMT DET:|\bOBI:|$)/i.exec(said);
+    if (to && to[1].trim().length > 1) return ("Wire to " + to[1].trim()).slice(0, 80);
+  }
+  const short = said.replace(/\b(conf(irmation)?|ref(erence)?|trn|id)\s*[#:]?\s*[A-Za-z0-9]*\d[A-Za-z0-9]*/gi, " ")
+    .replace(/\b(conf(irmation)?|ref(erence)?|trn)\s*[#:]+(?=\s|$)/gi, " ").replace(/\s+/g, " ").trim();
+  return (short || said || kind).slice(0, 80);
+}
+
 /* One Plaid transaction in the shape the sorter reads (the YNAB shape the
    sorting was written for): amounts in thousandths, money out negative. Plaid
    says money out is positive, so the sign flips. Card payments and money
-   leaving for another account are transfers, never spending. */
+   moved to savings are transfers, never spending; money sent to someone is
+   spending (sentAs). */
 function asTx(t: Obj, accounts: Record<string, Account>): Obj {
   const pfc = (t.personal_finance_category ?? {}) as Obj;
   const amt = Number(t.amount) || 0;
   // A payment arriving on a card is the other half of a transfer, not a refund.
   const onCard = accounts[String(t.account_id)]?.type === "creditCard";
-  const transfer = pfc.primary === "LOAN_PAYMENTS" || pfc.primary === "TRANSFER_OUT" ||
-    (pfc.primary === "TRANSFER_IN" && onCard);
+  const sent = sentAs(t, pfc, onCard);
+  const transfer = !sent && (pfc.primary === "LOAN_PAYMENTS" || pfc.primary === "TRANSFER_OUT" ||
+    (pfc.primary === "TRANSFER_IN" && onCard));
   // Money arriving on a card that isn't a refund: the card being paid down.
   const payment = onCard && amt < 0 && (pfc.primary === "LOAN_PAYMENTS" || pfc.primary === "TRANSFER_IN" ||
     /\bpayment\b/i.test(String(t.name || "")));
   return {
     id: String(t.transaction_id), account_id: String(t.account_id), amount: Math.round(-amt * 1000),
-    payee_name: String(t.merchant_name || t.name || ""), import_payee_name_original: String(t.name || ""),
+    // (For money sent to someone the bank's own line says who it went to; the "merchant" is only the bank or the app.)
+    payee_name: sent ? sentName(sent, t) : String(t.merchant_name || t.name || ""), import_payee_name_original: String(t.name || ""),
     // The day the charge was made (what the card statement shows); the day it
     // posted is kept for the balance math.
     date: String(t.authorized_date || t.date), posted: String(t.date),
     deleted: false, transfer_account_id: transfer || payment ? "transfer" : null,
-    payment,
+    payment, sent,
   };
 }
 
@@ -249,12 +288,17 @@ function matchDeposits(deps: Dep[], cands: Cand[]): { dep: Dep; picks: Cand[] }[
 
 const NOT_SPENDING = [
   /^starting balance$/i, /reconciliation balance adjustment/i, /manual balance adjustment/i,
-  /^transfer\b/i, /\btransfer (to|from)\b/i, /online (banking )?transfer/i,
-  /\b(e ?payment|autopay|auto pay|pmt)\b/i, /payment.{0,12}thank/i, /\bcredit card payment\b/i,
+  /\b(e ?payment|autopay|auto pay)\b/i, /payment.{0,12}thank/i, /\bcredit card payment\b/i,
   /\bcard ?member serv/i, /(american express|amex).{0,20}(payment|pmt|ach)/i,
   /bank of america.{0,20}(payment|pmt|credit card)/i,
 ];
-const isNotSpending = (payee: string) => NOT_SPENDING.some((re) => re.test(payee));
+// Words that mean "not spending" on an ordinary line, but are how a bank writes money sent to someone
+// ("Wire transfer to ...", "Zelle instant pmt to ..."): they do not hide a line the bank marked as sent.
+const MOVES = [/^transfer\b/i, /\btransfer (to|from)\b/i, /online (banking )?transfer/i, /\bpmt\b/i];
+// A Zelle or a wire is never a card payment; a plain transfer can be one, so it keeps the card-payment test.
+const isNotSpending = (payee: string, sent = "") =>
+  sent === "Zelle" || sent === "Wire" ? false
+    : NOT_SPENDING.some((re) => re.test(payee)) || (!sent && MOVES.some((re) => re.test(payee)));
 const FEES = /\b(interest charge|finance charge|annual (membership )?fee|late (payment )?fee|foreign transaction fee|returned payment fee|overdraft fee|monthly (maintenance|service) fee)\b/i;
 
 // A tour takes charges only between the logging dates its manager chose
@@ -267,9 +311,11 @@ function toursOn(tours: Tour[], date: string): Tour[] {
 interface Bucket { tour: Tour; charges: Obj; total: number; n: number }
 function sortTransactions(
   txs: Obj[], accounts: Record<string, Account>, tours: Tour[], labels: Obj,
-  known: Map<string, string>, owner: string, now: number, income = new Map<string, string>(),
+  known: Map<string, string>, owner: string, now: number, income = new Map<string, string>(), hold = false,
 ): { items: Obj[]; toFile: Map<string, Bucket>; dropped: string[]; deposits: Dep[]; payments: Dep[] } {
   const items: Obj[] = [];
+  // Money arriving anywhere in this read: the other half of a move between his own linked accounts.
+  const arrivals = txs.filter((x) => !x.deleted && Number(x.amount) > 0);
   const deposits: Dep[] = [];
   const payments: Dep[] = [];
   const toFile = new Map<string, Bucket>();
@@ -296,7 +342,13 @@ function sortTransactions(
     if (mode === "off") continue;
     if (t.transfer_account_id) continue;
     const payee = String(t.payee_name ?? "").trim();
-    if (isNotSpending(payee) || isNotSpending(String(t.import_payee_name_original ?? ""))) continue;
+    const sent = String(t.sent || "");
+    if (isNotSpending(payee, sent) || isNotSpending(String(t.import_payee_name_original ?? ""), sent)) continue;
+    // The same amount arriving on another of his linked accounts within three days: probably a move, not a payment.
+    const half = sent ? arrivals.find((x) => x.account_id !== t.account_id &&
+      Math.abs(Number(x.amount) + Number(t.amount)) < 5 &&
+      G.parseDay(String(x.posted || x.date)) && G.parseDay(String(t.posted || t.date)) &&
+      Math.abs(G.daysBetween(String(x.posted || x.date), String(t.posted || t.date))) <= 3) : null;
     const isCard = acct ? acct.type === "creditCard" : false;
     const spent = Math.round(-Number(t.amount) / 10) / 100;
     if (!(spent !== 0)) continue;
@@ -313,7 +365,7 @@ function sortTransactions(
     }
     // Two tours logging the same day: the manager picks.
     const tour = hits.length === 1 ? hits[0] : null;
-    const merchant = GRS.cleanMerchant(payee) || "Unknown";
+    const merchant = (sent ? payee.slice(0, 80) : GRS.cleanMerchant(payee)) || "Unknown";
     const cats = tour ? G.chargeCategoriesFor(tour.doc).map((c: Obj) => c.key) : [];
     let category: string | null = FEES.test(payee) ? "interest" : GRS.learnedCategory(labels, merchant);
     if (category && tour && cats.indexOf(category) < 0) category = null;
@@ -321,10 +373,15 @@ function sortTransactions(
     const posted = String(t.posted || date);
     const base = { id, owner_id: owner, tour_id: tour?.id ?? null, date, posted, seq: Number.isFinite(Number(t.seq)) ? Number(t.seq) : null, merchant, amount: spent, category, account: acct?.name ?? "" };
     const cutoff = tour ? G.preTourCutoff(tour.doc) : null;
-    if (spent > 0 && cutoff && date <= cutoff) { items.push({ ...base, why: "Before the tour", status: "skipped" }); continue; }
-    const twin = tour && spent > 0 && G.rows(tour.doc.charges).concat(G.rows(tour.doc.extras)).some((c: Obj) =>
+    if (spent > 0 && cutoff && date <= cutoff && !sent) { items.push({ ...base, why: "Before the tour", status: "skipped" }); continue; }
+    // Already typed in by hand? Same amount within a day. For money sent to someone (often typed days
+    // later, or logged from the merch cash) the look is wider: three days, and the cash log too.
+    const twinDays = sent ? 3 : 1;
+    const typedRows = tour ? G.rows(tour.doc.charges).filter((c: Obj) => !sent || !/^(cards|review)-/.test(String(c.importId ?? "")))
+      .concat(G.rows(tour.doc.extras), sent ? G.rows(tour.doc.cashLog).filter((c: Obj) => c.category !== "deposit" && c.category !== "handoff") : []) : [];
+    const twin = tour && spent > 0 && typedRows.some((c: Obj) =>
       G.parseDay(String(c.date)) && Math.abs(G.num(c.amount) - spent) < 0.005 &&
-      Math.abs(G.daysBetween(String(c.date), date)) <= 1);
+      Math.abs(G.daysBetween(String(c.date), date)) <= twinDays);
     const typed = category && tour ? G.num((G.normExpenses(tour.doc.expenses)[category] ?? {}).paid) : 0;
     const catLabel = typed > 0
       ? String((G.chargeCategoriesFor(tour!.doc).find((c: Obj) => c.key === category) ?? {}).label ?? category)
@@ -334,9 +391,14 @@ function sortTransactions(
     if (spent < 0) why = "Refund";
     else if (!tour) why = "Two tours that day";
     else if (twin) why = "Maybe already in";
+    // Money sent to someone always waits for a person, whatever the account is set to and whatever was learned.
+    else if (sent) why = !half ? sent
+      : sent + (half.payment ? " \u00b7 may be a payment to " : " \u00b7 may be a move to ") + (accounts[String(half.account_id)]?.name ?? "another account");
     else if (typed > 0) why = "Already typed into " + catLabel;
     else if (mode === "ask") why = "From " + (acct?.name ?? "a bank account");
     else if (!category) why = "New merchant";
+    // A catch-up reads months at once: nothing it finds is filed without a person.
+    else if (hold) why = "Found in the catch-up";
 
     if (why) { items.push({ ...base, why, status: "waiting" }); continue; }
 
@@ -462,6 +524,8 @@ async function applyPayments(tours: Tour[], accounts: Record<string, Account>, p
   for (const p of pays) {
     const name = accounts[String(p.watch)]?.name;
     if (!name) continue;
+    // (A read from the start brings every old payment round again: one that any tour already holds is done.)
+    if (tours.some((t) => Object.values((t.doc.debts ?? {}) as Record<string, Obj>).some((d) => ((d?.payments ?? {}) as Obj)[p.id]))) continue;
     let best: { tour: Tour; id: string; cutoff: string } | null = null;
     for (const t of tours) {
       for (const [id, d] of Object.entries((t.doc.debts ?? {}) as Record<string, Obj>)) {
@@ -511,8 +575,8 @@ async function fixDates(owner: string, txs: Obj[], known: Map<string, string>, t
   }
   if (!want.size) return;
   const ids = [...want.keys()];
-  for (let i = 0; i < ids.length; i += 200) {
-    const { data } = await admin.from("feed_items").select("id, date, posted").eq("owner_id", owner).in("id", ids.slice(i, i + 200));
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await admin.from("feed_items").select("id, date, posted").eq("owner_id", owner).in("id", ids.slice(i, i + 100));
     for (const r of data ?? []) {
       const w = want.get(String(r.id))!;
       if (String(r.date) === w.date && String(r.posted ?? "") === w.posted) continue;
@@ -553,7 +617,7 @@ async function pull(item: Item, token: string): Promise<{ added: Obj[]; removed:
       for (let page = 0; page < 40; page++) {
         const j = await plaidCall("/transactions/sync", {
           access_token: token, count: 500, ...(cursor ? { cursor } : {}),
-          options: { include_personal_finance_category: true },
+          options: { include_personal_finance_category: true, include_original_description: true },
         });
         for (const t of [...(j.added ?? []) as Obj[], ...(j.modified ?? []) as Obj[]]) added.push(t);
         for (const t of (j.removed ?? []) as Obj[]) removed.push(t);
@@ -570,7 +634,7 @@ async function pull(item: Item, token: string): Promise<{ added: Obj[]; removed:
   return { added: [], removed: [], cursor: item.cursor };
 }
 
-async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<Obj> {
+async function syncFeed(feed: Feed, opts: { refresh?: boolean; catchup?: boolean } = {}): Promise<Obj> {
   const items = await itemsFor(feed.owner_id);
   if (!items.length) return { ok: false, status: "not_connected" };
   const accounts: Record<string, Account> = {};
@@ -579,6 +643,7 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
   const runRank = (4e12 - Date.now()) * 1000;
   const cursors = new Map<string, string | null>();
   const problems: string[] = [];
+  let held = false;   // something in this run was read from the start
 
   for (const item of items) {
     try {
@@ -586,7 +651,10 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
       if (opts.refresh) { try { await plaidCall("/transactions/refresh", { access_token: token }); } catch { /* the regular read still runs */ } }
       await accountsFor(item, token, accounts);
       if (!feed.switched_on) continue;
-      const got = await pull(item, token);
+      // (A catch-up reads from the start; the saved place is only replaced once everything is safely written.)
+      const fromStart = !!opts.catchup || !item.cursor;
+      const got = await pull(fromStart ? { ...item, cursor: null } : item, token);
+      if (fromStart && got.added.length) held = true;
       cursors.set(item.item_id, got.cursor);
       for (const t of got.added) {
         if (t.pending) continue;                       // posted charges only
@@ -610,28 +678,47 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
   }
 
   const tours = await toursOf(feed.owner_id);
+  // A read from the start (a catch-up, or a connection with no place saved) brings months at once:
+  // nothing in such a read files itself, whatever an account is set to.
+  const hold = !!opts.catchup || held;
   const labels: Obj = {};
   const { data: labelRows } = await admin.from("labels").select("id, doc").eq("owner_id", feed.owner_id);
   for (const l of labelRows ?? []) labels[l.id] = l.doc;
   const ids = txs.map((t) => String(t.id));
   const known = new Map<string, string>();
-  for (let i = 0; i < ids.length; i += 200) {
-    const { data: seen } = await admin.from("feed_items").select("id, status")
-      .eq("owner_id", feed.owner_id).in("id", ids.slice(i, i + 200));
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data: seen, error: seenErr } = await admin.from("feed_items").select("id, status")
+      .eq("owner_id", feed.owner_id).in("id", ids.slice(i, i + 100));
+    // Not knowing what is already here is not "nothing is here": stop, save nothing, keep the place.
+    if (seenErr) return { ok: false, status: "save_failed" };
     for (const s of seen ?? []) known.set(s.id, s.status);
   }
-  if (!TEST) await fixDates(feed.owner_id, txs, known, tours);
+  // (A catch-up changes nothing that is already here, not even a day someone corrected by hand.)
+  if (!TEST && !opts.catchup) await fixDates(feed.owner_id, txs, known, tours);
   const now = Date.now();
   const { items: rows, toFile, dropped, deposits, payments } =
-    sortTransactions(txs, accounts, tours, labels, known, feed.owner_id, now, incomeAccounts(accounts));
+    sortTransactions(txs, accounts, tours, labels, known, feed.owner_id, now, incomeAccounts(accounts), hold);
   const filed = rows.filter((i) => i.status === "filed").length;
   const waiting = rows.filter((i) => i.status === "waiting").length;
+  // For the catch-up's own sentence: how many of each kind came in, and between which days. Counts and dates only.
+  const kindOf = (w: string): "zelle" | "wire" | "transfer" | "other" =>
+    /^Zelle/.test(w) ? "zelle" : /^Wire/.test(w) ? "wire" : /^Transfer/.test(w) ? "transfer" : "other";
+  const counts = { zelle: 0, wire: 0, transfer: 0, other: 0, maybe: 0 };
+  let firstDay = "", lastDay = "";
+  for (const r of rows) {
+    if (r.status !== "waiting") continue;
+    if (r.why === "Maybe already in") counts.maybe += 1; else counts[kindOf(String(r.why))] += 1;
+    const d = String(r.date);
+    if (!firstDay || d < firstDay) firstDay = d;
+    if (!lastDay || d > lastDay) lastDay = d;
+  }
+  const found = { ...counts, from: firstDay, to: lastDay };
 
   // Test mode: say what would happen, save nothing.
   if (TEST) {
     await admin.from("feed").update({ accounts, last_run: new Date().toISOString(), last_status: problems[0] ?? "ok" })
       .eq("owner_id", feed.owner_id);
-    return { ok: !problems.length, status: problems[0] ?? "ok", test: true, seen: txs.length, filed, waiting };
+    return { ok: !problems.length, status: problems[0] ?? "ok", test: true, seen: txs.length, filed, waiting, found, catchup: !!opts.catchup };
   }
 
   for (const b of toFile.values()) {
@@ -641,7 +728,8 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
     if (r.error) return { ok: false, status: "save_failed" };
   }
   for (let i = 0; i < rows.length; i += 200) {
-    const r = await admin.from("feed_items").upsert(rows.slice(i, i + 200));
+    // (Only ever adds: a row that is already here, waiting, filed or set aside, is left exactly as it is.)
+    const r = await admin.from("feed_items").upsert(rows.slice(i, i + 200), { onConflict: "owner_id,id", ignoreDuplicates: true });
     if (r.error) return { ok: false, status: "save_failed" };
   }
   if (dropped.length) {
@@ -665,7 +753,8 @@ async function syncFeed(feed: Feed, opts: { refresh?: boolean } = {}): Promise<O
     accounts, last_run: new Date().toISOString(), last_status: problems[0] ?? "ok",
   }).eq("owner_id", feed.owner_id);
   if (!problems.length) await reorderOnce(feed.owner_id, items);
-  return { ok: !problems.length, status: problems[0] ?? "ok", filed, waiting, merchPaid: paid, guaranteesIn, paidOff };
+  return { ok: !problems.length, status: problems[0] ?? "ok", filed, waiting, merchPaid: paid, guaranteesIn, paidOff,
+    found, catchup: !!opts.catchup };
 }
 
 /* Once: the bank's order, read fresh from the start, and every waiting
@@ -1238,6 +1327,12 @@ Deno.serve(async (req) => {
     }
 
     if (action === "sync") {
+      // Catch up: read every connection from the start again (as far back as the bank gives, 180 days
+      // before it was linked). What is already here is known by the bank's own id and is never added
+      // twice; what was missed comes in waiting to be sorted; nothing is filed by this read.
+      if (body.catchup === true) {
+        return reply(200, await syncFeed(feed, { refresh: false, catchup: true }));
+      }
       const last = feed.last_run ? Date.parse(feed.last_run) : 0;
       if (!body.force && Date.now() - last < 60_000) return reply(200, { ok: true, status: "recent" });
       return reply(200, await syncFeed(feed, { refresh: !!body.force }));

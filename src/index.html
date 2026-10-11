@@ -1777,6 +1777,14 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
   font-size: 12px; font-weight: 600;
 }
 .rv-flag.learned { background: var(--pos-soft); color: var(--pos); }
+/* A long reason on a charge ("Transfer · may be a move to Business Adv
+   Relationship ··5370") wraps inside the row, under the date. It never runs
+   off the side and never reaches the amount, which is on the line above. */
+.rv-charge .rv-sub { min-width: 0; }
+.rv-charge .rv-flag { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; border-radius: 10px; }
+/* Sorting sheet, at the top: a typed total and money sent from the bank in the same pile. */
+.rv-sheet .note.rv-typed { margin: 0 0 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2);
+  font-size: 12.5px; line-height: 1.4; color: var(--ink-2); overflow-wrap: anywhere; }
 /* The card feed: one account per row, its choice underneath. */
 .feed-entry { margin-bottom: 12px; }
 /* Refresh Card Expenses: the everyday button, glowing like Edit day sheet,
@@ -1785,6 +1793,9 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .feed-bar .feed-refresh { flex: 1; min-width: 0; }
 .feed-bar .feed-gear { flex: 0 0 54px; padding: 0; justify-content: center; }
 .feed-checked { margin: 6px 2px 0; text-align: center; font-size: 12px; color: var(--ink-3); }
+.feed-checked .linkbtn.feed-catchup { min-height: 0; padding: 4px 2px; font-size: 12px; font-weight: 500; color: var(--ink-3); text-decoration: underline; }
+/* Catch up: the one thing to do first, in grey above the button. */
+.hint.cu-before { margin: 0 2px; font-size: 12.5px; line-height: 1.45; }
 /* Budget's Cards tab: each linked card on a line, its new charges on the right. */
 .cards-list { position: relative; z-index: 1; margin-top: 6px; }
 .cards-list .row.card-line { min-height: 60px; padding: 12px 14px; gap: 10px; }
@@ -3266,6 +3277,9 @@ button.fl-row { cursor: pointer; }
 .rb-match .iv-hit-t { margin: 0 0 7px; font-size: 12.5px; overflow-wrap: anywhere; }
 .rb-match .btn.sm { min-height: 34px; height: auto; padding: 0 12px; font-size: 12.5px; }
 .rb-match .rb-acts { margin-top: 0; gap: 6px 8px; }
+/* The same box for a possible double: the entry it looks like, then "It's the
+   one I typed" and "No, it's another payment" (two lines of buttons on a phone). */
+.tw-match .rb-acts .btn.sm { max-width: 100%; white-space: normal; text-align: center; line-height: 1.2; }
 .pay-sum .neg { color: var(--neg); }
 .pay-head { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 2px 16px; }
 .pay-fig { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
