@@ -270,6 +270,29 @@ shim = r"""<script>
     ]
   };
   window.__harness.calls = []; window.__harness.marked = []; window.__harness.feedFns = [];
+  // A Crew phone: __harness.asCrew = true before the tour is opened, or the page opened with ?crew.
+  try { if (/[?&]crew\b/.test(String(location.search || ''))) window.__harness.asCrew = true; } catch (e) { /* no address to read */ }
+  // Asks to be paid back (see reimbursementsFor below).
+  function reimbList() {
+    var H = window.__harness, ago = function (ms) { return new Date(Date.now() - ms).toISOString(); };
+    if (!H.reimb) H.reimb = [
+      { id: 'rb-jeff-1', tourId: 't1', mine: false, name: 'Jeff Mora', amount: 60, what: 'Parking at the venue', date: ymd(new Date(today.getTime() - 4 * 864e5)),
+        status: 'paid', paidAt: ago(26 * 36e5), paidBy: 'Devin Oliver', how: 'cash', feedId: '', closedBy: '', closedAt: null, createdAt: ago(80 * 36e5) },
+      { id: 'rb-brent-1', tourId: 't1', mine: false, name: 'Brent Allen', amount: 64.12, what: 'Gas for the van', date: ymd(new Date(today.getTime() - 864e5)),
+        status: 'open', paidAt: null, paidBy: '', how: '', feedId: '', closedBy: '', closedAt: null, createdAt: ago(20 * 36e5) },
+      { id: 'rb-tasha-1', tourId: 't1', mine: false, name: 'Tasha Lane', amount: 18, what: 'Guitar strings', date: ymd(new Date(today.getTime() - 2 * 864e5)),
+        status: 'open', paidAt: null, paidBy: '', how: '', feedId: '', closedBy: '', closedAt: null, createdAt: ago(3 * 36e5) }];
+    return H.reimb;
+  }
+  // One write: the answer __harness.reimbFail forces, else what the change says; then the tours go out again.
+  // __harness.reimbLost = true: the write lands and its answer is lost (weak signal), so the app hears 'unavailable'.
+  function reimbAnswer(change) {
+    var H = window.__harness;
+    var out = H.reimbFail ? { ok: false, why: String(H.reimbFail) } : change();
+    if (!H.reimbFail && H.reimbLost) out = { ok: false, why: 'unavailable' };
+    setTimeout(emit, 0);
+    return Promise.resolve(out);
+  }
   window.__harness.members = []; window.__harness.invited = []; window.__harness.notified = []; window.__harness.notes = [];
   window.__harness.past = [{ email: 'brent@example.com', name: 'Brent Allen', phone: '555-0142', role: 'editor', tourRole: 'Tour manager' },
     { email: 'tasha@example.com', name: 'Tasha Lane', phone: '', role: 'viewer', tourRole: 'Production manager' },
@@ -909,9 +932,88 @@ shim = r"""<script>
       window.__harness.requests = (window.__harness.requests || []).filter(function (r) { return r.id !== id; });
       return Promise.resolve();
     },
+    /* Reimbursements, in memory: __harness.reimb, rows in the app's own shape.
+       Seeded on the harness tour with two asks waiting (Brent's is the same
+       amount as the Buc-Ee's charge in the card pile, so the sorting sheet has
+       a match to show) and one already paid back in cash. A write re-sends the
+       tours, as the real backend's re-read does, so every page follows.
+       __harness.reimbFail = 'role' (or any why) makes the four writes answer
+       that; __harness.reimbLost = true lets a write land and loses its answer;
+       __harness.reimbCalls keeps what was asked. With __harness.asCrew
+       the list is only your own asks and the Manager's writes are refused,
+       like the database. An ask keeps the id it is sent with: the same id
+       again is the same ask (ok, nothing added), and an id that is another
+       tour's or another person's ask answers 'id'. */
+    reimbursementsFor: function (tourId) {
+      var H = window.__harness;
+      return reimbList().filter(function (r) { return r.tourId === tourId && (!H.asCrew || r.mine); })
+        .map(function (r) { return JSON.parse(JSON.stringify(r)); })
+        .sort(function (a, b) { return String(a.createdAt || '').localeCompare(String(b.createdAt || '')); });
+    },
+    reimburseAsk: function (tourId, ask) {
+      var H = window.__harness, a = ask || {};
+      H.reimbCalls = (H.reimbCalls || []).concat([['ask', tourId, JSON.parse(JSON.stringify(a))]]);
+      return reimbAnswer(function () {
+        var amount = Math.round(Number(a.amount) * 100) / 100, what = String(a.what || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+        if (!tours[tourId] || tours[tourId].deletedAt || tours[tourId].kind === 'offtour') return { ok: false, why: 'tour' };
+        if (!(amount > 0) || amount > 10000) return { ok: false, why: 'amount' };
+        if (!what) return { ok: false, why: 'what' };
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.date || ''))) return { ok: false, why: 'date' };
+        if (a.id != null && a.id !== '' && !/^[A-Za-z0-9_-]{6,40}$/.test(String(a.id))) return { ok: false, why: 'id' };
+        var id = a.id ? String(a.id) : 'rb-' + Date.now().toString(36) + '-' + reimbList().length;
+        var same = reimbList().filter(function (x) { return x.id === id; })[0];
+        if (same) return same.mine && same.tourId === tourId ? { ok: true, id: id } : { ok: false, why: 'id' };
+        reimbList().push({ id: id, tourId: tourId, mine: true, name: 'Devin Oliver', amount: amount, what: what, date: a.date, status: 'open',
+          paidAt: null, paidBy: '', how: '', feedId: '', closedBy: '', closedAt: null, createdAt: new Date().toISOString() });
+        return { ok: true, id: id };
+      });
+    },
+    reimburseWithdraw: function (id) {
+      var H = window.__harness;
+      H.reimbCalls = (H.reimbCalls || []).concat([['withdraw', id]]);
+      return reimbAnswer(function () {
+        var r = reimbList().filter(function (x) { return x.id === id; })[0];
+        if (!r || (H.asCrew && !r.mine)) return { ok: false, why: 'gone' };
+        if (r.status === 'withdrawn') return { ok: true };
+        if (r.status === 'paid') return { ok: false, why: 'paid' };
+        r.status = 'withdrawn'; r.closedBy = 'Devin Oliver'; r.closedAt = new Date().toISOString();
+        return { ok: true };
+      });
+    },
+    reimburseMark: function (id, paid, how, feedId) {
+      var H = window.__harness;
+      H.reimbCalls = (H.reimbCalls || []).concat([['mark', id, !!paid, how || '', feedId == null ? '' : String(feedId)]]);
+      return reimbAnswer(function () {
+        var r = reimbList().filter(function (x) { return x.id === id; })[0];
+        if (!r) return { ok: false, why: 'gone' };
+        if (H.asCrew) return { ok: false, why: r.mine ? 'role' : 'gone' };
+        if (r.status === 'withdrawn') return { ok: false, why: 'gone' };
+        if (paid) {
+          // (Already paid: who paid and when stand. Only how, or the card charge, is filled in.)
+          var was = r.status === 'paid', h2 = ['cash', 'card', 'other'].indexOf(how) >= 0 ? how : '', f2 = feedId == null ? '' : String(feedId);
+          if (!was) { r.paidAt = new Date().toISOString(); r.paidBy = 'Devin Oliver'; }
+          r.status = 'paid';
+          r.how = h2 || (was ? r.how : ''); r.feedId = f2 || (was ? r.feedId : '');
+        } else { r.status = 'open'; r.paidAt = null; r.paidBy = ''; r.how = ''; r.feedId = ''; }
+        return { ok: true };
+      });
+    },
+    // A Manager puts a taken-off ask back to waiting (one that is not taken off is left as it is).
+    reimburseRestore: function (id) {
+      var H = window.__harness;
+      H.reimbCalls = (H.reimbCalls || []).concat([['restore', id]]);
+      return reimbAnswer(function () {
+        var r = reimbList().filter(function (x) { return x.id === id; })[0];
+        if (!r) return { ok: false, why: 'gone' };
+        if (H.asCrew) return { ok: false, why: r.mine ? 'role' : 'gone' };
+        if (r.status === 'withdrawn') { r.status = 'open'; r.closedBy = ''; r.closedAt = null; }
+        return { ok: true };
+      });
+    },
     username: function () { return me.username; },
-    ownsTour: function () { return true; },
-    myRole: function () { return Promise.resolve('owner'); },
+    // __harness.asCrew (or opening the page with ?crew): this phone is Crew on every tour, not its creator.
+    ownsTour: function () { return !window.__harness.asCrew; },
+    myRole: function () { return Promise.resolve(window.__harness.asCrew ? 'viewer' : 'owner'); },
     crew: function () { window.__harness.crewCalls = (window.__harness.crewCalls || 0) + 1; return Promise.resolve(window.__harness.crew); },
     /* Social, in memory. Brent has a profile with a tour you share and one
        you don't; Tasha is still pending, so she has none to open. */

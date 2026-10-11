@@ -36,8 +36,11 @@
     // Monthly-type costs sit at the end, by request.
     { key: 'utilities', label: 'Monthly utilities' }
   ];
-  // Two categories are figured, not typed: commission from the deal, merch tips from the nights.
-  var DERIVED = ['commission', 'merchTips'];
+  // Three lines are figured, not typed: commission from the deal, merch tips
+  // from the nights, and reimbursements from what people on the tour asked to
+  // be paid back. (Reimbursements is a line only, never a category: nothing
+  // can be filed under it, so it is in DERIVED and not in CATEGORIES.)
+  var DERIVED = ['commission', 'merchTips', 'reimbursements'];
   function isDerived(key) { return DERIVED.indexOf(key) >= 0; }
   var TYPED_CATEGORIES = CATEGORIES.filter(function (c) { return !isDerived(c.key); });
 
@@ -1418,6 +1421,25 @@
     return best;
   }
 
+  /* Reimbursements: money someone on the tour paid out of their own pocket
+     and asked to be paid back. The asks are not in the tour's document (crew
+     cannot write it), so they are handed in: calc(tour, { reimbursements })
+     when given, else GR.reimbursementsOf(tour), a hook the app sets, else
+     none. A row is { amount, date, status: 'open' | 'paid' | 'withdrawn',
+     how: '' | 'cash' | 'card' | 'other' }. An ask counts as a cost of the tour
+     from its date and stays one when it is paid back: marking it paid moves
+     money from "still owed" to "paid back" and never changes the total. */
+  function reimbursementRows(tour, o) {
+    var list = o && Array.isArray(o.reimbursements) ? o.reimbursements : null;
+    if (!list) {
+      var hook = root.GR && root.GR.reimbursementsOf;
+      if (typeof hook === 'function') { try { list = hook(tour); } catch (e) { list = null; } }
+    }
+    return (Array.isArray(list) ? list : []).filter(function (r) {
+      return isObj(r) && r.status !== 'withdrawn' && num(r.amount) > 0;
+    });
+  }
+
   // `upTo` limits shows, day-by-day costs and card charges to that date or
   // earlier, which is how the balance chart walks the tour day by day.
   // Projections are committed from day one, so the curve starts deep in the red.
@@ -1603,7 +1625,23 @@
     var dayByDay = extras.reduce(function (t, x) { return t + num(x.amount); }, 0) +
       (chargedTo[DAY_BY_DAY] || 0);
 
-    var out = fixed + commissionEffective + merchTipsDue + debt + dayByDay;
+    // What people paid out of their own pocket for the tour: one line, there
+    // only when there is at least one ask. Projected is all of it, paid is
+    // what has been paid back, and all of it counts whether paid back or not.
+    var asks = reimbursementRows(tour, o).filter(function (r) { return !upTo || (r.date && r.date <= upTo); });
+    var askAll = 0, askPaid = 0, askCash = 0;
+    asks.forEach(function (r) {
+      var a = num(r.amount);
+      askAll += a;
+      if (r.status === 'paid') { askPaid += a; if (r.how === 'cash') askCash += a; }
+    });
+    askAll = round(askAll * 100) / 100; askPaid = round(askPaid * 100) / 100; askCash = round(askCash * 100) / 100;
+    var askOwed = Math.max(0, round((askAll - askPaid) * 100) / 100);
+    if (asks.length) {
+      lines.push({ key: 'reimbursements', label: 'Reimbursements', projected: askAll, paid: askPaid, effective: askAll, left: askOwed, over: 0 });
+    }
+
+    var out = fixed + commissionEffective + merchTipsDue + debt + dayByDay + askAll;
 
     return {
       shows: shows, allShows: allShows, income: income, guarantees: guarantees, incomeBy: incomeBy,
@@ -1611,6 +1649,7 @@
       lines: lines, fixed: fixed,
       commission: commissionEffective, commissionProjected: commissionProjected, merchTips: merchTipsDue,
       agencyShows: agencyShows, agencyAdvance: advance, agentOwed: agentOwed, commissionKept: kept,
+      reimbursements: askAll, reimbursementsOwed: askOwed, reimbursementsPaid: askPaid, reimbursementsCash: askCash,
       debt: debt, dayByDay: dayByDay, out: out, net: income - out,
       coverage: out > 0 ? income / out : (income > 0 ? 1 : 0)
     };
@@ -1632,10 +1671,11 @@
 
   /* What's actually gone out or is owed, as of a calc: what's been spent in
      every category (card balances going in included), the commission on what
-     has come in, loans, and the day-by-day costs. Never projections. */
+     has come in, loans, the day-by-day costs, and what people paid out of
+     their own pocket for the tour (paid back or still owed). Never projections. */
   function spentOf(c) {
     var paid = c.lines.reduce(function (t, l) { return isDerived(l.key) ? t : t + num(l.paid); }, 0);
-    return round((paid + num(c.commission) + num(c.merchTips) + num(c.debt) + num(c.dayByDay)) * 100) / 100;
+    return round((paid + num(c.commission) + num(c.merchTips) + num(c.reimbursements) + num(c.debt) + num(c.dayByDay)) * 100) / 100;
   }
 
   /* The chart, day by day: money in (it only climbs) against what's spent
@@ -1644,7 +1684,9 @@
      tour is on). */
   function balanceSeries(tour, opts) {
     var o = opts || {};
-    var c = calc(tour);
+    // (The asks to be paid back are read once and handed to every day's sum.)
+    var asks = reimbursementRows(tour, o);
+    var c = calc(tour, { reimbursements: asks });
     var dated = c.allShows.filter(function (s) { return parseDay(s.date); });
     var extras = rows(tour && tour.extras).filter(function (x) { return parseDay(x.date); });
     var charges = rows(tour && tour.charges).filter(function (x) { return parseDay(x.date); });
@@ -1656,7 +1698,8 @@
       .concat(extras.map(function (x) { return x.date; }))
       .concat(charges.map(function (x) { return x.date; }))
       .concat(cash.map(function (x) { return x.date; }))
-      .concat(otherInc.map(function (x) { return x.date; }));
+      .concat(otherInc.map(function (x) { return x.date; }))
+      .concat(asks.filter(function (x) { return parseDay(x.date); }).map(function (x) { return x.date; }));
     if (!days.length) return [];
 
     days.sort();
@@ -1675,7 +1718,7 @@
     var series = [];
     for (var i = 0; i <= span; i++) {
       var day = addDays(start, i);
-      var snap = calc(tour, { upTo: day });
+      var snap = calc(tour, { upTo: day, reimbursements: asks });
       series.push({ date: day, net: snap.net, income: snap.income, out: snap.out, spent: spentOf(snap) });
     }
     return series;
@@ -1702,8 +1745,11 @@
     events.sort(function (a, b) { return a.at - b.at; });
     var last = events[events.length - 1];
 
-    var after = calc(tour).net;
-    var without = calc(stripEvent(tour, last)).net;
+    // (Both sums get the same asks to be paid back: the copy with the event
+    // taken out is not a tour the app's hook would recognise.)
+    var same = { reimbursements: reimbursementRows(tour, null) };
+    var after = calc(tour, same).net;
+    var without = calc(stripEvent(tour, last), same).net;
     var delta = after - without;
     if (round(delta) === 0) return null;
     return { delta: delta, label: last.label, kind: last.kind };
@@ -2131,7 +2177,9 @@
       expRows.push([l.label,
         l.projected == null ? '' : l.projected,
         l.paid,
-        l.projected == null ? '' : (l.paid - l.projected),
+        // (Reimbursements has no budget to be over or under: what is not paid
+        // back yet is money still owed to people, so its variance is left empty.)
+        l.projected == null || l.key === 'reimbursements' ? '' : (l.paid - l.projected),
         l.effective]);
     });
     otherDebts(tour).forEach(function (d) {
@@ -2264,6 +2312,8 @@
     tourStart: tourStart, tourEnd: tourEnd, cardWindow: cardWindow, cardMoved: cardMoved, cardPaidOff: cardPaidOff,
 
     calc: calc, stateOf: stateOf, caption: caption,
+    // Set by the app: a function (tour) -> the asks to be paid back on it (see reimbursementRows).
+    reimbursementsOf: null,
     balanceSeries: balanceSeries, latestChange: latestChange,
     normalizeSettlement: normalizeSettlement, pickBandNumber: pickBandNumber,
     DS_AMENITIES: DS_AMENITIES, daySheetSections: daySheetSections, daySheetLines: daySheetLines, daySheetText: daySheetText,

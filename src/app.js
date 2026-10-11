@@ -604,6 +604,8 @@
     // Whoever asked to be listed on a page you run: asked for once as the app starts, so the cards are on your profile when it draws.
     if (first) artistAsks(true);
     render(first);
+    // (A reimbursements sheet that is up draws its list again: a new ask, one just marked paid.)
+    reimbRedraw();
   }
   function loadLocal() {
     var data = null;
@@ -9177,6 +9179,10 @@
       return { text: [base.text, money(l.loose) + ' with no name on it'].filter(Boolean).join(' \u00b7 '), cls: base.cls };
     }
     if (l.over > 0) return { text: 'Over by ' + money(l.over) + cardBit(l), cls: ' over' };
+    // Reimbursements: what is still to pay back to the people who paid out of pocket.
+    if (l.key === 'reimbursements') {
+      return l.left > 0.004 ? { text: G.moneyCents(l.left) + ' to pay back', cls: ' over' } : { text: 'All paid back', cls: ' done' };
+    }
     if (G.isDerived(l.key)) return { text: l.key === 'merchTips' ? 'Owed to the merch person' : '', cls: '' };
     if (l.projected == null) return { text: cardBit(l).replace(/^ · /, ''), cls: '' };
     if (l.left === 0) return { text: 'All spent' + cardBit(l), cls: ' done' };
@@ -9640,6 +9646,8 @@
       // "Credit card (other)" is not a linked card: it counts under Other.
       rowKey = l.label === 'Credit card (other)' ? 'card-other' : l.key;
       var hint = lineHint(l);
+      // Reimbursements: what was paid back in cash sits under Cash, paid back any other way under Debit.
+      var rbCash = l.key === 'reimbursements' ? Math.min(G.num(l.paid), G.num(c.reimbursementsCash)) : 0;
       var unset = l.projected == null || (l.key === 'commission' && !l.projected && !commSet);
       var inner = [
         h('div', { class: 'row-label' }, l.label,
@@ -9648,9 +9656,9 @@
           unset ? '\u2014' : money(l.projected)),
         // Commission is paid from the bank, so it reads as debit.
         creditCell(G.isDerived(l.key) ? 0 : l.creditOut != null ? l.creditOut : l.paid - paidPart(t, l.key), l.over > 0),
-        paidCell(l.paidOut != null ? l.paidOut : G.isDerived(l.key) ? l.paid : debitPart(t, l.key) +
+        paidCell(l.paidOut != null ? l.paidOut : G.isDerived(l.key) ? l.paid - rbCash : debitPart(t, l.key) +
           (l.key === 'card' ? G.cardDebts(t).reduce(function (n, d) { return n + G.cardSummary(d, t).paidOff; }, 0) : 0)),
-        cashCell(G.isDerived(l.key) ? 0 : l.cashOut != null ? l.cashOut : cashPart(t, l.key))
+        cashCell(G.isDerived(l.key) ? rbCash : l.cashOut != null ? l.cashOut : cashPart(t, l.key))
       ];
       if (!edit) return h('div', { class: 'row ex-row' }, inner);
       return h('button', {
@@ -9658,6 +9666,7 @@
         onclick: function () {
           if (l.key === 'crew' || l.key === 'members') openCrewSheet(id, true);
           else if (l.key === 'commission') openCommissionSheet(id);
+          else if (l.key === 'reimbursements') openReimbursements(id);
           else openCategorySheet(id, l.key);
         }
       }, inner, icon('chevron', 18));
@@ -11532,7 +11541,7 @@
           h('span', { class: 'amt num' + (l.total > 0 ? ' glow' : '') }, l.total > 0 ? money(l.total) : '\u2014'), icon('chevron', 18));
       });
       return [head, chart, netLine,
-        h('div', { class: 'ledger' }, myPayCardsRow(id)),
+        h('div', { class: 'ledger' }, myPayCardsRow(id), myPayBackRow(id)),
         st.onCrew ? h('p', { class: 'note pay-note' }, 'Pay plan: ' + money(st.total) + ' for the tour \u00b7 ' + money(st.paid) + ' logged as paid \u00b7 ' + money(st.owed) + ' still owed')
           : h('p', { class: 'note pay-note' }, 'You\u2019re not on this tour\u2019s crew list yet, so there is no pay plan here. The tour manager adds you under Crew with your email.'),
         h('h3', { class: 'mn-h mn-over' }, 'My income'),
@@ -11555,7 +11564,7 @@
         icon('chevron', 18));
     });
     return [head, climb, netLine,
-      h('div', { class: 'ledger' }, myPayCardsRow(id)),
+      h('div', { class: 'ledger' }, myPayCardsRow(id), myPayBackRow(id)),
       h('h3', { class: 'mn-h mn-over' }, 'My expenses'),
       h('div', { class: 'ledger' }, colHead, lines),
       h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'button', onclick: function () { openMyPayCat(id, null); } },
@@ -11857,6 +11866,406 @@
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
       ];
     }, { label: 'My expenses', onClose: function () { st.closed = true; } });
+  }
+
+  /* ============================== Reimbursements ==============================
+     Devin (2026-10-10): "in the 'MY PAY' section there can be a log where if
+     someone on the tour spots any money for the band/tour they can log it as
+     something that needs to be reimbursed and it is sent to the tasks button
+     as well as the bands expense tab under 'REIMBURSEMENTS.' In this category
+     we can click it and see all the payments that need to be reimbursed and
+     mark them paid or not. If they are not paid they will stay in the tasks
+     tab".
+
+     Anyone on a tour, Crew included, asks from MY PAY ("Paid for the tour?").
+     The asks live in a table of their own (migration 0135): a person is handed
+     only their own, a tour's Managers every one on that tour, and each change
+     goes through a database function that checks who is asking. So Crew never
+     see each other's asks or the tour's totals.
+
+     The money: an ask is a cost of the tour from the day it is dated, paid
+     back or not (core.js adds the one line, Reimbursements). Marking it paid
+     records that it was paid back and by whom; it writes no charge and never
+     moves the tour's total. When the money that paid someone back comes
+     through a linked card, the sorting sheet says the amounts match and waits:
+     a tap, then a yes, marks the ask paid and sets the charge aside, so that
+     money is not counted a second time. Nothing here is automatic. */
+  function reimbOn() {
+    var B = window.GR_BACKEND;
+    return !!(S.mode === 'db' && B && B.reimbursementsFor);
+  }
+  // The asks this account may read on one tour, oldest first ([] when there is nothing to read them from).
+  function reimbRows(tourId) {
+    if (!tourId || !reimbOn()) return [];
+    var list = null;
+    try { list = window.GR_BACKEND.reimbursementsFor(tourId); } catch (e) { list = null; }
+    return Array.isArray(list) ? list : [];
+  }
+  var rbOpen = function (r) { return r.status === 'open'; };
+  var rbPaid = function (r) { return r.status === 'paid'; };
+  var rbSum = function (list) { return Math.round(list.reduce(function (n, r) { return n + G.num(r.amount); }, 0) * 100) / 100; };
+  var rbCents = function (v) { return Math.round(G.num(v) * 100); };
+  var rbStamp = function (v) { return typeof v === 'number' ? v : Date.parse(v) || 0; };
+  // A moment the database stamped, as the day it was on this phone ("Oct 12").
+  function rbDay(ts) { var at = rbStamp(ts); return at ? dayMD(G.ymd(new Date(at))) : ''; }
+  /* Which tour a tour's document is. The documents do not carry their own id,
+     so it is found by looking: the very object the app holds for a tour, or a
+     copy with something plugged in (it still shares that tour's shows). What
+     is found is remembered against the object, so a copy of the tour that a
+     sheet is still holding after newer data has landed is known too. */
+  var tourIdMemo = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function tourIdOf(tour) {
+    var known = tourIdMemo ? (tourIdMemo.get(tour) || (G.isObj(tour.shows) ? tourIdMemo.get(tour.shows) : null)) : null;
+    if (known) return known;
+    var hit = null;
+    var look = function (v, k) {
+      if (!G.isObj(v)) return;
+      if (tourIdMemo) { tourIdMemo.set(v, k); if (G.isObj(v.shows)) tourIdMemo.set(v.shows, k); }
+      if (!hit && (v === tour || (G.isObj(v.shows) && v.shows === tour.shows))) hit = k;
+    };
+    S.tours.forEach(look);
+    Object.keys(S.pending).forEach(function (k) { look(S.pending[k], k); });
+    return hit;
+  }
+  /* What core.js asks whenever it adds a tour up (G.reimbursementsOf, set once
+     as the app starts): the asks that count on that tour. None for an Off Tour
+     book, and none for a tour whose money this account may not see: Crew read
+     their own asks on MY PAY, never as part of the tour's sums. */
+  function reimbursementsOfTour(tour) {
+    if (!G.isObj(tour) || isOffTour(tour) || !reimbOn()) return [];
+    var id = tourIdOf(tour);
+    if (!id || !canSeeMoney(id)) return [];
+    return reimbRows(id);
+  }
+  // Each "no" the database can give, in plain words.
+  function reimbWhy(why, doing) {
+    var B = window.GR_BACKEND;
+    if (why === 'role') return doing === 'ask' ? 'Only people on this tour can ask to be paid back.' : 'Only a Manager of this tour can do that.';
+    if (why === 'tour') return 'This tour isn’t taking reimbursements. It may have been deleted.';
+    if (why === 'amount') return 'Enter an amount above $0, up to $10,000.';
+    if (why === 'what') return 'Say what it was for.';
+    if (why === 'date') return 'Pick the day you paid. It can’t be more than a day ahead, or more than 400 days back.';
+    if (why === 'many') return 'You’ve reached the limit of reimbursements for now. Try again tomorrow, or once some have been paid back.';
+    if (why === 'paid') return 'That one has been marked paid back, so it can’t be taken off.';
+    if (why === 'gone') return 'That reimbursement isn’t there anymore.';
+    // (Anything else is a save that did not go through; 'id', an id that is another ask's, reads the same.)
+    return B && B.netTrouble && B.netTrouble() ? NO_SIGNAL : 'Couldn’t save that just now. Try again in a moment.';
+  }
+  // One of the two reimbursement sheets, while it is up: it draws again when new data lands.
+  var reimbLive = null;
+  function reimbRedraw() {
+    if (!reimbLive) return;
+    // (Never under a finger: a button swapped out mid-tap swallows the tap.)
+    if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(reimbRedraw, 400); return; }
+    try { reimbLive(); } catch (e) { /* it draws again on its next tap */ }
+  }
+
+  // MY PAY: the way in, under "Your cards" on both sub-tabs.
+  function myPayBackRow(id) {
+    var t = getTour(id);
+    if (!reimbOn() || !t || isOffTour(t)) return null;
+    var mine = reimbRows(id).filter(function (r) { return r.mine; });
+    var waiting = mine.filter(rbOpen), paid = mine.filter(rbPaid), owed = rbSum(waiting);
+    var hint = waiting.length || paid.length
+      ? [waiting.length ? waiting.length + ' waiting' : null, paid.length ? paid.length + ' paid back' : null].filter(Boolean).join(' · ')
+      : 'Ask to be paid back';
+    return h('button', { class: 'row rowbtn ex-row pay-row', type: 'button', onclick: function () { openMyPayBack(id); } },
+      h('div', { class: 'row-label' }, 'Paid for the tour?', h('span', { class: 'hint' }, hint)),
+      owed > 0 ? h('span', { class: 'amt num glow' }, G.moneyCents(owed)) : null, icon('chevron', 18));
+  }
+  // How an ask stands, to the person who made it.
+  function reimbStateText(r) {
+    if (r.status === 'paid') {
+      var day = rbDay(r.paidAt);
+      return 'Paid back' + (day ? ' ' + day : '') + (r.how === 'cash' ? ' in cash' : r.how === 'card' ? ' by card or bank' : '');
+    }
+    if (r.status === 'withdrawn') {
+      // Who took it off is kept by name only, the name the tour knows them by:
+      // on your own ask, your own name there means you took it back yourself.
+      if (r.mine && r.closedBy && r.closedBy === r.name) return 'You took it back';
+      return 'Taken off by ' + (r.closedBy || 'someone on the tour');
+    }
+    return 'Waiting to be paid back';
+  }
+  // An id for a new ask, in the shape the database takes (6 to 40 of A-Z a-z 0-9 _ -).
+  function reimbNewId() {
+    try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* older phones */ }
+    return 'rb' + newId() + Math.random().toString(36).slice(2, 10);
+  }
+  /* "Paid for the tour?": log what you paid out of your own pocket, and see
+     where each of your asks stands. The list under the form draws in place
+     (what is being typed is never wiped), and again when a Manager marks one.
+     A try that fails must not become a second ask on the next tap: the save
+     may have landed with only its answer lost. So the form as it is filled in
+     has ONE id (st.rid, with what was filled in when it was made, st.ridFor):
+     made on the first tap, sent again on every retry (the database answers ok
+     for an id it already holds as this very ask), and dropped when the save
+     answers ok or when the amount, the day or the words are different. */
+  function openMyPayBack(id) {
+    var B = window.GR_BACKEND;
+    var st = { amount: null, date: G.ymd(new Date()), what: '', saving: false, arm: null, busy: null, rid: null, ridFor: '' };
+    var list = h('div', { class: 'rb-mine' });
+    var amountEl = h('input', { class: 'input', type: 'number', inputmode: 'decimal', step: '0.01', min: '0', placeholder: '0.00',
+      'aria-label': 'Amount', oninput: function (e) { st.amount = e.target.value === '' ? null : Number(e.target.value); } });
+    var dateEl = h('input', { class: 'input', type: 'date', 'aria-label': 'Day you paid', value: st.date, oninput: function (e) { st.date = e.target.value; } });
+    var whatEl = h('input', { class: 'input', type: 'text', maxlength: 140, autocomplete: 'off', placeholder: 'What was it for?', 'aria-label': 'What was it for?',
+      oninput: function (e) { st.what = e.target.value; } });
+    var askBtn = h('button', { class: 'btn primary block', type: 'submit' }, 'Ask to be paid back');
+    async function add(e) {
+      e.preventDefault(); blurActive();
+      if (st.saving) return;
+      var what = String(st.what || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+      if (!(st.amount > 0) || !isFinite(st.amount) || st.amount > 10000) { toast(reimbWhy('amount')); return; }
+      if (!G.parseDay(st.date)) { toast('Pick the day you paid'); return; }
+      if (!what) { toast(reimbWhy('what')); return; }
+      var amount = Math.round(st.amount * 100) / 100;
+      if (!(amount > 0)) { toast(reimbWhy('amount')); return; }
+      // The same form sent again is the same ask: its id is kept until it is saved or the form changes.
+      var filled = [amount, st.date, what].join('|');
+      // (One that did land under that id and has since been taken back, taken off or paid is done with:
+      // asking again is a new ask, or the database would answer ok for the old one and nothing would be waiting.)
+      var landed = st.rid ? reimbRows(id).filter(function (r) { return r.id === st.rid; })[0] : null;
+      if (!st.rid || st.ridFor !== filled || (landed && landed.status !== 'open')) { st.rid = reimbNewId(); st.ridFor = filled; }
+      st.saving = true; askBtn.disabled = true;
+      var out = null;
+      try { out = await B.reimburseAsk(id, { id: st.rid, amount: amount, what: what, date: st.date }); } catch (x) { out = null; }
+      st.saving = false; askBtn.disabled = false;
+      if (!out || !out.ok) {
+        // (That id is another ask's, so this one is not saved under it: the next try takes a new one.
+        // Any other no keeps the id. The asks are read again after a failed call, so one that did land is listed.)
+        if (out && out.why === 'id') { st.rid = null; st.ridFor = ''; }
+        toast(reimbWhy(out && out.why, 'ask'), 5200); draw(); return;
+      }
+      st.rid = null; st.ridFor = '';
+      toast(G.moneyCents(amount) + ' logged. The tour’s Managers can see it.', 4200);
+      st.amount = null; st.what = ''; amountEl.value = ''; whatEl.value = '';
+      draw(); render(true);
+    }
+    // Taking one back: the small x arms, the words that replace it confirm.
+    async function takeBack(r) {
+      if (st.busy) return;
+      st.busy = r.id; draw();
+      var out = null;
+      try { out = await B.reimburseWithdraw(r.id); } catch (x) { out = null; }
+      st.busy = null; st.arm = null;
+      toast(out && out.ok ? 'Taken back' : reimbWhy(out && out.why, 'withdraw'), out && out.ok ? 0 : 5200);
+      draw(); render(true);
+    }
+    function draw() {
+      var mine = reimbRows(id).filter(function (r) { return r.mine; })
+        .sort(function (a, b) { return rbStamp(b.createdAt) - rbStamp(a.createdAt); });
+      list.replaceChildren(mine.length ? h('div', { class: 'ledger' }, mine.map(function (r) {
+        var armed = st.arm === r.id, busy = st.busy === r.id;
+        return h('div', { class: 'row ex-row rb-row' },
+          h('div', { class: 'row-label' }, r.what || 'Paid for the tour',
+            h('span', { class: 'hint' + (r.status === 'paid' ? ' done' : r.status === 'open' ? ' over' : '') },
+              [r.date ? dayMD(r.date) : '', reimbStateText(r)].filter(Boolean).join(' · '))),
+          h('span', { class: 'amt num' + (r.status === 'withdrawn' ? ' rb-off' : '') }, G.moneyCents(r.amount)),
+          r.status !== 'open' ? null
+            : armed ? h('button', { class: 'linkbtn rb-link rb-arm', type: 'button', disabled: busy || null,
+                onclick: function () { takeBack(r); } }, busy ? 'Taking it back…' : 'Take it back?')
+            : h('button', { class: 'pay-entry-x', type: 'button', 'aria-label': 'Take this reimbursement back', disabled: st.busy ? true : null,
+                onclick: function () { st.arm = r.id; draw(); } }, '×'));
+      })) : h('p', { class: 'note' }, 'Nothing asked for yet.'));
+    }
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Paid for the tour?'),
+        h('p', { class: 'sh-sub' }, 'Log what you paid out of your own pocket. The tour’s Managers see it and pay you back.'),
+        h('form', { class: 'stack', novalidate: true, onsubmit: add },
+          h('div', { class: 'pt-two' }, amountEl, dateEl),
+          whatEl,
+          askBtn),
+        h('h3', { class: 'sh-h3' }, 'Your reimbursements'),
+        list,
+        h('button', { class: 'btn ghost block rb-done', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+      ];
+    }, { label: 'Paid for the tour?', cls: 'rb-sheet', onClose: function () { if (reimbLive === draw) reimbLive = null; } });
+    reimbLive = draw;
+  }
+
+  // "Paid Oct 12 · cash · by Devin", for the Managers' list.
+  function reimbPaidLine(r) {
+    var day = rbDay(r.paidAt);
+    return ['Paid' + (day ? ' ' + day : ''), r.how === 'cash' ? 'cash' : r.how === 'card' ? 'card or bank' : null,
+      r.paidBy ? 'by ' + r.paidBy : null, r.feedId ? 'matched to a card charge' : null].filter(Boolean).join(' · ');
+  }
+  /* The tour's Reimbursements (Managers): what is still to pay back, what has
+     been, and what was taken off. Opened from the line on Expenses and from
+     the Tasks card, for the tour on screen or any other tour this account
+     manages (everything here goes by tourId). Mark paid asks how, in place;
+     Not paid (it clears who paid, when and how) and Not a tour cost each take
+     two taps; a taken-off one can be put back. The sheet stays up when the
+     last one is taken off, so that can be undone right there.
+     back: where the last button returns to. */
+  function openReimbursements(tourId, back) {
+    var B = window.GR_BACKEND;
+    // asking: the ask whose "How did you pay?" is open. arm: the one whose "Not a tour cost" is armed.
+    // unpay: the paid one whose "Not paid" is armed.
+    // told: asks marked paid in this visit and how ('cash' or 'card'), which get the grey line about counting twice.
+    var st = { asking: null, arm: null, unpay: null, busy: null, told: {} };
+    var box = h('div', { class: 'rb-box' });
+    var say = function (out, doing) { toast(reimbWhy(out && out.why, doing), 5200); };
+    async function run(r, call, after) {
+      if (st.busy) return;
+      st.busy = r.id; draw();
+      var out = null;
+      try { out = await call(); } catch (x) { out = null; }
+      st.busy = null; st.asking = null; st.arm = null; st.unpay = null;
+      if (out && out.ok) after(); else say(out, 'mark');
+      draw(); render(true);
+    }
+    var markPaid = function (r, how) {
+      run(r, function () { return B.reimburseMark(r.id, true, how, ''); }, function () {
+        st.told[r.id] = how;
+        toast('Marked paid back');
+      });
+    };
+    // Only from the "Yes" under "Mark it not paid?". (The card charge is read first, as it stands now: the mark clears it.)
+    var markNot = function (r) {
+      var now = reimbRows(tourId).filter(function (x) { return x.id === r.id; })[0] || r;
+      var matched = !!now.feedId;
+      run(r, function () { return B.reimburseMark(r.id, false, '', ''); }, function () {
+        delete st.told[r.id];
+        if (matched) toast('Marked not paid. The card charge it was matched to stays set aside.', 6500);
+        else toast('Back in To pay back');
+      });
+    };
+    var takeOff = function (r) {
+      if (st.arm !== r.id) { st.arm = r.id; st.asking = null; st.unpay = null; draw(); return; }
+      run(r, function () { return B.reimburseWithdraw(r.id); }, function () { toast('Taken off. It no longer counts as a tour cost.', 4200); });
+    };
+    var putBack = function (r) {
+      run(r, function () { return B.reimburseRestore(r.id); }, function () { toast('Put back. It counts as a tour cost again.', 4200); });
+    };
+    function askRow(r) {
+      var busy = st.busy === r.id, off = st.busy ? true : null;
+      var head = [h('span', { class: 'rb-name' }, r.name || 'Someone on the tour'),
+        h('span', { class: 'hint' }, [r.what, r.date ? dayMD(r.date) : ''].filter(Boolean).join(' · '))];
+      var under = null;
+      if (r.status === 'open' && st.asking === r.id) {
+        under = h('div', { class: 'rb-how', role: 'group', 'aria-label': 'How did you pay ' + (r.name || 'them') + '?' },
+          h('span', { class: 'rb-how-q' }, busy ? 'Saving…' : 'How did you pay?'),
+          h('span', { class: 'rb-acts' },
+            h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { markPaid(r, 'cash'); } }, 'Cash'),
+            h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { markPaid(r, 'card'); } }, 'Card or bank'),
+            h('button', { class: 'linkbtn rb-link', type: 'button', disabled: off, onclick: function () { st.asking = null; draw(); } }, 'Not yet')));
+      } else if (r.status === 'open') {
+        under = h('span', { class: 'rb-acts' },
+          h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { st.asking = r.id; st.arm = null; st.unpay = null; draw(); } }, 'Mark paid'),
+          h('button', { class: 'linkbtn rb-link' + (st.arm === r.id ? ' rb-arm' : ''), type: 'button', disabled: off, onclick: function () { takeOff(r); } },
+            busy ? 'Taking it off…' : st.arm === r.id ? 'Take it off the tour’s costs?' : 'Not a tour cost'));
+      } else if (r.status === 'paid') {
+        // The grey line, for this visit, after saying how: where the same money could be counted a second time.
+        var note = st.told[r.id] === 'card' && r.how === 'card' && !r.feedId
+          ? 'If this payment shows up in this tour’s card charges for the same amount, the app offers to match it, so it is not counted twice.'
+          : st.told[r.id] === 'cash' && r.how === 'cash'
+            ? 'If the cash came out of the merch cash, log it there as Handed off, so it is not counted twice.' : '';
+        var unpay = st.unpay === r.id;
+        under = [h('span', { class: 'rb-state' }, h('span', { class: 'hint done' }, reimbPaidLine(r)),
+          unpay ? null : h('button', { class: 'linkbtn rb-link', type: 'button', disabled: off,
+            onclick: function () { st.unpay = r.id; st.asking = null; st.arm = null; draw(); } }, 'Not paid')),
+          // Not paid clears who paid, when and how: the first tap only asks.
+          unpay ? h('div', { class: 'rb-how', role: 'group', 'aria-label': 'Mark it not paid?' },
+            h('span', { class: 'rb-how-q' }, busy ? 'Saving…' : 'Mark it not paid?'),
+            h('span', { class: 'rb-acts' },
+              h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { markNot(r); } }, 'Yes'),
+              h('button', { class: 'btn sm ghost', type: 'button', disabled: off, onclick: function () { st.unpay = null; draw(); } }, 'No'))) : null,
+          note ? h('span', { class: 'hint rb-note' }, note) : null];
+      } else {
+        under = h('span', { class: 'rb-state' },
+          h('span', { class: 'hint' }, 'Taken off by ' + (r.closedBy || 'someone on the tour') + (rbDay(r.closedAt) ? ' · ' + rbDay(r.closedAt) : '')),
+          // (A backend file from before "Put it back" has nothing to call, so no link.)
+          B.reimburseRestore ? h('button', { class: 'linkbtn rb-link', type: 'button', disabled: off, onclick: function () { putBack(r); } },
+            busy ? 'Putting it back…' : 'Put it back') : null);
+      }
+      return h('div', { class: 'row rb-ask ' + r.status }, h('div', { class: 'row-label' }, head, under),
+        h('span', { class: 'amt num' + (r.status === 'withdrawn' ? ' rb-off' : '') }, G.moneyCents(r.amount)));
+    }
+    function draw() {
+      var rows = reimbRows(tourId);
+      var waiting = rows.filter(rbOpen);
+      var paid = rows.filter(rbPaid).sort(function (a, b) { return rbStamp(b.paidAt) - rbStamp(a.paidAt); });
+      var gone = rows.filter(function (r) { return r.status === 'withdrawn'; }).sort(function (a, b) { return rbStamp(b.closedAt) - rbStamp(a.closedAt); });
+      var part = function (title, list) {
+        return list.length ? h('section', { class: 'wn-sec' }, h('h3', { class: 'wn-h' }, title),
+          h('div', { class: 'ledger rb-list' }, list.map(askRow))) : null;
+      };
+      fillEl(box, [
+        h('p', { class: 'rb-sums' }, h('strong', { class: 'num' + (waiting.length ? ' rb-owed' : '') }, G.moneyCents(rbSum(waiting))), ' to pay back · ',
+          h('strong', { class: 'num' }, G.moneyCents(rbSum(paid))), ' paid back'),
+        part('To pay back', waiting),
+        // (Only taken-off ones left: nobody was paid back, there is simply nothing to pay.)
+        waiting.length ? null : paid.length ? h('p', { class: 'note rb-clear' }, 'Nothing waiting. Everyone has been paid back.')
+          : gone.length ? h('p', { class: 'note rb-clear' }, 'Nothing to pay back.') : null,
+        part('Paid back', paid),
+        part('Taken off', gone),
+        rows.length ? null : h('p', { class: 'note' }, 'Nobody has asked to be paid back on this tour.')
+      ]);
+    }
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Reimbursements'),
+        h('p', { class: 'sh-sub' }, 'Money people paid out of their own pocket for the tour. It counts as a tour cost from the day it is logged.'),
+        box,
+        h('div', { class: 'stack' }, h('button', { class: 'btn ghost block', type: 'button', onclick: function () {
+          closeSheet();
+          if (typeof back === 'function') setTimeout(back, 320);
+        } }, typeof back === 'function' ? 'Back' : 'Done'))
+      ];
+    }, { label: 'Reimbursements', cls: 'cat-sheet rb-sheet', onClose: function () { if (reimbLive === draw) reimbLive = null; render(true); } });
+    reimbLive = draw;
+  }
+
+  /* Tasks: one card for the tour while anyone is waiting to be paid back.
+     keep: it cannot be swiped away or ticked off. It leaves when nothing is
+     waiting and comes back if an ask is marked not paid; a new ask makes it
+     new again (the button lights up).
+     otherName: given for a tour that is NOT the one the Tasks belong to (its
+     name). Such a card has its own key and says which tour it is on. */
+  function reimbTask(tourId, otherName) {
+    var other = otherName != null;
+    var waiting = reimbRows(tourId).filter(rbOpen);
+    if (!waiting.length) return null;
+    var names = [];
+    waiting.forEach(function (r) { var n = r.name || 'someone on the tour'; if (names.indexOf(n) < 0) names.push(n); });
+    var who = names.length <= 2 ? names.join(' and ')
+      : names.length === 3 ? names[0] + ', ' + names[1] + ' and ' + names[2]
+      : names[0] + ', ' + names[1] + ' and ' + (names.length - 2) + ' others';
+    return { key: other ? 'reimb:' + tourId : 'reimb', keep: true, standing: true,
+      at: Math.max.apply(null, waiting.map(function (r) { return rbStamp(r.createdAt); })),
+      emoji: '💸', title: 'Reimbursements',
+      main: plural(waiting.length, 'reimbursement') + ' to pay back', amount: rbSum(waiting),
+      sub: other ? 'On ' + (String(otherName).trim() || 'another tour') + ': owed to ' + who : 'Owed to ' + who,
+      lines: waiting.slice(0, 4).map(function (r) {
+        return [r.name || 'Someone', r.what, r.date ? dayMD(r.date) : '', G.moneyCents(r.amount)].filter(Boolean).join(' · ');
+      }).concat(waiting.length > 4 ? ['+ ' + (waiting.length - 4) + ' more'] : []),
+      open: function () { openReimbursements(tourId); } };
+  }
+
+  /* The card pile: a waiting card charge for exactly what someone is owed is
+     most likely the payback itself, and filing it as an expense too would
+     count that money twice. These are the asks one charge could be: still
+     waiting, or already marked paid "by card or bank" with no charge named
+     yet (or this very charge, if setting it aside did not go through). The
+     sorting sheet only says so; nothing happens until "It's that
+     reimbursement" and then "Yes". */
+  function reimbMatches(tourId, r) {
+    if (!r || r.feedId == null || !(G.num(r.amount) > 0) || r.why === 'Refund') return [];
+    var t = getTour(tourId);
+    if (!t || isOffTour(t)) return [];
+    var cents = rbCents(r.amount), fid = String(r.feedId);
+    return reimbRows(tourId).filter(function (a) {
+      if (rbCents(a.amount) !== cents) return false;
+      return a.status === 'open' || (a.status === 'paid' && a.how === 'card' && (!a.feedId || a.feedId === fid));
+    });
+  }
+  function reimbMatchText(a) {
+    var who = a.name || 'someone on the tour';
+    return 'Same amount as the ' + G.moneyCents(a.amount) + (a.status === 'paid' ? ' paid back to ' + who + ' by card or bank' : ' owed to ' + who) +
+      (a.what ? ' for “' + a.what + '”' : '') + '.';
   }
 
   /* Five tabs along the bottom. The day sheet is where a tour opens. */
@@ -12887,6 +13296,20 @@
           sub: [place(x), r.author, open ? 'Waiting for an answer' : r.status === 'accepted' ? 'Accepted' : 'Denied'].filter(Boolean).join(' · '),
           open: function () { openRequests(tourId, x); } });
       });
+    });
+    // People waiting to be paid back for what they paid out of their own pocket:
+    // one card, there for as long as anyone is waiting.
+    var owedBack = live ? reimbTask(tourId) : null;
+    if (owedBack) tasks.push(owedBack);
+    // The same for every other tour this account manages (it made the tour, or
+    // is a Manager on it): a tour that has ended still has people waiting, and
+    // they stay in Tasks until they are paid back. One card a tour; never a
+    // deleted tour or an Off Tour book. (Who manages a tour is only asked about
+    // a tour that has someone waiting.)
+    if (live) allTourEntries(false).forEach(function (e) {
+      if (e[0] === tourId) return;
+      var owedThere = reimbTask(e[0], e[1].name || '');
+      if (owedThere && moneyLead(e[0])) tasks.push(owedThere);
     });
     // New expenses: what was logged, whoever sorted it, for both of you to see.
     var cats = {};
@@ -18151,10 +18574,14 @@
       h('tbody', null,
         c.lines.map(function (l) {
           var v = l.projected == null ? '' : l.paid - l.projected;
+          // Reimbursements is not a budget: what has not been paid back is still
+          // owed to people, never "under". Nothing in that cell once all is paid back.
+          var owed = l.key === 'reimbursements';
           return repRow([l.label,
             l.projected == null ? '\u2014' : money(l.projected),
             money(l.paid),
-            v === '' ? '\u2014' : (v > 0 ? money(v) + ' over' : v < 0 ? money(-v) + ' under' : 'on budget'),
+            owed ? (l.left > 0.004 ? money(l.left) + ' still owed' : '')
+              : v === '' ? '\u2014' : (v > 0 ? money(v) + ' over' : v < 0 ? money(-v) + ' under' : 'on budget'),
             money(l.effective)]);
         }),
         G.otherDebts(t).map(function (d) {
@@ -19672,7 +20099,8 @@
     var busy = false;
 
     // Add these charges to the tour (keep), or set them aside (feed only).
-    async function file(list, keep, btn) {
+    // say: other words for the line that says what happened (a charge matched to a reimbursement).
+    async function file(list, keep, btn, say) {
       if (busy || !list.length) return;
       if (keep) {
         var missing = list.filter(function (r) { return !r.category; });
@@ -19729,6 +20157,8 @@
           if (r.upcoming) bits.push(r.upcoming + ' to ' + (list.length === 1 && landsOn(list[0]) ? nameOf(landsOn(list[0])) : 'another tour'));
           if (whoMissed) bits.push('the crew member didn\u2019t save: set it under Crew, Logged Card Transactions');
           said = bits.join(' \u00b7 ');
+          // (The caller's own words, only when every one of them was set aside here and now.)
+          if (say && !keep && r.skipped === list.length && !r.already) said = say;
         } else {
           // A statement: each charge goes where it was pointed.
           var offs = [], byTour = {};
@@ -19775,12 +20205,62 @@
       // Everything the search found is sorted: the search clears, the rest comes back.
       if (query && !live.some(shown)) { query = ''; search.value = ''; }
       if (keep && addedN) { topCat = null; markChips(); hornSplash('Expenses Logged', said); }
-      else toast(said);
+      else toast(said, say && said === say ? 5200 : 0);
       render(true);
       if (!live.length) {
         closeSheet();
         if (opts && opts.next) setTimeout(opts.next, 380);
       } else draw();
+      // (What the card feed answered, for a caller that needs to know: null for a statement.)
+      return feed ? r : null;
+    }
+    /* "It's that reimbursement": this card charge is the money that paid someone
+       back, which the tour already counts under Reimbursements. It is two writes
+       and the second cannot be undone in the app, so it takes two taps: the
+       first only arms the line (r.rbArm: the ask it is armed for), which then
+       asks "Mark <name> paid back and set this charge aside?", and only "Yes"
+       comes here. Then: the ask is marked paid back by card, naming this charge;
+       and when the database has said yes, the charge is set aside exactly as
+       "Not a tour charge: set it aside" does, so it is not counted a second
+       time. A no changes nothing. */
+    // Does this charge still match that ask, as the app reads it right now?
+    function stillBack(r, ask) {
+      return reimbMatches(tourId, r).some(function (a) { return a.id === ask.id; });
+    }
+    // The ask changed under an open sheet (paid another way, matched to another charge, taken off): look again.
+    function backChanged(r) {
+      r.rbArm = null;
+      draw();
+      toast('That reimbursement has changed. Take another look.', 5200);
+    }
+    function armBack(r, ask) {
+      if (busy) return;
+      if (!stillBack(r, ask)) { backChanged(r); return; }
+      r.rbArm = ask.id; r.rbArmAt = Date.now();
+      draw();
+    }
+    async function payback(r, ask, btn) {
+      // (Not the second half of a double tap: "Yes" is drawn where the first button was.)
+      if (busy || r.rbArm !== ask.id || Date.now() - G.num(r.rbArmAt) < 350) return;
+      if (!stillBack(r, ask)) { backChanged(r); return; }
+      var B = window.GR_BACKEND, out = null;
+      busy = true; btn.disabled = true;
+      try { out = await B.reimburseMark(ask.id, true, 'card', String(r.feedId)); } catch (e) { out = null; } finally { busy = false; }
+      r.rbArm = null;
+      if (!out || !out.ok) {
+        toast(reimbWhy(out && out.why, 'mark') + ' Nothing was changed.', 5200);
+        draw();
+        return;
+      }
+      var res = await file([r], false, null, 'Marked paid back. The charge is set aside so it is not counted twice.');
+      // (Marked, but the charge is still here: its line stays, and says what is left to do.)
+      if (live.indexOf(r) >= 0) {
+        toast('Marked paid back, but the charge couldn\u2019t be set aside. Set it aside here so it is not counted twice.', 6500);
+        draw();
+      } else if (res && res.already && !res.skipped) {
+        // Another Manager sorted this very charge a moment ago: it may be filed as an expense.
+        toast('Marked paid back. Someone else had already sorted that charge: check it isn\u2019t also filed as an expense.', 6500);
+      }
     }
 
     var title = h('h2', { class: 'sh-title' });
@@ -19974,6 +20454,9 @@
         }
       });
       drawWho();
+      // Someone is owed exactly this amount: say so, under the row. Nothing is
+      // picked or ticked by it; the button is the only thing that acts.
+      var backs = feed && !baseOff ? reimbMatches(tourId, r) : [];
       wrap.append(cb, h('div', { class: 'rv-fields' },
         h('div', { class: 'rv-head' },
           h('span', { class: 'rv-name' }, r.merchant),
@@ -19992,7 +20475,22 @@
         whoHost,
         destRow(r),
         feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false); } },
-          'Not a tour charge — set it aside') : null));
+          'Not a tour charge — set it aside') : null,
+        backs.length ? h('div', { class: 'iv-hit rb-match' }, backs.map(function (a) {
+          // Armed by the first tap: the line asks, and only Yes does it.
+          if (r.rbArm === a.id) {
+            var yes = h('button', { class: 'btn sm primary', type: 'button' }, 'Yes');
+            var no = h('button', { class: 'btn sm ghost', type: 'button' }, 'No');
+            pressable(yes, function () { payback(r, a, yes); });
+            pressable(no, function () { if (busy) return; r.rbArm = null; draw(); });
+            return h('div', { class: 'rb-match-row' },
+              h('p', { class: 'iv-hit-t' }, 'Mark ' + (a.name || 'them') + ' paid back and set this charge aside?'),
+              h('span', { class: 'rb-acts' }, yes, no));
+          }
+          var b = h('button', { class: 'btn sm primary', type: 'button' }, 'It\u2019s that reimbursement');
+          pressable(b, function () { armBack(r, a); });
+          return h('div', { class: 'rb-match-row' }, h('p', { class: 'iv-hit-t' }, reimbMatchText(a)), b);
+        })) : null));
       return wrap;
     }
 
@@ -22312,6 +22810,8 @@
   }
 
   function init() {
+    // Every sum of a tour (G.calc) asks this for the tour's asks to be paid back.
+    G.reimbursementsOf = reimbursementsOfTour;
     applyTheme(currentTheme());
     render(true);
     initRole();

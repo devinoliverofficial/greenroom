@@ -1199,6 +1199,22 @@
     function amt(max) { var v = Math.round(rnd() * max * 100) / 100; return rnd() < 0.15 ? v.toLocaleString('en-US') : v; }
     function day(i) { return G.addDays('2026-05-01', i); }
     var n = function (v) { return G.num(v); };
+    // Asks to be paid back ride beside a tour, not in it. Their own dice, so
+    // the tours rolled above are the same ones they were before these existed.
+    var seed2 = 20261010;
+    function rnd2() { seed2 = (seed2 * 1103515245 + 12345) % 2147483648; return seed2 / 2147483648; }
+    function makeAsks() {
+      var list = [];
+      if (rnd2() < 0.45) return list;
+      var k = 1 + Math.floor(rnd2() * 5);
+      for (var i = 0; i < k; i++) {
+        var r = rnd2();
+        list.push({ id: 'rb' + i, amount: Math.round(rnd2() * 30000) / 100, date: day(Math.floor(rnd2() * 15) - 2),
+          status: r < 0.45 ? 'open' : r < 0.85 ? 'paid' : 'withdrawn',
+          how: ['', 'cash', 'card', 'other'][Math.floor(rnd2() * 4)] });
+      }
+      return list;
+    }
 
     function makeTour() {
       var t = { shows: {}, expenses: {}, crew: {}, commission: {}, extras: {}, charges: {}, debts: {}, cashLog: {}, imports: {} };
@@ -1261,7 +1277,7 @@
     }
 
     // The rules, written out plainly.
-    function oracle(t, upTo) {
+    function oracle(t, upTo, asks) {
       var inDay = function (d) { return !upTo || (d && d <= upTo); };
       var shows = Object.keys(t.shows).map(function (k) { return t.shows[k]; }).filter(function (s) { return inDay(s.date); });
       var incomeBy = {};
@@ -1350,8 +1366,17 @@
       var comm = Math.max(commProj, paidIn.commission || 0);
       var dbd = paidIn.dayByDay || 0;
       Object.keys(t.extras).forEach(function (k) { if (inDay(t.extras[k].date)) dbd += n(t.extras[k].amount); });
-      var out = fixed + comm + loans + dbd;
-      return { income: income, out: out, net: income - out, lines: lines, commission: comm, debt: loans, dayByDay: dbd };
+      // What people paid out of pocket for the tour and asked back: every ask
+      // not taken off counts in full from its date, paid back or not.
+      var asked = 0, paidBack = 0;
+      (asks || []).forEach(function (r) {
+        if (r.status === 'withdrawn' || !inDay(r.date)) return;
+        asked += n(r.amount);
+        if (r.status === 'paid') paidBack += n(r.amount);
+      });
+      lines.reimbursements = paidBack;
+      var out = fixed + comm + loans + dbd + asked;
+      return { income: income, out: out, net: income - out, lines: lines, commission: comm, debt: loans, dayByDay: dbd, asked: asked };
     }
 
     function close(a, b, what) {
@@ -1359,9 +1384,11 @@
       if (!(typeof a === 'number' && isFinite(a) && typeof b === 'number' && isFinite(b))) throw new Error(what + ': Greenroom ' + a + ' vs check ' + b);
       if (Math.abs(a - b) > 0.005) throw new Error(what + ': Greenroom ' + a + ' vs check ' + b);
     }
-    function compare(t, upTo, label) {
-      var c = G.calc(t, upTo ? { upTo: upTo } : {});
-      var o = oracle(t, upTo);
+    function compare(t, upTo, label, asks) {
+      var c = G.calc(t, upTo ? { upTo: upTo, reimbursements: asks } : { reimbursements: asks });
+      var o = oracle(t, upTo, asks);
+      close(c.reimbursements, o.asked, label + ' reimbursements');
+      close(c.reimbursementsOwed + c.reimbursementsPaid, o.asked, label + ' reimbursements owed + paid back');
       close(c.income, o.income, label + ' income');
       close(c.out, o.out, label + ' out');
       close(c.net, o.net, label + ' net');
@@ -1373,18 +1400,18 @@
 
     test('money checked twice: 400 random tours, today and every day of the chart', function () {
       for (var i = 0; i < 400; i++) {
-        var t = makeTour();
-        compare(t, null, 'tour ' + i);
-        for (var d = -2; d < 13; d += 3) compare(t, day(d), 'tour ' + i + ' on ' + day(d));
+        var t = makeTour(), asks = makeAsks();
+        compare(t, null, 'tour ' + i, asks);
+        for (var d = -2; d < 13; d += 3) compare(t, day(d), 'tour ' + i + ' on ' + day(d), asks);
       }
     });
 
     test('money checked twice: the balance chart ends where the total does', function () {
       for (var i = 0; i < 60; i++) {
-        var t = makeTour();
-        var s = G.balanceSeries(t);
+        var t = makeTour(), asks = makeAsks();
+        var s = G.balanceSeries(t, { reimbursements: asks });
         if (!s.length) continue;
-        var all = G.calc(t);
+        var all = G.calc(t, { reimbursements: asks });
         var last = s[s.length - 1];
         // The last day of the chart has everything dated; undated charges only count in the total.
         var undated = Object.keys(t.charges).some(function (k) { return !t.charges[k].date && !t.charges[k].accounted && t.charges[k].category; });
@@ -1983,6 +2010,143 @@
       eq(G.showsNear({ kind: 'offtour', shows: {} }, '2026-10-03', 2).length, 0, 'a book with no shows');
       eq(G.showsNear(null, '2026-10-03', 2).length, 0, 'no tour');
       eq(Object.keys(tour.shows).length, 6, 'the tour is untouched');
+    });
+  })();
+
+  /* ---- Reimbursements: what people on the tour paid out of their own pocket
+     and asked to be paid back. The asks are handed to calc (they are not in
+     the tour's document); they make one line, and they are a cost of the tour
+     from the day they are dated, paid back or not. ---- */
+  (function () {
+    function tour() {
+      return { name: 'T', expenses: { gas: { projected: 200, paid: 0 } }, commission: { management: { mode: 'pct', value: 10 } },
+        shows: keyed([{ id: 's1', date: '2026-05-10', city: 'Austin, TX', loggedAt: 1, income: { guarantee: 1000 }, guaranteeReceived: true }]),
+        charges: { c1: { date: '2026-05-09', merchant: 'Shell', amount: 60, category: 'gas' } } };
+    }
+    function asks() {
+      return [
+        { id: 'r1', name: 'Brent', what: 'Gas for the van', amount: 42.10, date: '2026-05-09', status: 'open', how: '' },
+        { id: 'r2', name: 'Tasha', what: 'Strings', amount: 18, date: '2026-05-10', status: 'paid', how: 'cash' },
+        { id: 'r3', name: 'Brent', what: 'Parking', amount: 60, date: '2026-05-11', status: 'paid', how: 'card' },
+        { id: 'r4', name: 'Jeff', what: 'Not ours', amount: 500, date: '2026-05-10', status: 'withdrawn', how: '' },
+        { id: 'r5', name: 'Tasha', what: 'Tolls', amount: 30, date: '2026-05-20', status: 'open', how: '' }];
+    }
+    var lineOf = function (c) { return c.lines.filter(function (l) { return l.key === 'reimbursements'; }); };
+
+    test('reimbursements: a tour with no asks is exactly what it was', function () {
+      var plain = G.calc(tour());
+      eq(lineOf(plain).length, 0, 'no line without an ask');
+      eq(plain.reimbursements, 0); eq(plain.reimbursementsOwed, 0); eq(plain.reimbursementsPaid, 0); eq(plain.reimbursementsCash, 0);
+      var empty = G.calc(tour(), { reimbursements: [] });
+      eq(lineOf(empty).length, 0, 'no line for an empty list');
+      near(empty.out, plain.out, 'out'); near(empty.net, plain.net, 'net'); eq(empty.lines.length, plain.lines.length, 'the same lines');
+      var gone = G.calc(tour(), { reimbursements: [asks()[3]] });
+      eq(lineOf(gone).length, 0, 'no line when every ask was taken off');
+      near(gone.out, plain.out, 'a taken-off ask costs nothing');
+      near(G.spentOf(empty), G.spentOf(plain), 'spent');
+    });
+
+    test('reimbursements: one line with the total, what is owed, what is paid back and what of that was cash', function () {
+      var plain = G.calc(tour()), c = G.calc(tour(), { reimbursements: asks() });
+      var l = lineOf(c);
+      eq(l.length, 1, 'one line');
+      eq(l[0].label, 'Reimbursements');
+      near(l[0].projected, 150.10, 'projected is all of it'); near(l[0].effective, 150.10, 'and all of it counts');
+      near(l[0].paid, 78, 'paid is what has been paid back'); near(l[0].left, 72.10, 'left is what is still owed'); eq(l[0].over, 0);
+      near(c.reimbursements, 150.10, 'total'); near(c.reimbursementsOwed, 72.10, 'owed');
+      near(c.reimbursementsPaid, 78, 'paid back'); near(c.reimbursementsCash, 18, 'paid back in cash');
+      near(c.out, plain.out + 150.10, 'the tour\u2019s out goes up by the total, once');
+      near(c.net, plain.net - 150.10, 'and the net comes down by it');
+      near(c.income, plain.income, 'income is untouched'); near(c.commission, plain.commission, 'commission is untouched');
+      near(c.fixed, plain.fixed, 'the typed categories are untouched');
+      near(G.spentOf(c), G.spentOf(plain) + 150.10, 'spent takes it in, paid back or owed');
+      eq(c.lines.length, plain.lines.length + 1, 'nothing else is added');
+    });
+
+    test('reimbursements: marking one paid back never changes the tour\u2019s total', function () {
+      var before = G.calc(tour(), { reimbursements: asks() });
+      var paidNow = asks(); paidNow[0].status = 'paid'; paidNow[0].how = 'cash';
+      var after = G.calc(tour(), { reimbursements: paidNow });
+      near(after.out, before.out, 'out'); near(after.net, before.net, 'net'); near(after.reimbursements, before.reimbursements, 'total');
+      near(after.reimbursementsOwed, 30, 'owed comes down'); near(after.reimbursementsPaid, 120.10, 'paid back goes up');
+      near(after.reimbursementsCash, 60.10, 'cash');
+      near(G.spentOf(after), G.spentOf(before), 'spent');
+      var unpaid = asks(); unpaid[1].status = 'open'; unpaid[1].how = '';
+      near(G.calc(tour(), { reimbursements: unpaid }).out, before.out, 'nor does marking one not paid');
+      var allPaid = asks().map(function (r) { return r.status === 'open' ? Object.assign({}, r, { status: 'paid', how: 'other' }) : r; });
+      var done = G.calc(tour(), { reimbursements: allPaid });
+      eq(lineOf(done)[0].left, 0, 'all paid back: nothing left'); near(done.out, before.out, 'and still the same total');
+    });
+
+    test('reimbursements: an ask counts from its date; taken-off asks never count', function () {
+      var c = G.calc(tour(), { upTo: '2026-05-10', reimbursements: asks() });
+      near(c.reimbursements, 60.10, 'May 9 and May 10 only'); near(c.reimbursementsPaid, 18); near(c.reimbursementsOwed, 42.10);
+      eq(lineOf(G.calc(tour(), { upTo: '2026-05-08', reimbursements: asks() })).length, 0, 'none dated yet: no line');
+      near(G.calc(tour(), { upTo: '2026-05-19', reimbursements: asks() }).reimbursements, 120.10, 'the May 20 one is not in yet');
+      near(G.calc(tour(), { upTo: '2026-05-20', reimbursements: asks() }).reimbursements, 150.10, 'and then it is');
+      var undated = [{ id: 'u', amount: 10, date: '', status: 'open' }];
+      near(G.calc(tour(), { reimbursements: undated }).reimbursements, 10, 'no date: in the total');
+      eq(G.calc(tour(), { upTo: '2026-12-31', reimbursements: undated }).reimbursements, 0, 'but on no day of the chart');
+      var s = G.balanceSeries(tour(), { reimbursements: asks() });
+      eq(s[s.length - 1].date, '2026-05-20', 'the chart runs to the last ask');
+      near(s[s.length - 1].net, G.calc(tour(), { reimbursements: asks() }).net, 'and ends on the tour\u2019s net');
+      var may10 = s.filter(function (p) { return p.date === '2026-05-10'; })[0];
+      near(may10.out, G.calc(tour(), { upTo: '2026-05-10' }).out + 60.10, 'May 10 carries the two asks dated by then');
+    });
+
+    test('reimbursements: the app\u2019s hook is used when no list is handed in, and never for a copy inside core', function () {
+      var plain = G.calc(tour()), seen = [];
+      var t = tour();
+      G.reimbursementsOf = function (x) { seen.push(x); return x === t ? asks() : []; };
+      try {
+        near(G.calc(t).reimbursements, 150.10, 'the hook\u2019s rows');
+        near(G.calc(t, { reimbursements: [] }).reimbursements, 0, 'a list handed in wins, even an empty one');
+        near(G.calc(t, { reimbursements: [asks()[0]] }).reimbursements, 42.10, 'a list handed in wins');
+        var s = G.balanceSeries(t);
+        near(s[s.length - 1].net, plain.net - 150.10, 'the chart takes the hook\u2019s rows');
+        // The latest-change chip compares the tour with a copy of it: both get the same asks.
+        var chip = G.latestChange(t);
+        G.reimbursementsOf = null;
+        var chipPlain = G.latestChange(t);
+        eq(!!chip, !!chipPlain, 'the chip is there or not as before');
+        if (chip && chipPlain) near(chip.delta, chipPlain.delta, 'and says the same change');
+        G.reimbursementsOf = function () { throw new Error('boom'); };
+        near(G.calc(t).out, plain.out, 'a hook that fails is no asks, never a broken total');
+        G.reimbursementsOf = function () { return 'nonsense'; };
+        near(G.calc(t).out, plain.out, 'a hook that answers nonsense is no asks');
+      } finally { G.reimbursementsOf = null; }
+      near(G.calc(t).out, plain.out, 'with the hook gone, nothing');
+    });
+
+    test('reimbursements is a line only: figured, never a category a charge can be filed under', function () {
+      eq(G.isDerived('reimbursements'), true);
+      eq(G.CATEGORIES.some(function (c) { return c.key === 'reimbursements'; }), false, 'not in CATEGORIES');
+      eq(G.TYPED_CATEGORIES.some(function (c) { return c.key === 'reimbursements'; }), false, 'not typed');
+      eq(G.chargeCategoriesFor(tour()).some(function (c) { return c.key === 'reimbursements'; }), false, 'not offered for a charge');
+      eq(G.typedCategoriesFor(tour()).some(function (c) { return c.key === 'reimbursements'; }), false);
+      // A charge someone managed to file under that key counts toward nothing, as with any unknown key.
+      var t = tour(); t.charges.c9 = { date: '2026-05-10', merchant: 'X', amount: 999, category: 'reimbursements' };
+      near(G.calc(t).out, G.calc(tour()).out, 'a charge under that key is not counted as a reimbursement');
+      var csv = G.closeoutCSVs(tour())['expenses-budget-vs-actual.csv'];
+      eq(csv.indexOf('Reimbursements') < 0, true, 'no line in the closeout without asks');
+    });
+
+    test('reimbursements: the closeout file leaves that line’s variance empty (what is not paid back is owed, not "under")', function () {
+      var t = tour();
+      G.reimbursementsOf = function (x) { return x === t ? asks() : []; };
+      try {
+        var rowsOf = function () { return G.closeoutCSVs(t)['expenses-budget-vs-actual.csv'].split('\n').map(function (l) { return l.split(','); }); };
+        var all = rowsOf(), head = all[0];
+        var line = all.filter(function (r) { return r[0] === 'Reimbursements'; });
+        eq(line.length, 1, 'one Reimbursements row');
+        eq(head[3], 'Variance', 'the fourth column is the variance');
+        near(Number(line[0][1]), 150.10, 'projected: all of it'); near(Number(line[0][2]), 78, 'actual paid: what was paid back');
+        eq(line[0][3], '', 'variance left empty');
+        near(Number(line[0][4]), 150.10, 'counted: all of it');
+        // Every other budgeted line still has its variance.
+        var gas = all.filter(function (r) { return r[0] === 'Gas'; })[0];
+        eq(!!gas && gas[3] !== '', true, 'a budgeted line keeps its variance');
+      } finally { G.reimbursementsOf = null; }
     });
   })();
 

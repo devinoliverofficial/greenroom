@@ -29,7 +29,7 @@
   var resetting = false;   // arrived by a password-reset link
   var session = null;
   var cache = { tours: new Map(), labels: new Map(), guests: [], notes: [], polls: [], votes: [], requests: [],
-    asks: [], checkins: [] };
+    asks: [], checkins: [], reimb: [] };
   // Flowers: each tour's crew and gifts, and your own, asked for when a page
   // shows them and kept until something changes.
   var flowerCache = {}, flowerAsk = {}, flowerGen = {}, myFlowerCache = null, myFlowerAsk = null, myFlowerGen = 0, flowerTimer = 0;
@@ -121,7 +121,25 @@
     // Ari's questions to the tour manager (only they and ALL ACCESS see them).
     var asks = await sb.from('ari_asks').select('*').order('created_at');
     if (!asks.error) cache.asks = asks.data;
+    // Asks to be paid back (never stops the rest: see loadReimbursements).
+    await loadReimbursements();
     emit('tours'); emit('labels');
+  }
+  /* Money people paid out of their own pocket for a tour and asked to be paid
+     back. The database hands each account only its own asks, plus every ask
+     on a tour it is a Manager of. A read that fails (the table is not there
+     yet: a build ahead of its migration) leaves what was here, which starts
+     out as an empty list, and never throws. Answers whether it was read.
+     Newest first, at most 1000: if there were ever more, the oldest are the
+     ones left out (reimbursementsFor sorts what it hands the app anyway). */
+  async function loadReimbursements() {
+    try {
+      var rb = await sb.from('reimbursements')
+        .select('id, tour_id, user_id, requester_name, amount, what, spent_on, status, paid_at, paid_by, paid_by_name, paid_how, feed_id, closed_by_name, closed_at, created_at')
+        .order('created_at', { ascending: false }).limit(1000);
+      if (!rb.error && Array.isArray(rb.data)) { cache.reimb = rb.data; return true; }
+    } catch (e) { /* as it was */ }
+    return false;
   }
   // A refetch that fails (no signal as the phone wakes) is tried again, a few
   // times, further apart each time; anything that asks for one starts over.
@@ -248,6 +266,29 @@
   function fnMissing(e) {
     return !!e && (e.code === 'PGRST202' || e.code === '42883' ||
       /could not find the function|function .* does not exist/i.test(String(e.message || '')));
+  }
+  /* The four reimbursement writes (reimburse_ask, reimburse_withdraw,
+     reimburse_mark, reimburse_restore). Each answers { ok: true } or
+     { ok: false, why } and never throws: 'unavailable' when nobody is signed
+     in, when the database does not have the function yet, or when the call
+     did not go through.
+     After an answer the asks are read again (they are all these functions
+     touch) and the app is told, so every page shows it before this resolves;
+     if that read fails, everything is read again shortly, as after any change.
+     A call that did not go through is followed by the same read, without
+     waiting on it: the save may have landed with only its answer lost, and
+     the list must then show it (so nobody sends it a second time). */
+  async function reimburseCall(fn, args) {
+    if (!sb || !session || !session.user) return { ok: false, why: 'unavailable' };
+    var q = null;
+    try { q = await sb.rpc(fn, args); } catch (e) { q = null; }
+    if (!q || q.error || !isObj(q.data)) {
+      loadReimbursements().then(function (read) { if (read) emit('tours'); else scheduleRefetch(); });
+      return { ok: false, why: 'unavailable' };
+    }
+    if (await loadReimbursements()) emit('tours'); else scheduleRefetch();
+    if (q.data.ok === true) return { ok: true };
+    return { ok: false, why: String(q.data.why || 'unavailable') };
   }
   // The database's own words for a "no" the app has an answer to (a day's or
   // a queue's limit); anything else the way mapError has it.
@@ -1787,6 +1828,55 @@
       if (q.error) throw mapError(q.error);
       if (!q.data || !q.data.length) throw err('permission');
       scheduleRefetch();
+    },
+    /* ---- Reimbursements: "I paid for this, for the tour." Anyone on a tour
+       can ask to be paid back; the tour's Managers see every ask on it and
+       mark each one paid or not. You are handed your own asks and, on a tour
+       you manage, everyone's (the database decides which). Oldest first.
+       These never throw: with no database behind the app they answer
+       an empty list and { ok: false, why: 'unavailable' }. ---- */
+    reimbursementsFor: function (tourId) {
+      var me = session && session.user ? session.user.id : null;
+      return (Array.isArray(cache.reimb) ? cache.reimb : []).filter(function (r) { return r && r.tour_id === tourId; })
+        .map(function (r) {
+          return { id: r.id, tourId: r.tour_id, mine: !!me && r.user_id === me, name: r.requester_name || '',
+            amount: Number(r.amount) || 0, what: r.what || '', date: r.spent_on || '', status: r.status || 'open',
+            paidAt: r.paid_at || null, paidBy: r.paid_by_name || '', how: r.paid_how || '', feedId: r.feed_id || '',
+            closedBy: r.closed_by_name || '', closedAt: r.closed_at || null, createdAt: r.created_at || null };
+        }).sort(function (a, b) { return String(a.createdAt || '').localeCompare(String(b.createdAt || '')); });
+    },
+    // { id, amount, what, date }. The id is the caller's: one for a form as it
+    // is filled in, sent again on a retry, so a save sent twice is one ask (the
+    // database answers ok for an id it already holds as this very ask). One is
+    // made here only when none is given; an id of the wrong shape (not 6 to 40
+    // of A-Z a-z 0-9 _ -) is refused, never swapped for another.
+    // why: 'role', 'tour', 'amount', 'what', 'date', 'many', 'id' (that id is
+    // another ask's), 'unavailable'.
+    reimburseAsk: async function (tourId, ask) {
+      var a = isObj(ask) ? ask : {};
+      var given = a.id != null && a.id !== '';
+      if (given && !/^[A-Za-z0-9_-]{6,40}$/.test(String(a.id))) return { ok: false, why: 'id' };
+      var id = given ? String(a.id) : newRowId();
+      var out = await reimburseCall('reimburse_ask', { r_id: id, t_id: tourId, amt: Number(a.amount),
+        r_what: String(a.what == null ? '' : a.what).slice(0, 140), r_day: a.date || null });
+      return out.ok ? { ok: true, id: id } : out;
+    },
+    // The asker, or a Manager, while it is waiting. why: 'gone', 'paid', 'unavailable'.
+    reimburseWithdraw: function (id) {
+      return reimburseCall('reimburse_withdraw', { r_id: id });
+    },
+    // A Manager says it was paid back (how: 'cash', 'card' or 'other'; feedId:
+    // the card charge that was the payback, when there is one) or not paid
+    // (which clears who, when and how). Marking one that is already paid keeps
+    // who paid and when; it only fills in how, or the card charge.
+    // why: 'role', 'gone', 'unavailable'.
+    reimburseMark: function (id, paid, how, feedId) {
+      return reimburseCall('reimburse_mark', { r_id: id, is_paid: !!paid, how: paid ? String(how || '') : '',
+        feed: paid && feedId != null ? String(feedId) : '' });
+    },
+    // A Manager puts an ask that was taken off back to waiting. why: 'role', 'gone', 'unavailable'.
+    reimburseRestore: function (id) {
+      return reimburseCall('reimburse_restore', { r_id: id });
     },
     /* ---- Ari asks before she fixes a night's merch ---- */
     asksFor: function (tourId) {
@@ -3514,6 +3604,18 @@
         if (liveOnce && session) { refetchTries = 0; scheduleRefetch(); }
         liveOnce = true;
       });
+    /* Asks to be paid back, heard as they happen (a new one, one marked paid);
+       each phone only hears about the rows it may read. On a line of its own:
+       the server sets up everything one line listens to in a single step, and
+       refuses the lot when a table is not there to listen to. So with a build
+       that is ahead of its migration this line stays quiet, and the tours,
+       guests and notes above keep theirs. (When that line reconnects it reads
+       everything again, these included.) */
+    try {
+      sb.channel('greenroom-reimbursements')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reimbursements' }, scheduleRefetch)
+        .subscribe();
+    } catch (e) { /* the list is still read with everything else */ }
     resolvers.db(db);
     resolvers.user(user);
     resolvers.sample(sample);

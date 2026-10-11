@@ -3227,6 +3227,45 @@ button.fl-row { cursor: pointer; }
 .ci-foot { font-size: 11px; color: var(--ink-3); }
 .mpc-item .ci-box { margin: 8px 0 10px; }
 .iv-sheet .ci-box { margin: -4px 0 0; }
+/* Reimbursements ("Paid for the tour?" on MY PAY, the tour's Reimbursements
+   sheet, and the "same amount" line in the card sorting sheet). Everything
+   else these use is the app's own rows, hints, buttons and sheets. */
+.linkbtn.rb-link { flex: none; min-height: 32px; padding: 0; font-size: 12.5px; font-weight: 600; color: var(--ink-3); text-underline-offset: 2px; }
+.linkbtn.rb-link.rb-arm { color: var(--neg); }
+.linkbtn.rb-link:disabled, .rb-row .pay-entry-x:disabled { opacity: .5; }
+.rb-off { color: var(--ink-3); text-decoration: line-through; }
+/* Your own asks, under the form. */
+.rb-sheet .sh-h3 { margin-top: 20px; }
+.row.ex-row.rb-row { gap: 10px; }
+/* (A long "what" with no spaces, a pasted link, breaks instead of running under the amount.) */
+.rb-row .row-label { overflow-wrap: anywhere; }
+.rb-row .pay-entry-x { flex: none; appearance: none; -webkit-appearance: none; border: 0; background: none; min-width: 36px; min-height: 36px;
+  margin: 0 -8px 0 -4px; padding: 0; font-size: 22px; line-height: 1; color: var(--ink-3); cursor: pointer; }
+.rb-row .linkbtn.rb-link { max-width: 96px; text-align: right; line-height: 1.25; }
+.btn.rb-done { margin-top: 14px; }
+/* The tour's list: who, what for, when, how much, and what can be done about it. */
+.rb-sums { margin: 0 0 2px; font-size: 13px; line-height: 1.4; color: var(--ink-2); }
+.rb-sums strong { font-weight: 700; color: var(--ink); }
+.rb-sums strong.rb-owed { color: var(--neg); }
+.rb-clear { margin: 12px 2px 0; }
+.ledger .row.rb-ask { align-items: flex-start; gap: 12px; }
+.rb-ask .rb-name { display: block; overflow-wrap: anywhere; }
+.rb-ask .amt { flex: none; padding-top: 1px; }
+.rb-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 8px; }
+.rb-how { display: block; margin-top: 8px; }
+.rb-how-q { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.rb-how .rb-acts { margin-top: 6px; gap: 6px 8px; }
+.rb-how .rb-acts .linkbtn.rb-link { margin-left: 6px; }
+.rb-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; margin-top: 2px; }
+.rb-state .hint { display: inline; }
+.rb-ask .hint.rb-note { margin-top: 4px; font-weight: 400; line-height: 1.4; }
+/* In the card sorting sheet, under a charge someone is owed exactly: the
+   app's "this number matches" box (.iv-hit), one line and one button a match. */
+.iv-hit.rb-match { margin: 2px 0 0; padding: 9px 10px; }
+.rb-match-row + .rb-match-row { margin-top: 10px; }
+.rb-match .iv-hit-t { margin: 0 0 7px; font-size: 12.5px; overflow-wrap: anywhere; }
+.rb-match .btn.sm { min-height: 34px; height: auto; padding: 0 12px; font-size: 12.5px; }
+.rb-match .rb-acts { margin-top: 0; gap: 6px 8px; }
 .pay-sum .neg { color: var(--neg); }
 .pay-head { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 2px 16px; }
 .pay-fig { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
