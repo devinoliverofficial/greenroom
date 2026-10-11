@@ -419,6 +419,9 @@
     if (!B || !B.feedWatch) return;
     B.feedWatch(function (f) {
       S.feed = f;
+      feedHadNote(f);
+      // (The pile changed, or was read again: the account of every bank line is asked for afresh.)
+      S.acctStale = true;
       if (S.loaded) render();
       // Opened fresh while Plaid's window was out: finish what was started.
       if (!feedSeen) { feedSeen = true; whenLoaded(function () { checkPlaid(false); }); }
@@ -8480,6 +8483,8 @@
       return !signedIn ? null
         : (hasFeed && runsATour()) ? function () { openFeedSheet(null); }
         : !inMusic() ? (hasFeed ? function () { openFeedSheet(null); } : null)
+        // (The cards could not be read: the sheet asks the server what is connected, and nothing connects on a guess.)
+        : (S.feed && S.feed.failed && runsATour()) ? function () { openFeedSheet(null); }
         : (S.feed && S.feed.connectOnly && runsATour()) ? function () { closeSheet(); connectCards(null); }
         : (payTour && B.myPayAccounts) ? function () { openMyPayCards(payTour, false, 'Linked Cards'); }
         : hasFeed ? function () { openFeedSheet(null); }
@@ -9282,6 +9287,8 @@
     S.cardSync[id] = Date.now();
     B.feedCall('status').then(async function (st) {
       var t = getTour(id);
+      // (What each account is set to, for the Cards tab's line about accounts that do not log expenses.)
+      if (st && st.ok && Array.isArray(st.accounts)) S.feedStatus = { accounts: st.accounts, at: Date.now() };
       if (!st || !st.ok || st.test || !t) return;
       var accounts = Array.isArray(st.accounts) && !st.needsConnect ? st.accounts : [];
       var banks = {};
@@ -13311,6 +13318,11 @@
       var owedThere = reimbTask(e[0], e[1].name || '');
       if (owedThere && moneyLead(e[0])) tasks.push(owedThere);
     });
+    // Your own bank lines still waiting to be sorted, on any tour or Off Tour
+    // book you made, and a bank that has stopped being read: one card, there
+    // until both are clear, on whichever tour these Tasks belong to.
+    var bankCard = live ? bankTask(tourId) : null;
+    if (bankCard) tasks.push(bankCard);
     // New expenses: what was logged, whoever sorted it, for both of you to see.
     var cats = {};
     G.chargeCategoriesFor(t).forEach(function (c) { cats[c.key] = c.label; });
@@ -18690,9 +18702,11 @@
   function cardMenuItem(id) {
     var B = window.GR_BACKEND;
     if (S.mode !== 'db' || !createdTour(id) || !S.feed || !B || !B.feedCall) return null;
-    var ready = !S.feed.connectOnly && !!(S.feed.row && S.feed.row.switched_on);
+    // (The cards could not be read: the settings sheet asks the server itself, so nothing here offers to connect on a guess.)
+    var unsure = !!S.feed.failed;
+    var ready = unsure || (!S.feed.connectOnly && !!(S.feed.row && S.feed.row.switched_on));
     return h('button', { class: 'btn ghost block', type: 'button',
-      onclick: function () { if (S.feed.connectOnly) connectCards(id); else openFeedSheet(id); } },
+      onclick: function () { if (S.feed.connectOnly && !unsure) connectCards(id); else openFeedSheet(id); } },
       icon(ready ? 'gear' : 'card', 18), ready ? 'Card settings' : 'Add card info');
   }
   function openTourMenu(id) {
@@ -20097,10 +20111,14 @@
     var nameOf = function (id2) { var x = getTour(id2); return (x && x.name) || 'the tour'; };
     var live = rows.slice();
     var busy = false;
+    // What the plain set-aside link says when it worked: where the charge can be found again (its creator's list).
+    var asideSay = feed && createdTour(tourId) ? 'Set aside. It is listed under Left out and set aside, where you can put it back.' : null;
 
     // Add these charges to the tour (keep), or set them aside (feed only).
     // say: other words for the line that says what happened (a charge matched to a reimbursement).
-    async function file(list, keep, btn, say) {
+    // reason: why a charge is set aside, kept with it so the list of what was set aside can say:
+    // 'same_as_typed' ("It's the one I typed"), 'paid_back' ("It's that reimbursement"); otherwise 'set_aside'.
+    async function file(list, keep, btn, say, reason) {
       if (busy || !list.length) return;
       if (keep) {
         var missing = list.filter(function (r) { return !r.category; });
@@ -20112,14 +20130,16 @@
       busy = true;
       var was = btn ? btn.textContent : '';
       if (btn) { btn.disabled = true; btn.textContent = keep ? 'Adding\u2026' : 'Moving\u2026'; }
-      var said = '', addedN = 0;
+      var said = '', addedN = 0, stuck = [];
       try {
         if (feed) {
           var B = window.GR_BACKEND, r = null;
           try {
-            r = await B.feedCall('file', { tourId: tourId, picks: list.map(function (x) {
-              return { id: x.feedId, keep: keep, category: keep ? x.category : null, accounted: false,
-                dest: x.dest === 'off' ? 'off' : 'tour', to: landsOn(x) };
+            // by 'hand': everything this sheet sends was a person's tap. The bank feed takes a set-aside
+            // only with that mark, so a phone still on a build that set look-alikes aside by itself is refused.
+            r = await B.feedCall('file', { tourId: tourId, by: 'hand', picks: list.map(function (x) {
+              return Object.assign({ id: x.feedId, keep: keep, category: keep ? x.category : null, accounted: false,
+                dest: x.dest === 'off' ? 'off' : 'tour', to: landsOn(x) }, keep ? {} : { reason: reason || 'set_aside' });
             }) });
           } catch (e) { r = null; }
           if (!r || !r.ok) {
@@ -20144,6 +20164,20 @@
             if (r.already && !r.retried) whoMissed = false;
           }
           if (S.pile && S.pile[tourId] && S.pile[tourId].lead) await loadPile(tourId);
+          /* What the bank feed left where it was. The pile has just been read
+             again: a charge still in it was not sorted, whatever the counts say
+             (more than one save takes, a set-aside it refused, or a charge it
+             would not take from this pile). Those stay on the sheet and are
+             said, never passed off as sorted by someone else. (Not judged when
+             that read failed: the pile on screen is then the old one.) */
+          var bounced = 0, Pm = S.pile && S.pile[tourId];
+          if (Pm && Pm.lead ? !Pm.failed : !(S.feed && S.feed.failed)) {
+            var still = {};
+            feedWaiting(tourId).forEach(function (it) { still[it.id] = true; });
+            stuck = list.filter(function (x) { return still[x.feedId]; });
+            bounced = Math.max(0, stuck.length - G.num(r.refused));
+          }
+          r.already = Math.max(0, G.num(r.already) - bounced);
           var bits = [];
           if (r.retried && keep && !r.filed && r.already) {
             r.filed = r.already; r.already = 0;
@@ -20153,6 +20187,18 @@
           if (r.filed) bits.push(plural(r.filed, 'charge') + ' added, ' + G.moneyCents(r.total));
           if (r.skipped) bits.push(plural(r.skipped, 'charge') + ' set aside');
           if (r.already) bits.push(plural(r.already, 'charge') + ' already sorted by someone else');
+          if (stuck.length) {
+            // (A charge from a tour that was taken down, on a bank feed that does not yet take it from another pile.
+            // Taken down: the tour is in Deleted tours and can be restored. Not there at all: nothing to restore, and it is said so.)
+            var orphanOf = stuck.filter(function (x) { return x.waitsOn && feedTourGone(x.waitsOn); });
+            var orphans = orphanOf.length, lostTour = orphanOf.filter(function (x) { return !getTour(x.waitsOn); }).length;
+            var were = orphans === stuck.length ? (orphans === 1 ? 'it was' : 'they were') : orphans === 1 ? '1 of them was' : orphans + ' of them were';
+            bits.push(plural(stuck.length, 'charge') + ' could not be sorted and ' + (stuck.length === 1 ? 'is' : 'are') + ' still waiting' +
+              (!orphans ? ''
+                : !lostTour ? ': ' + were + ' waiting on a tour that was taken down. Restore that tour from Settings to sort ' + (orphans === 1 ? 'it' : 'them')
+                : lostTour === orphans ? ': ' + were + ' waiting on a tour, and that tour is gone'
+                : ': ' + were + ' waiting on a tour that was taken down or is gone. Restoring a tour from Settings lets you sort the charges that were on it'));
+          }
           if (r.offTour) bits.push(r.offTour + ' to Off Tour');
           if (r.upcoming) bits.push(r.upcoming + ' to ' + (list.length === 1 && landsOn(list[0]) ? nameOf(landsOn(list[0])) : 'another tour'));
           if (whoMissed) bits.push('the crew member didn\u2019t save: set it under Crew, Logged Card Transactions');
@@ -20201,11 +20247,11 @@
             (away.length ? ' \u00b7 ' + away.map(function (x) { return byTour[x].length + ' to ' + nameOf(x); }).join(', ') : '');
         }
       } finally { busy = false; if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = was; } }
-      live = live.filter(function (x) { return list.indexOf(x) < 0; });
+      live = live.filter(function (x) { return list.indexOf(x) < 0 || stuck.indexOf(x) >= 0; });
       // Everything the search found is sorted: the search clears, the rest comes back.
       if (query && !live.some(shown)) { query = ''; search.value = ''; }
       if (keep && addedN) { topCat = null; markChips(); hornSplash('Expenses Logged', said); }
-      else toast(said, say && said === say ? 5200 : 0);
+      else toast(said, (say && said === say) || stuck.length ? 5200 : 0);
       render(true);
       if (!live.length) {
         closeSheet();
@@ -20216,7 +20262,7 @@
     }
     /* "It's that reimbursement": this card charge is the money that paid someone
        back, which the tour already counts under Reimbursements. It is two writes
-       and the second cannot be undone in the app, so it takes two taps: the
+       (the mark, then the set-aside), so it takes two taps: the
        first only arms the line (r.rbArm: the ask it is armed for), which then
        asks "Mark <name> paid back and set this charge aside?", and only "Yes"
        comes here. Then: the ask is marked paid back by card, naming this charge;
@@ -20252,7 +20298,7 @@
         draw();
         return;
       }
-      var res = await file([r], false, null, 'Marked paid back. The charge is set aside so it is not counted twice.');
+      var res = await file([r], false, null, 'Marked paid back. The charge is set aside so it is not counted twice.', 'paid_back');
       // (Marked, but the charge is still here: its line stays, and says what is left to do.)
       if (live.indexOf(r) >= 0) {
         toast('Marked paid back, but the charge couldn\u2019t be set aside. Set it aside here so it is not counted twice.', 6500);
@@ -20264,8 +20310,9 @@
     }
     /* "It's the one I typed": this bank row is the bank's copy of an entry
        already on the tour (r.twin, paired by feedTwins and named on the row).
-       Setting it aside cannot be undone in the app, so it takes two taps, like
-       the reimbursement match above: the first only arms the line, which then
+       It takes two taps, like the reimbursement match above (a bank copy set
+       aside can be put back from "Left out and set aside", but nothing should
+       leave the pile on a slip of the thumb): the first only arms the line, which then
        asks "Set this bank copy aside? It will not be counted.", and only "Yes"
        sets it aside, with the same call as "Not a tour charge: set it aside".
        The typed entry is never touched. "No, it's another payment" writes
@@ -20273,7 +20320,7 @@
        the visit (S.notTwin). */
     // The typed entry changed under an open sheet (deleted, another amount, another day): look again.
     function twinChanged(r) {
-      r.twArm = false; r.twin = null; r.duplicate = r.why === 'Maybe already in';
+      r.twArm = false; r.twin = null; r.duplicate = feedMaybeIn(r.why);
       draw();
       toast('The one you typed has changed. Take another look.', 5200);
     }
@@ -20288,7 +20335,7 @@
       if (busy || !r.twArm || Date.now() - G.num(r.twArmAt) < 350) return;
       if (!feedTwinStands(tourId, r)) { twinChanged(r); return; }
       var tw = r.twin;
-      var res = await file([r], false, btn, 'Set aside. Only the one you typed is counted.');
+      var res = await file([r], false, btn, 'Set aside. Only the one you typed is counted.', 'same_as_typed');
       // (Not set aside: file has said why. The line asks again from the start.)
       if (live.indexOf(r) >= 0) { r.twArm = false; draw(); }
       // (Its bank copy is set aside: that typed entry is not offered to another bank row.)
@@ -20337,9 +20384,12 @@
         draw();
       } });
     var found = h('p', { class: 'rv-found', 'aria-live': 'polite' });
-    // (Check all never ticks a row in the "may already be logged" fold: that one is ticked by hand, on purpose, or not at all.)
+    // (Check all never ticks a row in the "may already be logged" fold: that one is ticked by hand, on purpose, or not at all.
+    // Nor a line that was put back from "Left out and set aside": it was kept out of the pile for a reason
+    // (a card payment, the bank's copy of something typed), so it too is only ever ticked one at a time.)
+    var byHandOnly = function (r) { return !!r.duplicate || !!r.preCutoff || feedPutBackWhy(r.why); };
     var allBox = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check all',
-      onchange: function (e) { live.filter(shown).forEach(function (r) { r.pick = e.target.checked && !r.duplicate && !r.preCutoff; }); draw(); } });
+      onchange: function (e) { live.filter(shown).forEach(function (r) { r.pick = e.target.checked && !byHandOnly(r); }); draw(); } });
     var addTop = pressable(h('button', { class: 'btn primary sm rv-addall', type: 'button' }, 'ADD'),
       function () { file(live.filter(function (r) { return r.pick; }), true, addTop); });
     var topCat = null;
@@ -20417,12 +20467,12 @@
       var picked = live.filter(function (r) { return r.pick; });
       var total = picked.reduce(function (n, r) { return n + G.num(r.amount); }, 0);
       var vis = live.filter(shown);
-      // (The rows Check all can tick: everything showing but the possible doubles.)
-      var can = vis.filter(function (r) { return !r.duplicate && !r.preCutoff; });
+      // (The rows Check all can tick: everything showing but the possible doubles and the lines that were put back.)
+      var can = vis.filter(function (r) { return !byHandOnly(r); });
       allBox.checked = can.length > 0 && can.every(function (r) { return r.pick; });
       allBox.indeterminate = picked.length > 0 && !allBox.checked;
       // A typed total and money sent from the bank in the same sheet: say it once, at the top.
-      var totals = live.some(function (r) { return /^(Zelle|Wire|Transfer|Maybe already in)/.test(r.why || ''); }) ? typedTotals() : [];
+      var totals = live.some(function (r) { return /^(Put back: )?(Zelle|Wire|Transfer|Maybe already in)/.test(r.why || ''); }) ? typedTotals() : [];
       typedLine.hidden = !totals.length;
       typedLine.textContent = !totals.length ? ''
         : totals.length === 1 ? 'You typed a total for ' + totals[0] + '. A payment that is already inside that total would be counted twice if you file it again.'
@@ -20565,8 +20615,10 @@
           })()),
         whoHost,
         destRow(r),
-        feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false); } },
-          'Not a tour charge — set it aside') : null,
+        // One tap, because it can be taken back: what is set aside is listed under "Left out and set aside"
+        // (under Refresh Card), where Put back returns it to the pile.
+        feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false, null, asideSay, 'set_aside'); } },
+          'Not a tour charge: set it aside') : null,
         backs.length ? h('div', { class: 'iv-hit rb-match' }, backs.map(function (a) {
           // Armed by the first tap: the line asks, and only Yes does it.
           if (r.rbArm === a.id) {
@@ -20671,7 +20723,35 @@
     if (P && P.lead) return P.items || [];
     // Your own feed's charges belong on the tours you made, never on someone else's.
     if (!S.feed || !createdTour(tourId)) return [];
-    return S.feed.items.filter(function (it) { return !it.tour_id || it.tour_id === tourId; });
+    // (A row waiting on a tour that was taken down has no pile of its own any more: it shows as a no-tour row.)
+    return (S.feed.items || []).filter(function (it) { return !it.tour_id || it.tour_id === tourId || feedTourGone(it.tour_id); });
+  }
+  // Is the tour a waiting row points at taken down, or not there at all? (Only asked once the tours are in.)
+  function feedTourGone(tourId) {
+    if (!tourId || !S.loaded) return false;
+    var t = getTour(tourId);
+    return !t || !!t.deletedAt;
+  }
+  /* Where every waiting bank line of this account sits, each counted once:
+     [{ id, name, kind, n }], kind 'tour' | 'offtour' | 'none' (no tour) |
+     'gone' (its tour was taken down). From the pile the phone already holds,
+     so it can never disagree with the pile on screen. */
+  function feedWaitingWhere() {
+    var by = {}, out = [];
+    var books = 0;
+    S.tours.forEach(function (t) { if (isOffTour(t) && !t.deletedAt) books += 1; });
+    ((S.feed && S.feed.items) || []).forEach(function (it) {
+      var t = it.tour_id ? getTour(it.tour_id) : null;
+      var kind = !it.tour_id ? 'none' : feedTourGone(it.tour_id) ? 'gone' : isOffTour(t) ? 'offtour' : 'tour';
+      var key = kind === 'tour' || kind === 'offtour' ? 't:' + it.tour_id : kind;
+      if (!by[key]) {
+        by[key] = { id: kind === 'tour' || kind === 'offtour' ? it.tour_id : null, kind: kind, n: 0,
+          name: kind === 'tour' ? String((t && t.name) || 'a tour') : kind === 'offtour' ? 'Off Tour' + (books > 1 && artistOf(t) ? ' (' + artistOf(t) + ')' : '') : '' };
+        out.push(by[key]);
+      }
+      by[key].n += 1;
+    });
+    return out;
   }
   function feedAgo(iso) {
     var ms = Date.now() - Date.parse(iso || '');
@@ -20793,6 +20873,8 @@
       INSTITUTION_DOWN: 'The bank isn\u2019t answering right now. Try again later.',
       INSTITUTION_NOT_RESPONDING: 'The bank isn\u2019t answering right now. Try again later.',
       save_failed: 'Couldn\u2019t save what came in. Try again.',
+      // (The bank feed counted what the bank sent against what it stored, and they did not match: it keeps its place and reads again.)
+      lines_missing: 'Some bank lines could not be stored. Nothing is lost; tell Greenroom.',
       no_hosted_link: 'Plaid didn\u2019t open its connect window. Try again in a moment.'
     };
     return typeof code === 'string' && Object.prototype.hasOwnProperty.call(words, code) ? words[code] : '';
@@ -20819,10 +20901,31 @@
   // A tour whose logging dates are set takes card charges between them.
   function feedLogs(tourId) { var t = getTour(tourId); return isOffTour(t) || !!G.cardWindow(t); }
 
+  /* The read of the cards failed (S.feed.failed): said, with a way to ask
+     again. It is never taken for "nothing is waiting", and never for "no bank
+     is connected": Add Card Info on an error would have him connect a bank
+     that is already connected, and every charge would come back as new. What
+     is on screen under it is the last pile that was read. */
+  function feedFailedLine() {
+    var B = window.GR_BACKEND;
+    var again = B && B.feedRead ? h('button', { class: 'linkbtn feed-catchup', type: 'button' }, 'Try again') : null;
+    if (again) again.addEventListener('click', async function () {
+      if (again.disabled) return;
+      again.disabled = true; again.textContent = 'Checking\u2026';
+      try { await B.feedRead(); } catch (e) { /* said below */ }
+      // (Nothing on screen changes when it fails again, so it is said.)
+      if (S.feed && S.feed.failed) toast('Still couldn\u2019t check the cards. Try again when you have signal.', 4200);
+      render(true);
+    });
+    return h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' }, 'Couldn\u2019t check the cards.'), again);
+  }
+
   function feedEntry(id) {
     var B = window.GR_BACKEND;
     if (!createdTour(id)) return tmFeedEntry(id);
     if (!S.feed) return null;
+    // The cards could not be read and nothing is known from an earlier read: that is all there is to say.
+    if (S.feed.failed && !S.feed.row) return h('div', { class: 'feed-entry' }, feedFailedLine());
     // Only accounts on the approved list ever get this far without a feed.
     // Until a card is in (connected and set up), the one button adds it.
     var addCard = function (go_) {
@@ -20847,11 +20950,643 @@
     // Under the button: everything waiting out of the bank, charges and
     // deposits, behind one button (Devin: "All New Card Activity").
     if (incomeReady(id)) ensureIncomeNew(id);
+    // The deposits could not be read: said too (no deposits shown is then not "no deposits").
+    var depositsLine = null;
+    if (incomeReady(id) && S.incomeNew && S.incomeNew.failed && !S.incomeBusy) {
+      depositsLine = h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' }, 'Couldn\u2019t check the deposits.'),
+        h('button', { class: 'linkbtn feed-catchup', type: 'button', onclick: function () { S.incomeNew = null; ensureIncomeNew(id); render(true); } }, 'Try again'));
+    }
     return h('div', { class: 'feed-entry' },
       h('div', { class: 'feed-bar' }, refreshBtn),
+      S.feed.failed ? feedFailedLine() : null,
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run), ' \u00b7 ',
         h('button', { class: 'linkbtn feed-catchup', type: 'button', onclick: function () { openCatchUp(id); } }, 'Catch up on missed payments')),
+      acctBlock(id),
+      depositsLine,
       cardActivityButton(id));
+  }
+
+  /* ---------------- Every bank line accounted for (0136) ----------------
+     Devin, 2026-10-11: "I need you to also make sure that this won't happen
+     again with any other cards in the future. I need all transactions to be
+     accounted for". The bank feed's rule is now store first, label second:
+     every posted line a bank sends is kept once, and what the bank calls it
+     only decides where it waits. The database answers for the whole account
+     in one go (feed_account): how many lines it holds and where each stands,
+     what was left out and why, each bank's last good read, and the last full
+     check against the bank. The Cards tab says it in a few quiet lines above
+     the pile (acctBlock), and what is not in the pile is listed under "Left
+     out and set aside" (openLeftOut), where one tap returns a line to waiting.
+     Nothing here files, sets aside or logs anything.
+     It has to tell the truth in three states. Before the bank feed's own
+     update is in place: the server leaves nothing out yet and no full check
+     is on record, so the counts are said without "every line", and nothing is
+     promised about the next read (acctNewFeed, acctComplete). After it. And
+     when the account cannot be read (S.acct.failed): "Couldn't check", with
+     Try again, and never a zero the phone does not know. */
+  var LOGIN_CODES = { ITEM_LOGIN_REQUIRED: true, PENDING_EXPIRATION: true };
+  // Trouble that passes without anyone doing anything: said on the Cards tab, not kept on Tasks.
+  var PASSING_CODES = { INSTITUTION_DOWN: true, INSTITUTION_NOT_RESPONDING: true, RATE_LIMIT_EXCEEDED: true, PRODUCT_NOT_READY: true };
+  function feedOk(code) { return !code || code === 'ok'; }
+  function feedLastStatus() { var row = (S.feed && S.feed.row) || {}; return String(row.last_status || row.lastStatus || ''); }
+  // The account is the feed's owner's, and only once a bank is connected.
+  function acctOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.feedAccount) && !!(S.feed && S.feed.row);
+  }
+  async function loadAcct() {
+    var B = window.GR_BACKEND, d = null;
+    S.acctBusy = true; S.acctStale = false;
+    try { d = await B.feedAccount(); } catch (e) { d = null; }
+    S.acctBusy = false;
+    // (An answer without its counts is not an answer: nothing is read out of it, and no zero is made of what is missing.)
+    var ok = G.isObj(d) && G.isObj(d.by_status) && typeof d.total === 'number';
+    S.acct = { data: ok ? d : null, at: Date.now(), failed: !ok };
+    return S.acct;
+  }
+  // Asked for when it is old (two minutes unless maxAge says; half a minute after a try that failed), or when the pile has changed since.
+  function ensureAcct(maxAge) {
+    if (!acctOn() || S.acctBusy) return;
+    var A = S.acct;
+    if (!A || S.acctStale || Date.now() - A.at > (A.failed ? 30e3 : (maxAge || 120e3))) {
+      loadAcct().then(function () { render(); acctRedraw(); });
+    }
+  }
+  // The sheet "Left out and set aside", while it is up: it draws again when the account has been read again.
+  var acctLive = null;
+  function acctRedraw() {
+    if (!acctLive) return;
+    // (Never under a finger: a button swapped out mid-tap swallows the tap.)
+    if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(acctRedraw, 400); return; }
+    try { acctLive(); } catch (e) { /* it draws again on its next tap */ }
+  }
+  // The account as last read; null when there is nothing to go by (not read yet, or the read failed).
+  function acctData() { return acctOn() && S.acct && !S.acct.failed && G.isObj(S.acct.data) ? S.acct.data : null; }
+  function acctBanks(d) { return d && Array.isArray(d.banks) ? d.banks.filter(function (b) { return G.isObj(b); }) : []; }
+  // Has the bank feed's update run for this account? Only it notes a bank's last good read and keeps a count of each read.
+  function acctNewFeed(d) {
+    return !!d && (G.isObj(d.check) || acctBanks(d).some(function (b) { return !!(b.last_ok || b.full_read) || b.more === true; }));
+  }
+  // Every bank read from the start under today's rules, every one of them answering, and nothing unexplained.
+  function acctComplete(d) {
+    var banks = acctBanks(d), ck = d && d.check;
+    return G.isObj(ck) && ck.ok === true && !(G.num(ck.unexplained) > 0) && banks.length > 0 && feedOk(feedLastStatus()) &&
+      banks.every(function (b) { return !!b.full_read && b.more !== true && feedOk(String(b.status || '')); });
+  }
+  // "Bank lines in Greenroom: 250 on tours, 38 waiting, 110 left out, 14 set aside." Only what is there is named.
+  function acctSentence(d) {
+    var by = G.isObj(d.by_status) ? d.by_status : {};
+    var bits = [[by.filed, 'on tours'], [by.waiting, 'waiting'], [by.left_out, 'left out'], [by.skipped, 'set aside'], [by.mypay, 'in MY PAY']]
+      .filter(function (x) { return G.num(x[0]) > 0; }).map(function (x) { return G.num(x[0]) + ' ' + x[1]; });
+    // (Nothing named: none at all when the database's own total says so; otherwise just that total.)
+    if (!bits.length) return G.num(d.total) > 0 ? 'Bank lines in Greenroom: ' + G.num(d.total) + '.' : 'No bank lines are in Greenroom yet.';
+    // "Every line" is only said once every bank has been checked from the start and nothing was unexplained.
+    return (acctComplete(d) ? 'Every line your banks have sent is accounted for: ' : 'Bank lines in Greenroom: ') + bits.join(', ') + '.';
+  }
+  /* Banks that are not being read: [{ name, code, since }]. Bank by bank when
+     the account is in hand; otherwise what the last read said (no name). */
+  function bankTroubles() {
+    if (!(S.feed && S.feed.row)) return [];
+    var d = acctData(), banks = acctBanks(d), out = [];
+    banks.forEach(function (b) {
+      var code = String(b.status || '');
+      if (!feedOk(code)) out.push({ name: String(b.institution || '').trim(), code: code, since: b.last_ok || '' });
+    });
+    var last = feedLastStatus();
+    // (With the banks in hand their own marks are newer than the feed's: a bank signed back in to is ok at once.
+    // Only a bank's own code, which the bank feed passes on in capitals, is a bank's trouble; a read that
+    // broke some other way has its own line on the Cards tab.)
+    if (!banks.length && /^[A-Z][A-Z0-9_]*$/.test(last)) out.push({ name: '', code: last, since: '' });
+    return out;
+  }
+  // A bank whose read from the start ran out of pages: the rest of its history comes in on the next reads.
+  function bankHasMore(b) { return !!b && b.more === true; }
+  /* What the last full check against the bank found, said after "Checked
+     against the bank on <day>." Only what is true of it: how many lines were
+     not here before, and where each of them is now. (Most of what a first
+     full check finds is left out, not waiting, so "brought in" would be
+     untrue; and an ordinary new charge was never "missing". check.ok is not
+     "every bank answered": a bank that did not answer is simply not in the
+     check, and has its own line.) */
+  function checkWords(ck) {
+    if (G.num(ck.unexplained) > 0) return 'Some lines could not be stored.';
+    var w = G.num(ck.new_waiting), o = G.num(ck.new_left_out), f = G.num(ck.new_filed);
+    var n = Math.max(G.num(ck.found), w + o + f);
+    if (!(n > 0)) return 'Nothing was missing.';
+    var head = n === 1 ? '1 line was not here before' : n + ' lines were not here before';
+    // (Past tense on purpose: these are the last full check's numbers, and they stand until the next one, whatever he has sorted since.)
+    var parts = [[w, 'came in to be sorted', 'It came in to be sorted', 'They came in to be sorted'], [o, 'were left out', 'It was left out', 'They were left out'],
+      [f, 'went onto a tour', 'It went onto a tour', 'They went onto a tour']].filter(function (x) { return x[0] > 0; });
+    // (An answer without the counts, or with counts that do not come to the whole: only the whole is said.)
+    if (!parts.length || w + o + f !== n) return head + '.';
+    if (parts.length === 1) return head + '. ' + (n === 1 ? parts[0][2] : parts[0][3]) + '.';
+    return head + ': ' + parts.map(function (x) { return x[0] + ' ' + (x[0] === 1 && x[1] === 'were left out' ? 'was left out' : x[1]); }).join(', ') + '.';
+  }
+  function bankTroubleWords(x) {
+    var name = x.name || 'A bank', day = x.since ? rbDay(x.since) : '';
+    if (x.code === 'PENDING_EXPIRATION') return name + '’s connection is about to run out. Sign in again.';
+    if (LOGIN_CODES[x.code]) return day ? name + ' has not been read since ' + day + '. Sign in again.' : name + ' needs you to sign in again.';
+    return (day ? name + ' has not been read since ' + day + '.' : name + ' is not being read.') +
+      (PASSING_CODES[x.code] ? ' It is not answering right now.' : ' It is having trouble.');
+  }
+  // Is an account (by the name the bank feed gives it) logging expenses right now? 'on', 'off', or '' when this phone has not heard.
+  function acctModeNow(name) {
+    var list = S.feedStatus && Array.isArray(S.feedStatus.accounts) ? S.feedStatus.accounts : [];
+    var a = list.filter(function (x) { return x && x.name === name; })[0];
+    return a ? (a.mode === 'off' ? 'off' : 'on') : '';
+  }
+  // One account's own questions, found by its name (the bank feed is asked for its accounts first).
+  async function openAccountByName(name, tourId) {
+    var B = window.GR_BACKEND, st = null;
+    try { st = await B.feedCall('status'); } catch (e) { st = null; }
+    if (st && st.ok && Array.isArray(st.accounts)) S.feedStatus = { accounts: st.accounts, at: Date.now() };
+    var a = st && st.ok && Array.isArray(st.accounts) ? st.accounts.filter(function (x) { return x && x.name === name; })[0] : null;
+    if (a) openAccountQuestions([a], 0, tourId); else openFeedSheet(tourId);
+  }
+
+  /* The few lines above the pile (the feed's owner, on a tour he made or on
+     the Off Tour book). Red first: lines the bank feed could not store, a
+     read that could not be saved, a bank that is not being read, a read that
+     did not finish for some other reason. Then, quiet: a tour with no card
+     dates, the account of every line (the way in to "Left out and set
+     aside"), what waits on other tours, the last full check, a bank not
+     fully checked yet or with more history than one read takes, and accounts
+     that do not log expenses. */
+  function acctBlock(id) {
+    if (!acctOn() || !createdTour(id)) return null;
+    ensureAcct();
+    var t = getTour(id), d = acctData(), last = feedLastStatus(), kids = [];
+    var link = function (text, fn) { return h('button', { class: 'linkbtn feed-catchup', type: 'button', onclick: fn }, text); };
+    var quiet = function () { return h('p', { class: 'feed-checked' }, Array.prototype.slice.call(arguments)); };
+    var red = function (text, act) { return h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' }, text), act || null); };
+    var cardsSheet = function () { openFeedSheet(id); };
+    var ck = d && G.isObj(d.check) ? d.check : null;
+
+    if (last === 'lines_missing' || (ck && G.num(ck.unexplained) > 0)) kids.push(red(feedProblemKnown('lines_missing')));
+    if (last === 'save_failed') kids.push(red('The last bank read could not be saved, so its lines are not in yet. Tap Refresh Card.'));
+    var troubles = bankTroubles();
+    troubles.forEach(function (x) { kids.push(red(bankTroubleWords(x), link('Open Linked Cards', cardsSheet))); });
+    // The read broke as a whole (the bank feed itself failed, or could not open the connections) while each
+    // bank's own mark still says ok: no bank is named above, so it is said here. Otherwise the only sign
+    // would be a "Last checked" that grows old.
+    if (!feedOk(last) && last !== 'lines_missing' && last !== 'save_failed' && !troubles.length) {
+      kids.push(red('The last read of your banks did not finish. Tap Refresh Card.'));
+    }
+
+    // Shows, but no card dates: nothing the banks send lands on this tour.
+    if (t && !isOffTour(t) && !feedLogs(id) && G.tourStart(t)) {
+      kids.push(quiet(acctNewFeed(d) ? 'This tour has no card dates yet, so its bank lines are waiting under Off Tour or are left out. '
+        : 'This tour has no card dates yet, so no bank lines come to it. ', link('Set card dates', cardsSheet)));
+    }
+
+    if (d) kids.push(quiet(acctSentence(d) + ' ', link('Left out and set aside', function () { openLeftOut(id); })));
+    else if (S.acct && S.acct.failed) {
+      var again = link('Try again', function () {
+        if (S.acctBusy) return;
+        again.textContent = 'Checking…';
+        loadAcct().then(function () {
+          if (S.acct && S.acct.failed) toast('Still couldn’t check the bank lines. Try again when you have signal.', 4200);
+          render(true);
+        });
+      });
+      kids.push(red('Couldn’t check the bank lines.', again));
+    } else kids.push(quiet('Checking the bank lines…'));
+
+    // Waiting on other tours and Off Tour books: each a way to that pile.
+    var where = feedWaitingWhere();
+    var others = where.filter(function (x) { return (x.kind === 'tour' || x.kind === 'offtour') && x.id !== id; });
+    if (others.length) {
+      var parts = [];
+      others.forEach(function (x, i) {
+        if (i) parts.push(', ');
+        parts.push(link(x.kind === 'offtour' ? x.n + ' ' + x.name : x.n + ' on ' + x.name, function () {
+          var ot = getTour(x.id);
+          if (x.kind === 'offtour') go({ name: 'artist', artist: artistOf(ot), view: 'off', from: S.route, fromLabel: 'Cards' });
+          else go({ name: 'tour', id: x.id, view: 'cards' });
+        }));
+      });
+      kids.push(quiet('Also waiting: ', parts, '.'));
+    }
+    var lost = where.filter(function (x) { return x.kind === 'gone'; })[0];
+    if (lost) kids.push(quiet(lost.n === 1 ? '1 charge here was waiting on a tour that was taken down.'
+      : lost.n + ' charges here were waiting on a tour that was taken down.'));
+    // (Only if a read was ever cut short: the pile is then not all of it, and says so.)
+    var have = (S.feed.items || []).length, total = G.num(S.feed.total);
+    if (!S.feed.failed && total > have) kids.push(quiet('Showing the oldest ' + have + ' of ' + total + ' waiting charges.'));
+
+    var ckDay = ck && ck.at ? rbDay(ck.at) : '';
+    if (ckDay) kids.push(quiet('Checked against the bank on ' + ckDay + '. ' + checkWords(ck)));
+    // (Only once the bank feed's update is known to be running: before that, nothing about the next read is promised.)
+    if (acctNewFeed(d)) acctBanks(d).forEach(function (b) {
+      // (A bank in trouble has its red line above; nothing is promised about its next read.)
+      if (!feedOk(String(b.status || ''))) return;
+      var bank = String(b.institution || '').trim() || 'A bank';
+      // More history than one read takes: its check is not whole yet, and each read from here on carries on with it.
+      if (bankHasMore(b)) kids.push(quiet(bank + ' has more history than one read takes. The rest comes in on the next reads.'));
+      else if (!b.full_read) kids.push(quiet(bank + ' has not been fully checked yet. It will be on the next read.'));
+    });
+    var off = d && G.isObj(d.not_kept) && Array.isArray(d.not_kept.off) ? d.not_kept.off : [];
+    off.forEach(function (o) {
+      var n = G.num(o && o.n), name = String((o && o.account) || '').trim();
+      if (!(n > 0) || !name) return;
+      var now = acctModeNow(name), were = n === 1 ? ' was' : ' were';
+      if (now === 'on') {
+        kids.push(quiet(plural(n, 'line') + ' on ' + name + were + ' not read while it did not log expenses. Catch up on missed payments brings ' +
+          (n === 1 ? 'it' : 'them') + ' in.'));
+      } else {
+        kids.push(quiet(name + (now === 'off' ? ' does not log expenses: ' : ' did not log expenses at the last full check: ') +
+          plural(n, 'line') + were + ' not read. ', link('Change', function () { openAccountByName(name, id); })));
+      }
+    });
+    return kids.length ? h('div', { class: 'feed-acct' }, kids) : null;
+  }
+
+  /* Tasks: one card for the feed's owner while bank lines wait to be sorted
+     anywhere (every tour and Off Tour book, each line counted once) or a bank
+     has stopped being read. It is on the Tasks of whichever tour his Tasks
+     follow, one he made or not: the lines are his wherever he is looking.
+     keep: it cannot be swiped away or ticked off; it leaves when both are
+     clear. It opens the Cards tab where the lines wait. The count is the pile
+     this phone holds; when the cards could not be read just now the card
+     stays and says so, instead of a number, and instead of going away. Its
+     time is the newest waiting line's day, so a line that has come in since
+     he last looked lights the Tasks button, as a new reimbursement does. */
+  // Remembered on this phone, per account: a bank has been seen connected. (For a read that fails before anything else is known.)
+  function feedHadKey() { var B = window.GR_BACKEND; return 'gr-feed-had:' + ((B && B.uid && B.uid()) || 'me'); }
+  function feedHadNote(f) {
+    if (f && f.row) lsSet(feedHadKey(), '1');
+    // (Read, and no bank is connected: forgotten. A read that failed says nothing either way.)
+    else if (!f || !f.failed) { try { window.localStorage.removeItem(feedHadKey()); } catch (e) { /* nothing kept */ } }
+  }
+  function bankTask(tourId) {
+    if (S.mode !== 'db' || !S.feed) return null;
+    // Nothing read at all: only the account this phone has seen a bank on is told. Nobody else is shown bank words.
+    var cold = !S.feed.row;
+    if (cold && !(S.feed.failed && lsGet(feedHadKey()) === '1')) return null;
+    // Lines are sorted on a tour he made (or its artist's Off Tour book). Someone whose only bank is the one
+    // behind MY PAY has no pile to sort: for them the card is only ever a bank that needs a sign-in.
+    var sorts = createdTour(tourId) || runsATour();
+    ensureAcct(600e3);
+    var where = sorts ? feedWaitingWhere() : [];
+    var n = where.reduce(function (sum, x) { return sum + x.n; }, 0);
+    var down = cold ? [] : bankTroubles().filter(function (x) { return !PASSING_CODES[x.code]; });
+    var unsure = sorts && !!S.feed.failed;
+    if (!n && !down.length && !unsure) return null;
+    var bankLine = function (x) { return (x.name || 'A bank') + (LOGIN_CODES[x.code] ? ' needs you to sign in again' : ' is not being read'); };
+    var lines = where.map(function (x) {
+      return x.kind === 'tour' ? x.n + ' on ' + x.name : x.kind === 'offtour' ? x.n + ' ' + x.name
+        : x.kind === 'gone' ? x.n + ' on a tour that was taken down' : x.n + ' on no tour yet';
+    });
+    var cant = 'Couldn’t check the cards just now';
+    // The day of the newest line waiting (the day it posted, when the bank said).
+    var newest = '', arrived = 0;
+    (S.feed.items || []).forEach(function (it) {
+      [it && it.posted, it && it.date].forEach(function (v) { var day = String(v || ''); if (day > newest && G.parseDay(day)) newest = day; });
+      var came = it && it.created_at ? Date.parse(it.created_at) : 0;
+      if (came > arrived) arrived = came;
+    });
+    return { key: 'banklines', keep: true, standing: true, at: Math.min(Date.now(), arrived || (newest ? G.parseDay(newest).getTime() : 0)), emoji: '🏦', title: 'Bank lines',
+      main: n ? (unsure ? 'Bank lines are waiting to be sorted' : plural(n, 'bank line') + (n === 1 ? ' is' : ' are') + ' waiting to be sorted')
+        : down.length ? bankLine(down[0]) : cant,
+      sub: [unsure && (n || down.length) ? cant : null].concat(down.slice(n ? 0 : 1).map(bankLine)).filter(Boolean).join(' · ') || null,
+      lines: n && !unsure && (lines.length > 1 || where[0].id !== tourId) ? lines.slice(0, 5).concat(lines.length > 5 ? ['+ ' + (lines.length - 5) + ' more'] : []) : null,
+      open: function () { bankTaskOpen(tourId, where); } };
+  }
+  /* Where the card goes. His own tour: its Cards tab. A tour someone else
+     made (his lines are never on it): the tour or Off Tour book of his with
+     the most lines waiting, else any tour he made, else Linked Cards. */
+  function bankTaskOpen(tourId, where) {
+    if (createdTour(tourId)) { go({ name: 'tour', id: tourId, view: 'cards' }); return; }
+    var to = where.filter(function (x) { return (x.kind === 'tour' || x.kind === 'offtour') && createdTour(x.id); })
+      .sort(function (a, b) { return b.n - a.n; })[0];
+    if (to && to.kind === 'offtour') { go({ name: 'artist', artist: artistOf(getTour(to.id)), view: 'off', from: S.route, fromLabel: 'Tasks' }); return; }
+    var own = to ? to.id : (allTourEntries(false).filter(function (e) { return createdTour(e[0]); })[0] || [])[0];
+    if (own) go({ name: 'tour', id: own, view: 'cards' }); else openFeedSheet(null);
+  }
+
+  /* "Left out and set aside": every bank line that is not in the pile and not
+     on a tour, with why, and a way back. A fold for each reason the bank feed
+     leaves a line out (LEFT_OUT), one for what was set aside by a tap, and
+     "Needs a look" for a line the bank took back or changed after it was
+     dealt with, or one marked filed that no tour holds. Bring it in / Put
+     back are one tap: all they do is return the line to waiting, where it is
+     sorted like any other. A line the bank took back has no button. Rows come
+     a page at a time; a list that could not be read says so. */
+  var LEFT_OUT = [
+    ['card_payment', 'Card payments', 'Paying a credit card, or the payment arriving on the card. The charges on the card are what count.'],
+    ['own_move', 'Moved to savings or investments', 'Money moved to your own savings or investments.'],
+    ['outside_dates', 'Not during a tour', 'Dated outside every tour’s card dates, with no single Off Tour book to wait in.'],
+    ['before_tour', 'Before the tour', 'On or before the day a card’s opening balance was typed in, so already inside that balance.'],
+    ['zero', 'Zero amount', 'Lines for $0.00.'],
+    ['bank_removed', 'Taken back by the bank', 'The bank withdrew these while they were still waiting to be sorted.']
+  ];
+  var LO_PAGE = 100; // rows in one page of a list, as the backend hands them over
+  function openLeftOut(id) {
+    var B = window.GR_BACKEND;
+    if (!B || !B.feedLeftOut || !B.feedPutBack || !acctOn()) return;
+    var box = h('div', { class: 'rb-box' });
+    var here = true;
+    // acct: this sheet's own copy of the account (counts are taken down as lines are brought in); at: which read it is a copy of.
+    // folds: key -> { open, rows, more, busy, failed, asked, after, seen }. busy: the row being moved. look: the "needs a look" lists.
+    //   after: the last line the database handed over ({ date, id }), where the next page starts; seen: how many it has handed over.
+    var st = { acct: null, at: 0, folds: {}, busy: null, look: null, lookBusy: false, lookFailed: false };
+    var fold = function (key) {
+      return st.folds[key] || (st.folds[key] = { open: false, rows: [], more: false, busy: false, failed: false, asked: false, after: null, seen: 0 });
+    };
+    // A fold back to how it was before it was first opened (its list is read again from the top).
+    var foldReset = function (f) { f.rows = []; f.asked = false; f.more = false; f.failed = false; f.after = null; f.seen = 0; };
+    /* The next page of a fold. It starts just past the last line the database
+       handed over (its day, then its id), not at "page N": lines arrive in
+       these lists while the sheet is open (a bank read) and leave them
+       (brought in, here or on another phone), and a page counted from the top
+       would then hand back lines already shown and never reach the rest.
+       Should that last line ever lack a day or an id, the page is asked for by
+       how many lines have been handed over, and pages are asked for one after
+       another until one brings a line not shown yet or comes up short. Either
+       way one tap asks a bounded number of times (LO_TURNS), and each ask
+       moves on, so it cannot go round for ever. */
+    var LO_TURNS = 12;
+    async function loadFold(key, status, reason) {
+      var f = fold(key);
+      if (f.busy) return;
+      f.busy = true; f.failed = false; draw();
+      var have = {}, fresh = 0, lost = false, ended = false;
+      f.rows.forEach(function (r) { have[r.id] = true; });
+      for (var turn = 0; turn < LO_TURNS && !fresh && !ended; turn++) {
+        var got = null;
+        try { got = await B.feedLeftOut(status, reason, Math.floor(f.seen / LO_PAGE), f.after); } catch (e) { got = null; }
+        if (!Array.isArray(got)) { lost = true; break; }
+        got.forEach(function (r) { if (G.isObj(r) && r.id != null && !have[r.id]) { have[r.id] = true; f.rows.push(r); fresh += 1; } });
+        f.seen += got.length;
+        var last = got.length ? got[got.length - 1] : null;
+        f.after = G.isObj(last) && last.id != null && String(last.id) !== '' && G.parseDay(String(last.date || '')) ? { date: String(last.date), id: last.id } : null;
+        ended = got.length < LO_PAGE;
+      }
+      f.busy = false; f.asked = true;
+      // (A page that could not be read: said, and Try again asks from the same place. What is shown stays.)
+      if (lost) f.failed = true; else f.more = !ended;
+      draw();
+    }
+    async function loadLook(wantFiled) {
+      if (st.lookBusy) return;
+      st.lookBusy = true; st.lookFailed = false;
+      var got = null;
+      try { got = await B.feedLook(wantFiled); } catch (e) { got = null; }
+      st.lookBusy = false;
+      if (G.isObj(got)) st.look = got; else st.lookFailed = true;
+      draw();
+    }
+    /* Lines marked filed that no tour this phone holds has, by the database's
+       own rule: a taken-down tour still counts as holding it; a charge from
+       the bank is kept under "p" + the line's id (one from the first card
+       feed under "y" + its id); and a line filed in the last two minutes is
+       left alone, since filing marks the line a moment before it writes the
+       charge. The database checks all of it again before it moves anything. */
+    function orphanRows() {
+      var filed = st.look && Array.isArray(st.look.filed) ? st.look.filed : [];
+      var held = function (id) {
+        var hit = false;
+        var see = function (tour) {
+          if (!hit && G.isObj(tour) && G.isObj(tour.charges) && (G.isObj(tour.charges['p' + id]) || G.isObj(tour.charges['y' + id]))) hit = true;
+        };
+        S.tours.forEach(see);
+        Object.keys(S.pending).forEach(function (k) { see(S.pending[k]); });
+        return hit;
+      };
+      var justNow = Date.now() - 120e3;
+      return filed.filter(function (r) {
+        return G.isObj(r) && r.id != null && !(r.decided_at && rbStamp(r.decided_at) > justNow) && !held(r.id);
+      });
+    }
+    // Back to waiting: one line, one tap. The database decides whether it may move; the answer is how many did.
+    async function bring(key, r) {
+      if (st.busy != null) return;
+      st.busy = r.id; draw();
+      var n = null;
+      try { n = await B.feedPutBack([r.id]); } catch (e) { n = null; }
+      st.busy = null;
+      if (typeof n !== 'number') {
+        toast(B.netTrouble && B.netTrouble() ? 'No connection right now, so nothing was moved. Try again when you have signal.'
+          : 'Couldn’t move that line just now. Nothing was changed. Try again in a moment.', 5200);
+        draw();
+        return;
+      }
+      if (n > 0) {
+        // Off this sheet's lists and out of its counts; the account itself is read again behind it.
+        var f = fold(key), d = st.acct, cents = G.num(r.amount);
+        f.rows = f.rows.filter(function (x) { return x.id !== r.id; });
+        if (st.look && key === 'look') st.look.filed = (st.look.filed || []).filter(function (x) { return x.id !== r.id; });
+        if (d) {
+          var by = d.by_status, was = key === 'look' ? 'filed' : key === 'aside' ? 'skipped' : 'left_out';
+          by[was] = Math.max(0, G.num(by[was]) - 1); by.waiting = G.num(by.waiting) + 1;
+          // (A reason's total is what its lines come to with the signs taken off, the way the database adds it:
+          // a payment leaving the bank and the same payment arriving on the card would otherwise cancel to $0.00.)
+          if (was === 'left_out') (Array.isArray(d.left_out) ? d.left_out : []).forEach(function (x) {
+            if (G.isObj(x) && String(x.reason) === String(r.reason)) {
+              x.n = Math.max(0, G.num(x.n) - 1);
+              if (typeof x.sum === 'number') x.sum = Math.max(0, Math.round((x.sum - Math.abs(cents)) * 100) / 100);
+            }
+          });
+          if (was === 'skipped' && G.isObj(d.set_aside)) {
+            d.set_aside.n = Math.max(0, G.num(d.set_aside.n) - 1);
+            // (A total that never came is not made into one.)
+            if (typeof d.set_aside.sum === 'number') d.set_aside.sum = Math.round((d.set_aside.sum - cents) * 100) / 100;
+          }
+          if (was === 'filed' && G.isObj(d.look)) d.look.no_tour = Math.max(0, G.num(d.look.no_tour) - 1);
+        }
+        toast('Back in your card charges');
+      } else {
+        toast(key === 'look' ? 'That line was not moved: a tour has it, or it is already back in your card charges.'
+          : 'That line was not moved: it is no longer where it was. The list is read again.', 5200);
+        // (What the list shows is not what the database holds: start that fold again.)
+        if (key !== 'look') { var f0 = fold(key); foldReset(f0); if (f0.open) loadFold(key, f0.status, f0.reason); }
+        else { st.look = null; }
+      }
+      S.acctStale = true; ensureAcct();
+      draw(); render();
+    }
+    // The words for each reason a line is left out (LEFT_OUT), by its code.
+    var loKnown = {};
+    LEFT_OUT.forEach(function (x, i) { loKnown[x[0]] = { i: i, title: x[1], note: x[2] }; });
+    // What a line's own note says about how it arrived, when that tells him something: "Zelle", "Maybe already
+    // in", or what it was before it was put back ("Put back: Card payment"). Not the plain arrival notes.
+    function arrivedAs(why) {
+      var w = String(why || '').replace(/^Put back(: |$)/, '');
+      return !w || /^(New merchant$|From |it was on no tour$)/.test(w) ? '' : w;
+    }
+    // One line of a list. act: 'bring' (left out), 'back' (set aside, or filed on no tour), or none.
+    function lineRow(key, r, act, extra) {
+      var busy = st.busy === r.id;
+      var under = act ? h('span', { class: 'rb-acts' },
+        h('button', { class: 'btn sm primary', type: 'button', disabled: st.busy != null ? true : null, onclick: function () { bring(key, r); } },
+          busy ? (act === 'back' ? 'Putting it back…' : 'Bringing it in…') : act === 'back' ? 'Put back' : 'Bring it in')) : null;
+      return h('div', { class: 'row rb-ask' }, h('div', { class: 'row-label' },
+          h('span', { class: 'rb-name' }, String(r.merchant || '').trim() || 'Bank line'),
+          h('span', { class: 'hint' }, [r.date ? dayMD(r.date) : '', String(r.account || '').trim()].filter(Boolean).join(' · ')),
+          extra ? h('span', { class: 'hint' }, extra) : null, under),
+        h('span', { class: 'amt num' }, G.moneyCents(r.amount)));
+    }
+    // How a set-aside line came to be set aside, as far as was kept.
+    function asideLine(r) {
+      var what = r.reason === 'same_as_typed' ? 'Already typed in' : r.reason === 'paid_back' ? 'A reimbursement' : r.reason === 'set_aside' ? 'Not a tour charge' : '';
+      // (No date: set aside by a bank feed that did not keep one, which is also when an older app could do it by itself.)
+      var when = r.decided_at ? 'Set aside ' + rbDay(r.decided_at) : 'Set aside before dates were kept';
+      return [what, what ? when.charAt(0).toLowerCase() + when.slice(1) : when].filter(Boolean).join(' · ');
+    }
+    function foldEl(key, status, reason, title, note, n, sum, span) {
+      var f = fold(key);
+      f.status = status; f.reason = reason;
+      var more = function () { loadFold(key, status, reason); };
+      var kids = [h('button', { class: 'row rowbtn', type: 'button', 'aria-expanded': f.open ? 'true' : 'false',
+        onclick: function () { f.open = !f.open; if (f.open && !f.asked) more(); else draw(); } },
+        h('div', { class: 'row-label' }, title,
+          // (A total is only printed when one came as a number: a missing or odd one is never shown as $0.00.)
+          h('span', { class: 'hint' }, [plural(n, 'line'), typeof sum === 'number' && isFinite(sum) ? G.moneyCents(sum) : null, span].filter(Boolean).join(' · '))),
+        h('span', { class: 'hint' }, f.open ? 'Hide' : 'Show'))];
+      if (f.open) {
+        if (note) kids.push(h('div', { class: 'row' }, h('span', { class: 'hint' }, note)));
+        f.rows.forEach(function (r) {
+          // (How it arrived is said when that tells him something: "Zelle", "Maybe already in". Not the plain arrival notes.)
+          // (A line the bank has taken back is never returned to the pile, whoever set it aside: the database
+          // refuses it, so no button is offered. It is also under "Needs a look".)
+          if (status === 'skipped') kids.push(lineRow(key, r, r.gone_on ? null : 'back', [arrivedAs(r.why), asideLine(r),
+            r.gone_on ? 'the bank took this back on ' + dayMD(r.gone_on) : ''].filter(Boolean).join(' · ')));
+          else if (r.reason === 'bank_removed' || r.gone_on) kids.push(lineRow(key, r, null, 'The bank took this back' + (r.gone_on ? ' on ' + dayMD(r.gone_on) : '') + '.'));
+          // (A fold that holds every reason says each line's own.)
+          else kids.push(lineRow(key, r, 'bring', reason ? '' : (loKnown[r.reason] ? loKnown[r.reason].title : 'Left out')));
+        });
+        if (f.busy) kids.push(h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading…')));
+        else if (f.failed) kids.push(h('div', { class: 'row' }, h('div', { class: 'row-label' }, h('span', { class: 'hint over' }, 'Couldn’t load these.')),
+          h('button', { class: 'linkbtn rb-link', type: 'button', onclick: more }, 'Try again')));
+        else if (f.more) kids.push(h('div', { class: 'row' }, h('div', { class: 'row-label' }, h('span', { class: 'hint' }, 'Showing ' + f.rows.length + '.')),
+          h('button', { class: 'linkbtn rb-link', type: 'button', onclick: more }, 'Show more')));
+        // The end of the list, with fewer lines than the count says there are: lines came in above the ones
+        // shown after the list was read (a page only ever goes on from the last line shown). One tap reads
+        // the list again from the top; nothing is asked for until that tap.
+        else if (f.asked && f.rows.length < n) kids.push(h('div', { class: 'row' }, h('div', { class: 'row-label' },
+            h('span', { class: 'hint' }, f.rows.length ? 'Showing ' + f.rows.length + ' of ' + n + '.' : 'Nothing is listed here yet.')),
+          h('button', { class: 'linkbtn rb-link', type: 'button', onclick: function () { foldReset(f); more(); } }, 'Read the list again')));
+        else if (!f.rows.length) kids.push(h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Nothing here now.')));
+      }
+      return h('div', { class: 'ledger rb-list' }, kids);
+    }
+    function lookPart(d) {
+      var look = G.isObj(d.look) ? d.look : {};
+      var nGone = G.num(look.bank_gone), nChanged = G.num(look.bank_changed), nNone = G.num(look.no_tour);
+      if (!(nGone + nChanged + nNone > 0)) return null;
+      var kids = [h('h3', { class: 'wn-h' }, 'Needs a look')];
+      if (!st.look && !st.lookBusy && !st.lookFailed) loadLook(nNone > 0);
+      if (!st.look) {
+        kids.push(st.lookFailed
+          ? h('p', { class: 'note over-note', role: 'status' }, 'Couldn’t load these. ',
+              h('button', { class: 'linkbtn rb-link', type: 'button', onclick: function () { st.lookFailed = false; draw(); } }, 'Try again'))
+          : h('p', { class: 'note' }, 'Loading…'));
+        return h('section', { class: 'wn-sec' }, kids);
+      }
+      var head = function (title, note) { return h('div', { class: 'row' }, h('div', { class: 'row-label' }, title, h('span', { class: 'hint' }, note))); };
+      // Each of these lists is read up to a limit. Where the count says there are more than are shown, that is said.
+      var andMore = function (count, shown) {
+        var left = count - shown;
+        return left > 0 ? h('div', { class: 'row' }, h('span', { class: 'hint' }, 'and ' + left + ' more')) : null;
+      };
+      var gone = (st.look.gone || []).filter(function (r) { return G.isObj(r); });
+      if (gone.length) kids.push(h('div', { class: 'ledger rb-list' },
+        head('The bank took back a line you had already dealt with', 'Nothing on a tour was changed. Check whether it should still be counted.'),
+        gone.map(function (r) {
+          var tour = r.tour_id ? getTour(r.tour_id) : null;
+          var whereIs = r.status === 'skipped' ? 'Set aside' : r.status === 'mypay' ? 'In MY PAY'
+            : tour ? (isOffTour(tour) ? 'On Off Tour' : 'On ' + (tour.name || 'a tour')) : 'On a tour';
+          return lineRow('gone', r, null, whereIs + (r.gone_on ? ' · taken back ' + dayMD(r.gone_on) : ''));
+        }),
+        andMore(nGone, gone.length)));
+      var changed = (st.look.changed || []).filter(function (r) { return G.isObj(r); });
+      if (changed.length) kids.push(h('div', { class: 'ledger rb-list' },
+        head('The bank changed the amount', 'Nothing on a tour was changed. The amount on the right is the one Greenroom has.'),
+        changed.map(function (r) { return lineRow('changed', r, null, 'The bank now says ' + G.moneyCents(r.bank_amount)); }),
+        andMore(nChanged, changed.length)));
+      if (nNone > 0) {
+        var orphans = orphanRows(), listed = Math.min(orphans.length, LO_PAGE);
+        kids.push(h('div', { class: 'ledger rb-list' },
+          head('Filed but on no tour', 'Marked as added to a tour, but no tour has it. Put it back and it waits in your card charges.'),
+          // (One the bank has since taken back stays listed, without the button: the database does not return it to the pile.)
+          orphans.length ? orphans.slice(0, LO_PAGE).map(function (r) {
+            return r.gone_on ? lineRow('look', r, null, 'The bank took this back on ' + dayMD(r.gone_on) + '.') : lineRow('look', r, 'back');
+          })
+            : h('div', { class: 'row' }, h('span', { class: 'hint' }, Array.isArray(st.look.filed)
+                ? plural(nNone, 'line') + ' could not be listed here. Tell Greenroom.'
+                : 'Couldn’t list these just now.')),
+          listed ? andMore(Math.max(orphans.length, nNone), listed) : null));
+      }
+      // (Counted a moment ago, gone by the time the lists were read: nothing to head.)
+      return kids.length > 1 ? h('section', { class: 'wn-sec' }, kids) : null;
+    }
+    function draw() {
+      if (!here) return;
+      var A = S.acct, fresh = acctData();
+      if (fresh && A.at !== st.at) { st.acct = JSON.parse(JSON.stringify(fresh)); st.at = A.at; }
+      var d = st.acct, kids = [];
+      var again = function () {
+        return h('button', { class: 'linkbtn rb-link', type: 'button', disabled: S.acctBusy ? true : null,
+          onclick: function () { if (!S.acctBusy) { loadAcct().then(function () { render(); draw(); }); draw(); } } }, S.acctBusy ? 'Checking…' : 'Try again');
+      };
+      var failed = !!(A && A.failed);
+      if (failed) kids.push(h('p', { class: 'note over-note', role: 'status' }, 'Couldn’t check the bank lines. ', again()));
+      if (!d) {
+        if (!failed) kids.push(h('p', { class: 'note' }, 'Checking the bank lines…'));
+        fillEl(box, kids);
+        return;
+      }
+      kids.push(h('p', { class: 'rb-sums' }, acctSentence(d)),
+        h('p', { class: 'note' }, 'Nothing here is counted on a tour. Bring a line in and it waits in your card charges to sort.'));
+      // Left out by the bank feed, a fold a reason, in the listed order; a reason this build has no words for is still shown, last.
+      var known = loKnown;
+      var outs = (Array.isArray(d.left_out) ? d.left_out : []).filter(function (x) { return G.isObj(x) && x.reason && G.num(x.n) > 0; })
+        .sort(function (a, b) { return (known[a.reason] ? known[a.reason].i : 99) - (known[b.reason] ? known[b.reason].i : 99); });
+      var loN = G.num(d.by_status.left_out);
+      if (outs.length) kids.push(h('section', { class: 'wn-sec' }, h('h3', { class: 'wn-h' }, 'Left out'),
+        outs.map(function (x) {
+          var k = known[x.reason] || { title: 'Left out for another reason', note: '' };
+          var span = x.first_day && x.last_day ? (x.first_day === x.last_day ? dayMD(x.first_day) : dayMD(x.first_day) + ' to ' + dayMD(x.last_day)) : '';
+          return foldEl('lo:' + x.reason, 'left_out', String(x.reason), k.title, k.note, G.num(x.n), x.sum, span);
+        })));
+      // The counts say lines are left out, but the list of reasons did not come with them: one fold that
+      // lists every left-out line, each with its reason. (A missing list is never read as "nothing is left out".)
+      else if (loN > 0) kids.push(h('section', { class: 'wn-sec' }, h('h3', { class: 'wn-h' }, 'Left out'),
+        foldEl('lo:*', 'left_out', null, 'Left out', 'Every line the bank feed left out of your card charges, whatever the reason.', loN, null, '')));
+      // (Likewise the set-aside lines: whichever of the two counts says there are some.)
+      var aside = G.isObj(d.set_aside) ? d.set_aside : { n: d.by_status.skipped, sum: null };
+      var asideN = Math.max(G.num(aside.n), G.num(d.by_status.skipped));
+      if (asideN > 0) {
+        var undated = fold('aside').rows.some(function (r) { return !r.decided_at; });
+        kids.push(h('section', { class: 'wn-sec' }, h('h3', { class: 'wn-h' }, 'Set aside'),
+          foldEl('aside', 'skipped', null, 'Set aside by you', undated
+            ? 'Older versions of the app could set a charge aside by themselves when it looked like one you had typed. Check the ones set aside before dates were kept.'
+            : 'Charges someone said were not the tour’s, or were the bank’s copy of one already on the tour.', asideN, aside.sum, '')));
+      }
+      if (!outs.length && !(loN > 0) && !(asideN > 0)) kids.push(h('p', { class: 'note rb-clear' }, 'Nothing is left out or set aside.'));
+      kids.push(lookPart(d));
+      // Counted only: lines the bank feed does not keep at all.
+      var nk = G.isObj(d.not_kept) ? d.not_kept : {}, nkBits = [];
+      (Array.isArray(nk.off) ? nk.off : []).forEach(function (o) {
+        if (G.isObj(o) && G.num(o.n) > 0) nkBits.push(plural(G.num(o.n), 'line') + ' on ' + (String(o.account || '').trim() || 'an account') + ', which did not log expenses');
+      });
+      if (G.num(nk.money_in) > 0) nkBits.push(plural(G.num(nk.money_in), 'line') + ' of money coming in');
+      if (nkBits.length) kids.push(h('section', { class: 'wn-sec' }, h('h3', { class: 'wn-h' }, 'Counted, not kept'),
+        h('p', { class: 'note' }, 'At the last full check the bank also sent ' + nkBits.join('; ') + '. Greenroom keeps only a count of these. ' +
+          '(A deposit into an account you watch for income is listed with your new income.)')));
+      fillEl(box, kids);
+    }
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Left out and set aside'),
+        box,
+        h('div', { class: 'stack' }, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done'))
+      ];
+    }, { label: 'Left out and set aside', cls: 'cat-sheet rb-sheet', onClose: function () { here = false; if (acctLive === draw) acctLive = null; render(true); } });
+    acctLive = draw;
+    // Read afresh as it opens: what the sheet says should be what the database holds now.
+    if (!S.acctBusy) loadAcct().then(function () { render(); acctRedraw(); });
   }
 
   /* Catch up (Devin, 2026-10-10): "there are expenses on the debit card that
@@ -20874,11 +21609,14 @@
       // the first already brought everything in: say what is in the pile, not
       // that nothing was missed.
       var p = G.num(pile);
+      // (New lines that were left out are still new lines: "found nothing" is not said over them. The sentence
+      // that adds up what the bank sent, just under this one, says how many and where they are listed.)
+      var leftOut = r && G.isObj(r.ledger) && G.num(r.ledger.left_out) > 0;
       if (p > 0) {
-        return plural(p, 'charge') + (p === 1 ? ' is' : ' are') + ' waiting in your card charges to sort. This read found nothing beyond ' +
-          (p === 1 ? 'that' : 'those') + '. Nothing was added to a tour.';
+        return plural(p, 'charge') + (p === 1 ? ' is' : ' are') + ' waiting in your card charges to sort.' +
+          (leftOut ? '' : ' This read found nothing beyond ' + (p === 1 ? 'that' : 'those') + '.') + ' Nothing was added to a tour.';
       }
-      return 'Nothing new was found.';
+      return leftOut ? 'Nothing new is waiting to be sorted. Nothing was added to a tour.' : 'Nothing new was found.';
     }
     var span = f.from && f.to ? ' from ' + dayMD(f.from) + ' to ' + dayMD(f.to) : '';
     return 'Found ' + plural(n, 'payment') + span + (kinds.length ? ': ' + kinds.join(', ') : '') + '. ' +
@@ -20886,10 +21624,27 @@
         : maybe > 1 ? maybe + ' look like ones you already typed in and wait in their own fold. ' : '') +
       'They are waiting in your card charges to sort. Nothing was added to a tour.';
   }
+  /* What the bank handed over in this read, added up (r.ledger: only the bank
+     feed's newer function sends it; '' without it, and the sheet keeps its
+     earlier words). "Every one is accounted for" is only said when the sums
+     really do come to what the bank sent. */
+  function ledgerWords(r) {
+    var L = r && G.isObj(r.ledger) ? r.ledger : null;
+    if (!L || G.num(L.unexplained) > 0) return '';
+    var sent = G.num(L.sent), w = G.num(L.waiting), f = G.num(L.filed), o = G.num(L.left_out), a = G.num(L.already), k = G.num(L.not_kept);
+    if (!(sent > 0)) return 'The bank sent no lines.';
+    var said = 'The bank sent ' + plural(sent, 'line') + '.';
+    if (w + f + o + a + k !== sent) return said;
+    var bits = [w ? w + ' new and waiting to be sorted' : null, f ? f + ' new and filed' : null,
+      o ? o + ' new and left out (listed under Left out and set aside)' : null, a ? a + ' already here' : null,
+      k ? k + ' counted but not kept (money coming in, or an account that does not log expenses)' : null].filter(Boolean);
+    return said + (sent === 1 ? ' It is accounted for: ' : ' Every one is accounted for: ') + bits.join(', ') + '.';
+  }
   function openCatchUp(id) {
     var B = window.GR_BACKEND;
     if (!B || !B.feedCall || !createdTour(id)) return;
-    // done: { text, sort: offer "Sort the ones on this tour", again: offer "Check again" }
+    // done: { text, sort: offer "Sort the ones on this tour", again: offer "Check again",
+    //   ledger: the sentence that adds up what the bank sent, red: a line said in red above the rest }
     var st = { busy: false, done: null };
     var pileNow = function () { return S.feed && S.feed.items ? S.feed.items.length : 0; };
     var draw = function () {
@@ -20897,14 +21652,19 @@
       if (!st.done) {
         kids.push(h('p', { class: 'sh-sub' }, 'Greenroom was leaving out money sent from your bank accounts: Zelle, wires and transfers. This reads each bank again from the start, as far back as the bank gives (about six months before you linked it), and brings in what was missed.'));
         kids.push(h('p', { class: 'sh-sub' }, 'Nothing already here comes in twice, and nothing is added to a tour until you sort it. It can take a minute.'));
-        kids.push(h('p', { class: 'hint cu-before' }, 'Before you start: every tour needs its card dates set (the tour’s menu, Card settings). Payments outside every tour’s dates are not brought in.'));
+        // (Once the bank feed's update is running, a payment outside every tour's dates is kept and listed, not dropped.)
+        kids.push(h('p', { class: 'hint cu-before' }, acctNewFeed(acctData())
+          ? 'Before you start: every tour needs its card dates set (the tour’s menu, Card settings). A payment outside every tour’s dates is not put in the pile: it is listed under Left out and set aside.'
+          : 'Before you start: every tour needs its card dates set (the tour’s menu, Card settings). Payments outside every tour’s dates are not brought in.'));
         // While it reads, the one button says so and Not now cannot be tapped.
         kids.push(h('div', { class: 'stack', 'aria-busy': st.busy ? 'true' : null },
           h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || null, onclick: run },
             st.busy ? 'Reading the bank…' : 'Read the bank again'),
           h('button', { class: 'btn ghost block', type: 'button', disabled: st.busy || null, onclick: function () { if (!st.busy) closeSheet(); } }, 'Not now')));
       } else {
+        if (st.done.red) kids.push(h('p', { class: 'note over-note', role: 'status' }, st.done.red));
         kids.push(h('p', { class: 'sh-sub' }, st.done.text));
+        if (st.done.ledger) kids.push(h('p', { class: 'sh-sub' }, st.done.ledger));
         var n = st.done.sort ? feedWaiting(id).length : 0;
         kids.push(h('div', { class: 'stack' },
           n ? h('button', { class: 'btn primary block', type: 'button', onclick: function () { closeSheet(); setTimeout(function () { openFeedReview(id); }, 280); } }, 'Sort the ones on this tour') : null,
@@ -20923,8 +21683,13 @@
       st.busy = false;
       var code = r && (r.status || r.error), known = feedProblemKnown(code);
       if (!r || !r.ok) {
+        // The bank feed counted what the bank sent against what it stored and they did not match: it kept its
+        // place, so the next read goes over the same lines. Said in red; what was stored is in.
+        if (code === 'lines_missing') {
+          st.done = { sort: G.num(r.waiting) > 0, again: false, red: known,
+            text: 'What could be stored is in. Nothing is added twice, so it is safe to run this again.' };
         // A bank's own trouble keeps its own words. The banks that did answer are read and saved all the same.
-        if (known) {
+        } else if (known) {
           var some = r.catchup === true && G.num(r.waiting) > 0;
           st.done = { sort: some, again: false, text: known + ' ' + (some ? 'The banks that did answer were read. ' + catchUpWords(r, pileNow())
             : 'Nothing is added twice, so it is safe to run this again.') };
@@ -20937,10 +21702,13 @@
       else if (r.catchup !== true) st.done = { sort: false, again: false, text: 'The bank feed\u2019s update is not in place yet, so this only did an ordinary check. The missed payments are not in yet.' };
       // Plaid's test mode says what it would do and saves nothing.
       else if (r.test) st.done = { sort: false, again: false, text: 'Test mode: this read would bring in ' + plural(G.num(r.waiting), 'payment') + '. Nothing was saved.' };
-      else st.done = { sort: true, again: false, text: catchUpWords(r, pileNow()) };
+      else {
+        st.done = { sort: true, again: false, text: catchUpWords(r, pileNow()), ledger: ledgerWords(r),
+          red: G.isObj(r.ledger) && G.num(r.ledger.unexplained) > 0 ? feedProblemKnown('lines_missing') : '' };
+      }
       if (incomeReady(id)) { S.incomeNew = null; ensureIncomeNew(id); }
       // (The sheet was closed while it read: the answer is still said.)
-      if (!here) toast(st.done.text, 7000);
+      if (!here) toast((st.done.red ? st.done.red + ' ' : '') + st.done.text, 7000);
       redraw();
       render();
     }
@@ -22142,11 +22910,16 @@
       var nm = String(it.account || '').trim();
       if (nm && !cards.some(function (c) { return c.names.indexOf(nm) >= 0; })) cards.push({ id: nm, name: nm, names: [nm], bank: '', kind: '', debt: null, label: cardLabelFor(t, nm) });
     });
+    // Does this phone know the pile? The creator's own (read without a failure), or the one the server
+    // hands a Manager it lets sort. Anyone else is shown no count at all: "0 new charges" would be a guess.
+    var P = S.pile && S.pile[id];
+    var known = createdTour(id) ? !!(S.feed && S.feed.row && !S.feed.failed) : !!(P && P.lead && !P.failed);
     var rows = cards.map(function (c) {
       var n = waiting.filter(function (it) { return c.names.indexOf(String(it.account || '').trim()) >= 0; }).length;
       var first = n ? String(waiting.filter(function (it) { return c.names.indexOf(String(it.account || '').trim()) >= 0; })[0].account || '').trim() : '';
+      var said = known || n > 0;
       return h('button', { class: 'row rowbtn card-line', type: 'button',
-        'aria-label': c.label + ', ' + plural(n, 'new charge'),
+        'aria-label': c.label + (said ? ', ' + plural(n, 'new charge') : ''),
         onclick: function () {
           if (n) openFeedReview(id, null, first);
           else if (c.debt) openFeedCardSheet(id, c.debt.id);
@@ -22161,7 +22934,7 @@
                 ? 'deposits watched: ' + c.income.map(function (k) { return k === 'guarantees' ? 'guarantees' : 'merch'; }).join(', ')
                 : 'deposits not watched')
             : 'Credit card') : null),
-        h('span', { class: 'card-new' + (n ? ' on' : '') }, plural(n, 'new charge')),
+        said ? h('span', { class: 'card-new' + (n ? ' on' : '') }, plural(n, 'new charge')) : null,
         icon('chevron', 18));
     });
     // Links (Devin): atVenu, with a switch. On, the mailbox's atVenu reports log
@@ -22219,9 +22992,16 @@
     S.pileBusy[tourId] = true;
     try { r = await B.feedCall('pile', { tourId: tourId }); } catch (e) { r = null; }
     S.pileBusy[tourId] = false;
+    var had = S.pile[tourId];
+    // A read that got no answer (not a "no, not yours") keeps the pile it had, marked as not checked:
+    // a failed read is never an empty pile.
+    var lost = !r || (!r.ok && r.error !== 'not_allowed');
+    // (feedStatus: how the creator's last bank read ended, when the bank feed says; an older one does not, and nothing is made of that.)
     S.pile[tourId] = r && r.ok
-      ? { lead: !r.mine && !!r.connected && !!r.switchedOn, items: r.items || [], lastRun: r.lastRun, at: Date.now() }
-      : { lead: false, items: [], at: Date.now() };
+      ? { lead: !r.mine && !!r.connected && !!r.switchedOn, items: r.items || [], lastRun: r.lastRun, at: Date.now(),
+          feedStatus: typeof r.feedStatus === 'string' ? r.feedStatus : null }
+      : lost && had && had.lead ? Object.assign({}, had, { failed: true, at: Date.now() })
+      : { lead: false, items: [], at: Date.now(), failed: lost };
     return S.pile[tourId];
   }
   // The Tour Manager's pile of the owner's charges for this tour, fetched when it's stale.
@@ -22230,7 +23010,7 @@
     if (S.mode !== 'db' || !B || !B.feedCall || createdTour(id) || !bookLead(id)) return;
     var P = S.pile && S.pile[id];
     if ((!P || Date.now() - P.at > 120e3) && !(S.pileBusy && S.pileBusy[id])) {
-      loadPile(id).then(function (np) { if (np.lead || (P && P.lead)) render(true); });
+      loadPile(id).then(function (np) { if (np.lead || np.failed || (P && P.lead)) render(true); });
     }
   }
   function tmFeedEntry(id) {
@@ -22238,15 +23018,43 @@
     if (S.mode !== 'db' || !B || !B.feedCall || !bookLead(id)) return null;
     ensurePile(id);
     var P = S.pile && S.pile[id];
+    // The pile could not be read: said (with the last one that was read under it, if there was one), never shown as nothing.
+    var again = function () {
+      var b = h('button', { class: 'linkbtn feed-catchup', type: 'button' }, 'Try again');
+      b.addEventListener('click', function () {
+        if (S.pileBusy && S.pileBusy[id]) return;
+        b.textContent = 'Checking\u2026';
+        loadPile(id).then(function (np) {
+          if (np.failed) toast('Still couldn\u2019t check the cards. Try again when you have signal.', 4200);
+          render(true);
+        });
+      });
+      return h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' }, 'Couldn\u2019t check the cards.'), b);
+    };
+    if (P && P.failed && !P.lead) return h('div', { class: 'feed-entry' }, again());
     if (!P || !P.lead) return null;
-    var n = (P.items || []).length;
+    var t = getTour(id);
     var label = h('span', null, 'Refresh Card');
     var refreshBtn = h('button', { class: 'btn quiet glow feed-refresh', type: 'button',
       onclick: function () { tmRefresh(id, refreshBtn, label); } }, icon('refresh', 18), label);
     if (incomeReady(id)) ensureIncomeNew(id);
+    /* The creator's banks are not being read: said to the Manager too, since
+       new charges will not reach this pile until it is mended, but with no
+       button (signing in to a bank is the creator's to do). The pile's answer
+       carries how the last read ended; from an older bank feed it does not,
+       and then nothing is said. */
+    var fs = typeof P.feedStatus === 'string' ? P.feedStatus : '';
+    var feedLine = !fs || feedOk(fs) ? null : h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' },
+      LOGIN_CODES[fs] === true ? 'A bank needs the tour’s creator to sign in again. New charges from that bank are not arriving until then.'
+        : 'The last read of the banks did not finish.'));
     return h('div', { class: 'feed-entry' },
       h('div', { class: 'feed-bar' }, refreshBtn),
+      P.failed ? again() : null,
       h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(P.lastRun)),
+      feedLine,
+      // Shows, but no card dates: nothing the banks send lands on this tour. Its creator sets them (Card settings).
+      t && !isOffTour(t) && !feedLogs(id) && G.tourStart(t)
+        ? h('p', { class: 'feed-checked' }, 'This tour has no card dates yet, so no bank lines come to it. The tour\u2019s creator sets them in Card settings.') : null,
       cardActivityButton(id));
   }
   async function tmRefresh(id, btn, label) {
@@ -22315,19 +23123,28 @@
   function cardActivityCounts(id) {
     var charges = feedWaiting(id).length;
     var deposits = incomeReady(id) ? ((S.incomeNew && S.incomeNew.items) || []).length : 0;
-    return { charges: charges, deposits: deposits };
+    // unsure: a read behind these numbers failed (the pile, the Manager's pile, or the deposits), so "none" is not known.
+    var P = S.pile && S.pile[id];
+    var unsure = createdTour(id) ? !!(S.feed && S.feed.failed) || !!(incomeReady(id) && S.incomeNew && S.incomeNew.failed) : !!(P && P.failed);
+    return { charges: charges, deposits: deposits, unsure: unsure };
   }
   function openCardActivity(id) {
     var c = cardActivityCounts(id);
     if (c.charges) { openFeedReview(id, 0, null, c.deposits ? function () { openIncomeReview(id); } : null); return; }
     if (c.deposits) { openIncomeReview(id); return; }
+    // (Nothing to show because it could not be read is not "nothing new".)
+    if (c.unsure) {
+      toast('Couldn\u2019t check the cards just now. Try again in a moment.', 4200);
+      if (incomeReady(id) && S.incomeNew && S.incomeNew.failed) { S.incomeNew = null; ensureIncomeNew(id); }
+      return;
+    }
     toast(S.incomeBusy || (incomeReady(id) && !S.incomeNew) ? 'Checking the bank\u2026' : 'No new card activity. Tap Refresh Card to check again.');
   }
   function cardActivityButton(id) {
     var c = cardActivityCounts(id), any = c.charges + c.deposits;
     var bits = [c.charges ? plural(c.charges, 'charge') : null, c.deposits ? plural(c.deposits, 'deposit') : null].filter(Boolean);
     return h('button', { class: 'btn ' + (any ? 'primary' : 'quiet') + ' feed-new', type: 'button',
-      'aria-label': 'All new card activity' + (bits.length ? ': ' + bits.join(', ') : ', nothing new'),
+      'aria-label': 'All new card activity' + (bits.length ? ': ' + bits.join(', ') : c.unsure ? ', could not be checked' : ', nothing new'),
       onclick: function () { openCardActivity(id); } },
       icon('card', 18), h('span', { class: 'feed-new-t' }, 'All New Card Activity', bits.length ? h('span', { class: 'feed-new-n' }, bits.join(' \u00b7 ')) : null));
   }
@@ -22401,6 +23218,13 @@
     });
     return out;
   }
+  /* What a waiting line's own note ("why") says about it. The bank feed marks
+     a look-alike of something already on the tour "Maybe already in". A line
+     returned to the pile from "Left out and set aside" says "Put back" and
+     keeps what it was: "Put back: Card payment", or "Maybe already in" again
+     for one that had been set aside as the bank's copy of a typed entry. */
+  function feedMaybeIn(why) { return /^(Put back: )?Maybe already in$/.test(String(why || '')); }
+  function feedPutBackWhy(why) { return /^Put back/.test(String(why || '')); }
   // Is the entry a bank row was paired with still on the tour, as it was? (Asked again before anything is set aside.)
   function feedTwinStands(tourId, r) {
     var tw = r && r.twin, t = getTour(tourId);
@@ -22425,13 +23249,14 @@
       // twin: the fold's own words). "No, it's another payment" lifts both
       // for the visit.
       var twin = Object.prototype.hasOwnProperty.call(twins, it.id) ? twins[it.id] : null;
-      var dup = !not[it.id] && (!!twin || it.why === 'Maybe already in');
+      var dup = !not[it.id] && (!!twin || feedMaybeIn(it.why));
       return {
         feedId: it.id, date: it.date, posted: it.posted || it.date, seq: it.seq, merchant: it.merchant, amount: amt, account: it.account || '',
-        category: cat, source: cat ? 'learned' : null, why: it.why || '',
+        // (waitsOn: the tour the bank feed put it on, when that is not this pile's own: one that was taken down.)
+        category: cat, source: cat ? 'learned' : null, why: it.why || '', waitsOn: it.tour_id && it.tour_id !== tourId ? it.tour_id : null,
         duplicate: dup, twin: dup ? twin : null, preCutoff: false,
-        // Refunds and look-alikes start unticked.
-        keep: amt > 0 && !dup
+        // Refunds, look-alikes and lines that were put back start unticked.
+        keep: amt > 0 && !dup && !feedPutBackWhy(it.why)
       };
     });
   }
@@ -22751,11 +23576,21 @@
       return h('button', { class: 'btn ' + (cls || 'primary') + ' block', type: 'button',
         onclick: function () { closeSheet(); connectCards(tourId); } }, icon('card', 18), label);
     }
+    /* With the last bank goes every charge still waiting to be sorted, on
+       every tour: the confirm says how many (the pile this phone holds; "any"
+       when that could not be read just now). */
+    // lead: how the sentence starts when something will be cleared; calm: the whole of it when nothing is waiting.
+    function waitingCleared(lead, calm) {
+      var n = S.feed && !S.feed.failed && Array.isArray(S.feed.items) ? Math.max(S.feed.items.length, G.num(S.feed.total)) : null;
+      if (n === 0) return calm + ' Nothing is waiting to be sorted. ';
+      return lead + (n == null ? 'any charges' : 'the ' + plural(n, 'charge')) + ' still waiting to be sorted. ';
+    }
     function disconnectAll() {
       return h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
         confirmSheet({
           title: 'Disconnect every bank?',
-          body: 'Greenroom tells Plaid to delete each connection right away, and clears the charges waiting for a look. ' +
+          body: waitingCleared('Greenroom tells Plaid to delete each connection right away, and clears ',
+              'Greenroom tells Plaid to delete each connection right away.') +
             'Charges already on your tours stay. You can connect again anytime.',
           action: 'Disconnect', danger: true,
           onConfirm: async function () {
@@ -22791,10 +23626,19 @@
           ' Plaid\u2019s fake banks only. Nothing is filed onto your tours.'));
       }
       if (st.needsConnect) {
-        parts.push(
+        /* Connect is offered only when the bank feed itself says this account
+           may connect (allowed: true). This sheet can be reached with nothing
+           known about the account (the cards could not be read, so the way in
+           was shown on a guess), and the bank feed would refuse the
+           connection anyway. An account that already has a feed but no bank
+           left on it is not told "allowed" either way: it connected before,
+           so it keeps the button. */
+        var mayConnect = st.allowed === true || (st.allowed == null && st.source === 'plaid');
+        if (mayConnect) parts.push(
           h('p', { class: 'note' },
             'Connect the bank or card company your tour cards are with. You sign in on Plaid\u2019s screen, or your bank\u2019s.'),
           h('div', { class: 'stack' }, connectBtn('Connect a bank or card')));
+        else parts.push(h('p', { class: 'note' }, feedProblemKnown('not_allowed')));
         parts.push(safety);
         body.replaceChildren(h('div', null, parts));
         return;
@@ -22810,9 +23654,15 @@
               onclick: function () { closeSheet(); connectCards(tourId, bk.id); } }, 'Reconnect') : null,
             h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Disconnect ' + bk.name,
               onclick: function () {
+                // The only bank left: disconnecting it clears the pile, the same as "every bank". It says so, with the count.
+                var lastOne = st.banks.length === 1;
                 confirmSheet({
                   title: 'Disconnect ' + bk.name + '?',
-                  body: 'Greenroom tells Plaid to delete this connection right away. Charges already on your tours stay.',
+                  body: 'Greenroom tells Plaid to delete this connection right away. ' +
+                    (lastOne ? waitingCleared('It is your last bank, so this also clears ', 'It is your last bank.') : '') +
+                    'Charges already on your tours stay.' +
+                    // (The way to mend a bank is Reconnect: a new connection sends every charge again under a new name.)
+                    (trouble ? ' To fix a bank that has stopped being read, use Reconnect instead: connecting it afresh brings every charge back as new.' : ''),
                   action: 'Disconnect', danger: true,
                   onConfirm: async function () {
                     var r = await B.feedCall('disconnect', { itemId: bk.id });
@@ -22868,7 +23718,7 @@
       return [
         h('h2', { class: 'sh-title' }, settingUp ? 'Link a card' : 'Linked Cards'),
         h('p', { class: 'sh-sub' }, 'Greenroom reads what your cards spend through Plaid and logs it. ' +
-          'Money coming in is never logged, and only you see this.'),
+          'A tour’s Tour Manager can sort its charges with you. Money coming in is only matched to shows on accounts you mark for income.'),
         body
       ];
     }, { label: settingUp ? 'Link a card' : 'Linked Cards' });

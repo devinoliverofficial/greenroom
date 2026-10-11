@@ -2002,11 +2002,95 @@
       if (action !== 'status') await loadFeed(false);
       return out;
     },
-    feedMark: async function (ids, patch) {
-      if (!ids.length) return;
-      var q = await sb.from('feed_items').update(patch).in('id', ids).select('id');
-      if (q.error) throw mapError(q.error);
-      loadFeed(false);
+    // Read the feed and its pile again now (Try again, after a read that failed).
+    feedRead: function () { return loadFeed(false); },
+    /* ---- Every bank line accounted for (0136). The phone no longer writes
+       feed_items at all: it reads, and asks the database to put a line back.
+       Each of these answers null when it could not be asked or read, so the
+       app can say "couldn't check" and never mistakes that for "nothing". ---- */
+    // The whole account in one answer: counts by where each line stands, what
+    // waits on which tour, what was left out and why, each bank, the last full check.
+    feedAccount: async function () {
+      try {
+        var q = await sb.rpc('feed_account');
+        if (q.error) { noteError('cards:account', q.error); return null; }
+        return isObj(q.data) ? q.data : null;
+      } catch (e) { return null; }
+    },
+    // Back to waiting, by a person's tap: lines left out or set aside, and a
+    // line marked filed that is on no tour. Answers how many moved.
+    feedPutBack: async function (ids) {
+      var list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean).slice(0, 500);
+      if (!list.length) return 0;
+      var n = null;
+      try {
+        var q = await sb.rpc('feed_put_back', { ids: list });
+        if (q.error) noteError('cards:putback', q.error);
+        else n = Number(q.data) || 0;
+      } catch (e) { n = null; }
+      // (Asked again whatever the answer: one that was lost may still have moved the line.)
+      await loadFeed(false);
+      return n;
+    },
+    // One page (100) of the lines that are not in the pile, newest first:
+    // status 'left_out' (reason: one code, or null for all of them) or 'skipped'.
+    /* after: { date, id } of the last line already in hand. The page then
+       starts just past that line (the rest of its day by id, then the days
+       before it) and "page" is not used. Lines arrive in these lists while
+       one is open (a bank read) and leave them (brought in, here or on
+       another phone); a page asked for by its number would then hand back
+       lines already shown and never reach the rest. A page of fewer than
+       100 is the end of the list. */
+    feedLeftOut: async function (status, reason, page, after) {
+      var st = status === 'skipped' ? 'skipped' : 'left_out', from = Math.max(0, Math.round(Number(page)) || 0) * FEED_LIST;
+      var ask = function () {
+        var q = sb.from('feed_items').select(FEED_LIST_COLS).eq('status', st);
+        return reason ? q.eq('reason', String(reason)) : q;
+      };
+      try {
+        var day = after && /^\d{4}-\d{2}-\d{2}$/.test(String(after.date || '')) ? String(after.date) : '';
+        if (day && after.id != null && String(after.id) !== '') {
+          var same = await ask().eq('date', day).gt('id', String(after.id)).order('id').limit(FEED_LIST);
+          if (same.error) { noteError('cards:leftout', same.error); return null; }
+          var rows = same.data || [];
+          if (rows.length < FEED_LIST) {
+            var older = await ask().lt('date', day).order('date', { ascending: false }).order('id').limit(FEED_LIST - rows.length);
+            if (older.error) { noteError('cards:leftout', older.error); return null; }
+            rows = rows.concat(older.data || []);
+          }
+          return rows;
+        }
+        var q = await ask().order('date', { ascending: false }).order('id').range(from, from + FEED_LIST - 1);
+        if (q.error) { noteError('cards:leftout', q.error); return null; }
+        return q.data || [];
+      } catch (e) { return null; }
+    },
+    /* The "needs a look" lists. gone: the bank withdrew a line that a person
+       had already dealt with. changed: the bank's figure is no longer the one
+       stored. filed (only when asked for): every line marked filed, few
+       columns, so the app can find the ones no tour of his holds; the
+       database checks again before it puts one back. */
+    feedLook: async function (wantFiled) {
+      try {
+        var gone = await sb.from('feed_items').select(FEED_LIST_COLS).not('gone_on', 'is', null)
+          .in('status', ['filed', 'skipped', 'mypay']).order('date', { ascending: false }).order('id').limit(200);
+        var changed = await sb.from('feed_items').select(FEED_LIST_COLS).not('bank_amount', 'is', null)
+          .order('date', { ascending: false }).order('id').limit(200);
+        if (gone.error || changed.error) { noteError('cards:look', gone.error || changed.error); return null; }
+        var out = { gone: gone.data || [],
+          // (To the cent: a figure the bank sent again unchanged is not a change.)
+          changed: (changed.data || []).filter(function (r) { return Math.round(Number(r.bank_amount) * 100) !== Math.round(Number(r.amount) * 100); }),
+          filed: null };
+        if (wantFiled) {
+          var filed = await pageRows(function () {
+            return sb.from('feed_items').select('id, tour_id, date, merchant, amount, account, decided_at, gone_on', { count: 'exact' })
+              .eq('status', 'filed').order('date', { ascending: false }).order('id');
+          });
+          if (!filed) return null;
+          out.filed = filed.rows;
+        }
+        return out;
+      } catch (e) { return null; }
     },
     /* Straight to the sign-in page. This phone forgets the sign-in at once;
        telling the server is a courtesy that gets two seconds, never a wait. */
@@ -2031,26 +2115,83 @@
   function dmChanged() { dmListeners.forEach(function (fn) { try { fn(); } catch (e) { /* listener's problem */ } }); }
   var feedListeners = [];
   var feedTimer = 0;
+  var FEED_PAGE = 1000;  // the most rows the database hands over in one answer
+  var FEED_LIST = 100;   // a page of the left-out and set-aside lists
+  var FEED_LIST_COLS = 'id, tour_id, date, posted, merchant, amount, account, why, status, reason, decided_at, bank_amount, gone_on';
+  /* Every row of one question, a page at a time, until a short page. make()
+     builds the question afresh for each page (it must put the rows in a fixed
+     order and ask for the count). The count decides when it is known: the end
+     is when the rows in hand have reached it, which guards a project set to
+     hand over fewer rows than FEED_PAGE (a short page is then not the end),
+     and never asks for a page past the last row (the database answers that
+     with an error, not an empty page). Answers { rows, total }, or null when
+     any page failed: part of a list is never passed off as the whole of it. */
+  async function pageRows(make) {
+    var rows = [], seen = {}, from = 0, total = null;
+    for (var turn = 0; turn < 60; turn++) {
+      var q = await make().range(from, from + FEED_PAGE - 1);
+      if (q.error) return null;
+      var got = q.data || [];
+      if (typeof q.count === 'number') total = q.count;
+      // (A row that changed places between two pages is kept once.)
+      got.forEach(function (r) { if (!seen[r.id]) { seen[r.id] = true; rows.push(r); } });
+      from += got.length;
+      if (!got.length || (total != null ? from >= total : got.length < FEED_PAGE)) break;
+    }
+    return { rows: rows, total: total == null ? rows.length : Math.max(total, rows.length) };
+  }
+  /* Three answers that must never be mixed up: the read failed (failed: true,
+     with the last good pile if there was one, so nothing vanishes from the
+     screen and nothing offers to connect a bank that is already connected);
+     no bank is connected (connectOnly, for accounts on the approved list, or
+     null); and what is waiting, which may be nothing. */
+  var feedGood;        // the last state that was really read (undefined: nothing has been read yet)
+  // (Each listener's state is a copy: the app may write on what it is handed.)
+  function feedTell(state) {
+    feedListeners.forEach(function (fn) {
+      try { fn(state ? Object.assign({}, state, { row: state.row ? Object.assign({}, state.row) : null, items: (state.items || []).slice() }) : null); }
+      catch (e) { /* listener's problem */ }
+    });
+  }
+  // (An account last known to have no cards at all stays that way: nothing to mark as unchecked.)
+  function feedFailed() {
+    if (feedGood === null) { feedTell(null); return; }
+    feedTell(feedGood ? Object.assign({}, feedGood, { failed: true }) : { row: null, items: [], failed: true });
+  }
   async function loadFeed(opening) {
     try {
       var f = await sb.from('feed').select('switched_on, plan_name, since, last_run, last_status, source').maybeSingle();
-      if (f.error || !f.data) {
-        // No feed yet: only accounts on the approved list get a Connect button.
+      // The read failed. That is not "no bank is connected": the app must not offer to connect one.
+      if (f.error) { feedFailed(); return; }
+      if (!f.data) {
+        // No feed yet: only accounts on the approved list get a Connect button
+        // (and when that list cannot be read, nobody is offered one on a guess).
         var ok = await sb.from('ynab_allowed').select('owner_id').maybeSingle();
-        var none = (ok.error || !ok.data) ? null : { row: null, items: [], connectOnly: true };
-        feedListeners.forEach(function (fn) { fn(none); });
+        feedGood = (ok.error || !ok.data) ? null : { row: null, items: [], connectOnly: true };
+        feedTell(feedGood);
         return;
       }
-      var items = await sb.from('feed_items').select('id, tour_id, date, posted, seq, merchant, amount, category, account, why')
-        .eq('status', 'waiting').order('date');
-      var state = { row: f.data, items: items.error ? [] : items.data };
-      feedListeners.forEach(function (fn) { try { fn(state); } catch (e) { /* listener's problem */ } });
+      var items = await pageRows(function () {
+        return sb.from('feed_items').select('id, tour_id, date, posted, seq, merchant, amount, category, account, why, created_at', { count: 'exact' })
+          .eq('status', 'waiting').order('date').order('id');
+      });
+      // The feed row is known, the pile is not: the last pile stays, marked as not checked.
+      if (!items) {
+        feedTell({ row: f.data, items: feedGood && feedGood.items ? feedGood.items : [], failed: true });
+        return;
+      }
+      // total: every waiting row the database counted (more than items only if the read was cut short).
+      feedGood = { row: f.data, items: items.rows, total: items.total };
+      feedTell(feedGood);
       // Opening the app is the manager's cue that fresh charges matter now.
       var last = f.data.last_run ? Date.parse(f.data.last_run) : 0;
       if (opening && f.data.switched_on && Date.now() - last > 15 * 60e3) {
         window.GR_BACKEND.feedCall('sync').catch(function () { /* next open tries again */ });
       }
-    } catch (e) { /* the feed is a convenience, never a blocker */ }
+    } catch (e) {
+      // The feed is a convenience, never a blocker; but a read that broke is said, not shown as an empty pile.
+      feedFailed();
+    }
   }
   /* One question in flight at a time. A request that set off before the
      latest change (an older generation) isn't reused, and what it brings
@@ -2100,6 +2241,7 @@
     flowerTimer = setTimeout(function () { flowersStale(); emit('tours'); }, 300);
   }
   function feedChanged() {
+    if (!feedListeners.length) return;
     clearTimeout(feedTimer);
     feedTimer = setTimeout(function () { loadFeed(false); }, 300);
   }
@@ -3231,12 +3373,12 @@
       if (hiddenAt && Date.now() - hiddenAt > 30e3) {
         freshToken(false).then(function () { flushErrors(); }).catch(function () { /* next tap tries */ });
         flowersChanged(); // gifts while the phone slept never came down the live line
-        if (session) { refetchTries = 0; scheduleRefetch(); } // nor did anyone's changes to the tours
+        if (session) { refetchTries = 0; scheduleRefetch(); feedChanged(); } // nor did anyone's changes to the tours, or new bank lines
         newBuildCheck();
       } else if (refetchOwed && session) { refetchTries = 0; scheduleRefetch(); }
       hiddenAt = 0;
     });
-    window.addEventListener('online', function () { flushErrors(); if (session) { refetchTries = 0; scheduleRefetch(); } });
+    window.addEventListener('online', function () { flushErrors(); if (session) { refetchTries = 0; scheduleRefetch(); feedChanged(); } });
     var got = await sb.auth.getSession();
     session = got.data ? got.data.session : null;
     var note = '';
@@ -3601,7 +3743,7 @@
       // missed in between never comes down it, so ask again.
       .subscribe(function (status) {
         if (status !== 'SUBSCRIBED') return;
-        if (liveOnce && session) { refetchTries = 0; scheduleRefetch(); }
+        if (liveOnce && session) { refetchTries = 0; scheduleRefetch(); feedChanged(); }
         liveOnce = true;
       });
     /* Asks to be paid back, heard as they happen (a new one, one marked paid);

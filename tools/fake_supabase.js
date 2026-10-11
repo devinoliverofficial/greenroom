@@ -49,7 +49,39 @@
                         with either switch above the refusal comes at the end
        ?settings=hang   the settings read never answers (5 s, then carry on)
        ?mail=0          no email can be sent (the confirmation, a new code)
-       ?old=1           a database that has no sign-up functions yet */
+       ?old=1           a database that has no sign-up functions yet
+
+   THE CARD FEED (migration 0136), so backend.js's own reads of it can be
+   tried with no project behind them. Sign in on tools/gate_test.html
+   (anyone@example.com / greenroom), then in the console:
+     GR_BACKEND.feedWatch(function (s) { console.log(s); })   the feed row and the pile, read a page at a time
+     await GR_BACKEND.feedRead()                               the same read again (what Try again does)
+     await GR_BACKEND.feedAccount()                            rpc feed_account
+     await GR_BACKEND.feedLeftOut('left_out', 'card_payment', 0)   also ('skipped', null, 0); a fourth
+                                                               argument { date, id } asks for the page just past that line
+     await GR_BACKEND.feedLook(true)                           the "needs a look" lists
+     await GR_BACKEND.feedPutBack(['lo-0'])                    rpc feed_put_back
+   (The screens themselves are tried in the app harness, tools/make_dbstub.py:
+   it has a pretend backend of its own and its switches are listed there.)
+   What the pretend database holds: one feed, switched on; 12 lines waiting;
+   8 left out by the server (card payments, outside every tour's dates, one
+   the bank took back); 3 set aside (one with no reason or date, as an older
+   build left them); 4 filed (the bank took one back, and changed the amount
+   of another). It refuses every write to feed_items, as the real one does.
+   Switches, on window.__harness (set them, then read again):
+     feedFail = true     the feed row cannot be read (never "no bank connected")
+     pileFail = true     the feed row reads, the waiting lines do not
+     noFeed = true       no bank is connected; with allowed = false, and this
+                         account is not on the approved list either
+     waiting = 2300      how many lines wait (more than 1000 takes several pages)
+     cap = 500           the most rows one answer carries (a project set lower
+                         than the app's page of 1000)
+     account = {...}     feed_account answers exactly this
+     moreHistory = true  the bank's read from the start ran out of pages: its entry says
+                         more: true, it has no full read yet, and the check's ok is false
+     accountFail = true  feed_account errors
+     leftOutFail = true  the left-out, set-aside and needs-a-look reads error
+     putBackFail = true  feed_put_back errors */
 (function () {
   'use strict';
 
@@ -293,14 +325,128 @@
       return later(ok({ ok: true }));
     }
     if (name === 'save_kinds') { account.kinds = Array.isArray(a.k) ? a.k.slice() : []; return later(ok({ ok: true })); }
+    if (name === 'feed_account' || name === 'feed_put_back') return feedRpc(name, a);
     // claim_invites and anything else: nothing to say.
     return later(ok(null));
   }
 
+  /* ---- The card feed (0136): a feed row, its lines, and the two functions. ---- */
+  var H = window.__harness = window.__harness || {};
+  function dayAgo(n) { return new Date(Date.now() - n * 864e5).toISOString().slice(0, 10); }
+  var feedLines = null, feedMade = 0;
+  function feedDb() {
+    var want = H.waiting > 0 ? Math.round(H.waiting) : 12;
+    if (feedLines && feedMade === want) return feedLines;
+    feedMade = want;
+    var line = function (id, status, days, merchant, amount, more) {
+      return Object.assign({ id: id, tour_id: 't1', date: dayAgo(days), posted: dayAgo(days), seq: null, merchant: merchant, amount: amount, category: null,
+        account: 'Tour Card \u2013 0000', why: '', status: status, reason: null, decided_at: null, bank_amount: null, gone_on: null }, more || {});
+    };
+    feedLines = [];
+    for (var i = 0; i < want; i++) feedLines.push(line('w' + ('0000' + i).slice(-5), 'waiting', i % 60, 'Charge ' + (i + 1), 10 + (i % 90), { why: 'New merchant' }));
+    for (i = 0; i < 5; i++) feedLines.push(line('lo-' + i, 'left_out', 10 + i, 'Payment Thank You ' + (i + 1), 500 + i, { tour_id: null, reason: 'card_payment', why: 'Card payment' }));
+    feedLines.push(line('lo-5', 'left_out', 70, 'Shell Oil', 48.1, { tour_id: null, reason: 'outside_dates', why: 'Not during a tour' }));
+    feedLines.push(line('lo-6', 'left_out', 72, 'Spotify', 11.99, { tour_id: null, reason: 'outside_dates', why: 'Not during a tour' }));
+    feedLines.push(line('lo-7', 'left_out', 4, 'Uber *Trip', 23.4, { reason: 'bank_removed', why: 'Taken back by the bank', gone_on: dayAgo(1) }));
+    feedLines.push(line('sk-0', 'skipped', 5, 'Netflix.com', 15.49, { reason: 'set_aside', decided_at: new Date(Date.now() - 864e5).toISOString() }));
+    feedLines.push(line('sk-1', 'skipped', 7, 'Zelle payment to Ana Reyes', 250, { reason: 'same_as_typed', decided_at: new Date(Date.now() - 2 * 864e5).toISOString() }));
+    feedLines.push(line('sk-2', 'skipped', 16, 'Hotel Indigo', 189, { why: 'Maybe already in' }));
+    feedLines.push(line('fi-0', 'filed', 8, 'Lyft *Ride', 31.2, { gone_on: dayAgo(2) }));
+    feedLines.push(line('fi-1', 'filed', 10, 'Chevron 0092', 50, { bank_amount: 52.1 }));
+    feedLines.push(line('fi-2', 'filed', 11, 'Guitar Center #214', 412.88));
+    feedLines.push(line('fi-3', 'filed', 12, 'Marriott', 219, { bank_amount: 219 }));
+    return feedLines;
+  }
+  // What feed_account says, counted from the lines above (no tour holds anything here, so every filed line is "on no tour").
+  function feedAccount() {
+    var rows = feedDb(), by = { waiting: 0, filed: 0, left_out: 0, skipped: 0, mypay: 0 }, lo = {}, left = [], aside = { n: 0, sum: 0 };
+    rows.forEach(function (r) {
+      by[r.status] += 1;
+      if (r.status === 'skipped') { aside.n += 1; aside.sum = Math.round((aside.sum + r.amount) * 100) / 100; }
+      if (r.status !== 'left_out') return;
+      var g = lo[r.reason];
+      if (!g) { g = lo[r.reason] = { reason: r.reason, n: 0, sum: 0, first_day: r.date, last_day: r.date }; left.push(g); }
+      // (A reason's total is its lines with the signs taken off.)
+      g.n += 1; g.sum = Math.round((g.sum + Math.abs(r.amount)) * 100) / 100;
+      if (r.date < g.first_day) g.first_day = r.date;
+      if (r.date > g.last_day) g.last_day = r.date;
+    });
+    // (ok is false only when a read from the start ran out of pages; that bank's entry then says more: true.)
+    var more = !!H.moreHistory;
+    return { total: rows.length, by_status: by, waiting_by_tour: by.waiting ? [{ tour_id: 't1', name: 'The Test Tour', kind: 'tour', n: by.waiting }] : [],
+      left_out: left, set_aside: aside,
+      look: { no_tour: by.filed, bank_gone: rows.filter(function (r) { return r.gone_on && r.status !== 'left_out' && r.status !== 'waiting'; }).length,
+        bank_changed: rows.filter(function (r) { return r.bank_amount != null && r.bank_amount !== r.amount; }).length },
+      banks: [{ institution: 'First Platypus Bank', status: 'ok', last_ok: new Date().toISOString(), linked: dayAgo(40),
+        full_read: more ? null : new Date(Date.now() - 2 * 864e5).toISOString(), more: more }],
+      check: { at: new Date(Date.now() - 2 * 864e5).toISOString(), bank_sent: rows.length + 21, found: 3, new_waiting: 3, new_filed: 0, new_left_out: 0,
+        unexplained: 0, ok: !more },
+      not_kept: { off: [], money_in: 21 } };
+  }
+  // One read of the feed's tables, the way the real ones answer: filters, order, a count, and at most `cap` rows.
+  function feedSelect(table, q) {
+    var bad = no('fake: the read failed', '57014');
+    if (table === 'ynab_allowed') return later(ok(H.allowed === false ? null : { owner_id: 'fake-owner' }));
+    if (table === 'feed') {
+      if (H.feedFail) return later(bad);
+      return later(ok(H.noFeed ? null : { switched_on: true, plan_name: '', since: dayAgo(40), last_run: new Date().toISOString(), last_status: 'ok', source: 'plaid' }));
+    }
+    var status = q.eq.status;
+    if (H.feedFail || (status === 'waiting' && H.pileFail) || (status !== 'waiting' && H.leftOutFail)) return later(bad);
+    var rows = feedDb().filter(function (r) {
+      return Object.keys(q.eq).every(function (k) { return r[k] === q.eq[k]; }) &&
+        Object.keys(q.isIn).every(function (k) { return q.isIn[k].indexOf(r[k]) >= 0; }) &&
+        // (Compared the way the rows are put in order below, so "past this line" means the same in both.)
+        Object.keys(q.gt).every(function (k) { return String(r[k]).localeCompare(String(q.gt[k])) > 0; }) &&
+        Object.keys(q.lt).every(function (k) { return String(r[k]).localeCompare(String(q.lt[k])) < 0; }) &&
+        q.notNull.every(function (k) { return r[k] != null; });
+    });
+    rows.sort(function (a, b) {
+      for (var i = 0; i < q.order.length; i++) {
+        var k = q.order[i][0], d = String(a[k]).localeCompare(String(b[k]));
+        if (d) return q.order[i][1] ? d : -d;
+      }
+      return 0;
+    });
+    var count = rows.length, from = q.range ? q.range[0] : 0, to = q.range ? q.range[1] + 1 : rows.length;
+    // Like the real one: a page that starts past the last row, asked for with a count, is an error, not an empty page.
+    if (q.count && from > 0 && from >= count) return later(no('Requested range not satisfiable', 'PGRST103'));
+    var cap = H.cap > 0 ? Math.round(H.cap) : 1000;
+    rows = rows.slice(from, Math.min(to, from + cap, q.limit != null ? from + q.limit : Infinity));
+    return later({ data: JSON.parse(JSON.stringify(rows)), error: null, count: q.count ? count : null });
+  }
+  function feedRpc(name, a) {
+    if (name === 'feed_account') {
+      if (H.accountFail) return later(no('fake: feed_account failed', '57014'));
+      return later(ok(H.account ? JSON.parse(JSON.stringify(H.account)) : feedAccount()));
+    }
+    // feed_put_back: left out (never one the bank took back) or set aside goes back to waiting; so does a filed
+    // line no tour holds (here: every filed line). A line the bank has withdrawn (gone_on) stays where it is.
+    // The line keeps its warning ("Put back: " and what it was left out for; "Maybe already in" again for one
+    // set aside as the one he typed; any other set-aside keeps its words) and takes the bank's latest figure.
+    // Answers how many moved.
+    if (H.putBackFail) return later(no('fake: feed_put_back failed', '57014'));
+    var n = 0;
+    feedDb().forEach(function (r) {
+      if ((a.ids || []).indexOf(r.id) < 0) return;
+      if (r.gone_on || !((r.status === 'left_out' && r.reason !== 'bank_removed') || r.status === 'skipped' || r.status === 'filed')) return;
+      r.why = r.status === 'filed' ? 'Put back: it was on no tour'
+        : r.status === 'left_out' ? (r.why ? 'Put back: ' + r.why : 'Put back')
+        : r.reason === 'same_as_typed' ? 'Maybe already in' : r.why;
+      if (r.bank_amount != null) { r.amount = r.bank_amount; r.bank_amount = null; }
+      r.status = 'waiting'; r.reason = null; r.decided_at = new Date().toISOString();
+      n += 1;
+    });
+    return later(ok(n));
+  }
+
   // from(table): every step hands the same builder back; waiting on it
   // answers { data: [], error: null } (one row asked for: data null).
+  // (The card feed's three tables are really filtered, ordered and paged: see feedSelect.)
   function from(table) {
     var op = 'select', payload, single = false;
+    var feedTable = table === 'feed' || table === 'feed_items' || table === 'ynab_allowed';
+    var q = { eq: {}, isIn: {}, gt: {}, lt: {}, notNull: [], order: [], range: null, limit: null, count: false };
     var b = {};
     ['select', 'eq', 'neq', 'in', 'or', 'order', 'limit', 'gte', 'lte', 'gt', 'lt', 'is', 'not', 'match', 'filter',
       'range', 'contains', 'ilike', 'like'].forEach(function (m) { b[m] = function () { return b; }; });
@@ -308,7 +454,24 @@
       b[m] = function (row) { op = m; payload = row; return b; };
     });
     b.maybeSingle = b.single = function () { single = true; return b; };
+    if (feedTable) {
+      b.select = function (cols, o) { if (o && o.count) q.count = true; return b; };
+      b.eq = function (k, v) { q.eq[k] = v; return b; };
+      b.in = function (k, list) { q.isIn[k] = list || []; return b; };
+      b.gt = function (k, v) { q.gt[k] = v; return b; };
+      b.lt = function (k, v) { q.lt[k] = v; return b; };
+      b.not = function (k, how, v) { if (how === 'is' && v === null) q.notNull.push(k); return b; };
+      b.order = function (k, o) { q.order.push([k, !(o && o.ascending === false)]); return b; };
+      b.range = function (a, z) { q.range = [a, z]; return b; };
+      b.limit = function (n) { q.limit = n; return b; };
+    }
     function run() {
+      if (feedTable) {
+        log('from(' + table + ').' + op, op === 'select' ? [{ where: q.eq, range: q.range, gt: q.gt, lt: q.lt, limit: q.limit }] : [payload]);
+        // The phone may read these tables and nothing else (0136 took its right to write feed_items away).
+        if (op !== 'select') return later(no('permission denied for table ' + table, '42501'));
+        return feedSelect(table, q);
+      }
       log('from(' + table + ').' + op, payload === undefined ? [] : [payload]);
       if (table === 'profiles' && op === 'upsert' && payload && Object.prototype.hasOwnProperty.call(payload, 'handle')) {
         if (payload.handle === 'brent') {

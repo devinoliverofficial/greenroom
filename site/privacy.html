@@ -22,7 +22,7 @@
 <body>
 <main>
   <h1>Greenroom linked cards: privacy</h1>
-  <p class="date">Last updated: October 10, 2026</p>
+  <p class="date">Last updated: October 11, 2026</p>
 
   <p>Greenroom is a budget app for touring bands. A tour manager can connect the bank or card company their
   tour cards are with, through Plaid, so the charges on those cards file themselves onto their tour. This page
@@ -40,7 +40,9 @@
   <ul>
     <li>The names and types of your card, checking and savings accounts (for example “Business Gold Card”),
       so you can choose which ones feed your tour.</li>
-    <li>Transactions on those accounts: date, amount and merchant name. Accounts you switch off are skipped.</li>
+    <li>Transactions on those accounts: date, amount and merchant name. For an account you switch off, Greenroom
+      keeps nothing about its lines. At most it counts how many there were, so it can tell you they were not
+      looked at.</li>
     <li>For each bank account you mark for income (merch, guarantees or both): the date and amount of its
       deposits, to confirm that what atVenu said a show would pay, or a show’s guarantee, actually arrived.</li>
     <li>For each credit card you log: its balance when you start logging a tour, put on that tour under Credit
@@ -56,8 +58,12 @@
       digits, as part of its name, so you can tell your cards apart.</li>
     <li>Bank account balances. Plaid includes them when it lists your accounts; Greenroom throws them away. The
       only balances kept are a credit card’s, as described above.</li>
-    <li>Money coming into your accounts is skipped and never stored, except deposits on accounts you mark for
-      income, and from those only each deposit’s date and amount.</li>
+    <li>Money coming into your bank accounts. Of that, Greenroom keeps at most a count of how many lines there
+      were, with two exceptions. Deposits on accounts you mark for income, and from those only each deposit’s
+      date and amount. And, from the October 2026 update to the bank feed on, money coming back from something
+      you sent (a returned Zelle, wire or payment), which is kept and shown in your pile the way a refund is.
+      From the same update on, a line Greenroom cannot read properly is kept with whatever could be read, so
+      that it is not lost, but never when it is money coming into a bank account.</li>
   </ul>
 
   <h2>What Greenroom keeps</h2>
@@ -65,17 +71,46 @@
     <li><strong>The key Plaid issues for each bank you connect.</strong> It is locked (encrypted) on Greenroom’s
       server, where only the server can open it. It is never sent to your phone or anyone else’s.</li>
     <li><strong>Spending it looks at:</strong> the date, amount, a cleaned-up merchant name, the account’s name
-      and a category. Charges Greenroom isn’t sure about wait in your private pile until you add them to a
-      tour or set them aside. Refunds on a card are shown to you in the same pile. For money sent from a
-      bank account (a Zelle, a wire, a transfer) the bank’s own description is kept in place of a merchant
-      name, with long numbers taken out, because it is the only thing that says who was paid. It can carry the name, phone number or email address the money went to.</li>
+      and a category. Charges Greenroom isn’t sure about wait in your pile until they are added to a tour or
+      set aside (who can see the pile is listed further down). Refunds on a card wait in the same pile. For
+      money sent, the bank’s own description is kept in place of a merchant name, with long numbers taken out,
+      because it is the only thing that says who was paid. That covers a Zelle, a wire and a transfer and,
+      from the October 2026 update to the bank feed on, a cash withdrawal, a loan payment, money sent or
+      advanced from a card, and money coming back from any of those. The description can carry a name, a phone
+      number or an email address: the one the money went to, and sometimes your own.</li>
     <li><strong>Charges on your tours:</strong> once added, a charge is part of that tour’s budget.</li>
+    <li><strong>Lines it leaves out of your pile:</strong> paying a credit card (and that payment arriving on
+      the card), money moved to your own savings or investments, a line dated outside every tour’s card dates
+      or from before a card’s opening balance, a line for $0, and a line your bank later takes back. Greenroom
+      used to throw nearly all of these away. It now keeps
+      them, each with the reason it was left out and the same details as any other line (date, amount, name,
+      account), so that every line your bank sends is accounted for. You can see them in the app under
+      “Left out and set aside” and bring one into your pile. None of them is counted on a tour unless you do.</li>
+    <li><strong>Charges you set aside:</strong> kept, as they always were, now with the reason picked (not a
+      tour charge, already typed in, or a reimbursement), when, and who on the tour did it, so they can be
+      listed and put back.</li>
+    <li><strong>A tally of each read:</strong> every time Greenroom reads a bank it notes when, which bank, and
+      how many lines the bank sent, the days they span, and where they went: already here, waiting, left
+      out, and, as a number only, lines on accounts you switched off (by the account’s name) and money coming
+      in. There are no merchant names and no amounts in it. It is how Greenroom checks that no line went
+      missing. The newest 400 are kept, and full checks for 30 days.</li>
   </ul>
+  <p>The last three begin with the October 2026 update to the bank feed. Until that update is running for your
+  banks, Greenroom still discards the lines it leaves out (all but the ones from before a card’s opening
+  balance, which it keeps), keeps no reason or date with a charge that is set aside, and keeps no tally of its
+  reads.</p>
   <p>Everything is stored with Greenroom’s hosting provider, Supabase, which encrypts stored data.</p>
 
   <h2>Who can see it</h2>
   <ul>
-    <li>Your pile of charges waiting for a look: <strong>only you</strong>.</li>
+    <li>The pile of charges waiting for a look on a tour: you, and that tour’s Tour Manager (a Manager on the
+      tour whose tour role is Tour Manager), who can sort it. For an artist’s Off Tour book: you, and the Tour
+      Manager of any of that artist’s tours. A line that is waiting for no tour in particular shows in every
+      one of those piles, so each of those Tour Managers sees it too. That includes a line you bring in from
+      “Left out and set aside” when it belongs to no tour. A line that was waiting on a tour you have since
+      deleted shows in your own piles only, not in a Tour Manager’s.</li>
+    <li>The lines left out or set aside, while they stay there, and the tallies of each read:
+      <strong>only you</strong>.</li>
     <li>Charges on a tour: you, and the people you make Managers of that tour. People you invite as crew
       never receive the tour’s money at all: the database gives them a copy of the tour without it.</li>
     <li>Charges on an artist’s Off Tour book: you, and the Managers of that artist’s tours.</li>
@@ -94,8 +129,12 @@
   <h2>How long it’s kept</h2>
   <ul>
     <li>A bank’s Plaid key: until you disconnect that bank.</li>
-    <li>Your pile, and the record of what’s already been brought in (so nothing comes in twice): until you
-      disconnect.</li>
+    <li>Your pile (the lines still waiting to be sorted): until you sort them, or until you disconnect your
+      last bank, which clears them.</li>
+    <li>The record of what’s already been brought in (so nothing comes in twice), the lines you set aside and
+      the lines left out: they stay after you disconnect, until you delete your account.</li>
+    <li>The tallies of each read: the newest 400, and full checks for 30 days. All of them go when you delete
+      your account.</li>
     <li>Charges on a tour: until you remove them. Deleting a tour hides it, with its charges, for everyone
       on it; it is kept so you can restore it, and is not erased. Deleting your whole account erases the
       tours you made and had deleted.</li>
@@ -104,7 +143,10 @@
   <h2>Deleting your data</h2>
   <ul>
     <li><strong>Disconnect in Greenroom:</strong> Settings → Linked Cards → the trash next to a bank, or Disconnect every bank.
-      Greenroom tells Plaid to close the connection and deletes its key right away.</li>
+      Greenroom tells Plaid to close the connection and deletes its key right away. Disconnecting your last
+      bank also clears the lines still waiting to be sorted. Lines already on a tour, lines you set aside and
+      lines left out are kept. While no bank is linked the app does not show the list of what was left out and
+      set aside; it shows again when you link a bank.</li>
     <li><strong>Or through Plaid:</strong> at my.plaid.com you can see and remove the apps connected to your
       banks. Greenroom stops being able to read anything right away.</li>
     <li><strong>Remove a charge</strong>, or a whole import, from a tour to erase it from that tour.</li>

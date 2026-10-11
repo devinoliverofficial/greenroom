@@ -279,9 +279,11 @@ shim = r"""<script>
       { id: 'x1', tour_id: 't1', date: ymd(new Date(today.getTime() - 2 * 864e5)), merchant: 'Online Transfer to CHK 1885', amount: 1500, category: null, account: 'Business Adv Relationship \u2013 5370', why: 'Transfer \u00b7 may be a move to Merch \u00b7\u00b71885' }
     ]
   };
-  window.__harness.calls = []; window.__harness.marked = []; window.__harness.feedFns = [];
+  window.__harness.calls = []; window.__harness.feedFns = [];
   // A Crew phone: __harness.asCrew = true before the tour is opened, or the page opened with ?crew.
   try { if (/[?&]crew\b/.test(String(location.search || ''))) window.__harness.asCrew = true; } catch (e) { /* no address to read */ }
+  // A Manager who did not create the tour (tour role Tour Manager): __harness.asManager = true before the tour is opened, or ?manager.
+  try { if (/[?&]manager\b/.test(String(location.search || ''))) window.__harness.asManager = true; } catch (e) { /* no address to read */ }
   // Asks to be paid back (see reimbursementsFor below).
   function reimbList() {
     var H = window.__harness, ago = function (ms) { return new Date(Date.now() - ms).toISOString(); };
@@ -308,8 +310,249 @@ shim = r"""<script>
     { email: 'tasha@example.com', name: 'Tasha Lane', phone: '', role: 'viewer', tourRole: 'Production manager' },
     { email: 'ana@example.com', name: 'Ana Reyes', phone: '', role: 'viewer', tourRole: 'FOH engineer' }];
   window.__harness.pushSupported = true; window.__harness.pushOn = false; window.__harness.phones = 3;
-  window.__harness.feedState = function () { var F = window.__harness.feed; return { row: Object.assign({}, F.row), items: F.items.slice() }; };
+  // What the app is told about the cards: the feed's row and the pile. feedFail (see the switches below):
+  // the read failed, over the last pile; 'cold': it failed with nothing read before.
+  window.__harness.feedState = function () {
+    var H = window.__harness, F = H.feed;
+    // (asManager: the cards are the tour creator's. This phone has no feed of its own; it is handed the pile.)
+    if (H.asManager) return null;
+    if (H.feedFail === 'cold') return { row: null, items: [], failed: true };
+    var row = Object.assign({}, F.row);
+    if (H.linesMissing) row.last_status = 'lines_missing';
+    var st = { row: row, items: F.items.slice(), total: F.items.length };
+    if (H.feedFail) st.failed = true;
+    return st;
+  };
   window.__harness.feedPush = function () { var st = window.__harness.feedState(); window.__harness.feedFns.forEach(function (fn) { fn(st); }); };
+  /* ---- Every bank line accounted for (0136): the fake database's side ----
+     The Cards tab's lines above the pile, the sheet "Left out and set aside",
+     the Tasks card and the catch-up's ledger sentence, all in memory.
+
+     TO SEE IT: in the console run  __harness.cardsOn()  (linked cards switched
+     on, live mode, and this tour given card dates), then open the tour's
+     Budget, Cards/Links. The lines sit under Refresh Card; "Left out and set
+     aside" opens the sheet; the Tasks button carries "Bank lines".
+     After changing a switch below, run  __harness.feedPush()  to draw again.
+
+     SWITCHES (all on window.__harness):
+       cardsOn({ noDates: true })  as above but the tour keeps no card dates: the "no card dates yet" line
+                            (Refresh Card then opens Card settings, as on a real tour without dates)
+       oldFeed = true       STATE 1: the database change is live, the bank feed is still the older one. The
+                            server leaves nothing out (only the "Before the tour" rows the migration relabelled),
+                            no full check and no last good read are on record, a catch-up answer has no ledger,
+                            a set-aside keeps no reason and no date, and a row from a taken-down tour is refused
+       account = {...}      feedAccount answers exactly this (to try a field that is missing, or odd numbers)
+       accountFail = true   STATE 3: feedAccount answers null: "Couldn't check the bank lines. Try again."
+       feedFail = true      the read of the cards fails: "Couldn't check the cards." over the last pile read
+       feedFail = 'cold'    the same with nothing read before: only that line, and never Add Card Info
+       leftOutFail = true   the lists in the sheet (and "Needs a look") cannot be read
+       putBackFail = true   Bring it in / Put back gets no answer;  putBackNone = true: it answers that nothing moved
+       linesMissing = true  the bank feed could not store every line: the red line, and a catch-up that says so
+       noCheck = true       no full check on record yet;  halfChecked = true: American Express not fully checked yet
+       checkNew = [40, 1160]  what the last full check found that was not here before: [waiting, left out]
+                            (3 waiting and none left out when it is not set)
+       moreHistory = true   the first bank's read from the start ran out of pages: its entry says more: true, it has
+                            no full read yet, and the check's ok is false (ok: false means that, or a full read
+                            that came up short, linesMissing; a bank that did not answer is simply not in the check)
+       offWas = [__harness.feed.accounts[1].name]  accounts, by name, that did not log expenses at the last full
+                            check but do now
+       asManager = true     this phone is a Manager with the tour role Tour Manager on a tour someone else created
+                            (set it before the tour is opened, or open the page with ?manager): no feed of its own,
+                            the pile comes from the creator's cards, and the pile's answer says how the creator's last
+                            bank read ended (feedStatus; none with oldFeed). feed.row.last_status = 'failed' to try a
+                            read that did not finish; bankDown() for a bank that needs a sign-in
+       noFeed = true        Linked Cards is told there is no feed at all, and that this account may connect a bank;
+                            notAllowed = true: no feed, and it may not (no Connect button)
+       look = true          rows for "Needs a look": one the bank took back, one whose amount changed, one filed on no
+                            tour, and a set-aside line the bank took back (listed, with no Put back)
+       manyLeftOut = 230    that many extra card payments left out (pages of 100, "Show more")
+       elsewhere()          adds a second tour and an Off Tour book with rows waiting on each ("Also waiting")
+       goneTour()           adds a taken-down tour with two rows still waiting on it (they show in this pile for the
+                            cards' owner; a Manager who is not the owner is not handed them)
+       bankDown(code)       American Express gets that trouble ('ITEM_LOGIN_REQUIRED' when no code is given, e.g.
+                            'INSTITUTION_DOWN', 'ITEM_NOT_FOUND');  bankDown(false)  makes every bank healthy
+       out                  the rows themselves that are not in the pile (left out, set aside): change or add to
+                            them to try any shape; set it to null to have them made afresh
+     Banks: American Express starts out needing a new sign-in, as in Linked Cards, so its red line and the Tasks
+     card show from the start;  __harness.bankDown(false)  clears it.
+     An account set to Neither or Income (Linked Cards, or __harness.feed.accounts[2].mode = 'off') gets the
+     "does not log expenses: 37 lines were not read" line.
+     Kept for a test to read: accountCalls (how many times the account was asked for), putBacks (the ids asked
+     back), filedPicks and calls (every card call with its body: by and each pick's reason are there). */
+  var daysAgo = function (n) { return ymd(new Date(today.getTime() - n * 864e5)); };
+  var stampAgo = function (n) { return new Date(Date.now() - n * 864e5).toISOString(); };
+  // The rows that are not in the pile: left out by the server, set aside by a tap, or (look) marked filed.
+  function outRows() {
+    var H = window.__harness, old = !!H.oldFeed;
+    // (Built once, and again when a switch that shapes them is changed.)
+    var sig = [old, !!H.look, H.manyLeftOut > 0 ? H.manyLeftOut : 0].join('|');
+    if (!H.out || H.outFor !== sig) {
+      H.outFor = sig;
+      // (Each line carries one of the feed's own accounts, listed with the feed above: a card and two bank accounts.)
+      var acctName = function (i) { return H.feed.accounts[i].name; };
+      var gold = acctName(3), merch = acctName(1), adv = acctName(2);
+      var lo = function (id, reason, why, days, merchant, amount, account, more) {
+        return Object.assign({ id: id, tour_id: null, date: daysAgo(days), posted: daysAgo(days), merchant: merchant, amount: amount, account: account,
+          why: why, status: 'left_out', reason: reason, decided_at: null, bank_amount: null, gone_on: null }, more || {});
+      };
+      var aside = function (id, reason, days, merchant, amount, account, why, decided) {
+        return { id: id, tour_id: 't1', date: daysAgo(days), posted: daysAgo(days), merchant: merchant, amount: amount, account: account, why: why || '',
+          status: 'skipped', reason: old ? null : reason, decided_at: old || decided == null ? null : stampAgo(decided), bank_amount: null, gone_on: null };
+      };
+      H.out = old ? [
+        // (All the older bank feed ever kept out of sight: its own "Before the tour" rows, relabelled by the migration.)
+        lo('lo-bt1', 'before_tour', 'Before the tour', 25, 'Sweetwater Sound', 320, gold, { tour_id: 't1' })
+      ] : [
+        lo('lo-cp1', 'card_payment', 'Card payment', 6, 'AMEX EPAYMENT ACH PMT', 1500, merch),
+        lo('lo-cp2', 'card_payment', 'Card payment', 6, 'Payment Thank You - Web', -1500, gold),
+        lo('lo-cp3', 'card_payment', 'Card payment', 34, 'BANK OF AMERICA CREDIT CARD Bill Payment', 2750.5, adv),
+        lo('lo-om1', 'own_move', 'Moved to savings or investments', 12, 'Online Transfer to SAV 0000', 2000, adv),
+        lo('lo-od1', 'outside_dates', 'Not during a tour', 61, 'Shell Oil 5744', 48.1, gold),
+        lo('lo-od2', 'outside_dates', 'Not during a tour', 58, 'Zelle payment to Ana Reyes', 300, merch),
+        lo('lo-bt1', 'before_tour', 'Before the tour', 25, 'Sweetwater Sound', 320, gold, { tour_id: 't1' }),
+        lo('lo-z1', 'zero', 'Zero amount', 9, 'Card verification', 0, gold),
+        lo('lo-br1', 'bank_removed', 'Taken back by the bank', 4, 'Uber *Trip', 23.4, gold, { tour_id: 't1', gone_on: daysAgo(1) })
+      ];
+      H.out = H.out.concat([
+        aside('sk-1', 'set_aside', 5, 'Netflix.com', 15.49, gold, 'New merchant', 1),
+        aside('sk-2', 'same_as_typed', 7, 'Zelle payment to Tasha Lane', 250, merch, 'Zelle', 2),
+        // Set aside by an older build, by itself: no reason and no date were ever kept.
+        aside('sk-3', null, 16, 'Hotel Indigo', 189, gold, 'Maybe already in', null)
+      ]);
+      for (var k = 0; k < (H.manyLeftOut > 0 ? H.manyLeftOut : 0); k++) {
+        H.out.push(lo('lo-many' + k, 'card_payment', 'Card payment', 40 + k, 'Payment Thank You ' + (k + 1), 100 + k, gold));
+      }
+      // (The first two are on the tour as charges, like any filed line; the third is on no tour.)
+      if (H.look && !tours.t1.charges['plk-gone']) {
+        tours.t1.charges['plk-gone'] = { id: 'plk-gone', date: daysAgo(8), merchant: 'Lyft *Ride', amount: 31.2, category: 'food', account: gold, importId: 'review-look', paid: false };
+        tours.t1.charges['plk-chg'] = { id: 'plk-chg', date: daysAgo(10), merchant: 'Chevron 0092', amount: 50, category: 'gas', account: gold, importId: 'review-look', paid: false };
+        tours.t1.imports = Object.assign({}, tours.t1.imports, { 'review-look': { createdAt: Date.now() - 9 * 864e5, count: 2, total: 81.2, source: 'Card feed' } });
+        setTimeout(emit, 0);
+      }
+      if (H.look) H.out = H.out.concat([
+        { id: 'lk-gone', tour_id: 't1', date: daysAgo(8), posted: daysAgo(8), merchant: 'Lyft *Ride', amount: 31.2, account: gold, why: '', status: 'filed',
+          reason: null, decided_at: stampAgo(7), bank_amount: null, gone_on: daysAgo(2) },
+        { id: 'lk-chg', tour_id: 't1', date: daysAgo(10), posted: daysAgo(10), merchant: 'Chevron 0092', amount: 50, account: gold, why: '', status: 'filed',
+          reason: null, decided_at: stampAgo(9), bank_amount: 52.1, gone_on: null },
+        // Marked filed, but no tour has a charge "plk-none".
+        { id: 'lk-none', tour_id: 't1', date: daysAgo(11), posted: daysAgo(11), merchant: 'Guitar Center #214', amount: 412.88, account: gold, why: '', status: 'filed',
+          reason: null, decided_at: stampAgo(10), bank_amount: null, gone_on: null },
+        // Set aside by a tap, and then taken back by the bank: listed, and never put back.
+        { id: 'lk-sgone', tour_id: 't1', date: daysAgo(9), posted: daysAgo(9), merchant: 'Parking Meter 0417', amount: 6.5, account: gold, why: 'New merchant', status: 'skipped',
+          reason: 'set_aside', decided_at: stampAgo(8), bank_amount: null, gone_on: daysAgo(3) }
+      ]);
+    }
+    return H.out;
+  }
+  // Does any tour hold this bank line as a charge? (A taken-down tour still counts.)
+  function tourHolds(fid) {
+    return Object.keys(tours).some(function (tid) { var c = (tours[tid].charges || {})['p' + fid]; return !!c && typeof c === 'object'; });
+  }
+  function tourGone(tid) { return !!tid && (!tours[tid] || !!tours[tid].deletedAt); }
+  // What feed_account answers, counted from what the fake holds.
+  function fakeAccount() {
+    var H = window.__harness, F = H.feed, out = outRows(), old = !!H.oldFeed, noCheck = old || !!H.noCheck;
+    var by = { waiting: F.items.length, filed: Object.keys(H.filedItems || {}).length, left_out: 0, skipped: 0, mypay: 0 };
+    out.forEach(function (r) { by[r.status] = (by[r.status] || 0) + 1; });
+    var wb = {}, where = [];
+    F.items.forEach(function (it) {
+      var t = it.tour_id ? tours[it.tour_id] : null;
+      var kind = !it.tour_id ? 'none' : tourGone(it.tour_id) ? 'gone' : t.kind === 'offtour' ? 'offtour' : 'tour';
+      var key = kind + ':' + (it.tour_id || '');
+      if (!wb[key]) { wb[key] = { tour_id: it.tour_id || null, name: t ? String(t.name || '') : '', kind: kind, n: 0 }; where.push(wb[key]); }
+      wb[key].n += 1;
+    });
+    var lo = {}, left = [];
+    out.forEach(function (r) {
+      if (r.status !== 'left_out') return;
+      var g = lo[r.reason];
+      if (!g) { g = lo[r.reason] = { reason: r.reason, n: 0, sum: 0, first_day: r.date, last_day: r.date }; left.push(g); }
+      // (A reason's total is its lines with the signs taken off: a payment out and the same payment arriving do not cancel.)
+      g.n += 1; g.sum = Math.round((g.sum + Math.abs(r.amount)) * 100) / 100;
+      if (r.date < g.first_day) g.first_day = r.date;
+      if (r.date > g.last_day) g.last_day = r.date;
+    });
+    var aside = out.filter(function (r) { return r.status === 'skipped'; });
+    var total = by.waiting + by.filed + by.left_out + by.skipped + by.mypay;
+    // The last full check, as the database answers it: each bank's latest read from the start that was carried
+    // through, added up. A bank that did not answer is simply not in it. ok is false only when one of those
+    // reads ran out of pages (moreHistory), and that bank's own entry then says more: true, or when one came
+    // up short of what the bank sent (linesMissing, which also counts the lines as unexplained).
+    var more = !!H.moreHistory && !noCheck;
+    var fresh = Array.isArray(H.checkNew) ? H.checkNew : [3, 0];
+    return {
+      total: total, by_status: by, waiting_by_tour: where, left_out: left,
+      set_aside: { n: aside.length, sum: Math.round(aside.reduce(function (n, r) { return n + r.amount; }, 0) * 100) / 100 },
+      look: { no_tour: out.filter(function (r) { return r.status === 'filed' && !tourHolds(r.id); }).length,
+        bank_gone: out.filter(function (r) { return r.gone_on && r.status !== 'left_out'; }).length,
+        bank_changed: out.filter(function (r) { return r.bank_amount != null && Math.round(r.bank_amount * 100) !== Math.round(r.amount * 100); }).length },
+      banks: F.banks.map(function (b) {
+        var ok = !b.status || b.status === 'ok';
+        return { institution: b.name, status: b.status || 'ok', linked: daysAgo(40),
+          // (The older bank feed never notes a good read. A bank in trouble was last read 8 days ago.)
+          last_ok: old ? null : stampAgo(ok ? 0.05 : 8),
+          full_read: noCheck || !ok || (H.halfChecked && b.id === 'b2') || (more && b.id === 'b1') ? null : stampAgo(2),
+          more: more && b.id === 'b1' };
+      }),
+      check: noCheck ? null : { at: stampAgo(2), bank_sent: Math.max(total, 412), found: fresh[0] + fresh[1], new_waiting: fresh[0], new_filed: 0,
+        new_left_out: fresh[1], unexplained: H.linesMissing ? 2 : 0, ok: !more && !H.linesMissing },
+      not_kept: noCheck ? { off: [], money_in: 0 } : {
+        off: F.accounts.filter(function (a) { return a.mode === 'off'; }).map(function (a) { return { account: a.name, n: 37 }; })
+          .concat((H.offWas || []).map(function (nm) { return { account: nm, n: 12 }; })),
+        money_in: 21 }
+    };
+  }
+  // How the last read of the banks ended, as the bank feed keeps it on the feed's row: its own word, or the
+  // code of a bank that is in trouble.
+  function lastStatusNow() {
+    var H = window.__harness, F = H.feed;
+    if (H.linesMissing) return 'lines_missing';
+    if (F.row.last_status && F.row.last_status !== 'ok') return F.row.last_status;
+    var down = F.banks.filter(function (b) { return b.status && b.status !== 'ok'; })[0];
+    return down ? down.status : 'ok';
+  }
+  // asManager: the crew list of a tour someone else created, on which this phone (the harness's own account,
+  // first in the list) is a Manager with the tour role Tour Manager.
+  function crewAsManager() {
+    var H = window.__harness;
+    return [{ owner: true, role: 'owner', userId: 'u-creator', name: 'Tour Creator', email: 'creator@example.com', phone: '', tourRole: 'Artist', joined: true },
+      Object.assign({}, H.crew[0], { owner: false, role: 'editor', manager: true, tourRole: 'Tour Manager' })].concat(H.crew.slice(1));
+  }
+  window.__harness.bankDown = function (code) {
+    var H = window.__harness;
+    H.feed.banks.forEach(function (b, i) { b.status = code === false ? 'ok' : i === 1 ? (typeof code === 'string' ? code : 'ITEM_LOGIN_REQUIRED') : b.status; });
+    H.feedPush();
+  };
+  /* cardsOn: the one call that makes the Cards tab live in the harness. */
+  window.__harness.cardsOn = function (o) {
+    var H = window.__harness, F = H.feed;
+    F.row.switched_on = true; F.row.since = daysAgo(30); F.row.last_run = stampAgo(0.01); F.live = true;
+    F.accounts.forEach(function (a) { a.asked = true; });
+    tours.t1.cardLog = o && o.noDates ? null : { from: 'tour', to: 'tour' };
+    emit(); H.feedPush();
+  };
+  window.__harness.elsewhere = function () {
+    var H = window.__harness, F = H.feed;
+    tours.t2 = { name: 'Taste Of Chaos', artist: tours.t1.artist, setupDone: true, setupStep: 5, createdAt: 2, expenses: {}, commission: {}, charges: {}, imports: {},
+      cardLog: { from: 'tour', to: 'tour' }, shows: { a1: { id: 'a1', date: daysAgo(-30), city: 'Denver, CO', venue: 'Summit' } } };
+    tours.off1 = { kind: 'offtour', artist: tours.t1.artist, name: 'Off Tour', setupDone: true, offFrom: daysAgo(90).slice(0, 8) + '01', createdAt: 3, shows: {}, expenses: {}, charges: {} };
+    F.items = F.items.concat([
+      { id: 'e1', tour_id: 't2', date: daysAgo(2), merchant: 'Sweetwater Sound', amount: 219, category: null, account: F.accounts[3].name, why: 'New merchant' },
+      { id: 'e2', tour_id: 't2', date: daysAgo(3), merchant: 'Penske Truck Rental', amount: 640.2, category: null, account: F.accounts[3].name, why: 'New merchant' },
+      { id: 'e3', tour_id: 'off1', date: daysAgo(5), merchant: 'Adobe Creative Cloud', amount: 59.99, category: null, account: F.accounts[3].name, why: 'New merchant' }
+    ]);
+    emit(); H.feedPush();
+  };
+  window.__harness.goneTour = function () {
+    var H = window.__harness, F = H.feed;
+    tours.t9 = { name: 'Cancelled run', artist: tours.t1.artist, setupDone: true, createdAt: 4, deletedAt: Date.now() - 864e5, expenses: {}, charges: {}, shows: {} };
+    F.items = F.items.concat([
+      { id: 'gt1', tour_id: 't9', date: daysAgo(6), merchant: 'Love’s Travel Stop', amount: 88.4, category: null, account: F.accounts[3].name, why: 'New merchant' },
+      // (A tour that is not there at all, not even in Deleted tours.)
+      { id: 'gt2', tour_id: 'nowhere', date: daysAgo(6), merchant: 'FedEx Office', amount: 41.07, category: null, account: F.accounts[3].name, why: 'New merchant' }
+    ]);
+    emit(); H.feedPush();
+  };
   window.GR_BACKEND = {
     tourRoles: ['Artist', 'Band', 'Tour Manager', 'Production Manager', 'Stage Manager', 'Merch',
       'Guitar Tech', 'Drum Tech', 'Assistant', 'FOH Engineer', 'Monitors', 'Friend', 'Family Member', 'Liaison', 'Dancer'],
@@ -1025,9 +1268,13 @@ shim = r"""<script>
     },
     username: function () { return me.username; },
     // __harness.asCrew (or opening the page with ?crew): this phone is Crew on every tour, not its creator.
-    ownsTour: function () { return !window.__harness.asCrew; },
-    myRole: function () { return Promise.resolve(window.__harness.asCrew ? 'viewer' : 'owner'); },
-    crew: function () { window.__harness.crewCalls = (window.__harness.crewCalls || 0) + 1; return Promise.resolve(window.__harness.crew); },
+    // __harness.asManager (or ?manager): a Manager with the tour role Tour Manager on every tour, not its creator.
+    ownsTour: function () { return !window.__harness.asCrew && !window.__harness.asManager; },
+    myRole: function () { return Promise.resolve(window.__harness.asCrew ? 'viewer' : window.__harness.asManager ? 'editor' : 'owner'); },
+    crew: function () {
+      window.__harness.crewCalls = (window.__harness.crewCalls || 0) + 1;
+      return Promise.resolve(window.__harness.asManager && !window.__harness.asCrew ? crewAsManager() : window.__harness.crew);
+    },
     /* Social, in memory. Brent has a profile with a tour you share and one
        you don't; Tasha is still pending, so she has none to open. */
     pushSocial: function (p) { var H = window.__harness; H.social = JSON.parse(JSON.stringify(p)); H.socialPushes = (H.socialPushes || 0) + 1; return Promise.resolve(); },
@@ -1814,21 +2061,42 @@ shim = r"""<script>
         if (window.__harness.pileDenied) return Promise.resolve({ error: 'not_allowed' });
         var cards = {};
         F.accounts.forEach(function (a) { cards[a.name] = a.type === 'creditCard' ? 'credit' : 'debit'; });
-        return Promise.resolve({ ok: true, connected: true, switchedOn: !!F.row.switched_on, lastRun: F.row.last_run, cards: cards,
-          mine: !window.__harness.asTM, items: F.items.filter(function (it) { return !it.tour_id || it.tour_id === body.tourId; }) });
+        // (The newer bank feed counts a row on a taken-down tour as a no-tour row for the cards' owner only: a
+        // Manager who is not the owner is never handed it. It says how many wait in all to the owner, and says
+        // how the last read of the owner's banks ended: feedStatus, one word, no bank's name.)
+        var pileMine = !(window.__harness.asTM || window.__harness.asManager);
+        var pile = { ok: true, connected: true, switchedOn: !!F.row.switched_on, lastRun: F.row.last_run, cards: cards,
+          mine: pileMine, items: F.items.filter(function (it) {
+            return !it.tour_id || it.tour_id === body.tourId || (pileMine && !window.__harness.oldFeed && tourGone(it.tour_id)); }) };
+        if (pileMine) pile.total = F.items.length;
+        if (!window.__harness.oldFeed) pile.feedStatus = lastStatusNow();
+        return Promise.resolve(pile);
       }
       if (action === 'file') {
         // Like the server: each charge where it's pointed (H.offTourId / H.nextTourId
         // stand in for the band's Off Tour book and next tour).
         var H = window.__harness;
-        var picks = body.picks || [], adds = {}, filed = 0, skipped = 0, already = 0, total = 0, now = Date.now(), offN = 0, nextN = 0;
+        var picks = body.picks || [], adds = {}, filed = 0, skipped = 0, already = 0, refused = 0, total = 0, now = Date.now(), offN = 0, nextN = 0;
         var into = function (tid, key, ch) { adds[tid] = adds[tid] || {}; adds[tid][key] = ch; };
+        var oldFeed = !!H.oldFeed;
         picks.forEach(function (pk, i) {
           var it = F.items.filter(function (x) { return x.id === pk.id; })[0];
           if (!it) { already += 1; return; }
+          // The older bank feed only takes a row from its own tour's pile: one on a taken-down tour is
+          // answered "already" and stays waiting. (The newer one takes it as a no-tour row.)
+          if (it.tour_id && it.tour_id !== body.tourId && (oldFeed || !tourGone(it.tour_id))) { already += 1; return; }
+          // The newer bank feed sets a charge aside only for a request marked by: 'hand'; any other is left waiting.
+          if (!pk.keep && !oldFeed && body.by !== 'hand') { refused += 1; return; }
           F.items = F.items.filter(function (x) { return x.id !== pk.id; });
           if (pk.keep) { H.filedItems = H.filedItems || {}; H.filedItems[it.id] = it; }
-          if (!pk.keep) { skipped += 1; return; }
+          if (!pk.keep) {
+            // Set aside: kept, with why and when (the older bank feed keeps neither), for "Left out and set aside".
+            outRows().push({ id: it.id, tour_id: it.tour_id || null, date: it.date, posted: it.date, merchant: it.merchant, amount: it.amount,
+              account: it.account, why: it.why || '', status: 'skipped', bank_amount: null, gone_on: null,
+              reason: oldFeed ? null : (pk.reason === 'same_as_typed' || pk.reason === 'paid_back' ? pk.reason : 'set_aside'),
+              decided_at: oldFeed ? null : new Date().toISOString() });
+            skipped += 1; return;
+          }
           var acct = F.accounts.filter(function (a) { return a.name === it.account; })[0];
           var ch = { date: it.date, merchant: it.merchant, amount: it.amount, category: pk.category, accounted: !!pk.accounted,
             account: it.account, importId: 'review-' + now, createdAt: now + i, paid: !(acct && acct.type === 'creditCard'),
@@ -1855,8 +2123,8 @@ shim = r"""<script>
             var imp = {}; imp['review-' + now] = { createdAt: now, count: Object.keys(adds[tid]).length, total: 0, source: 'Card feed' };
             return db.doc('tours/' + tid).update({ charges: adds[tid], imports: imp });
           }));
-        }).then(function () { return { ok: true, filed: filed, skipped: skipped, already: already, offTour: offN, upcoming: nextN,
-          total: Math.round(total * 100) / 100 }; });
+        }).then(function () { return Object.assign({ ok: true, filed: filed, skipped: skipped, already: already, offTour: offN, upcoming: nextN,
+          total: Math.round(total * 100) / 100 }, oldFeed ? {} : { refused: refused }); });
       }
       // Undo, like the server: off every tour it landed on, back in the pile.
       if (action === 'unfile') {
@@ -1888,9 +2156,15 @@ shim = r"""<script>
       }
       if (action === 'disconnect' && body && body.itemId) {
         F.banks = F.banks.filter(function (b) { return b.id !== body.itemId; });
+        // Like the server: with the last bank goes every charge still waiting, and the feed itself.
+        if (!F.banks.length) { F.items = []; window.__harness.feedFns.forEach(function (fn) { fn({ row: null, items: [], connectOnly: true }); }); }
         return Promise.resolve({ ok: true, left: F.banks.length });
       }
       if (action === 'disconnect') { window.__harness.feedFns.forEach(function (fn) { fn({ row: null, items: [], connectOnly: true }); }); return Promise.resolve({ ok: true }); }
+      // No feed at all (noFeed, notAllowed): the answer says whether this account may connect a bank.
+      if (action === 'status' && (window.__harness.noFeed || window.__harness.notAllowed)) {
+        return Promise.resolve({ ok: true, source: null, needsConnect: true, test: !F.live, allowed: !window.__harness.notAllowed });
+      }
       // F.live: answer as the real thing does (not Plaid's test mode), for trying the Cards tab.
       if (action === 'status') return Promise.resolve({ ok: true, source: 'plaid', test: !F.live, switchedOn: F.row.switched_on,
         since: F.row.since, lastRun: F.row.last_run, lastStatus: 'ok', banks: JSON.parse(JSON.stringify(F.banks)),
@@ -1924,7 +2198,10 @@ shim = r"""<script>
          answers like a server that does not know the word; __harness.catchupFail = true like a request
          that got no answer (a string instead, say 'ITEM_LOGIN_REQUIRED', like a bank that refused);
          __harness.catchupReply, when set, is answered as it is (zeros, for a phone that asked twice);
-         __harness.catchupSlow waits that many ms first. */
+         __harness.catchupSlow waits that many ms first.
+         The newer bank feed also says what the bank handed over and where each line went (ledger: it adds up to
+         sent); with __harness.oldFeed there is none. __harness.linesMissing: its count did not add up, so it
+         answers lines_missing (what could be stored is in). */
       if (action === 'sync' && body && body.catchup === true) {
         var Hc = window.__harness, ans;
         if (Hc.catchupFail) ans = typeof Hc.catchupFail === 'string' ? { ok: false, status: Hc.catchupFail } : { error: 'offline' };
@@ -1933,19 +2210,80 @@ shim = r"""<script>
           ans = Hc.catchupOld ? { ok: true, status: 'ok', filed: 0, waiting: 0 }
             : (Hc.catchupReply || { ok: true, status: 'ok', waiting: 3, filed: 0, catchup: true,
               found: { zelle: 1, wire: 1, transfer: 1, other: 0, maybe: 0, from: '2026-10-02', to: '2026-10-08' } });
+          if (!Hc.catchupOld && !Hc.catchupReply && !Hc.oldFeed) {
+            ans.ledger = { sent: 412, already: 300, waiting: 3, filed: 0, left_out: 88, not_kept: 21, unexplained: 0 };
+            if (Hc.linesMissing) { ans.ok = false; ans.status = 'lines_missing'; ans.ledger.already = 298; ans.ledger.unexplained = 2; }
+          }
         }
         return new Promise(function (res) { setTimeout(function () { Hc.feedPush(); res(ans); }, Hc.catchupSlow > 0 ? Hc.catchupSlow : 0); });
       }
       if (action === 'sync') F.row.last_run = new Date().toISOString();
       window.__harness.feedPush();
+      if (action === 'sync' && window.__harness.linesMissing && !window.__harness.syncReply) return Promise.resolve({ ok: false, status: 'lines_missing' });
       return Promise.resolve(action === 'sync' ? (window.__harness.syncReply || { ok: true, status: 'ok', test: true, seen: 16, filed: 3, waiting: 10 }) : { ok: true });
     },
-    feedMark: function (ids, patch) {
-      var F = window.__harness.feed;
-      window.__harness.marked.push([ids.slice(), patch]);
-      F.items = F.items.filter(function (it) { return ids.indexOf(it.id) < 0; });
-      window.__harness.feedPush();
-      return Promise.resolve();
+    /* Every bank line accounted for (0136), as the real backend answers it; the switches are listed
+       above (at outRows). Each answers null when it "could not be read". accountSlow: ms to wait first. */
+    feedRead: function () { window.__harness.feedPush(); return Promise.resolve(); },
+    feedAccount: function () {
+      var H = window.__harness;
+      H.accountCalls = (H.accountCalls || 0) + 1;
+      var ans = H.accountFail ? null : H.account ? JSON.parse(JSON.stringify(H.account)) : fakeAccount();
+      return new Promise(function (res) { setTimeout(function () { res(ans); }, H.accountSlow > 0 ? H.accountSlow : 30); });
+    },
+    // (after: { date, id } of the last line in hand: the page starts just past it, newest first, as the real
+    // one does, and the page number is not used. leftOutCalls keeps what was asked.)
+    feedLeftOut: function (status, reason, page, after) {
+      var H = window.__harness;
+      H.leftOutCalls = (H.leftOutCalls || []).concat([[status, reason, page, after ? { date: after.date, id: after.id } : null]]);
+      if (H.leftOutFail) return Promise.resolve(null);
+      var st = status === 'skipped' ? 'skipped' : 'left_out', from = Math.max(0, Math.round(Number(page)) || 0) * 100;
+      var rows = outRows().filter(function (r) { return r.status === st && (!reason || r.reason === reason); })
+        .sort(function (a, b) { return String(b.date).localeCompare(String(a.date)) || String(a.id).localeCompare(String(b.id)); });
+      if (after && after.date && after.id != null) {
+        from = 0;
+        rows = rows.filter(function (r) {
+          return String(r.date) < String(after.date) || (String(r.date) === String(after.date) && String(r.id).localeCompare(String(after.id)) > 0);
+        });
+      }
+      return Promise.resolve(JSON.parse(JSON.stringify(rows.slice(from, from + 100))));
+    },
+    // Back to waiting, as feed_put_back does it: left out (never one the bank took back) or set aside; a row
+    // marked filed only when no tour holds it. A line the bank has withdrawn (gone_on) stays where it is. The
+    // line keeps its warning: "Put back: " and what it was left out for; "Maybe already in" again for one set
+    // aside as the one he typed; any other set-aside keeps its words. It takes the bank's latest figure.
+    // Answers how many moved.
+    feedPutBack: function (ids) {
+      var H = window.__harness, F = H.feed, n = 0;
+      H.putBacks = (H.putBacks || []).concat([(ids || []).slice()]);
+      if (H.putBackFail) return Promise.resolve(null);
+      if (H.putBackNone) return Promise.resolve(0);
+      (ids || []).forEach(function (id) {
+        var r = outRows().filter(function (x) { return x.id === id; })[0];
+        if (!r) return;
+        var orphan = r.status === 'filed' && !tourHolds(r.id);
+        if (r.gone_on || !((r.status === 'left_out' && r.reason !== 'bank_removed') || r.status === 'skipped' || orphan)) return;
+        H.out = H.out.filter(function (x) { return x !== r; });
+        F.items.push({ id: r.id, tour_id: r.tour_id || null, date: r.date, merchant: r.merchant, category: null, account: r.account,
+          amount: r.bank_amount != null ? r.bank_amount : r.amount,
+          why: orphan ? 'Put back: it was on no tour'
+            : r.status === 'left_out' ? (r.why ? 'Put back: ' + r.why : 'Put back')
+            : r.reason === 'same_as_typed' ? 'Maybe already in' : (r.why || '') });
+        n += 1;
+      });
+      H.feedPush();
+      return Promise.resolve(n);
+    },
+    feedLook: function (wantFiled) {
+      var H = window.__harness, out = outRows();
+      if (H.leftOutFail) return Promise.resolve(null);
+      var filed = Object.keys(H.filedItems || {}).map(function (k) { var it = H.filedItems[k];
+        return { id: it.id, tour_id: it.tour_id || 't1', date: it.date, merchant: it.merchant, amount: it.amount, account: it.account, gone_on: null }; })
+        .concat(out.filter(function (r) { return r.status === 'filed'; }));
+      return Promise.resolve(JSON.parse(JSON.stringify({
+        gone: out.filter(function (r) { return r.gone_on && r.status !== 'left_out'; }),
+        changed: out.filter(function (r) { return r.bank_amount != null && Math.round(r.bank_amount * 100) !== Math.round(r.amount * 100); }),
+        filed: wantFiled ? filed : null })));
     },
     // same markup as backend.js's picker, so the contact card can be exercised here
     openRolePicker: function (current, onPick) {
