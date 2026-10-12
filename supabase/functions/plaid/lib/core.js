@@ -63,16 +63,39 @@
 
   /* Income catalogued onto the book itself, not one night (tour.otherIncome,
      keyed by the bank deposit that brought it): royalties, an advance, or
-     merch and guarantees that belong to no one show. */
+     merch and guarantees that belong to no one show. 'other' is a deposit
+     that is none of the four (asked for as: "there should be an 'other' tab
+     in 'what was it for?' categories"): it carries the few words typed for
+     it, as label ("Sync licence", "Venue refund", "Tip jar"). It is income of
+     the book exactly as royalties are: no commission is figured on it. */
   var OTHER_INCOME_KINDS = [
     { key: 'merch', label: 'Merch' },
     { key: 'guarantee', label: 'Guarantee' },
     { key: 'royalties', label: 'Royalties' },
-    { key: 'advance', label: 'Advance' }
+    { key: 'advance', label: 'Advance' },
+    { key: 'other', label: 'Other' }
   ];
+  var OTHER_NOTE_MAX = 60;
   function otherKindLabel(kind) {
     var hit = OTHER_INCOME_KINDS.filter(function (k) { return k.key === kind; })[0];
     return hit ? hit.label : 'Income';
+  }
+  /* The words typed for an "Other" deposit, cleaned the way the database
+     cleans them (catalog_income, 0141): runs of blanks to one space, trimmed,
+     60 characters at most. Counted in whole characters, so a symbol the phone
+     stores as two halves is never cut in two (half of one cannot be saved). */
+  function otherNote(v) {
+    var t = String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+    return Array.from(t).filter(function (ch) { return !/^[\uD800-\uDFFF]$/.test(ch); })
+      .slice(0, OTHER_NOTE_MAX).join('').trim();
+  }
+  /* What one entry is called where a person reads it: the words typed for an
+     "Other" deposit when there are any ("Sync licence", not "Other"), else
+     its kind. Only an 'other' entry is named by its words: a label on any
+     other kind is not read, so nothing can pass for a guarantee or merch. */
+  function otherEntryLabel(x) {
+    var e = isObj(x) ? x : {};
+    return (e.kind === 'other' ? otherNote(e.label) : '') || otherKindLabel(e.kind);
   }
 
   // The titles an artist's page can give its people (or it types its own):
@@ -2168,7 +2191,8 @@
     // Income on the book itself, under the nights: its amount lands in the
     // same column the show totals use, so the file still sums to the tour.
     c.otherRows.forEach(function (x) {
-      showRows.push([x.date || '', 'Other income', otherKindLabel(x.kind), ''].concat(
+      // (An "Other" deposit goes by the words typed for it: "Sync licence".)
+      showRows.push([x.date || '', 'Other income', otherEntryLabel(x), ''].concat(
         INCOME_FIELDS.map(function () { return ''; }), [num(x.amount), '']));
     });
 
@@ -2278,6 +2302,7 @@
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
     yearSlice: yearSlice, bookYears: bookYears,
     OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
+    OTHER_NOTE_MAX: OTHER_NOTE_MAX, otherNote: otherNote, otherEntryLabel: otherEntryLabel,
     HISTORY_TIERS: HISTORY_TIERS, LEGACY_BAR: LEGACY_BAR, historyTier: historyTier,
     BAND_ROLES: BAND_ROLES, ARTIST_CREW_ROLES: ARTIST_CREW_ROLES, CREW_ROLES: CREW_ROLES,
     creditGroupName: creditGroupName, creditTally: creditTally, creditClaim: creditClaim,

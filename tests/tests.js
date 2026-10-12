@@ -1481,6 +1481,85 @@
       eq(G.otherKindLabel('advance'), 'Advance', 'known kind');
       eq(G.otherKindLabel('mystery'), 'Income', 'unknown kind says Income');
     });
+
+    /* "Other": a deposit that is none of the four, with the few words typed
+       for it (catalog_income, 0141). Income of the book, as royalties are. */
+    var withOther = {
+      shows: tour.shows, expenses: {}, commission: tour.commission,
+      otherIncome: {
+        dRoy: { date: '2026-05-12', amount: 500, kind: 'royalties', at: 1 },
+        dSync: { date: '2026-05-14', amount: 750.25, kind: 'other', label: 'Sync licence', at: 3 },
+        dBare: { date: '2026-05-16', amount: 40, kind: 'other', at: 4 }
+      }
+    };
+    test('Other is the last answer for a deposit, after Advance', function () {
+      var keys = G.OTHER_INCOME_KINDS.map(function (k) { return k.key; });
+      eq(keys.join(','), 'merch,guarantee,royalties,advance,other', 'the list, in order');
+      eq(G.otherKindLabel('other'), 'Other', 'its name');
+    });
+    test('an Other deposit counts as income of the book exactly as royalties do', function () {
+      var c = G.calc(withOther);
+      near(c.otherIncome, 1290.25, 'all three entries');
+      near(c.income, 2290.25, 'show income plus the book\'s own');
+      eq(c.showIncome, 1000, 'the shows\' money is untouched');
+      eq(c.guarantees, 1000, 'it is not a guarantee');
+      eq(c.incomeBy.guarantee, 1000, 'nothing added to the guarantees');
+      eq(c.incomeBy.merch, 0, 'nothing added to merch');
+      near(c.commissionProjected, 100, 'commission is still 10% of the shows\' 1000');
+      eq(c.agencyAdvance, 0, 'no agent share');
+      near(c.net, 2290.25 - c.out, 'net is income less out');
+      // The very same book with that money called royalties: every total is the same.
+      var asRoy = JSON.parse(JSON.stringify(withOther));
+      asRoy.otherIncome.dSync = { date: '2026-05-14', amount: 750.25, kind: 'royalties', at: 3 };
+      asRoy.otherIncome.dBare = { date: '2026-05-16', amount: 40, kind: 'royalties', at: 4 };
+      var r = G.calc(asRoy);
+      ['income', 'showIncome', 'otherIncome', 'guarantees', 'commission', 'commissionProjected', 'out', 'net'].forEach(function (k) {
+        near(c[k], r[k], k + ' is what it would be as royalties');
+      });
+      near(G.calc(withOther, { upTo: '2026-05-15' }).otherIncome, 1250.25, 'dated like any other entry');
+      var series = G.balanceSeries(withOther);
+      near(series[series.length - 1].income, 2290.25, 'the chart reaches it');
+      near(G.calc(G.yearSlice(withOther, 2026)).otherIncome, 1290.25, 'and so does a year of the book');
+    });
+    test('an entry is named by the words typed for it, else by its kind', function () {
+      eq(G.otherEntryLabel({ kind: 'other', label: 'Sync licence' }), 'Sync licence', 'the words typed');
+      eq(G.otherEntryLabel({ kind: 'other' }), 'Other', 'nothing typed reads Other');
+      eq(G.otherEntryLabel({ kind: 'other', label: '   ' }), 'Other', 'blanks are nothing typed');
+      eq(G.otherEntryLabel({ kind: 'other', label: 42 }), '42', 'a number is read as words');
+      eq(G.otherEntryLabel({ kind: 'other', label: '  Venue \n\t refund  ' }), 'Venue refund', 'blanks folded');
+      eq(G.otherEntryLabel({ kind: 'royalties' }), 'Royalties', 'a known kind');
+      eq(G.otherEntryLabel({ kind: 'royalties', label: 'Guarantee' }), 'Royalties', 'a label on another kind is not read');
+      eq(G.otherEntryLabel({ kind: 'guarantee', label: 'Tip jar', unsorted: true }), 'Guarantee', 'a guarantee stays a guarantee');
+      eq(G.otherEntryLabel({ kind: 'mystery', label: 'x' }), 'Income', 'an unknown kind says Income');
+      eq(G.otherEntryLabel(null), 'Income', 'no entry at all');
+      eq(G.otherEntryLabel('other'), 'Income', 'not an entry');
+    });
+    test('the words for an Other deposit are cleaned as the database cleans them', function () {
+      eq(G.OTHER_NOTE_MAX, 60);
+      eq(G.otherNote('  Sync   licence \n'), 'Sync licence', 'folded and trimmed');
+      eq(G.otherNote(''), ''); eq(G.otherNote(null), ''); eq(G.otherNote(undefined), ''); eq(G.otherNote('  \t '), '');
+      var long = G.otherNote(new Array(201).join('x'));
+      eq(long.length, 60, '200 characters are cut to 60');
+      // 'word  ' 33 times and 'xy' is 200 characters: folded, cut at 60, no blank left at the end.
+      var folded = G.otherNote(new Array(34).join('word  ') + 'xy');
+      eq(folded, new Array(13).join('word ').trim(), 'twelve words');
+      eq(folded.length, 59, 'the blank at the cut is trimmed');
+      // A symbol stored as two halves is one character, and is never cut in two.
+      var faces = G.otherNote(new Array(71).join('🎸'));
+      eq(Array.from(faces).length, 60, '60 whole symbols');
+      eq(faces.length, 120, 'each still in one piece');
+      eq(G.otherNote('Tip\uD83C jar'), 'Tip jar', 'half a symbol is dropped');
+    });
+    test('the closeout names an Other deposit by its words', function () {
+      var csv = G.closeoutCSVs(withOther)['shows.csv'];
+      eq(csv.indexOf('Other income,Sync licence,') >= 0, true, 'the labelled one');
+      eq(csv.indexOf('Other income,Other,') >= 0, true, 'the one with nothing typed');
+      eq(csv.indexOf('Other income,Royalties,') >= 0, true, 'royalties as before');
+      // A comma in the words stays inside its own cell.
+      var odd = JSON.parse(JSON.stringify(withOther));
+      odd.otherIncome.dSync.label = 'Refund, venue';
+      eq(G.closeoutCSVs(odd)['shows.csv'].indexOf('Other income,"Refund, venue",') >= 0, true, 'quoted');
+    });
   })();
 
   /* ---- Road badges: shows climb the rungs; Legacy takes the whole

@@ -992,7 +992,10 @@ shim = r"""<script>
     /* New income, in memory: two bank deposits no matcher claimed (one
        atVenu-looking near s0's night, one plain). catalogIncome mirrors the
        real RPC: merch/guarantee with a show write the received fields;
-       anything whole-tour lands in doc.otherIncome; skip just clears it. */
+       anything whole-tour lands in doc.otherIncome; skip just clears it.
+       'other' (0141) is the book's own money too, and keeps the words typed
+       for it as label (cleaned as the database cleans them; none typed, no
+       label; a show id sent with it is not used). */
     incomeNew: function () {
       var H = window.__harness;
       if (!H.deposits) {
@@ -1094,11 +1097,16 @@ shim = r"""<script>
     },
     catalogIncome: async function (depId, opts) {
       var H = window.__harness, o = opts || {};
-      H.catalogued = (H.catalogued || []).concat([{ id: depId, tourId: o.tourId || null, showId: o.showId || null, kind: o.kind }]);
+      var sent = { id: depId, tourId: o.tourId || null, showId: o.showId || null, kind: o.kind };
+      // (For 'other', what the app sent as its words, as sent. Every other record is as it always was.)
+      if (o.kind === 'other') sent.note = o.note == null ? null : o.note;
+      H.catalogued = (H.catalogued || []).concat([sent]);
       var dep = (H.deposits || []).filter(function (d) { return d.id === depId; })[0];
       if (!dep) return { ok: false, why: 'gone' };
       if (dep.matched) return { ok: false, why: 'done' };
-      if (['merch', 'merch_later', 'guarantee', 'guarantee_later', 'royalties', 'advance', 'skip'].indexOf(o.kind) < 0) throw new Error('what kind');
+      if (['merch', 'merch_later', 'guarantee', 'guarantee_later', 'royalties', 'advance', 'other', 'skip'].indexOf(o.kind) < 0) throw new Error('what kind');
+      // 'other' is never one night's money: a show id sent with it is not used.
+      if (o.kind === 'other') o = Object.assign({}, o, { showId: null });
       if (o.showId && o.kind !== 'merch' && o.kind !== 'guarantee' && o.kind !== 'skip') throw new Error('not show money');
       if (o.showId && o.kind !== 'skip' && !(((tours[o.tourId] || {}).shows || {})[o.showId] && typeof tours[o.tourId].shows[o.showId] === 'object')) throw new Error('no such show');
       if (/_later$/.test(o.kind) && (tours[o.tourId] || {}).kind === 'offtour') throw new Error('no nights on this book');
@@ -1122,9 +1130,15 @@ shim = r"""<script>
       var oi = {};
       oi[depId] = { date: dep.date, amount: dep.amount, kind: o.kind === 'guarantee_later' ? 'guarantee' : o.kind, at: Date.now() };
       if (o.kind === 'guarantee_later') oi[depId].unsorted = true;
+      // 'other': the words typed for it, cleaned; nothing typed, no label. Ignored for every other kind.
+      var said = o.kind !== 'other' ? '' : window.GR && window.GR.otherNote ? window.GR.otherNote(o.note)
+        : String(o.note == null ? '' : o.note).replace(/\s+/g, ' ').trim().slice(0, 60).trim();
+      if (said) oi[depId].label = said;
       await db.doc('tours/' + o.tourId).update({ otherIncome: oi });
       return { ok: true };
     },
+    // (As the real backend file says: this copy takes the note.)
+    catalogIncomeNote: true,
     /* One guarantee deposit over several nights (0121, 0124). */
     catalogIncomeSplit: async function (depId, opts) {
       var H = window.__harness, o = opts || {}, parts = Array.isArray(o.parts) ? o.parts : [];

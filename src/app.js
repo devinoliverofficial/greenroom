@@ -7967,7 +7967,7 @@
           ' \u00b7 net ', h('strong', { class: 'num' + (net < 0 ? ' neg' : '') }, money(net))),
         income.length ? [h('h3', { class: 'oi-head' }, 'Income'),
           h('div', { class: 'ledger oi-list' }, income.map(function (x) {
-            return h('div', { class: 'row' }, h('div', { class: 'row-label' }, G.otherKindLabel(x.kind), h('span', { class: 'hint' }, dayMD(x.date))),
+            return h('div', { class: 'row' }, h('div', { class: 'row-label' }, otherName(x), h('span', { class: 'hint' }, dayMD(x.date))),
               h('span', { class: 'amt num' }, money(G.num(x.amount))));
           }).concat(h('div', { class: 'row total' }, h('span', null, 'Income'), h('strong', { class: 'amt num' }, money(inTotal)))))] : null,
         tabExpenses(id, slice, c, { off: true, readOnly: true })
@@ -14720,6 +14720,8 @@
       mine ? h('button', { class: 'btn sm primary us-go', type: 'button', onclick: function () { open(null); } },
         list.length > 1 ? 'Say which shows' : 'Say which show') : null);
   }
+  // What an other-income entry is called: its own words when it has them. (With an older core.js still on the phone: the kind's name.)
+  function otherName(x) { return G.otherEntryLabel ? G.otherEntryLabel(x) : G.otherKindLabel(x && x.kind); }
   function otherIncomeList(id, c) {
     // (Guarantees still to sort have their own place, under Tonight.)
     var list = ((c && c.otherRows) || []).filter(function (x) { return !(x && x.unsorted === true && x.kind === 'guarantee'); });
@@ -14729,7 +14731,8 @@
       h('h3', { class: 'oi-head' }, 'Other income'),
       h('div', { class: 'ledger oi-list' },
         list.map(function (x) {
-          var label = G.otherKindLabel(x.kind);
+          // (An "Other" deposit goes by the words typed for it: "Sync licence".)
+          var label = otherName(x);
           var inner = [
             h('div', { class: 'row-label' }, label,
               h('span', { class: 'hint' }, dayMD(x.date))),
@@ -14746,7 +14749,7 @@
   function openOtherIncome(id, x) {
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, G.otherKindLabel(x.kind)),
+        h('h2', { class: 'sh-title' }, otherName(x)),
         h('p', { class: 'sh-sub' }, dayMD(x.date) + ' · ' + money(G.num(x.amount))),
         h('p', { class: 'note' }, 'Logged from a bank deposit on the Cards tab. ' +
           'Taking it off the book doesn’t bring the deposit back as new income.'),
@@ -14762,7 +14765,7 @@
           } }, 'Take it off the book'),
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Keep it'))
       ];
-    }, { label: G.otherKindLabel(x.kind) });
+    }, { label: otherName(x) });
   }
 
   function showRow(id, s, today) {
@@ -19051,7 +19054,10 @@
       // Income on the book itself, under the nights, so the column still
       // adds up to the tour's total income.
       c.otherRows.map(function (x) {
-        return repRow([dayMD(x.date), 'Other income \u00b7 ' + G.otherKindLabel(x.kind)].concat(
+        // An "Other" deposit goes by its words ("Other income · Sync licence"); with
+        // none typed the line is "Other income" alone, not "Other income · Other".
+        var nm = otherName(x);
+        return repRow([dayMD(x.date), 'Other income' + (x.kind === 'other' && nm === G.otherKindLabel('other') ? '' : ' \u00b7 ' + nm)].concat(
           G.INCOME_FIELDS.map(function () { return '\u2014'; }), [money(G.num(x.amount))]));
       }),
       repRow(['', 'Total'].concat(G.INCOME_FIELDS.map(function (f) {
@@ -22157,9 +22163,10 @@
   /* ---- New income (the Cards tab's other half). The bank feed keeps every
      deposit on a watched account — date and amount, nothing else — and the
      matchers claim what they recognise. Whatever's left waits here for the
-     tour manager to say what it was: merch, a guarantee, royalties or an
-     advance, onto Off Tour, the current tour or an upcoming one, the same
-     way charges are sorted. Owner only: it's their bank. ---- */
+     tour manager to say what it was: merch, a guarantee, royalties, an
+     advance, or "Other" with a few words for it, onto Off Tour, the current
+     tour or an upcoming one, the same way charges are sorted. Owner only:
+     it's their bank. ---- */
   function incomeReady(id) {
     var B = window.GR_BACKEND;
     return S.mode === 'db' && !!(B && B.incomeNew) && createdTour(id) && !!(S.feed && S.feed.row);
@@ -22211,7 +22218,8 @@
       return { id: String(d.id), date: String(d.date || ''), amount: G.num(d.amount), av: !!d.atvenu, watch: String(d.watch || ''),
         dest: curTour ? 'cur' : 'off', upTo: ups.length ? ups[0].id : null,
         // Nothing is chosen for him: not what it was, not which night ("see and approve and log").
-        kind: '', show: '', showTouched: false, later: false, armed: false };
+        // (what: the few words he types when it is "Other".)
+        kind: '', what: '', show: '', showTouched: false, later: false, armed: false };
     });
     // What is being placed (one kind at a time: each has its own list on the Income tab).
     var placeMerch = placing && live.length && live.every(function (r) { return r.kind === 'merch'; });
@@ -22727,7 +22735,16 @@
         S.incomeNew.items = S.incomeNew.items.filter(function (d) { return String(d.id) !== r.id; });
       }
       if (!live.length) { closeSheet(); render(true); return; }
-      draw();
+      // He is typing in another row's "What was it?" box: that row is left alone
+      // (its box, its keyboard); only the finished row goes now, and the list is
+      // drawn again once he leaves the box.
+      var act = document.activeElement;
+      if (act && act.classList && act.classList.contains('iv-what') && listHost.contains(act)) {
+        if (r.el) r.el.remove();
+        sayCount();
+        var later = function () { act.removeEventListener('focusout', later); setTimeout(function () { if (listHost.isConnected) draw(); }, 320); };
+        act.addEventListener('focusout', later);
+      } else draw();
       render(true);
     }
     async function logOne(r, row) {
@@ -22742,6 +22759,12 @@
       // Everything this call needs, read before any waiting; the row is
       // frozen (busy) so nothing can change under it either way.
       var pick = { showId: null, kind: r.kind };
+      // "Other": the few words he typed for it go with the call. None typed is
+      // allowed (it reads "Other"). For every other answer nothing is sent.
+      pick.note = r.kind === 'other' ? G.otherNote(r.what) : '';
+      // A phone that has this file but an older copy of the backend file would
+      // log it without his words: nothing is sent.
+      if (pick.note && !B.catalogIncomeNote) { toast('Close Greenroom and open it again, then log this one'); return; }
       // Ticked onto nights: one night is logged as it always was; two or more
       // share the deposit, each night marked received.
       var parts = null, ticked = [];
@@ -22782,7 +22805,7 @@
       try {
         out = r.place ? await (r.kind === 'merch' ? B.sortMerch : B.sortGuarantee).call(B, r.id, { tourId: tid, parts: parts || [], expect: r.amount })
           : parts ? await (r.kind === 'merch' ? B.catalogMerchSplit : B.catalogIncomeSplit).call(B, r.id, { tourId: tid, parts: parts })
-          : await B.catalogIncome(r.id, { tourId: tid, showId: pick.showId, kind: pick.kind });
+          : await B.catalogIncome(r.id, { tourId: tid, showId: pick.showId, kind: pick.kind, note: pick.note });
       }
       catch (e) { bad = e; }
       // 'changed': someone else sorted part of it since this sheet opened. Nothing
@@ -22896,6 +22919,7 @@
     }
     function rowEl(r) {
       var wrap = h('div', { class: 'rv-row iv-row' });
+      r.el = wrap;
       var row = { redraw: redraw };
       function redraw() {
         // "Not sure which show yet" needs a tour with nights to sort onto: never the Off Tour book.
@@ -22918,6 +22942,18 @@
             return o;
           }));
         kindSel.value = (r.kind === 'guarantee' || isMerch) && r.later && canLater ? r.kind + '_later' : r.kind;
+        // "Other" (asked for as: "there should be an 'other' tab in 'what was it
+        // for?' categories"): a deposit that is none of the four, with a few words
+        // for what it was ("Sync licence"). No show to pick: it is the book's own
+        // money, as royalties are. The words are kept on the row as he types, so
+        // the box comes back with them whenever the row is drawn again (typing
+        // itself draws nothing again). Left empty, it is logged as "Other".
+        var whatBox = r.kind === 'other' && !r.place ? h('input', { class: 'input sm iv-what', type: 'text',
+          maxlength: G.OTHER_NOTE_MAX, autocomplete: 'off', enterkeyhint: 'done',
+          placeholder: 'What was it?', 'aria-label': 'What it was, in a few words',
+          value: r.what || '', disabled: r.busy || null,
+          oninput: function (e) { r.what = e.target.value; },
+          onkeydown: function (e) { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } } }) : null;
         var choices = showChoices(r);
         var showSel = null;
         if ((r.kind === 'guarantee' || isMerch) && nightsTour(r)) {
@@ -23296,7 +23332,7 @@
             hitLine,
             lumpLine,
             r.place ? null : destPills(r, redraw),
-            h('div', { class: 'iv-sels' }, r.place ? null : h('div', { class: 'sel-wrap' }, kindSel, icon('chevron', 14)), showSel),
+            h('div', { class: 'iv-sels' }, r.place ? null : h('div', { class: 'sel-wrap' }, kindSel, icon('chevron', 14)), whatBox, showSel),
             // (Putting it back is for the person whose bank it is, and only while none of it has been placed.)
             h('div', { class: 'rv-act iv-act' }, logBtn, r.place && (!createdTour(tourId) || r.of > 0) ? null : aside)));
         r.note = null;

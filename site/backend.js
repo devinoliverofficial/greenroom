@@ -1293,10 +1293,20 @@
     },
     // Says what a deposit was and which book it belongs to. kind 'skip'
     // clears it for good; a showId pins merch or a guarantee to one night.
+    // kind 'other' is a deposit that is none of the four: note is the few
+    // words typed for it ("Sync licence"), kept on the entry as its label.
     catalogIncome: async function (depId, opts) {
       var o = opts || {};
-      var q = await sb.rpc('catalog_income', {
-        dep_id: String(depId), t_id: o.tourId || null, s_id: o.showId || null, kind: String(o.kind || '') });
+      var args = { dep_id: String(depId), t_id: o.tourId || null, s_id: o.showId || null, kind: String(o.kind || '') };
+      // The note goes only with 'other', and only when something was typed:
+      // every other answer is the same four-argument call it has always been,
+      // so it also works on a database from before the note existed (0141).
+      // (Blanks folded, 60 whole characters at most; the database cleans it again.)
+      var note = o.kind === 'other' && o.note != null
+        ? Array.from(String(o.note).replace(/\s+/g, ' ').trim())
+            .filter(function (ch) { return !/^[\uD800-\uDFFF]$/.test(ch); }).slice(0, 60).join('').trim() : '';
+      if (note) args.note = note;
+      var q = await sb.rpc('catalog_income', args);
       if (q.error) throw mapError(q.error);
       var out = isObj(q.data) ? q.data : { ok: false };
       // The write landed inside the database; pull the books fresh so the
@@ -1304,6 +1314,9 @@
       if (out.ok && o.tourId) { try { await refetch(); } catch (e) { /* realtime catches up */ } }
       return out;
     },
+    // This copy of the file sends the note. The app asks before it logs an
+    // "Other" deposit with words typed: an older copy would drop them.
+    catalogIncomeNote: true,
     // One guarantee deposit that paid for several nights: parts is
     // [{ show, amount, agent? }], the shares adding up to the deposit. Every
     // night is marked received with its share, or nothing is written.
