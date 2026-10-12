@@ -5123,6 +5123,10 @@
       if (isNaN(t)) return '';
       return (t <= Date.now() ? 'Ran out ' : 'Runs out ') + dayMD(G.ymd(new Date(t))) + ', ' + new Date(t).getFullYear();
     };
+    var madeOn = function (x) {
+      var t = Date.parse(x.at || '');
+      return isNaN(t) ? '' : 'Made ' + dayMD(G.ymd(new Date(t)));
+    };
     var codeRow = function (x) {
       var box = codeBox(x.code);
       var off = dead(x) || typeof B.revokeInviteCode !== 'function' ? null : h('button', { class: 'btn sm ghost', type: 'button' }, 'Switch off');
@@ -5140,7 +5144,7 @@
       });
       return h('div', { class: 'ivc-row' + (dead(x) ? ' off' : '') },
         box,
-        h('p', { class: 'ivc-line' }, [standing(x), who(x), until(x)].filter(Boolean).join(' · ')),
+        h('p', { class: 'ivc-line' }, [madeOn(x), standing(x), who(x), until(x)].filter(Boolean).join(' · ')),
         x.note ? h('p', { class: 'ivc-note' }, x.note) : null,
         h('div', { class: 'ivc-acts' },
           h('button', { class: 'btn sm quiet', type: 'button', onclick: function () { copy(x.code, box); } }, icon('copy', 16), 'Copy'),
@@ -5153,8 +5157,16 @@
         return;
       }
       var live = st.list.filter(function (x) { return !dead(x); }), old = st.list.filter(dead);
+      /* Devin: "everytime i generate a code for someone it should be a new
+         code ... As of right now it is the same code every time". Making a
+         code always made a new one; but this sheet opened on the code made
+         days before, with Copy beside it, and the form to make one sat under
+         it, so the old code was the one that got handed out each time. The
+         sheet now opens on making a new code, and the codes made before are
+         under it, under their own heading, each with the day it was made. */
       fillEl(host, [
-        live.length ? live.map(codeRow) : h('p', { class: 'note' }, 'No code is in use right now. Make one below.'),
+        st.list.length ? h('h3', { class: 'ivc-h' }, 'Codes made before') : null,
+        live.length ? live.map(codeRow) : (st.list.length ? h('p', { class: 'note' }, 'None of them is still in use.') : null),
         old.length ? h('button', { class: 'linkbtn ivc-old', type: 'button', onclick: function () { st.old = !st.old; draw(); } },
           st.old ? 'Hide the old codes' : 'Show ' + plural(old.length, 'old code')) : null,
         st.old ? old.map(codeRow) : null
@@ -5195,6 +5207,7 @@
         fillEl(formHost, [
           h('h3', { class: 'ivc-h' }, 'Your new code'),
           big,
+          h('p', { class: 'ivc-note' }, 'This one is new. Nobody else has it.'),
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'button', onclick: function () { copy(code, big); } }, icon('copy', 18), 'Copy'),
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { st.made = ''; drawForm(); } }, 'Make another'))
@@ -5205,9 +5218,9 @@
         'aria-label': 'How many people can use it', oninput: function (e) { f.uses = e.target.value; } });
       var daysIn = h('input', { class: 'input', type: 'number', inputmode: 'numeric', min: '1', max: '365', step: '1', value: f.days,
         'aria-label': 'How many days it lasts', oninput: function (e) { f.days = e.target.value; } });
-      var make = h('button', { class: 'btn primary block', type: 'submit' }, 'Make the code');
+      var make = h('button', { class: 'btn primary block', type: 'submit' }, 'Make a new code');
       fillEl(formHost, [
-        h('h3', { class: 'ivc-h' }, 'New code'),
+        h('h3', { class: 'ivc-h' }, 'A new code'),
         h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
           e.preventDefault();
           if (st.busy) return;
@@ -5248,8 +5261,8 @@
       draw(); drawForm();
       return [
         h('h2', { class: 'sh-title' }, 'Invite codes'),
-        h('p', { class: 'sh-sub' }, 'A code lets the number of people you set make an account, until it runs out or you switch it off. People invited to a tour sign up from their invite, without one.'),
-        warnHost, host, formHost,
+        h('p', { class: 'sh-sub' }, 'Every code you make here is a new one. Make one for each person, or one for several by setting how many people can use it. It works until it runs out or you switch it off. People invited to a tour sign up from their invite, without one.'),
+        warnHost, formHost, host,
         h('div', { class: 'stack' }, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
       ];
     }, { label: 'Invite codes', cls: 'ivc-sheet' });
