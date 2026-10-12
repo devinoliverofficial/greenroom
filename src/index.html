@@ -2086,6 +2086,14 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .ivc-warns:empty { display: none; }
 .ivc-warn { margin: 0; padding: 12px 14px; border: 1px solid var(--neg); border-radius: 14px; background: color-mix(in srgb, var(--neg) 10%, transparent);
   color: var(--ink); font-size: 14.5px; font-weight: 600; line-height: 1.4; }
+/* Who has agreed (the same admin's other sheet): a person a card, in the Invite codes look. Someone who agreed is
+   a button, because a tap opens the whole record. A long line (an address, a fingerprint) breaks instead of
+   pushing the card wider than the sheet. */
+button.ivc-row { appearance: none; -webkit-appearance: none; width: 100%; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+button.ivc-row:active { background: var(--surface-2); }
+.lgl-sheet .ivc-row > * { min-width: 0; overflow-wrap: anywhere; }
+.lgl-sheet .ivc-h { margin-bottom: 0; }
+.lgl-sheet .rv-find { margin-top: 4px; }
 /* A member asked to leave, waiting on the others: the same pill, quiet. */
 .am-endorse.am-leaving { background: transparent; border: 1px solid var(--line); color: var(--ink-2); font-size: 12px; }
 /* Give flowers on Crew Stats and your profile's Stats: pinned at the bottom of

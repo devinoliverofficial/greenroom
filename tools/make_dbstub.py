@@ -619,7 +619,27 @@ shim = r"""<script>
        blind: true          nobody knows yet whether documents are loaded: the waiting screen does not speak of them
        statusFail: true     where the account stands cannot be read (the row stays hidden; no "Updated" line)
      "Sign out" sits under the button of every page and of the "Try again" screen (people signed in only). Here
-     it signs nobody out: it sets __harness.legalSignedOut and takes the pages down. */
+     it signs nobody out: it sets __harness.legalSignedOut and takes the pages down.
+     WHO HAS AGREED (0139), a Greenroom admin's list: the three lines, Settings, "Who has agreed" (directly
+       under "Invite codes"). Every person in it is invented. It opens the list: the first line ("6 people have
+       agreed. 4 have not yet."), a search box (there are more than 10 people), "Not yet agreed", then "Agreed";
+       a tap on someone who agreed opens the whole record, with "Copy this record".
+       What the page is handed is __harness.legalList = { agreed: [...], waiting: [...] } (filled with the
+       invented people the first time it is asked for). Two things are worked out on the way, as the server
+       does: "current" (the documents' own versions, top level and on each agreed row that does not say), and,
+       while no documents are loaded (__harness.legal = { ready: false }), nobody waiting and current null.
+       __harness.admin = false          not an admin: the answer is null and there is no row (Invite codes too)
+       __harness.legalList = null       the same for this row alone
+       __harness.legalListFail = true   the call fails, which the real B.legalList also answers with null. Set
+                                        before Settings is opened: no row. Set with Settings already open,
+                                        then tap the row: "Couldn't load the list. Close and try again."
+       __harness.legalList = { agreed: [], waiting: [] }   "Nobody has agreed yet."
+       __harness.legalListMany = 250    that many more invented people who agreed: the "Show all" link, and
+                                        a search through a long list
+       __harness.legalList.agreed.length = 4; __harness.legalList.waiting.length = 2   10 people or fewer:
+                                        no search box
+       How often it was asked is counted in __harness.legalListCalls. The app keeps the yes or no behind the
+       row for a minute, so load the page again after changing whether there is a list. */
   var LEGAL_DOCS = [
     { doc: 'nda', title: 'Harness Non-Disclosure Agreement', version: '1.0', body:
       '# Harness Non-Disclosure Agreement\n\n**Version 1.0.** An invented stand-in. It is not a real agreement.\n\n## What stays in the room\n\n' +
@@ -2054,6 +2074,60 @@ shim = r"""<script>
       H.codeCalls = (H.codeCalls || []).concat([{ revoke: code }]);
       (H.codes || []).forEach(function (c) { if (c.code === code) c.revoked = true; });
       return Promise.resolve({ ok: true });
+    },
+    /* Who has agreed (0139), for a Greenroom admin: what legal_list() would
+       answer, from __harness.legalList. Every person here is invented. The
+       switches are listed with the other documents' hooks, further up. */
+    legalList: function () {
+      var H = window.__harness, n = legalNow();
+      H.legalListCalls = (H.legalListCalls || 0) + 1;
+      // (Not an admin, or the call failed: site/backend.js answers null for both.)
+      if (H.admin === false || H.legalList === null || H.legalListFail) return Promise.resolve(null);
+      var ago = function (days) { return new Date(Date.now() - days * 864e5).toISOString(); };
+      var hex = function (k) { var s = ''; for (var i = 0; i < 64; i++) s += ((k * 7 + i * 13 + (i * i) % 11) % 16).toString(16); return s; };
+      var phone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
+      var row = function (name, email, handle, days, via, o) {
+        return Object.assign({ name: name, email: email, handle: handle, at: ago(days), via: via,
+          versions: { nda: n.cur.nda, terms: n.cur.terms, privacy: n.cur.privacy },
+          ip: '203.0.113.' + (20 + Math.round(days * 3) % 200), agent: phone,
+          shas: { nda: hex(1), terms: hex(2), privacy: hex(3) }, said: shared.LEGAL_SAID, gone: false }, o || {});
+      };
+      if (!H.legalList) H.legalList = {
+        // Newest first, as the server sends them. Jordan agreed twice (a version changed in between), one
+        // account has been deleted, one person has no name, and Quinn is still on an older version.
+        agreed: [
+          row('Riley Stone', 'riley.stone@example.com', 'riley.foh', 0.1, 'invite'),
+          row('', 'casey.marlow@example.com', '', 1, 'code'),
+          row('Avery Lang', 'avery.lang@example.org', '', 2, 'invite', { ip: '2001:db8::7a1c', agent: '' }),
+          row('Jordan Vale', 'jordan.vale@example.com', 'jordanvale', 3, 'inside'),
+          row('Morgan Tate', 'morgan.tate@example.com', 'morgan.ld', 5, 'code'),
+          row('', 'closed.account@example.com', '', 6, 'code', { gone: true }),
+          row('Quinn Harper', 'quinn.harper@example.com', 'quinn', 30, 'inside',
+            { versions: { nda: n.cur.nda, terms: '0.9', privacy: n.cur.privacy }, shas: { nda: hex(1), terms: hex(4), privacy: hex(3) } }),
+          row('Jordan Vale', 'jordan.vale@example.com', 'jordanvale', 40, 'inside',
+            { versions: { nda: n.cur.nda, terms: '0.9', privacy: n.cur.privacy }, shas: { nda: hex(1), terms: hex(4), privacy: hex(3) } })],
+        // Oldest account first.
+        waiting: [
+          { name: 'Quinn Harper', email: 'quinn.harper@example.com', handle: 'quinn', since: ago(60), invited: false },
+          { name: 'Skyler Brooks', email: 'skyler.brooks@example.com', handle: 'sky.ld', since: ago(12), invited: false },
+          { name: '', email: 'new.tech@example.com', handle: '', since: ago(2), invited: true },
+          { name: 'Dana Whit', email: 'dana.whit@example.com', handle: '', since: ago(1), invited: true }]
+      };
+      var L = JSON.parse(JSON.stringify(H.legalList));
+      L.agreed = Array.isArray(L.agreed) ? L.agreed : []; L.waiting = Array.isArray(L.waiting) ? L.waiting : [];
+      for (var k = 0; k < (parseInt(H.legalListMany, 10) || 0); k++) {
+        L.agreed.push(row('Harness Person ' + (k + 1), 'person' + (k + 1) + '@example.com', '', 50 + k, k % 3 ? 'code' : 'invite'));
+      }
+      // As the server works them out: which rows carry the current versions, and nobody waiting (and no
+      // current versions) while the three documents are not loaded.
+      L.agreed.forEach(function (x) {
+        var v = x.versions || {};
+        if (typeof x.current !== 'boolean') x.current = n.ready && v.nda === n.cur.nda && v.terms === n.cur.terms && v.privacy === n.cur.privacy;
+        if (!n.ready) x.current = false;
+      });
+      if (!n.ready) L.waiting = [];
+      L.current = n.ready ? { nda: n.cur.nda, terms: n.cur.terms, privacy: n.cur.privacy } : null;
+      return Promise.resolve(L);
     },
     people: { 'u-devin': { name: 'Devin Oliver', handle: '', verified: true, roles: ['Artist'], tourRole: 'Artist', canOpen: true },
       'u-brent': { name: 'Brent Allen', handle: 'brent', roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', canOpen: true, followers: 12 },

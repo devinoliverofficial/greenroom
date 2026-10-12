@@ -563,6 +563,19 @@
       } catch (e) { return null; }
     },
     legalBody: function (text, title) { sgStyle(); return mdNodes(text, title); },
+    /* Who has agreed (migration 0139), for a Greenroom admin: the whole
+       record of the documents, { agreed: [...], waiting: [...], current }.
+       The database answers null to everyone else, and this answers null
+       too when it could not be read or the database does not have the
+       function yet: either way there is no list, and Settings shows no
+       row. Never thrown. */
+    legalList: async function () {
+      if (!sb || !session) return null;
+      try {
+        var q = await sgLimit(sb.rpc('legal_list'), 20000);
+        return q.error || !isObj(q.data) ? null : q.data;
+      } catch (e) { return null; }
+    },
     myProfile: function () {
       var m = (session && session.user && session.user.user_metadata) || {};
       var full = String(m.full_name || '').trim();

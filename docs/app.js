@@ -8527,7 +8527,18 @@
       // (anyone else is answered null), and sits on top so nothing under a finger moves when it appears.
       var codesRow = signedIn && B.inviteCodes ? h('button', { class: 'btn ghost block', type: 'button', hidden: true,
         onclick: function () { openInviteCodes(); } }, icon('tag', 18), 'Invite codes') : null;
-      if (codesRow) inviteCodesKnown(function (list) { codesRow.hidden = !Array.isArray(list); });
+      // (The second question, "is there a list of who has agreed?", is only asked once this one has said admin.)
+      var askAgreed = function () {};
+      if (codesRow) inviteCodesKnown(function (list) { codesRow.hidden = !Array.isArray(list); if (Array.isArray(list)) askAgreed(); });
+      // Who has agreed: the same admin's row, directly under Invite codes and shown the same way, only once the
+      // server has answered with a list (0139 answers null to anyone else, and then there is no row at all).
+      var agreedRow = signedIn && typeof B.legalList === 'function' ? h('button', { class: 'btn ghost block', type: 'button', hidden: true,
+        onclick: function () { openLegalList(); } }, icon('check', 18), 'Who has agreed') : null;
+      if (agreedRow) {
+        var askedAgreed = false;
+        askAgreed = function () { if (askedAgreed) return; askedAgreed = true; legalListKnown(function (yes) { agreedRow.hidden = !yes; }); };
+        if (S.inviteCodes && Array.isArray(S.inviteCodes.list)) askAgreed();
+      }
       // The documents agreed to at sign-up: shown once the server says there is an acceptance on file, and
       // last in the list, so nothing under a finger moves when it appears.
       var legalSaid = h('p', { class: 'hint', style: 'margin:-4px 0 0;text-align:center' }, '');
@@ -8546,6 +8557,7 @@
         who ? h('p', { class: 'sh-sub' }, 'Signed in as ' + who) : null,
         h('div', { class: 'stack' },
           codesRow,
+          agreedRow,
           offId ? cardMenuItem(offId) : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
             onclick: function () { openUsernameSheet(false); } },
@@ -8664,6 +8676,242 @@
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLegalDocs(); } }, 'Back to the documents'))
       ];
     }, { label: d.title || d.name || 'Document' });
+  }
+  /* Who has agreed (Devin, 2026-10-11): "as the creator i should have a full
+     list in my settings but ONLY ME." The whole record of the documents, for
+     a Greenroom admin: everyone who agreed (when, to which versions, by
+     which door) and everyone who has an account and has not agreed yet. The
+     server answers null to anyone else (0139), so for them the row in
+     Settings never shows. It is a list to read and to copy from: nothing
+     here changes anything. */
+  var LEGAL_VIA = { code: 'with a Greenroom code', invite: 'from a tour invite', inside: 'already in' };
+  function legalDoor(v) { return Object.prototype.hasOwnProperty.call(LEGAL_VIA, v) ? LEGAL_VIA[v] : ''; }
+  // What the server answered, checked: the two lists, or null (not an admin, or no usable answer).
+  function legalListClean(d) {
+    if (!G.isObj(d) || !Array.isArray(d.agreed) || !Array.isArray(d.waiting)) return null;
+    return { agreed: d.agreed.filter(G.isObj), waiting: d.waiting.filter(G.isObj), current: G.isObj(d.current) ? d.current : null };
+  }
+  // Is there a list for this account? then(true or false). Asked when Settings opens, the way inviteCodesKnown
+  // asks. Only the yes or no is kept, and for a minute: the list itself is read fresh each time the sheet opens.
+  // (A no is not kept ten minutes as it is for the codes: B.legalList answers null for a call that failed too,
+  // and one dropped call must not hide the row for that long.)
+  function legalListKnown(then) {
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B || typeof B.legalList !== 'function') return;
+    // (Only an account the server already answered as an admin asks at all: everyone else's phone makes no call.)
+    if (!S.inviteCodes || !Array.isArray(S.inviteCodes.list)) return;
+    var c = S.legalList || (S.legalList = { yes: undefined, at: 0 });
+    if (c.yes !== undefined) then(c.yes);
+    if (c.yes !== undefined && Date.now() - c.at < 60e3) return;
+    Promise.resolve().then(function () { return B.legalList(); }).then(function (d) {
+      c.yes = !!legalListClean(d); c.at = Date.now(); then(c.yes);
+    }, function () { /* no answer: the row stays as it was */ });
+  }
+  // "Oct 11, 2026 at 3:42 PM", by the phone's own clock and time zone (zone: with the zone's name after it).
+  function legalWhen(at, zone) {
+    var d = new Date(at);
+    if (at == null || at === '' || isNaN(d.getTime())) return '';
+    var o = { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' };
+    if (zone) o.timeZoneName = 'short';
+    try { return d.toLocaleString('en-US', o); } catch (e) { return d.toString(); }
+  }
+  // "NDA 1.0, Terms 1.0, Privacy 1.0"
+  function legalVersionsLine(v) {
+    var o = G.isObj(v) ? v : {};
+    return [['NDA', o.nda], ['Terms', o.terms], ['Privacy', o.privacy]]
+      .filter(function (p) { return p[1] != null && String(p[1]) !== ''; })
+      .map(function (p) { return p[0] + ' ' + p[1]; }).join(', ');
+  }
+  // One agreement as plain text, for his files. loaded: the three documents are loaded, so "older" means something.
+  function legalRecordText(x, loaded) {
+    // (Every value on one line, whatever it holds: a name or a sentence with a line break in it cannot start a line of its own.)
+    var one = function (v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); };
+    var s0 = G.isObj(x.shas) ? x.shas : {}, none = 'not recorded';
+    var s = { nda: one(s0.nda), terms: one(s0.terms), privacy: one(s0.privacy) };
+    var name = one(x.name), handle = one(x.handle);
+    x = { email: one(x.email), at: x.at, via: one(x.via), versions: x.versions, ip: one(x.ip), agent: one(x.agent), said: one(x.said), current: x.current, gone: x.gone };
+    return [
+      'Greenroom: record of an agreement to the documents',
+      '',
+      name ? 'Name: ' + name : null,
+      'Email: ' + (String(x.email || '').trim() || none),
+      handle ? 'Username: @' + handle : null,
+      'Agreed: ' + (legalWhen(x.at, true) || none),
+      x.at ? 'Time as the server recorded it: ' + x.at : null,
+      'How they came in: ' + (legalDoor(x.via) || String(x.via || none)),
+      'Versions: ' + (legalVersionsLine(x.versions) || none),
+      'Network address: ' + (x.ip || none),
+      'Phone, as it described itself: ' + (x.agent || none),
+      'Fingerprint of the NDA (SHA-256): ' + (s.nda || none),
+      'Fingerprint of the Terms (SHA-256): ' + (s.terms || none),
+      'Fingerprint of the Privacy Policy (SHA-256): ' + (s.privacy || none),
+      'What the phone sent as the sentence beside the box: ' + (x.said ? '"' + x.said + '"' : none),
+      loaded && !x.current ? 'These are older versions than the current ones.' : null,
+      x.gone ? 'This account has since been deleted.' : null
+    ].filter(function (l) { return l != null; }).join('\n');
+  }
+  // keep: the list as it stood (what was loaded, what was typed in the search), when coming back from a record.
+  function openLegalList(keep) {
+    var B = window.GR_BACKEND;
+    if (!B || typeof B.legalList !== 'function') return;
+    var CAP = 2000, STEP = 100;
+    var st = keep && G.isObj(keep.data) && Array.isArray(keep.data.agreed) ? keep
+      : { data: null, failed: false, typed: '', all: {} };
+    var say = h('p', { class: 'sh-sub', role: 'status' }, '');
+    var host = h('div', { class: 'ivc-list' });
+    // (The search box is made once and only shown or hidden, so typing in it never loses its place.)
+    var find = h('div', { class: 'rv-find', hidden: true }, icon('search', 17),
+      h('input', { class: 'input rv-search', type: 'search', placeholder: 'Search name or email', autocomplete: 'off',
+        autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', 'aria-label': 'Search the list', value: st.typed,
+        oninput: function (e) { st.typed = String(e.target.value || ''); draw(); } }));
+    var people = function (n) { return n === 1 ? '1 person' : n.toLocaleString('en-US') + ' people'; };
+    var have = function (n) { return n === 1 ? ' has' : ' have'; };
+    // The first line. People, not rows: someone who agreed again after a version changed is one person. While the
+    // documents are loaded, "agreed" means to the current ones (anyone on older ones is among those who have not yet).
+    function firstLine(D) {
+      var loaded = !!D.current, seen = {}, a = 0, w = D.waiting.length;
+      // (The server stops each list at 2,000. A list that long may be cut short, and the line says so.)
+      var cut = D.agreed.length >= CAP || w >= CAP;
+      D.agreed.forEach(function (x, i) {
+        if (loaded && !x.current) return;
+        var k = 'e:' + (String(x.email || '').trim().toLowerCase() || '#' + i);
+        if (!seen[k]) { seen[k] = true; a += 1; }
+      });
+      var s = a ? people(a) + have(a) + ' agreed.'
+        : D.agreed.length ? 'Nobody has agreed to the current versions yet.' : 'Nobody has agreed yet.';
+      if (w) s += ' ' + (a ? w.toLocaleString('en-US') + have(w) + ' not yet.' : people(w) + have(w) + ' still to agree.');
+      else if (!loaded) s += ' No documents are loaded right now, so nobody is being asked.';
+      else if (a && !cut) s += ' Nobody is waiting to agree.';
+      if (cut) s += ' The list stops at 2,000 of each, so there may be more.';
+      return s;
+    }
+    // The name, or the email when there is no name; under it the email (not twice) and the @username.
+    var who = function (x) { return String(x.name || '').trim() || String(x.email || '').trim() || 'No name or email'; };
+    var under = function (x) {
+      var named = !!String(x.name || '').trim(), e = String(x.email || '').trim(), u = String(x.handle || '').trim();
+      return [named ? e : '', u ? '@' + u : ''].filter(Boolean).join(' · ');
+    };
+    var hit = function (q) {
+      return function (x) {
+        return !q || (String(x.name || '') + '\n' + String(x.email || '') + '\n' + String(x.handle || '') + '\n@' + String(x.handle || '')).toLowerCase().indexOf(q) >= 0;
+      };
+    };
+    var waitRow = function (x) {
+      var since = x.since ? legalDay(x.since) : '', u = under(x);
+      return h('div', { class: 'ivc-row' },
+        h('span', { class: 'row-label' }, who(x)),
+        u ? h('span', { class: 'ivc-line' }, u) : null,
+        h('span', { class: 'ivc-note' }, x.invited ? 'Invited, has not opened it yet'
+          : x.confirmed === false ? 'Started signing up' + (since ? ' on ' + since : '') + ', never confirmed the email'
+          : since ? 'In since ' + since : 'Has an account'));
+    };
+    // Someone who agreed: a tap opens the whole record.
+    var agreedRow = function (x) {
+      var D = st.data, when = legalWhen(x.at), u = under(x), ver = legalVersionsLine(x.versions);
+      var marks = [D.current && !x.current ? 'agreed to older versions' : '', x.gone ? 'account deleted' : ''].filter(Boolean).join(' · ');
+      return h('button', { class: 'ivc-row', type: 'button',
+        onclick: function () { openLegalRecord(x, !!D.current, function () { openLegalList(st); }); } },
+        h('span', { class: 'row-label' }, who(x)),
+        u ? h('span', { class: 'ivc-line' }, u) : null,
+        h('span', { class: 'ivc-line' }, [when ? 'Agreed ' + when : 'Agreed', legalDoor(x.via)].filter(Boolean).join(', ')),
+        ver ? h('span', { class: 'ivc-line' }, ver) : null,
+        marks ? h('span', { class: 'ivc-note' }, marks) : null);
+    };
+    // One of the two lists under its heading. A long one shows its first hundred until asked for the rest.
+    function part(key, title, rows, rowOf, note) {
+      if (!rows.length) return null;
+      var cut = st.all[key] ? rows : rows.slice(0, STEP);
+      return [
+        h('h3', { class: 'ivc-h' }, title + ' (' + rows.length.toLocaleString('en-US') + ')'),
+        note ? h('p', { class: 'ivc-note' }, note) : null,
+        cut.map(rowOf),
+        cut.length < rows.length ? h('button', { class: 'linkbtn ivc-old', type: 'button',
+          onclick: function () { st.all[key] = true; draw(); } }, 'Show all ' + rows.length.toLocaleString('en-US')) : null
+      ];
+    }
+    function draw() {
+      var D = st.data;
+      if (!D) {
+        // (Never a count before there is one: a made-up zero would read as "nobody has agreed".)
+        say.textContent = st.failed ? 'Couldn’t load the list. Close and try again.' : 'Loading…';
+        find.hidden = true;
+        fillEl(host, []);
+        return;
+      }
+      say.textContent = firstLine(D);
+      find.hidden = !(D.agreed.length + D.waiting.length > 10);
+      var q = find.hidden ? '' : st.typed.trim().toLowerCase();
+      var wait = D.waiting.filter(hit(q)), agreed = D.agreed.filter(hit(q));
+      fillEl(host, [
+        part('waiting', 'Not yet agreed', wait, waitRow),
+        part('agreed', 'Agreed', agreed, agreedRow, 'Tap anyone for the full record.'),
+        q && !wait.length && !agreed.length ? h('p', { class: 'note' }, 'Nobody matches that.') : null
+      ]);
+    }
+    function load() {
+      Promise.resolve().then(function () { return B.legalList(); }).then(function (d) {
+        var clean = legalListClean(d);
+        if (!clean) { st.failed = true; draw(); return; }
+        st.data = clean; st.failed = false;
+        draw();
+      }, function () { st.failed = true; draw(); });
+    }
+    if (!st.data) load();
+    openSheet(function () {
+      draw();
+      return [
+        h('h2', { class: 'sh-title' }, 'Who has agreed'),
+        say, find, host,
+        h('p', { class: 'hint', style: 'margin:14px 0 0;text-align:center' }, 'Only a Greenroom admin sees this list.'),
+        h('div', { class: 'stack' }, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: 'Who has agreed', cls: 'ivc-sheet lgl-sheet' });
+  }
+  // One agreement, in full: everything the database recorded, and one thing to do with it, which is to copy it.
+  function openLegalRecord(x, loaded, back) {
+    var text = legalRecordText(x, loaded);
+    var s = G.isObj(x.shas) ? x.shas : {};
+    var name = String(x.name || '').trim(), email = String(x.email || '').trim(), handle = String(x.handle || '').trim();
+    var item = function (label, value, note) {
+      return h('div', { class: 'ivc-row' },
+        h('span', { class: 'ivc-note' }, label),
+        h('span', { class: 'ivc-line' }, value ? String(value) : 'Not recorded'),
+        note ? h('span', { class: 'ivc-note' }, note) : null);
+    };
+    // (Where the phone will not let a page copy, the same words are put in sight in this box, to press and hold.)
+    var ta = h('textarea', { class: 'sr', readonly: true, tabindex: '-1', 'aria-hidden': 'true', value: text });
+    var copy = async function () {
+      if (await copyText(text, ta)) { toast('Record copied'); return; }
+      ta.className = 'update'; ta.rows = text.split('\n').length + 4;
+      ta.removeAttribute('aria-hidden'); ta.removeAttribute('tabindex'); ta.setAttribute('aria-label', 'This record as text');
+      toast('Press and hold the text to copy it.');
+    };
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, name || email || 'Record'),
+        h('p', { class: 'sh-sub' }, ['What was recorded when they agreed.',
+          loaded && !x.current ? 'These are older versions than the current ones.' : '',
+          x.gone ? 'This account has since been deleted.' : ''].filter(Boolean).join(' ')),
+        h('div', { class: 'ivc-list' },
+          name ? item('Name', name) : null,
+          item('Email', email),
+          handle ? item('Username', '@' + handle) : null,
+          item('Agreed', legalWhen(x.at, true), x.at ? 'As the server recorded it: ' + x.at : ''),
+          item('How they came in', legalDoor(x.via) || String(x.via || '')),
+          item('Versions', legalVersionsLine(x.versions)),
+          item('Network address', x.ip),
+          item('Phone, as it described itself', x.agent),
+          item('Fingerprint of the NDA', s.nda),
+          item('Fingerprint of the Terms', s.terms),
+          item('Fingerprint of the Privacy Policy', s.privacy),
+          item('The sentence beside the box', x.said)),
+        ta,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: copy }, icon('copy', 18), 'Copy this record'),
+          h('button', { class: 'btn ghost block', type: 'button',
+            onclick: function () { if (typeof back === 'function') back(); else closeSheet(); } }, 'Back to the list'))
+      ];
+    }, { label: 'Record of agreement', cls: 'ivc-sheet lgl-sheet' });
   }
   /* Deleting your account: everything that is yours alone goes for good,
      tours you had deleted included. A tour you still run has to be deleted
