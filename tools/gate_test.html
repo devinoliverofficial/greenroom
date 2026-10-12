@@ -42,7 +42,11 @@
     taken@example.com    already has an account (at "Create account")
     invited@example.com  has a tour invite waiting (at "Create account");
                          with the emailed code 123456 it is Ana Reyes, invited
-    bare@example.com     with 123456: invited, no name or role on the invite
+                         (her invite carried her phone number: not asked)
+    bare@example.com     with 123456: invited, no name, role or phone number
+                         on the invite (asked for each; the phone number has
+                         its own screen after the role, and "Skip for now"
+                         shows once a number too short to be one is tried)
     reset@example.com    with 123456: a password reset
     bad@example.com      the server says the address is invalid
     slow@example.com     the sign-up never answers, yet the account is made:
@@ -203,7 +207,7 @@
     <li>Every sign-up ends on "Check your email": the code is <code>123456</code>. "Wrong address? Go back" and a new address hands the first account back.</li>
     <li>The username <code>brent</code> is taken. The password <code>password</code> is too easy to guess. A birthday under 18 is refused.</li>
     <li>At "Create account": <code>taken@example.com</code> already has an account. <code>invited@example.com</code> has a tour invite waiting. <code>bad@example.com</code> is not a real address. <code>slow@example.com</code> never answers (30 seconds), yet the account is made: tap again.</li>
-    <li>An emailed code has no letter in it: <code>123456</code> with <code>invited@example.com</code> is an invited person (Ana Reyes). With <code>bare@example.com</code> the invite carried no name or role. With <code>reset@example.com</code> it is a password reset.</li>
+    <li>An emailed code has no letter in it: <code>123456</code> with <code>invited@example.com</code> is an invited person (Ana Reyes). With <code>bare@example.com</code> the invite carried no name, role or phone number, so each is asked (the phone number on its own screen, after the role). With <code>reset@example.com</code> it is a password reset.</li>
     <li>Sign in: <code>anyone@example.com</code> with the password <code>greenroom</code> (first run done long ago; the documents come first unless <a href="?agreed=1">?agreed=1</a> or <a href="?docs=0">?docs=0</a>).</li>
     <li>The documents: three invented ones, a page each, after a Greenroom code is found good, before an invited person's questions, and over everything for <code>anyone@example.com</code>. The third page's "I Agree" is off until the box is ticked. <a href="?docs=0">?docs=0</a>: none loaded, nothing is asked. <a href="?docs=fail">?docs=fail</a>: loading fails. <a href="?docs=hang">?docs=hang</a>: loading never answers. <a href="?accept=fail">?accept=fail</a>: saving fails. <a href="?accept=once">?accept=once</a>: saving fails once. <a href="?accept=stale">?accept=stale</a>: the Terms change while they are read. <a href="?changed=privacy">?changed=privacy</a>: a version changed ("Updated: Privacy Policy"). <a href="?agreed=1">?agreed=1</a>: anyone@ has agreed. <a href="?status=fail">?status=fail</a>, <a href="?facts=fail">?facts=fail</a>: those reads fail. <a href="?keep=1">?keep=1</a>: the sign-in survives a reload. <a href="?accept=email">?accept=email</a>: saving is refused (address not confirmed). <a href="?accept=lost">?accept=lost</a>: saving gets no answer; anyone@ is let on with the agreement kept, to be sent later. Agreed with a code and reloaded, the pages are shown again; what is kept on the phone waits for that sign-up's own account: <a href="#" id="gt-forget">forget what this browser agreed to</a>.</li>
     <li><a href="?closed=1">?closed=1</a>: sign-ups are off. <a href="?confirm=0">?confirm=0</a>: "Confirm email" is off. <a href="?settings=0&amp;closed=1">?settings=0&amp;closed=1</a>: off, and the settings cannot be read. <a href="?settings=hang">?settings=hang</a>: the settings never answer. <a href="?mail=0">?mail=0</a>: no email can be sent. <a href="?old=1">?old=1</a>: the database change is not live yet. <a href="?code=123456">?code=123456</a>: arriving from an email's button. <a href="?">Plain</a>.</li>

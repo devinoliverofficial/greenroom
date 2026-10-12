@@ -471,6 +471,121 @@ shim = r"""<script>
     }
     emit();
   };
+  /* ---- LIVE WITHOUT A RESTART (0144): a seat, an artist's yes, a new request, tours confirmed ----
+     On the real thing the database touches the account's own row in "pokes" and the phone hears it: the
+     backend links any waiting seat, reads the tours again and calls the one function the app handed to
+     GR_BACKEND.socialWatch, and the app asks again for everything it holds about where the person stands.
+     Here there is no database, so each call below changes the pretend data the way the database would and
+     then pokes. Nothing is reloaded: watch the page change by itself.
+       __harness.poke(what)        the poke alone: a fresh copy of the tours goes to the app, then the app's
+                                   function is called with what ('seat', 'listing', 'endorsement', 'request',
+                                   'credits', or '' for "one may have been missed"). Every poke is kept in
+                                   __harness.pokes, and how many times the app was told in __harness.socialTold.
+       __harness.seat()            the test person is given a seat on a tour they were not on ("Seat run",
+                                   I See Stars, a show today, tomorrow and in three days) and is poked.
+                                   On their profile's Today tab the day appears; the Overview button opens
+                                   the tour with its tabs. Best seen on a phone that is on no tour: open the
+                                   page with ?newcrew (below). seat(false) takes the seat away again and pokes.
+       __harness.acceptRequest()   the artist says yes to the test person's waiting request (the oldest one,
+                                   or acceptRequest('pub1') for that page): they are listed and endorsed
+                                   there, the request is gone from the waiting ones, and they are poked. On
+                                   the profile the artist stops saying pending and the endorsement shows.
+                                   Answers false when no request is waiting (send one first: the first run,
+                                   or an unclaimed artist's page such as Sleeping With Sirens).
+       __harness.newRequest()      someone asks to be listed on a page the test person runs (Ana Reyes, crew,
+                                   FOH engineer; a second call is Jeff Valentine, a Member, Drums), and the test
+                                   person is poked: the card shows at the top of their profile and on the
+                                   artist's page. With no test artist yet, "I See Stars" is made first.
+       __harness.confirmTours()    the artist confirms tours for the test person (what they claimed and is
+                                   waiting; with nothing waiting, every tour of the pretend I See Stars), and
+                                   they are poked: the tours and the numbers show on their profile. With no
+                                   I See Stars page yet one is made, run by somebody else on a ?newcrew
+                                   phone, with the test person listed on it as crew.
+     A BRAND-NEW CREW ACCOUNT:  open the page with  ?newcrew  (it has to be the address: the account is set
+     up before the app starts). No phone number, no role, no tour, nobody has endorsed it, and its first run
+     is due with CREW ticked: Next, then "Your phone number" (the step this build adds; it is not shown to
+     someone who ticks only Fan or Promoter, nor once the account has a number), then "Which artist do you
+     work for?" (search "sleeping"), the role, Send request. __harness.saved is the card as last saved (the
+     phone after the phone step, the role after the request is sent); __harness.me is the account. Then
+     acceptRequest(), seat() and confirmTours() show the rest with no reload. Not meant to be mixed with the
+     other tour switches (offTour, offYear, undated), which expect the harness tour to be there. */
+  window.__harness.poke = function (what) {
+    var H = window.__harness;
+    H.pokes = (H.pokes || []).concat([String(what || '')]);
+    // (As the real backend does it: the tours first, then the app is told.)
+    setTimeout(function () {
+      emit();
+      if (typeof H.socialFn === 'function') { H.socialTold = (H.socialTold || 0) + 1; H.socialFn(String(what || '')); }
+    }, 0);
+  };
+  window.__harness.seat = function (on) {
+    if (on === false) delete tours.tseat;
+    else tours.tseat = { name: 'Seat run', artist: 'I See Stars', setupDone: true, setupStep: 5, createdAt: 9, expenses: {}, commission: {},
+      crew: {}, debts: {}, extras: {}, charges: {}, imports: {}, bands: ['I See Stars'], ourBand: 'I See Stars',
+      shows: { q1: { id: 'q1', date: inDays(0), city: 'Denver, CO', venue: 'Summit', daySheet: { doors: '7:00 PM', venueAddress: '1902 Blake St, Denver, CO 80202' } },
+        q2: { id: 'q2', date: inDays(1), city: 'Salt Lake City, UT', venue: 'The Depot' },
+        q3: { id: 'q3', date: inDays(3), city: 'Boise, ID', venue: 'Knitting Factory' } } };
+    window.__harness.poke('seat');
+  };
+  // The pretend I See Stars page, made when there is none. someoneElses: the test person does not run it (a Crew phone).
+  function issPage(someoneElses) {
+    var H = window.__harness, a = creditIss();
+    if (a) return a;
+    H.acts = H.acts || [];
+    a = { id: 'act' + (H.acts.length + 1), handle: 'iseestars', name: 'I See Stars', avatar: '', bio: '', notMine: !!someoneElses,
+      members: someoneElses ? [] : [{ userId: 'u-devin', kind: 'band', role: 'Vocals', endorsed: true }] };
+    H.acts.push(a);
+    return a;
+  }
+  window.__harness.acceptRequest = function (artistId) {
+    var H = window.__harness;
+    var x = (H.artistRequests || []).filter(function (y) {
+      return (y.userId || 'u-devin') === 'u-devin' && (y.state || 'pending') === 'pending' && (!artistId || y.artistId === artistId); })[0];
+    if (!x) return false;
+    H.artistRequests = H.artistRequests.filter(function (y) { return y !== x; });
+    var a = (H.acts || []).filter(function (y) { return y.id === x.artistId; })[0];
+    var g = ghostList().filter(function (y) { return y.id === x.artistId; })[0] || {};
+    // Listed and endorsed in one go, as decide_artist_request does it.
+    if (a) a.members = a.members.filter(function (m) { return m.userId !== 'u-devin'; }).concat([{ userId: 'u-devin', kind: x.kind, role: x.role || '', endorsed: true }]);
+    else H.devinActs = devinActs().filter(function (y) { return y.id !== x.artistId; }).concat([
+      // (A username Greenroom made up for an unclaimed page, "mb." and twenty characters, is never shown as a name.)
+      { id: x.artistId, name: g.name || 'Artist', handle: /^mb\./.test(g.handle || '') ? '' : (g.handle || ''), avatar: '', kind: x.kind, role: x.role || '', endorsed: true, eid: 'e-' + x.artistId }]);
+    window.__harness.poke('request,listing,endorsement');
+    return true;
+  };
+  window.__harness.newRequest = function () {
+    var H = window.__harness, a = (H.acts || []).filter(function (y) { return !y.notMine; })[0] || issPage(false);
+    H.artistRequests = H.artistRequests || [];
+    var who = [{ userId: 'u-ana', kind: 'crew', role: 'FOH engineer' }, { userId: 'u-jeff', kind: 'band', role: 'Drums' }].filter(function (w) {
+      return !listedOn(a.id, w.userId) && !H.artistRequests.some(function (y) { return y.artistId === a.id && y.userId === w.userId && (y.state || 'pending') === 'pending'; }); })[0];
+    if (!who) return false;
+    H.artistRequests = H.artistRequests.filter(function (y) { return !(y.artistId === a.id && y.userId === who.userId); });
+    H.artistRequests.push({ artistId: a.id, userId: who.userId, kind: who.kind, role: who.role, state: 'pending', at: new Date().toISOString() });
+    window.__harness.poke('request');
+    return true;
+  };
+  window.__harness.confirmTours = function () {
+    var H = window.__harness, a = issPage(!!H.isNewCrew), rows = creditStore(), k = a.id + ':u-devin';
+    if (!listedOn(a.id, 'u-devin')) a.members.push({ userId: 'u-devin', kind: 'crew', role: me.tour_role || 'Crew', endorsed: true });
+    var row = rows[k] || { approved: null, pending: null, submittedAt: new Date().toISOString(), declinedAt: null };
+    row.approved = row.pending || { all: true, until: ymd(today) };
+    row.pending = null; row.declined = null; row.declinedAt = null;
+    rows[k] = row;
+    window.__harness.poke('credits');
+    return true;
+  };
+  // A brand-new Crew account (see LIVE WITHOUT A RESTART above): set up before the app starts.
+  var held = {};
+  window.__harness.newCrew = function () {
+    var H = window.__harness;
+    H.isNewCrew = true; H.asCrew = true;
+    me.phone = ''; me.tour_role = '';
+    ['t1', 'off1'].forEach(function (id) { if (tours[id]) { held[id] = tours[id]; delete tours[id]; } });
+    H.devinActs = []; H.kinds = [];
+    H.firstRun = { suggest: ['crew'] };
+    emit();
+  };
+  try { if (/[?&]newcrew\b/.test(String(location.search || ''))) window.__harness.newCrew(); } catch (e) { /* no address to read */ }
   try {
     var offAsk = /[?&]offtour=(next|none|travel)\b/.exec(String(location.search || ''));
     if (offAsk) window.__harness.offTour(offAsk[1]);
@@ -1682,15 +1797,17 @@ shim = r"""<script>
       window.GR_BACKEND.flowersFor('t1');
       base.gotFlowers = (H.flowers || []).filter(function (x) { return x.to === uid; }).slice().reverse().map(function (x) {
         return { id: x.id, n: x.n, note: x.note, category: x.category || '', at: x.at, from: x.from, name: names[x.from] || '', avatar: '' }; });
-      if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', verified: true, bio: so.bio || '', roles: so.roles || [], tourRole: me.tour_role, avatar: so.photo || '', artists: so.artists || [],
+      if (uid === 'u-devin') return Promise.resolve(Object.assign({ userId: uid, name: me.full_name, handle: H.handle || '', verified: !H.isNewCrew, bio: so.bio || '', roles: so.roles || [], tourRole: me.tour_role, avatar: so.photo || '', artists: so.artists || [],
         // The pages that list the test Devin (his own included), then the ones that only endorsed him.
         acts: (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-devin'; }); }).map(function (x) {
           var m = x.members.filter(function (y) { return y.userId === 'u-devin'; })[0];
           return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: m.kind, role: m.role || '', endorsed: !!m.endorsed, mine: true, declined: false, past: m.leftAt ? true : undefined, until: m.leftAt || null }; }).concat(devinActs()),
         flowers: 2, endorsements: devinActs().length + (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-devin' && m.endorsed; }); }).length,
-        roadStats: H.roadStats || (function () { try { return JSON.parse(localStorage.getItem('gr_h_road') || 'null'); } catch (e) { return null; } })() || (function () { var c = creditSums('u-devin'); return { tours: 1 + c.tours, shows: 15 + c.shows, countries: 1 + (c.shows ? 3 : 0), cities: 15 + c.shows, firstYear: c.first || 2026 }; })(),
+        roadStats: H.roadStats || (function () { try { return JSON.parse(localStorage.getItem('gr_h_road') || 'null'); } catch (e) { return null; } })() || (function () { var c = creditSums('u-devin'), nw = H.isNewCrew ? 0 : 1; return { tours: nw + c.tours, shows: 15 * nw + c.shows, countries: nw + (c.shows ? 3 : 0), cities: 15 * nw + c.shows, firstYear: c.first || 2026 }; })(),
         credits: creditSums('u-devin').credits, creditTours: creditSums('u-devin').list,
-        tours: [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }], logos: {} }, base));
+        // (A brand-new Crew account, ?newcrew: only the tour it has been given a seat on.)
+        tours: H.isNewCrew ? (tours.tseat ? [{ id: 'tseat', artist: 'I See Stars', name: 'Seat run', first: inDays(0), last: inDays(3), shows: 3, mine: true }] : [])
+          : [{ id: 't1', artist: 'I See Stars', name: 'Harness run', first: '2026-09-27', last: '2026-10-04', shows: 4, mine: true }], logos: {} }, base));
       if (uid === 'u-brent') return Promise.resolve(Object.assign({ userId: uid, name: 'Brent Allen', handle: 'brent', bio: 'Guitars, backline, bad jokes.',
         roles: ['Guitar Tech', 'Stage Manager'], tourRole: 'Guitar Tech', avatar: '', artists: ['Sleeping With Sirens', 'I See Stars'],
         acts: (H.acts || []).filter(function (x) { return x.members.some(function (m) { return m.userId === 'u-brent'; }); }).map(function (x) { var bm = x.members.filter(function (m) { return m.userId === 'u-brent'; })[0]; return { id: x.id, name: x.name, handle: x.handle, avatar: x.avatar, kind: bm.kind, role: bm.role || '', endorsed: !!bm.endorsed, past: bm.leftAt ? true : undefined, until: bm.leftAt || null }; })
@@ -1852,7 +1969,10 @@ shim = r"""<script>
     },
     myArtists: function () {
       var H = window.__harness; H.acts = H.acts || [];
-      return Promise.resolve(H.acts.map(function (a) { return { id: a.id, handle: a.handle, name: a.name, avatar: a.avatar, mine: true, kind: null }; }));
+      // (notMine: a page somebody else runs, see issPage. It is in this list only while the test person is listed on it.)
+      return Promise.resolve(H.acts.filter(function (a) { return !a.notMine || listedOn(a.id, 'u-devin'); }).map(function (a) {
+        var m = a.notMine ? a.members.filter(function (y) { return y.userId === 'u-devin'; })[0] : null;
+        return { id: a.id, handle: a.handle, name: a.name, avatar: a.avatar, mine: !a.notMine, kind: m ? m.kind : null }; }));
     },
     /* Venues and festivals (0134). findPlaces answers from a few pretend
        places with shows on record; a place becomes a page only when it is
@@ -2161,7 +2281,7 @@ shim = r"""<script>
         H.artistRequests.push({ artistId: first, userId: 'u-ana', kind: 'crew', role: 'FOH engineer', state: 'pending', at: new Date(Date.now() - 2 * 36e5).toISOString() },
           { artistId: first, userId: 'u-jeff', kind: 'band', role: 'Drums', state: 'pending', at: new Date(Date.now() - 3 * 864e5).toISOString() });
       }
-      var mine = (H.acts || []).map(function (a) { return a.id; });
+      var mine = (H.acts || []).filter(function (a) { return !a.notMine; }).map(function (a) { return a.id; });
       (H.queueAsks = H.queueAsks || []).push(artistId == null ? null : artistId);
       // (As live since the review: someone who is on the page by now is left out, so their card goes.)
       return Promise.resolve(H.artistRequests.filter(function (x) {
@@ -2375,7 +2495,7 @@ shim = r"""<script>
       }
       if (!a) return Promise.resolve(null);
       var fol = (H.artistFollows || []).indexOf(a.id) >= 0;
-      return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '', mine: true,
+      return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '', mine: !a.notMine,
         unclaimed: false, verified: !!a.verified || /i see stars/i.test(a.name || ''), checkmark: !!a.verified || /i see stars/i.test(a.name || ''), claimed: !!a.verified || /i see stars/i.test(a.name || ''), about: a.about || '', country: a.country || '', myClaim: null,
         myClaimCode: null, myRequest: null,
         iFollow: fol, followers: (a.followers || 0) + (fol ? 1 : 0),
@@ -2497,6 +2617,8 @@ shim = r"""<script>
     notesFor: function () { return window.__harness.notes; },
     // A fake card feed: the pile, the switch and the account choices, all in memory.
     feedWatch: function (fn) { window.__harness.feedFns.push(fn); setTimeout(function () { fn(window.__harness.feedState()); }, 0); },
+    // The app's one function for "something of yours changed" (0144): called by __harness.poke and the hooks built on it.
+    socialWatch: function (fn) { window.__harness.socialFn = fn; },
     feedCall: function (action, body) {
       var F = window.__harness.feed;
       window.__harness.calls.push([action, JSON.parse(JSON.stringify(body || {}))]);

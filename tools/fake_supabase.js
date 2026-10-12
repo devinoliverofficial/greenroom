@@ -35,8 +35,12 @@
        the password "password" is too easy to guess
    - a birthday under 18 is refused by save_birth_date ("young");
    - the emailed code 123456 with invited@example.com signs in an invited
-     person (Ana Reyes, FOH engineer); with bare@example.com an invited
-     person whose invite carried no name and no role; with reset@example.com
+     person (Ana Reyes, FOH engineer, her phone number typed by the Manager:
+     she is not asked for it); with bare@example.com an invited person whose
+     invite carried no name, no role and no phone number (asked for each, the
+     phone on its own screen, "Your phone number", after the role; a number
+     too short to be one offers "Skip for now", and a skip is kept on the
+     account as phone_asked so nothing asks again); with reset@example.com
      someone resetting a password;
    - anyone@example.com signs in with the password "greenroom": an account
      that answered the first-run questions long ago (and has yet to agree to
@@ -329,7 +333,7 @@
           user = waiting[email].user; delete waiting[email];
         } else if (email === 'invited@example.com' && type === 'invite') {
           user = makeUser(email, { invited: true, first_name: 'Ana', last_name: 'Reyes', full_name: 'Ana Reyes',
-            username: 'Ana Reyes', phone: '', tour_role: 'FOH engineer', access: 'viewer', tour_name: 'The Test Tour' });
+            username: 'Ana Reyes', phone: '(313) 555-0199', tour_role: 'FOH engineer', access: 'viewer', tour_name: 'The Test Tour' });
         } else if (email === 'bare@example.com' && type === 'invite') {
           user = makeUser(email, { invited: true, access: 'viewer', tour_name: 'The Test Tour' });
         } else if (email === 'reset@example.com' && type === 'recovery') {

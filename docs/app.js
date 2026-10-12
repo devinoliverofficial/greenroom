@@ -406,7 +406,7 @@
     if (c && typeof c.use === 'function') {
       try { db = await c.use('db'); } catch (e) { db = null; }
     }
-    if (db) { store.db = db; S.mode = 'db'; subscribe(); subscribeLabels(); subscribeFeed(); }
+    if (db) { store.db = db; S.mode = 'db'; subscribe(); subscribeLabels(); subscribeFeed(); subscribeSocial(); }
     else { S.mode = 'local'; S.role = S.role || 'owner'; loadLocal(); loadLocalLabels(); dataArrived(); }
   }
 
@@ -425,6 +425,77 @@
       if (S.loaded) render();
       // Opened fresh while Plaid's window was out: finish what was started.
       if (!feedSeen) { feedSeen = true; whenLoaded(function () { checkPlaid(false); }); }
+    });
+  }
+  /* ---- Live without a restart (Devin, 2026-10-12) ----
+     "I also dont want someone to have to 'hard close the app' to see their
+     endorsements or tours. The information should just be added while they
+     are using the app"
+     The backend calls the one function handed over here each time the
+     database says something about this account changed (a seat on a tour
+     made or taken away, a listing under an artist, an endorsement, a request
+     and its answer, a new request on a page you run, tours confirmed), and
+     wherever that word may have been missed (back from the background, the
+     live line coming back, the signal found again). The tours themselves are
+     read again by the backend. Here, everything else this phone holds about
+     where the person stands is asked for again. Nothing is emptied first:
+     what is on screen stays until the fresh answer lands, and each answer
+     draws the screen again as it arrives. */
+  function subscribeSocial() {
+    var B = window.GR_BACKEND;
+    if (!B || typeof B.socialWatch !== 'function') return;
+    B.socialWatch(function (what) { socialAgain(what); });
+  }
+  // One held answer ({ at, asking }, the shape cardOf, actOf, myActs, kept and the lists of things waiting all
+  // use): out of date as of now. An ask of it that is still out was sent before the change, so it is sent again
+  // when it lands.
+  function askOver(c) {
+    if (!c || typeof c !== 'object') return;
+    c.at = 0;
+    if (c.asking) c.again = true;
+  }
+  function socialAgain(what) {
+    if (S.mode !== 'db') return;
+    var B = window.GR_BACKEND, each = function (bag, fn) { Object.keys(bag || {}).forEach(function (k) { fn(bag[k], k); }); };
+    // Every profile card held: yours, and anyone's you have looked at (their endorsement or their tours may be the news).
+    each(S.cards, askOver);
+    // The artists you run or are listed under, and every artist page held (its members, your request on it).
+    askOver(S.acts);
+    each(S.actCards, askOver);
+    // Who is asking to be listed on the pages you run, what you asked artists for, the pages you asked to run.
+    each(S.kept, function (c, k) { if (/^(aq:|myreq$|myclaims$)/.test(k)) askOver(c); });
+    // Tours to confirm and where each claim stands, claims waiting on your pages, pages waiting on Greenroom,
+    // and a member someone asked to let go.
+    askOver(S.creditAsks); askOver(S.creditQueue); askOver(S.claimQ); askOver(S.memberAsks);
+    // Who is on each tour with you (a seat changes who manages): each list is asked again the next time it is drawn.
+    each(S.crewCache, function (c) { if (c) c.at = 0; });
+    // What you are on each tour.
+    rolesAgain();
+    if (!S.loaded) return;
+    // Asked for at once, whatever page is open: your own card (the numbers kept on the phone come with it), your
+    // artists, and who is waiting on the pages you run (as the app's start asks). The rest is asked by the page
+    // that shows it, which is drawn again now.
+    if (socialOn() && B && B.uid && B.uid()) cardOf(B.uid());
+    myActs();
+    artistAsks();
+    render();
+  }
+  /* What you are on each tour (Manager or Crew), asked again. The answer held
+     stays until the new one lands, so nobody's Budget tab blinks out and
+     back, and an ask that fails changes nothing. The screen is drawn again
+     only when an answer is a different one. A tour that is new to this phone
+     is asked about the first time it is drawn, as always. */
+  function rolesAgain() {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || !B.myRole) return;
+    Object.keys(S.roles).forEach(function (id) {
+      if (B.ownsTour && B.ownsTour(id)) return;
+      Promise.resolve().then(function () { return B.myRole(id); }).then(function (r) {
+        if (!r || S.roles[id] === r) return;
+        S.roles[id] = r;
+        forgetCrew(id);
+        render();
+      }).catch(function () { /* as it was */ });
     });
   }
   function whenLoaded(fn, tries) {
@@ -2739,7 +2810,7 @@
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
             online ? h('button', { class: 'btn ghost block', type: 'button',
-              onclick: function () { openUsernameSheet(false); } }, icon('people', 18), 'Phone and contact card') : null,
+              onclick: function () { openUsernameSheet(); } }, icon('people', 18), 'Phone and contact card') : null,
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel')))
       ];
     }, { label: 'Edit profile', cls: 'pe-sheet' });
@@ -3480,9 +3551,11 @@
       B.myArtists().then(function (rows) {
         a.asking = false;
         if (a.again) { a.again = false; myActs(true); return; }
-        var first = !a.list;
+        var first = !a.list, was = first ? '' : JSON.stringify(a.list);
         a.list = rows; a.at = Date.now();
         if (a.onLoad) { var f = a.onLoad; a.onLoad = null; f(); }
+        // A different list (a page you were given, one you were listed under or taken off): whatever shows it is drawn again.
+        if (!first && JSON.stringify(rows) !== was) render();
         // The three-lines menu is drawn from this list (Create a tour, Merchroom): draw it again once it lands.
         if (first && S.route && S.route.name === 'mainmenu') render(true);
         // The artist you're on isn't yours any more: redraw, which puts you back on your own account.
@@ -4109,7 +4182,8 @@
       c.asking = true;
       window.GR_BACKEND.creditAsks().then(function (l) {
         c.list = Array.isArray(l) ? l : []; c.at = Date.now(); c.asking = false; render();
-      }).catch(function () { c.asking = false; c.at = Date.now(); });
+        if (c.again) { c.again = false; if (S.creditAsks === c) creditAsks(true); }
+      }).catch(function () { c.asking = false; c.at = Date.now(); if (c.again) { c.again = false; if (S.creditAsks === c) creditAsks(true); } });
     }
     return c;
   }
@@ -4121,7 +4195,8 @@
       c.asking = true;
       window.GR_BACKEND.creditQueue().then(function (l) {
         c.list = Array.isArray(l) ? l : []; c.at = Date.now(); c.asking = false; render();
-      }).catch(function () { c.asking = false; c.at = Date.now(); });
+        if (c.again) { c.again = false; if (S.creditQueue === c) creditQueue(true); }
+      }).catch(function () { c.asking = false; c.at = Date.now(); if (c.again) { c.again = false; if (S.creditQueue === c) creditQueue(true); } });
     }
     return c;
   }
@@ -4274,7 +4349,8 @@
       c.asking = true;
       B.claimQueue().then(function (l) {
         c.list = Array.isArray(l) ? l : null; c.at = Date.now(); c.asking = false; render();
-      }).catch(function () { c.asking = false; c.at = Date.now(); });
+        if (c.again) { c.again = false; if (S.claimQ === c) claimQ(true); }
+      }).catch(function () { c.asking = false; c.at = Date.now(); if (c.again) { c.again = false; if (S.claimQ === c) claimQ(true); } });
     }
     return c;
   }
@@ -4561,6 +4637,7 @@
     myArtistRequests(true);
     if (S.actCards && S.actCards[artistId]) actOf(artistId, true);
     if (!why) {
+      keepCardRole(role);
       // (You run that page: there is nobody to ask, you are simply on it.)
       if (r.listed) { myActs(true); staleCards(); toast('You are on ' + artist + '’s page.'); }
       else toast('Request sent. It waits on ' + artist + '’s page for an answer.');
@@ -5350,7 +5427,8 @@
         var had = c.list.length;
         c.list = Array.isArray(l) ? l : []; c.at = Date.now(); c.asking = false;
         if (c.list.length || had) render();
-      }).catch(function () { c.asking = false; c.at = Date.now(); });
+        if (c.again) { c.again = false; if (S.memberAsks === c) memberAsks(true); }
+      }).catch(function () { c.asking = false; c.at = Date.now(); if (c.again) { c.again = false; if (S.memberAsks === c) memberAsks(true); } });
     }
     return c;
   }
@@ -7657,6 +7735,7 @@
     var s = fr.step;
     return s === 'handle' ? frHandle(fr)
       : s === 'birth' ? frBirth(fr)
+      : s === 'phone' ? frPhone(fr)
       : s === 'm-find' || s === 'c-find' ? frArtist(fr)
       : s === 'm-unclaimed' ? frUnclaimed(fr)
       : s === 'm-role' || s === 'c-role' ? frRole(fr)
@@ -7841,7 +7920,93 @@
       fan: !!(B.findArtists && B.followArtist && B.unfollowArtist),
       promoter: !!(B.findPlaces && B.openVenue && B.openFestival && B.placeWorkAsk && B.placeWorkWithdraw) };
     fr.queue = fr.kinds.filter(function (k) { return can[k] && fr.had.indexOf(k) < 0; });
+    // A Member or Crew whose account has no phone number is asked for it here, before the artist: once.
+    if (frPhoneDue(fr)) { frGo('phone'); return; }
     frNextKind();
+  }
+
+  /* ---- The phone number (Devin, 2026-10-12): "when they do get endorsed
+     and approved and hard close they get asked for their phone number and
+     role again. This should all be done during the sign up process and not
+     asked again". The contact card used to open by itself on the home page
+     for anyone on a tour whose account had no role, and asked for a phone
+     number and the role over again. Now the sign-up asks: this one step, for
+     someone who ticks Member or Crew and whose account has no number (a Fan
+     or a Promoter is on nobody's tour and is not asked); and the role picked
+     for the artist a few screens on is kept as the role on their own card
+     (keepCardRole). Nothing asks afterwards; the card is under Settings. ---- */
+  function frDigits(v) { return String(v || '').replace(/\D/g, '').length; }
+  function frPhoneDue(fr) {
+    var B = window.GR_BACKEND, f = fr.f;
+    if (!B || typeof B.saveProfile !== 'function' || typeof B.myProfile !== 'function') return false;
+    if (f.phoneSaved || f.phoneSkipped) return false;
+    if (!fr.kinds.some(function (k) { return (k === 'member' || k === 'crew') && fr.had.indexOf(k) < 0; })) return false;
+    var p = null;
+    try { p = B.myProfile(); } catch (e) { p = null; }
+    // (phoneAsked: the invite's own questions asked already, and they chose to leave it out.)
+    return !!p && !String(p.phone || '').trim() && p.phoneAsked !== true;
+  }
+  function frPhone(fr) {
+    var f = fr.f;
+    if (f.phone == null) f.phone = '';
+    var nx = { label: 'Next', ready: frDigits(f.phone) >= 7, onTap: frSavePhone };
+    var input = h('input', { class: 'fr-in', type: 'tel', 'data-k': 'fr-phone', value: f.phone, maxlength: 30, inputmode: 'tel',
+      autocomplete: 'tel', enterkeyhint: 'next', placeholder: '(555) 555-5555', 'aria-label': 'Phone',
+      oninput: function (e) { f.phone = e.target.value; frSay(''); nx.set(frDigits(f.phone) >= 7); } });
+    return frShell({ title: 'Your phone number', sub: 'It goes on your contact card, with your name and your role.',
+      body: [frField('Phone', input), h('p', { class: 'fr-sub' }, 'People on a tour with you can see it.')],
+      onBack: fr.trail.length ? frBack : null, next: nx,
+      skip: function () { f.phoneSkipped = true; frNextKind(); } });
+  }
+  async function frSavePhone() {
+    var fr = S.firstRun, f = fr.f, phone = String(f.phone || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+    if (fr.busy || frDigits(phone) < 7) return;
+    // (Back to this screen with the number it already saved: on, without saving it again.)
+    if (f.phoneSaved && f.phoneSaved === phone) { fr.fails = 0; frNextKind(); return; }
+    blurActive();
+    var op = frBegin();
+    try {
+      // A save with no answer in 12 seconds counts as one that failed, as at the end of the run.
+      await Promise.race([cardPatch(function () { return { phone: phone }; }),
+        sleep(12000).then(function () { throw Object.assign(new Error('offline'), { code: 'offline' }); })]);
+    } catch (x) {
+      if (!frStill(fr, op)) return;
+      fr.busy = false;
+      fr.fails = (fr.fails || 0) + 1;
+      // Nobody is held here by a save that keeps failing: after the third try they go on without it.
+      if (fr.fails >= 3) { fr.fails = 0; f.phoneSkipped = true; frNextKind(); return; }
+      fr.err = frWhy('phone', x, 'Couldn’t save that. Try again.');
+      render(true);
+      return;
+    }
+    f.phoneSaved = phone;
+    forgetCrew();
+    if (frStill(fr, op)) { fr.fails = 0; frNextKind(); }
+  }
+  /* The account's own card (name, phone, role) is saved whole, so a change
+     to one line of it starts from what the card holds at that moment and
+     waits for the change before it: the phone number and the role are saved
+     moments apart here, and neither may write the other back to empty.
+     change(card) answers the lines to change, or nothing to leave it. */
+  var cardLine = Promise.resolve();
+  function cardPatch(change) {
+    var B = window.GR_BACKEND;
+    var run = function () {
+      var p = B.myProfile(), patch = change(p);
+      if (!patch) return null;
+      return B.saveProfile(Object.assign({ firstName: p.firstName, lastName: p.lastName, phone: p.phone, tourRole: p.tourRole }, patch));
+    };
+    var out = cardLine.then(run);
+    cardLine = out.then(function () {}, function () {});
+    return out;
+  }
+  // The role just given to an artist is the role on the person's own card too, when the card has none. (Never
+  // waited on, and never a reason the request fails: the card can be filled in from Settings.)
+  function keepCardRole(role) {
+    var B = window.GR_BACKEND, r = String(role || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!r || S.mode !== 'db' || !B || typeof B.saveProfile !== 'function' || typeof B.myProfile !== 'function') return;
+    cardPatch(function (p) { return String(p.tourRole || '').trim() ? null : { tourRole: r }; })
+      .then(function () { forgetCrew(); }, function () { /* the card keeps what it had */ });
   }
 
   /* ---- Finding an artist, the way the Search page finds one: Greenroom's
@@ -8128,6 +8293,7 @@
     if (!frStill(fr, op)) return;
     if (r && r.ok) {
       frStale(p.id);
+      keepCardRole(role);
       if (r.listed) myActs(true);
       frSent(r.listed ? { title: 'You’re listed', sub: 'You’re listed on ' + p.name + '.' }
         : { title: 'Request sent', sub: p.unclaimed
@@ -8203,6 +8369,7 @@
     if (!frStill(fr, op)) return;
     if (r && r.ok) {
       frStale(p.id); S.claimQ = null;
+      keepCardRole(frRoleValue());
       var code = String(r.code || '');
       // (True for everyone: the pending row is handed only to the claimant and to Greenroom.)
       var shown = 'You show as a Member, pending. Only you and Greenroom see that until the claim is approved.';
@@ -9075,20 +9242,10 @@
       })(),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar('me'),
-      (function () {
-        // (It asks "your role on the tour": only for someone who is on one. A fan or a promoter has no tour.
-        // Never under the invite overlay, which asks the same thing itself.)
-        if (S.mode === 'db' && !S.askedUsername && window.GR_BACKEND && allTourEntries().length && !document.getElementById('gr-pass-gate') &&
-            window.GR_BACKEND.saveProfile && window.GR_BACKEND.myProfile &&
-            !window.GR_BACKEND.myProfile().tourRole) {
-          S.askedUsername = true;
-          setTimeout(function () {
-            // Still on your profile with nothing open? Otherwise ask next time.
-            if (S.route && S.route.name === 'home' && !sheet) openUsernameSheet(true); else S.askedUsername = false;
-          }, 700);
-        }
-        return null;
-      })(),
+      // (The contact card used to open here by itself for anyone on a tour whose account had no role, and asked
+      // for a phone number and a role the sign-up had already been given. Devin, 2026-10-12: "This should all be
+      // done during the sign up process and not asked again". The sign-up asks now (the first run's phone step,
+      // and the role picked for the artist is kept on the card); the card is under Settings.)
       null);
   }
 
@@ -9164,7 +9321,7 @@
           agreedRow,
           offId ? cardMenuItem(offId) : null,
           signedIn ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { openUsernameSheet(false); } },
+            onclick: function () { openUsernameSheet(); } },
             icon('people', 18),
             (B.myProfile && B.myProfile().tourRole) ? 'Your contact card' : 'Add your details') : null,
           // The sign-up question, to change the answer (member, crew, fan, promoter). What was asked for
@@ -17342,9 +17499,9 @@
     return e ? String(e).split('@')[0] : 'You';
   }
 
-  /* Your card in the tour's phone book. Asked once for accounts made before
-     it existed, changeable any time from the home page. */
-  function openUsernameSheet(firstRun) {
+  /* Your card in the tour's phone book: opened from Settings ("Phone and
+     contact card"), never by itself. */
+  function openUsernameSheet() {
     var B = window.GR_BACKEND;
     if (!B || !B.saveProfile) return;
     var cur = B.myProfile ? B.myProfile() : {};
@@ -17371,7 +17528,7 @@
         } }, f.tourRole || 'Your role on the tour');
       return [
         h('h2', { class: 'sh-title' }, cur.tourRole ? 'Your contact card' : 'Add your details'),
-        h('p', { class: 'sh-sub' }, 'Your name rides everything you write. The rest is how the tour reaches you \u2014 everyone on the run can see it.'),
+        h('p', { class: 'sh-sub' }, 'Your name rides everything you write. The rest is how the tour reaches you. Everyone on a tour with you can see it.'),
         h('form', { class: 'sh-form', novalidate: true,
           onsubmit: async function (e) {
             e.preventDefault();
@@ -17383,7 +17540,7 @@
               await B.saveProfile(f);
               forgetCrew();
               closeSheet();
-              toast('Saved \u2014 you\u2019re ' + (f.firstName.trim() + ' ' + f.lastName.trim()) + ', ' + f.tourRole);
+              toast('Saved. You\u2019re ' + (f.firstName.trim() + ' ' + f.lastName.trim()) + ', ' + f.tourRole);
               render(true);
             } catch (e2) { toast('Couldn\u2019t save it. Try again.'); }
           } },
@@ -17397,7 +17554,7 @@
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
             h('button', { class: 'btn ghost block', type: 'button',
-              onclick: function () { closeSheet(); } }, firstRun ? 'Later' : 'Cancel')))
+              onclick: function () { closeSheet(); } }, 'Cancel')))
       ];
     }, { label: 'Your details' });
   }

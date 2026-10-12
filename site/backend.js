@@ -586,6 +586,8 @@
         firstName: first, lastName: last, fullName: full,
         username: String(m.username || '').trim(),
         phone: String(m.phone || '').trim(),
+        // (Asked for a phone number once already and chose to leave it out: nobody asks a second time.)
+        phoneAsked: m.phone_asked === true,
         tourRole: roleName(m.tour_role),
         email: session && session.user ? session.user.email : ''
       };
@@ -1596,6 +1598,9 @@
       if (doc && doc.kind === 'offtour') return 'editor';
       var q = await sb.from('members').select('role')
         .eq('tour_id', tourId).eq('user_id', session ? session.user.id : '').maybeSingle();
+      // (Could not be asked: said so, not answered "Crew". The app asks this again while it runs (0144), and a
+      // Manager must not be shown as Crew because one ask had no signal. The first ask still falls back to Crew.)
+      if (q.error) throw mapError(q.error);
       return (q.data && q.data.role) || 'viewer';
     },
     ownsTour: function (tourId) {
@@ -2036,6 +2041,20 @@
       feedListeners.push(fn);
       loadFeed(true);
     },
+    /* ---- "Something of yours changed" (0144) ----
+       The app hands over one function. It is called, with a word for what
+       changed ('seat', 'listing', 'endorsement', 'request', 'credits';
+       several at once come joined by commas), each time the database pokes
+       this account: a seat on a tour made or taken away, listed under an
+       artist, endorsed, a request answered or a new one waiting on a page
+       you run, tours confirmed. By then any seat that was waiting has been
+       linked and the tours are being read again. It is also called with ''
+       wherever a poke may have been missed: back from more than 30 seconds
+       in the background, the live line coming back, the phone finding its
+       signal again. Never while the start-up is waiting at the documents. */
+    socialWatch: function (fn) {
+      if (typeof fn === 'function') socialFns.push(fn);
+    },
     feedCall: async function (action, body) {
       var r;
       try {
@@ -2296,6 +2315,51 @@
   function flowersChanged() {
     clearTimeout(flowerTimer);
     flowerTimer = setTimeout(function () { flowersStale(); emit('tours'); }, 300);
+  }
+  /* A poke (0144): the database touched this account's own row in pokes,
+     which is all it ever says: look again. Several within a moment count as
+     one. First any seat still waiting by address is linked (the call the
+     start-up makes), then the tours are read again, the flowers asked for
+     again, and the app told, so it asks again for everything it holds about
+     where this person stands. Not while the start-up is waiting at the
+     documents (the rule the return from the background follows): nothing of
+     a tour is read for someone who has agreed to nothing yet, and the
+     start-up reads everything when it carries on. */
+  var socialFns = [], pokeTimer = 0, pokeWhat = [], pokeBusy = false, pokeOwed = false, missedAt = 0;
+  function socialTell(what) {
+    socialFns.forEach(function (fn) { try { fn(what || ''); } catch (e) { /* the app's own trouble is not the line's */ } });
+  }
+  function poked(what) {
+    var w = String(what || '').slice(0, 40);
+    if (w && pokeWhat.indexOf(w) < 0) pokeWhat.push(w);
+    clearTimeout(pokeTimer);
+    pokeTimer = setTimeout(pokeRun, 400);
+  }
+  async function pokeRun() {
+    // (One at a time: a poke that lands while seats are being linked is answered as soon as that is done.)
+    if (pokeBusy) { pokeOwed = true; return; }
+    if (!session || !legalStarted) { pokeWhat = []; return; }
+    pokeBusy = true;
+    var what = pokeWhat.join(','); pokeWhat = [];
+    try { await sgLimit(sb.rpc('claim_invites'), 10000); } catch (e) { /* what is linked already still shows */ }
+    pokeBusy = false;
+    if (session && legalStarted) {
+      refetchTries = 0; scheduleRefetch();
+      flowersChanged();
+      socialTell(what);
+    }
+    if (pokeOwed) { pokeOwed = false; poked(''); }
+  }
+  /* Where a poke may have been missed (the phone slept, the live line
+     dropped, no signal): the app is told to ask again, and a seat that was
+     waiting is linked. Whoever calls this is already reading the tours
+     again; and if a seat is linked here, the database pokes this phone for
+     it and they are read once more with the seat in place. */
+  function socialMissed() {
+    if (!session || !legalStarted || Date.now() - missedAt < 2000) return;
+    missedAt = Date.now();
+    socialTell('');
+    if (!pokeBusy) sgLimit(sb.rpc('claim_invites'), 10000).then(function () {}, function () { /* the next start links it */ });
   }
   function feedChanged() {
     if (!feedListeners.length) return;
@@ -4190,7 +4254,8 @@
         // Nor did anyone's changes to the tours, or new bank lines. (Not while the start-up is still waiting at
         // the documents: someone reading them who looks away and comes back has agreed to nothing yet, and
         // nothing of a tour is read for them until they have. The start-up reads everything when it carries on.)
-        if (session && legalStarted) { refetchTries = 0; scheduleRefetch(); feedChanged(); }
+        // (Nor did a seat on a tour, an artist's yes, an endorsement or tours confirmed: the app asks for those again.)
+        if (session && legalStarted) { refetchTries = 0; scheduleRefetch(); feedChanged(); socialMissed(); }
         newBuildCheck();
         // The documents may have been loaded, or one changed, while the app sat open: asked here too (see legalWake).
         if (session) legalWake();
@@ -4199,7 +4264,7 @@
     });
     window.addEventListener('online', function () {
       flushErrors();
-      if (session && legalStarted) { refetchTries = 0; scheduleRefetch(); feedChanged(); legalFlush(); }
+      if (session && legalStarted) { refetchTries = 0; scheduleRefetch(); feedChanged(); legalFlush(); socialMissed(); }
     });
     var got = await sb.auth.getSession();
     session = got.data ? got.data.session : null;
@@ -4275,10 +4340,13 @@
     var typed = String(m0.full_name || m0.username || '').trim();
     var a = { first: String(m0.first_name || typed.split(/\s+/)[0] || '').trim(),
       last: String(m0.last_name || typed.split(/\s+/).slice(1).join(' ') || '').trim(),
-      role: roleName(m0.tour_role), handle: '', handleMine: false, month: 0, day: 0, year: 0, birth: '', pass: '' };
+      role: roleName(m0.tour_role), phone: String(m0.phone || '').trim(), phoneSkipped: false,
+      handle: '', handleMine: false, month: 0, day: 0, year: 0, birth: '', pass: '' };
     var steps = [];
     if (!a.first || !a.last) steps.push(askName);
     if (!m0.tour_role) steps.push(askRole);
+    // The phone number, here and only here: when the Manager's invite carried none. (Nothing in the app asks later.)
+    if (!a.phone && m0.phone_asked !== true) steps.push(askPhone);
     steps.push(askHandle, askBirth, askPass);
     function go(i) { steps[i](i); }
     function nav(i) {
@@ -4315,6 +4383,32 @@
         }
       });
     }
+    /* One field. A number needs at least 7 digits; someone who would rather
+       not give one is told how to go on without it, and is not asked again. */
+    function askPhone(i) {
+      var n = nav(i);
+      var digits = function (v) { return String(v || '').replace(/\D/g, '').length; };
+      var ui = sgScreen(wrap, {
+        onBack: n.back,
+        title: 'Your phone number',
+        sub: 'People on a tour with you can see it.',
+        fields: [{ label: 'Phone', type: 'tel', value: a.phone,
+          attrs: { maxlength: '30', inputmode: 'tel', autocomplete: 'tel' } }],
+        onInput: function (u, inp) {
+          a.phone = String(inp.value || '').trim().slice(0, 30);
+          u.ok(0, digits(a.phone) >= 7);
+          u.say('');
+        },
+        onNext: function () {
+          a.phone = String(ui.inputs[0].value || '').trim().slice(0, 30);
+          if (digits(a.phone) >= 7) { a.phoneSkipped = false; n.next(); return; }
+          ui.say(a.phone ? 'That number looks too short. Type it with the area code.' : 'Type your phone number.');
+          ui.act('Skip for now', function () { a.phone = ''; a.phoneSkipped = true; n.next(); });
+          ui.inputs[0].focus();
+        }
+      });
+      ui.ok(0, digits(a.phone) >= 7);
+    }
     function askHandle(i) {
       var n = nav(i);
       // Signed in now, so the ordinary question does.
@@ -4336,7 +4430,9 @@
       var meta = Object.assign({}, m0, {
         invited: false, first_name: a.first.slice(0, 30), last_name: a.last.slice(0, 30),
         full_name: full.slice(0, 60), username: full.slice(0, 40),
-        phone: String(m0.phone || '').slice(0, 30), tour_role: a.role });
+        phone: String(a.phone || m0.phone || '').slice(0, 30), tour_role: a.role });
+      // (Left out on purpose: remembered on the account, so the first run does not ask for it a second time.)
+      if (a.phoneSkipped && !meta.phone) meta.phone_asked = true;
       // Said on the button the moment it is tapped: the saves below can take several seconds.
       var btn = ui.form.querySelector('.sg-next'), word = btn ? btn.textContent : '';
       if (btn) btn.textContent = 'Saving\u2026';
@@ -4636,7 +4732,7 @@
       // missed in between never comes down it, so ask again.
       .subscribe(function (status) {
         if (status !== 'SUBSCRIBED') return;
-        if (liveOnce && session) { refetchTries = 0; scheduleRefetch(); feedChanged(); }
+        if (liveOnce && session) { refetchTries = 0; scheduleRefetch(); feedChanged(); socialMissed(); }
         liveOnce = true;
       });
     /* Asks to be paid back, heard as they happen (a new one, one marked paid);
@@ -4651,6 +4747,27 @@
         .on('postgres_changes', { event: '*', schema: 'public', table: 'reimbursements' }, scheduleRefetch)
         .subscribe();
     } catch (e) { /* the list is still read with everything else */ }
+    /* This account's own poke (0144), heard as it is written: "something of
+       yours changed, look again" (see poked). On a line of its own for the
+       reason the asks to be paid back are: with a build that is ahead of its
+       migration there is no such table to listen to, this line stays quiet,
+       and the others keep theirs. Only a row being written is listened for
+       (never one taken away, which is an account being deleted), only this
+       account's, and the database hands each phone no row but its own. */
+    try {
+      var pokeId = session && session.user ? String(session.user.id || '') : '';
+      if (/^[0-9a-f-]{36}$/i.test(pokeId)) {
+        var onPoke = function (ev) {
+          var row = ev && ev.new;
+          if (row && row.user_id && String(row.user_id) !== pokeId) return;
+          poked(row && row.what);
+        };
+        sb.channel('greenroom-pokes')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'pokes', filter: 'user_id=eq.' + pokeId }, onPoke)
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'pokes', filter: 'user_id=eq.' + pokeId }, onPoke)
+          .subscribe();
+      }
+    } catch (e) { /* what changed still shows at the next read of everything */ }
     resolvers.db(db);
     resolvers.user(user);
     resolvers.sample(sample);
