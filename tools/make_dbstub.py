@@ -312,6 +312,37 @@ shim = r"""<script>
   try { if (/[?&]crew\b/.test(String(location.search || ''))) window.__harness.asCrew = true; } catch (e) { /* no address to read */ }
   // A Manager who did not create the tour (tour role Tour Manager): __harness.asManager = true before the tour is opened, or ?manager.
   try { if (/[?&]manager\b/.test(String(location.search || ''))) window.__harness.asManager = true; } catch (e) { /* no address to read */ }
+  /* ---- THE PROFILE NUMBERS: a profile card that comes late, fails, or comes back empty ----
+     The four numbers on your own profile (tours, shows, countries, cities) come with your profile card. The
+     app keeps the last real ones on the phone (localStorage "gr-road:u-devin" here) and draws those until a
+     newer real answer arrives; the single "tours" stand-in is only for a phone that has never had an answer.
+     SWITCHES (they act on every profile card asked for from then on, yours and other people's):
+       __harness.cardLate = 4000    each answer takes that many milliseconds.     Or  ?cardlate=4000
+       __harness.cardFail = true    each ask fails, as with no signal.             Or  ?cardfail
+       __harness.cardEmpty = true   each answer comes back with nothing in it.     Or  ?cardempty
+       __harness.roadStats = {...}  the numbers the test Devin's card carries (tours, shows, countries,
+                                    cities, firstYear), as before.
+       __harness.cardAsks           how many times a card has been asked for.
+     (A card is asked for again a minute after the last answer, or at once with View profile.)
+     TO SEE THE NUMBERS HOLD: open the page once as it is (the card arrives, the numbers are kept), then open it
+     again with ?cardlate=4000 : the four numbers are there from the first frame and stay. With ?cardfail or
+     ?cardempty they are still there and nothing replaces them.
+     The followers and following line under the photo, and the check by the name, are kept with the numbers
+     and hold the same way. An empty answer for YOUR OWN card is taken as an ask that went wrong, not a profile
+     that is gone: with __harness.cardEmpty set after the page has opened, View profile still opens your page;
+     with ?cardempty from the start it says it could not load (never "This profile isn't available").
+     ALSO KEPT, DRAWN NOWHERE: in the same localStorage entry, "at" (when the numbers were last got) and "trail"
+     (the last 30 times this phone saw them change: when, when it had last got them before, what they were).
+     To see one: open the page, set __harness.roadStats to other numbers, wait a minute or tap View profile,
+     then JSON.parse(localStorage.getItem('gr-road:u-devin')).trail .
+     TO SEE A PHONE THAT NEVER HAD AN ANSWER: localStorage.removeItem('gr-road:u-devin') , then open with
+     ?cardlate=4000 : one number for four seconds (how many tours the harness account has), then the four. */
+  try {
+    var cardAsk = String(location.search || ''), cardLate = /[?&]cardlate=(\d{1,5})\b/.exec(cardAsk);
+    if (cardLate) window.__harness.cardLate = Number(cardLate[1]);
+    if (/[?&]cardfail\b/.test(cardAsk)) window.__harness.cardFail = true;
+    if (/[?&]cardempty\b/.test(cardAsk)) window.__harness.cardEmpty = true;
+  } catch (e) { /* no address to read */ }
   /* ---- THE OFF TOUR FRAME: the Off Tour book, and an account with no tour on the road ----
      As the page opens, the harness tour ("Harness run") is on the road today and its artist has an Off Tour
      book (off1 above: five charges and two income entries, Royalties and an "Other" called Sync licence).
@@ -347,6 +378,20 @@ shim = r"""<script>
                                    artist's owner; nothing is started by landing there). The OFF TOUR tab of a
                                    tour's own Budget still starts an empty one on the tap, as it always did.
                                    offBook(true)  puts the seeded book back.
+       __harness.offYear(true)     THE BOOK'S GRAPH, MONTH BY MONTH. The seeded book only has the last six weeks on
+                                   it, so its graph is two bars. This fills it with a year shaped like the live one:
+                                   charges from January to this month (most of them April to June, one a refund,
+                                   and a month with nothing spent), money in on four months, one charge dated next
+                                   month (months to come stay dashed outlines; the quiet line under the graph says
+                                   what is dated ahead), and a total typed straight into Studio, which has no date
+                                   (the quiet line names it too). Two more tours of the artist join the list,
+                                   "March run" (about seven months ago) and "Summer festivals" (about two months
+                                   ago), so the graph has three shaded bands with the harness tour's own.
+                                   Budget, OFF TOUR, Expenses shows it: tap or drag across the months, or focus the
+                                   graph and use the arrow keys.  offYear(false)  puts the seeded book back and
+                                   takes the two tours away. Or add  &offyear  to the address. For the empty
+                                   book's graph (twelve dashed outlines): elsewhere(), or offBook(false) and the
+                                   OFF TOUR tab of the tour's Budget.
      (elsewhere(), further down, still swaps the book for the empty one it always made, with a row waiting on it.) */
   var inDays = function (n) { return ymd(new Date(today.getTime() + n * 864e5)); };
   var runDays = { s0: -4, s00: -2, s1: 0, s1b: 1, s2: 3 };
@@ -381,6 +426,40 @@ shim = r"""<script>
     if (on === false) delete tours.off1; else tours.off1 = JSON.parse(seededBook);
     emit();
   };
+  // A year on the Off Tour book, for its month by month graph (see offYear in THE OFF TOUR FRAME above).
+  window.__harness.offYear = function (on) {
+    delete tours.tmarch; delete tours.tfest;
+    tours.off1 = JSON.parse(seededBook);
+    if (on !== false) {
+      var Y = today.getFullYear(), M = today.getMonth() + 1;
+      var on2 = function (m, d) { return Y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0'); };
+      // [month, day, merchant, amount, category]. Only the months up to this one go on the book; August has nothing.
+      [[1, 6, 'PUBLIC STORAGE 28511', 189, 'utilities'], [2, 14, 'Rehearsal Room B', 640, 'studio'], [3, 2, 'PUBLIC STORAGE 28511', 189, 'utilities'],
+        [4, 3, 'Van service', 2840.75, 'transport'], [4, 19, 'Rehearsal Room B', 1900, 'studio'], [5, 3, 'String and Stick Supply', 3280.1, 'supplies'],
+        [5, 20, 'String and Stick Supply', -40.1, 'supplies'], [6, 11, 'Rehearsal Room B', 2420, 'studio'], [7, 11, 'PUBLIC STORAGE 28511', 189, 'utilities']
+      ].forEach(function (r, i) {
+        if (r[0] > M || on2(r[0], r[1]) > ymd(today)) return;
+        tours.off1.charges['y' + i] = { id: 'y' + i, date: on2(r[0], r[1]), merchant: r[2], amount: r[3], category: r[4], manual: true, paid: true };
+      });
+      // One charge dated next month: it is in the book's totals and on no bar yet.
+      if (M < 12) tours.off1.charges.ynext = { id: 'ynext', date: on2(M + 1, 5), merchant: 'Studio deposit', amount: 300, category: 'studio', manual: true, paid: false };
+      // [month, day, amount, kind]
+      [[1, 20, 310.4, 'royalties'], [4, 15, 2600, 'advance'], [5, 5, 900, 'merch'], [7, 21, 1310.4, 'royalties']].forEach(function (r, i) {
+        if (r[0] > M || on2(r[0], r[1]) > ymd(today)) return;
+        tours.off1.otherIncome['yi' + i] = { id: 'yi' + i, date: on2(r[0], r[1]), amount: r[2], kind: r[3] };
+      });
+      // A total typed straight into a category: money with no date.
+      tours.off1.expenses = { studio: { projected: null, paid: 450 } };
+      var run = function (name, from, to) {
+        return { name: name, artist: tours.t1.artist, setupDone: true, setupStep: 5, createdAt: 0, expenses: {}, commission: {},
+          crew: {}, debts: {}, extras: {}, charges: {}, imports: {},
+          shows: { a: { id: 'a', date: inDays(from), city: 'Tulsa, OK', venue: 'Cain’s' }, b: { id: 'b', date: inDays(to), city: 'Wichita, KS', venue: 'The Cotillion' } } };
+      };
+      tours.tmarch = run('March run', -215, -191);
+      tours.tfest = run('Summer festivals', -75, -50);
+    }
+    emit();
+  };
   // Two tours with no dates yet (see THE OFF TOUR FRAME above).
   window.__harness.undated = function (on) {
     delete tours.tidea; delete tours.thalf;
@@ -396,6 +475,7 @@ shim = r"""<script>
     var offAsk = /[?&]offtour=(next|none|travel)\b/.exec(String(location.search || ''));
     if (offAsk) window.__harness.offTour(offAsk[1]);
     if (/[?&]undated\b/.test(String(location.search || ''))) window.__harness.undated(true);
+    if (/[?&]offyear\b/.test(String(location.search || ''))) window.__harness.offYear(true);
   } catch (e) { /* no address to read */ }
   // Asks to be paid back (see reimbursementsFor below).
   function reimbList() {
@@ -491,7 +571,9 @@ shim = r"""<script>
      An account set to Neither or Income (Linked Cards, or __harness.feed.accounts[2].mode = 'off') gets the
      "does not log expenses: 37 lines were not read" line.
      Kept for a test to read: accountCalls (how many times the account was asked for), putBacks (the ids asked
-     back), filedPicks and calls (every card call with its body: by and each pick's reason are there). */
+     back), filedPicks and calls (every card call with its body: by and each pick's reason are there).
+     The sorting sheet's saves can be made slow or made to fail: fileSlow and fileFail (or ?fileslow=1500,
+     ?filefail=offline), described where the fake files a charge (THE SORTING SHEET'S SAVES, further down). */
   var daysAgo = function (n) { return ymd(new Date(today.getTime() - n * 864e5)); };
   var stampAgo = function (n) { return new Date(Date.now() - n * 864e5).toISOString(); };
   // The rows that are not in the pile: left out by the server, set aside by a tap, or (look) marked filed.
@@ -1578,7 +1660,18 @@ shim = r"""<script>
       if (['brent', 'tasha.lane'].indexOf(String(h).toLowerCase()) >= 0) { var e = new Error('taken'); e.code = 'taken'; return Promise.reject(e); }
       window.__harness.handle = h || ''; return Promise.resolve();
     },
+    // What the app asks for. The switches under THE PROFILE NUMBERS (near the top) make the answer fail, come
+    // back empty, or come late; with none set it is profileCardNow's answer, at once, as it always was.
     profileCard: function (uid) {
+      var H = window.__harness, late = Number(H.cardLate) || 0;
+      H.cardAsks = (H.cardAsks || 0) + 1;
+      var answer = function () {
+        return H.cardFail ? Promise.reject(Object.assign(new Error('offline'), { code: 'offline' }))
+          : H.cardEmpty ? Promise.resolve(null) : window.GR_BACKEND.profileCardNow(uid);
+      };
+      return late > 0 ? new Promise(function (res, rej) { setTimeout(function () { answer().then(res, rej); }, late); }) : answer();
+    },
+    profileCardNow: function (uid) {
       var H = window.__harness; H.follows = H.follows || [{ a: 'u-brent', b: 'u-devin' }];
       var n = function (f) { return H.follows.filter(f).length; };
       var base = { followers: n(function (x) { return x.b === uid; }), following: n(function (x) { return x.a === uid; }),
@@ -2423,7 +2516,45 @@ shim = r"""<script>
         if (!window.__harness.oldFeed) pile.feedStatus = lastStatusNow();
         return Promise.resolve(pile);
       }
+      /* THE SORTING SHEET'S SAVES (Add, ADD n, set aside). Switches, all on window.__harness:
+           fileSlow = 1500       every save takes that many milliseconds to answer, as on a weak signal, so Add
+                                 can be tapped on other rows while one is out.       Or open with  ?fileslow=1500
+           fileFail = 'offline'  saves are not done, and answer as the real thing does when it fails: 'offline'
+                                 (no answer got through), 'save_failed', 'not_allowed', or any other word (an
+                                 error by that name). fileFail = 2 : only the next two fail ('save_failed'),
+                                 then saves go through again.                        Or  ?filefail=offline
+           fileAsks              how many saves were asked for (Adds tapped while one is out go together as one).
+         Like the server, a save is refused whole (bad_category, nothing filed) when a charge is to be kept
+         under a category the pile's own book does not have. */
       if (action === 'file') {
+        var Hf = window.__harness;
+        // (The address can set them too, unless they were set by hand: read once, at the first save.)
+        if (!Hf.fileAsks) {
+          var fileQ = ''; try { fileQ = String(location.search || ''); } catch (e) { fileQ = ''; }
+          var fileSlowQ = /[?&]fileslow=(\d{1,5})\b/.exec(fileQ), fileFailQ = /[?&]filefail=([a-z_]{1,24})\b/.exec(fileQ);
+          if (fileSlowQ && Hf.fileSlow == null) Hf.fileSlow = Number(fileSlowQ[1]);
+          if (fileFailQ && Hf.fileFail == null) Hf.fileFail = fileFailQ[1];
+        }
+        var fileWait = Number(Hf.fileSlow) || 0;
+        Hf.fileAsks = (Hf.fileAsks || 0) + 1;
+        var fileAnswer = function () {
+          var fail = Hf.fileFail;
+          if (fail) {
+            if (typeof fail === 'number') { Hf.fileFail = fail > 1 ? fail - 1 : 0; fail = 'save_failed'; }
+            if (fail === true) fail = 'save_failed';
+            return Promise.resolve(fail === 'save_failed' ? { ok: false, status: 'save_failed' } : { error: String(fail) });
+          }
+          var okCat = {};
+          window.GR.chargeCategoriesFor(tours[body.tourId] || {}).forEach(function (c) { okCat[c.key] = true; });
+          delete okCat.offdebt;
+          if ((body.picks || []).some(function (pk) { return pk.keep && !okCat[String(pk.category == null ? '' : pk.category)]; })) {
+            return Promise.resolve({ error: 'bad_category' });
+          }
+          return fileNow();
+        };
+        return fileWait > 0 ? new Promise(function (res) { setTimeout(function () { fileAnswer().then(res); }, fileWait); }) : fileAnswer();
+      }
+      function fileNow() {
         // Like the server: each charge where it's pointed (H.offTourId / H.nextTourId
         // stand in for the band's Off Tour book and next tour).
         var H = window.__harness;

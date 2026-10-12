@@ -252,13 +252,62 @@
 
   /* Tours can grow their own expense categories (tour.extraCats: {key: label},
      keys prefixed "x-" so they can never collide with the built-ins). They
-     count exactly like typed categories everywhere. */
+     count exactly like typed categories everywhere.
+
+     A book only has a line for a category it has a name for. Money can still
+     reach a book under an added category that book was never given (a card
+     charge sent from a tour's pile to the artist's Off Tour book took the
+     tour's own category with it), and it would then sit on no line and count
+     toward nothing. So a key the book's own entries are filed under, with no
+     name on the book, is a category of that book all the same: its money is
+     counted, on a line of its own, labelled from the key ("x-security-guard"
+     reads "Security guard") until the app writes the real name onto the book. */
+  // The names a book has for its added categories: { key: label }.
+  function extraCatNames(tour) {
+    var src = tour && isObj(tour.extraCats) ? tour.extraCats : {}, out = {};
+    Object.keys(src).forEach(function (k) {
+      var label = k.indexOf('x-') === 0 ? String(src[k] || '').trim().slice(0, 30) : '';
+      if (label) out[k] = label;
+    });
+    return out;
+  }
+  // The added categories a book's own entries use that it has no name for:
+  // its charges, its merch cash log, and a line with a number typed on it.
+  function unnamedExtraCats(tour) {
+    if (!isObj(tour)) return [];
+    var names = extraCatNames(tour), seen = {}, out = [];
+    var note = function (k) {
+      if (typeof k !== 'string' || k.indexOf('x-') !== 0 || seen[k]) return;
+      seen[k] = true;
+      if (!names[k]) out.push(k);
+    };
+    [tour.charges, tour.cashLog].forEach(function (map) {
+      if (!isObj(map)) return;
+      Object.keys(map).forEach(function (id) { if (isObj(map[id])) note(map[id].category); });
+    });
+    var exp = isObj(tour.expenses) ? tour.expenses : {};
+    Object.keys(exp).forEach(function (k) {
+      if (isObj(exp[k]) && (num(exp[k].projected) > 0 || num(exp[k].paid) > 0)) note(k);
+    });
+    return out;
+  }
+  // A label read back out of a key, for a category nothing has named: never the raw key. One that would
+  // read exactly like a built-in line ("x-gas", from a category once named "Gas!", beside Gas) is marked, so
+  // the two lines can be told apart.
+  function extraCatLabel(key) {
+    var s = String(key == null ? '' : key).replace(/^x-/, '').replace(/[^a-z0-9]+/gi, ' ').trim().slice(0, 30);
+    if (!s) return 'Added category';
+    var plain = function (v) { return String(v).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
+    var builtIn = CHARGE_CATEGORIES.map(function (c) { return c.label; }).concat(['Members', 'Members & Crew', 'Reimbursements'])
+      .some(function (l) { return plain(l) === s.toLowerCase(); });
+    return s.charAt(0).toUpperCase() + s.slice(1) + (builtIn ? ' (added)' : '');
+  }
   function extraCategories(tour) {
-    var src = tour && isObj(tour.extraCats) ? tour.extraCats : {};
-    return Object.keys(src)
-      .filter(function (k) { return k.indexOf('x-') === 0 && String(src[k] || '').trim(); })
-      .sort(function (a, b) { return String(src[a]).localeCompare(String(src[b])); })
-      .map(function (k) { return { key: k, label: String(src[k]).trim().slice(0, 30) }; });
+    var names = extraCatNames(tour);
+    unnamedExtraCats(tour).forEach(function (k) { names[k] = extraCatLabel(k); });
+    return Object.keys(names)
+      .sort(function (a, b) { return names[a].localeCompare(names[b]); })
+      .map(function (k) { return { key: k, label: names[k] }; });
   }
   // On a tour with members on its list, the one category everyone's pay is
   // filed under is named for both groups wherever a category is picked or
@@ -1756,6 +1805,64 @@
     return series;
   }
 
+  /* ---------------- Month by month (the Off Tour book's graph) ---------------- */
+
+  /* An artist's Off Tour book has no shows and no end: it runs all year and
+     the tours interrupt it, so its graph is one calendar year, a bar a month
+     (Devin, 2026-10-12: "For the Off Tour graph, use option 1: month by
+     month"). A month holds what the day-by-day line above gains between the
+     last day of the month before and its own last day: the very same sums
+     (calc with upTo, then spentOf and income), read at thirteen days. So
+     every rule about what is spent, what is money in and which date an entry
+     sits on is the line's own and none is decided a second time here: a
+     refund lowers its month, a charge marked "already accounted for" is in
+     no month, a charge that was already inside a card's balance going in
+     moves out of Credit card into its category the month it posted and adds
+     nothing.
+
+     What cannot sit in a month of the year is kept apart, so the sums always
+     meet: the twelve months, plus `undated`, `before` and `after`, are the
+     book's own totals to the cent (spentOf(calc(book)) and calc(book).income).
+       undated: money with no date. A total typed straight into a category, a
+                card balance or a loan carried in, a flat commission, an entry
+                whose date is missing or is not a day.
+       before, after: entries dated in an earlier or a later year.
+     today (a day; default tourToday()) only says which months are still to
+     come (`future`). A month to come still carries whatever is dated in it,
+     so the twelve add up whatever day it is. Money is in dollars, exact to
+     the cent. */
+  function yearByMonth(tour, year, today, opts) {
+    var day = parseDay(today) ? today : tourToday();
+    var y = /^\d{4}$/.test(String(year)) && +year >= 1 ? String(year) : day.slice(0, 4);
+    var asks = reimbursementRows(tour, opts);
+    // The book as the line has it at the end of that day, in whole cents (no day: as it stands now).
+    var at = function (upTo) {
+      var c = calc(tour, upTo ? { upTo: upTo, reimbursements: asks } : { reimbursements: asks });
+      return { spent: Math.round(spentOf(c) * 100), income: Math.round(num(c.income) * 100) };
+    };
+    var less = function (a, b) { return { spent: (a.spent - b.spent) / 100, income: (a.income - b.income) / 100 }; };
+    var all = at(null);
+    // No day is on or before the first of these two; every day is on or before the second.
+    var never = at('0000-00-00'), ever = at('9999-12-31');
+    var eve = at(('000' + (+y - 1)).slice(-4) + '-12-31');
+    var months = [], prev = eve;
+    for (var m = 1; m <= 12; m++) {
+      var key = y + '-' + pad(m);
+      // (Days are compared as text, and no month has a day after its 31st: this is the month's last day, whichever month.)
+      var end = at(key + '-31'), d = less(end, prev);
+      months.push({ month: m, key: key, spent: d.spent, income: d.income, future: key > day.slice(0, 7) });
+      prev = end;
+    }
+    var whole = less(prev, eve);
+    return {
+      year: y, months: months, spent: whole.spent, income: whole.income,
+      undated: { spent: (never.spent + all.spent - ever.spent) / 100, income: (never.income + all.income - ever.income) / 100 },
+      before: less(eve, never), after: less(ever, prev)
+    };
+  }
+  // The twelve months alone: [{ month: 1..12, key: 'YYYY-MM', spent, income, future }].
+  function monthSeries(tour, year, today, opts) { return yearByMonth(tour, year, today, opts).months; }
+
   /* ---------------- The change chip ---------------- */
 
   // What the most recent thing that happened did to the number, net of commission.
@@ -2225,6 +2332,8 @@
 
     var catLabel = {};
     CHARGE_CATEGORIES.forEach(function (x) { catLabel[x.key] = x.label; });
+    // (A category the tour added goes by its name, never by its key.)
+    extraCategories(tour).forEach(function (x) { catLabel[x.key] = x.label; });
     var chargeRows = [['Date', 'Merchant', 'Amount', 'Category']];
     rows(tour && tour.charges).sort(byDate).forEach(function (ch) {
       chargeRows.push([ch.date || '', ch.merchant || '', num(ch.amount),
@@ -2319,6 +2428,7 @@
     CHARGE_CATEGORIES: CHARGE_CATEGORIES,
     extraCategories: extraCategories, typedCategoriesFor: typedCategoriesFor,
     chargeCategoriesFor: chargeCategoriesFor, slugCategory: slugCategory,
+    extraCatNames: extraCatNames, unnamedExtraCats: unnamedExtraCats, extraCatLabel: extraCatLabel,
     CREW_TITLES: CREW_TITLES,
     DEBT_CHIPS: DEBT_CHIPS,
     DAILY_CHIPS: DAILY_CHIPS,
@@ -2349,6 +2459,7 @@
     // Set by the app: a function (tour) -> the asks to be paid back on it (see reimbursementRows).
     reimbursementsOf: null,
     balanceSeries: balanceSeries, latestChange: latestChange,
+    yearByMonth: yearByMonth, monthSeries: monthSeries,
     normalizeSettlement: normalizeSettlement, pickBandNumber: pickBandNumber,
     DS_AMENITIES: DS_AMENITIES, daySheetSections: daySheetSections, daySheetLines: daySheetLines, daySheetText: daySheetText,
     splitTime: splitTime, joinTime: joinTime, cleanTime: cleanTime,

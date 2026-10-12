@@ -527,6 +527,124 @@
       'Security', 'label rides along');
   });
 
+  /* An added category the book has no name for (a charge sent to the Off
+     Tour book from a tour's pile took the tour's category with it): the
+     money is counted all the same, on a line of its own. */
+  (function () {
+    var book = function (more) {
+      return Object.assign({ kind: 'offtour', expenses: {}, crew: {}, debts: {}, commission: {}, extras: {}, shows: {}, imports: {},
+        charges: keyed([
+          { date: '2026-03-01', merchant: 'Pilot', amount: 400, category: 'gas' },
+          { date: '2026-03-02', merchant: 'Guard Co', amount: 250, category: 'x-security-guard' }]) }, more || {});
+    };
+    var lineOf = function (t, key, o) { return G.calc(t, o).lines.filter(function (l) { return l.key === key; })[0] || null; };
+    var keysOf = function (list) { return list.map(function (c) { return c.key; }).join(','); };
+
+    test('money under an added category the book has no name for is counted, on its own line', function () {
+      var t = book();
+      near(G.calc(t).out, 650, 'both charges count');
+      var l = lineOf(t, 'x-security-guard');
+      eq(!!l, true, 'it has a line');
+      near(l.paid, 250, 'its money is on that line');
+      eq(l.label, 'Security guard', 'the label is read out of the key');
+      eq(l.label.indexOf('x-') < 0, true, 'never the raw key');
+      near(G.spentOf(G.calc(t)), 650, 'and it is in what has been spent');
+    });
+
+    test('an unnamed added category: the pickers, the lines and calc agree', function () {
+      var t = book();
+      eq(G.typedCategoriesFor(t).some(function (c) { return c.key === 'x-security-guard'; }), true, 'a typed category of the book');
+      eq(G.chargeCategoriesFor(t).some(function (c) { return c.key === 'x-security-guard'; }), true, 'offered for a charge');
+      eq(G.extraCategories(t).length, 1, 'one added category');
+      eq(G.unnamedExtraCats(t).join(','), 'x-security-guard', 'and it is the one with no name');
+      // Every typed category is a line (Crew is its own two), and every x- line is a typed category.
+      var lines = G.calc(t).lines.filter(function (l) { return l.key.indexOf('x-') === 0; });
+      eq(keysOf(lines), keysOf(G.extraCategories(t)), 'the same added categories on both');
+    });
+
+    test('an unnamed added category: once the book has the name, the name is used and nothing else moves', function () {
+      var bare = book(), named = book({ extraCats: { 'x-security-guard': 'Security Guard' } });
+      near(G.calc(named).out, G.calc(bare).out, 'the same total, named or not');
+      eq(lineOf(named, 'x-security-guard').label, 'Security Guard', 'the book’s own name');
+      eq(G.unnamedExtraCats(named).length, 0, 'nothing left to name');
+      eq(G.extraCatNames(named)['x-security-guard'], 'Security Guard');
+      eq(G.extraCatNames(bare)['x-security-guard'], undefined, 'no name is made up for the list of names');
+    });
+
+    test('an unnamed added category: the merch cash log and a typed number count too', function () {
+      var t = book({ charges: {},
+        cashLog: keyed([{ date: '2026-03-03', amount: 60, category: 'x-tolls' }, { date: '2026-03-03', amount: 500, category: 'deposit' }]),
+        expenses: { 'x-storage': { projected: 300, paid: 120 }, 'x-empty': { projected: null, paid: 0 } } });
+      near(lineOf(t, 'x-tolls').paid, 60, 'cash spent under it');
+      near(lineOf(t, 'x-storage').paid, 120, 'a total typed under it');
+      near(lineOf(t, 'x-storage').projected, 300, 'and what was planned');
+      eq(lineOf(t, 'x-empty'), null, 'a line with nothing on it is not made up');
+      // 60 cash + the plan of 300 (the 120 paid fills it). A deposit only moves cash.
+      near(G.calc(t).out, 360, 'what the book comes to');
+    });
+
+    test('an unnamed added category: it follows the date like any line, and a charge marked accounted still has a name', function () {
+      var t = book();
+      near(lineOf(t, 'x-security-guard', { upTo: '2026-03-01' }).paid, 0, 'not before its day');
+      near(lineOf(t, 'x-security-guard', { upTo: '2026-03-02' }).paid, 250, 'from its day on');
+      var acc = book({ charges: keyed([{ date: '2026-03-02', merchant: 'Guard Co', amount: 250, category: 'x-security-guard', accounted: true }]) });
+      near(G.calc(acc).out, 0, 'an accounted charge is still not counted');
+      eq(G.chargeCategoriesFor(acc).filter(function (c) { return c.key === 'x-security-guard'; })[0].label, 'Security guard', 'but it can be named');
+    });
+
+    test('an unnamed added category: only x- keys, and only the book’s own entries', function () {
+      var t = book({ charges: keyed([
+        { date: '2026-03-02', merchant: 'Odd', amount: 99, category: 'mystery' },
+        // Off-tour spending carried as debt names the Off Tour book's category: not a line here.
+        { date: '2026-03-02', merchant: 'Guard Co', amount: 250, category: 'offdebt', offTour: true, offCategory: 'x-security-guard' }]) });
+      eq(G.unnamedExtraCats(t).length, 0, 'neither is an added category of this book');
+      eq(lineOf(t, 'mystery'), null, 'an unknown key that is not an added category still counts toward nothing');
+      near(G.calc(t).out, 250, 'the debt line counts once');
+      eq(G.unnamedExtraCats(null).length, 0); eq(G.unnamedExtraCats({}).length, 0);
+      eq(G.extraCategories({ extraCats: { 'x-a': '  ' }, charges: keyed([{ amount: 5, category: 'x-a' }]) })[0].label, 'A', 'a blank name is no name');
+    });
+
+    test('a label read out of a key is never the key', function () {
+      eq(G.extraCatLabel('x-security-guard'), 'Security guard');
+      eq(G.extraCatLabel('x-per-diems-2026'), 'Per diems 2026');
+      eq(G.extraCatLabel('x-'), 'Added category');
+      eq(G.extraCatLabel(''), 'Added category');
+      eq(G.extraCatLabel(G.slugCategory('Séance & Co.')).indexOf('x-') < 0, true);
+    });
+
+    test('a label read out of a key never reads exactly like a built-in line', function () {
+      // ("Gas!" was once typed as a new category: its key is x-gas, and unnamed it would read "Gas" beside Gas.)
+      eq(G.slugCategory('Gas!'), 'x-gas');
+      eq(G.extraCatLabel('x-gas'), 'Gas (added)');
+      eq(G.extraCatLabel('x-crew'), 'Crew (added)');
+      eq(G.extraCatLabel('x-credit-card'), 'Credit card (added)');
+      eq(G.extraCatLabel('x-uber-lyft'), 'Uber lyft (added)');
+      eq(G.extraCatLabel('x-day-by-day'), 'Day by day (added)');
+      eq(G.extraCatLabel('x-members-crew'), 'Members crew (added)');
+      eq(G.extraCatLabel('x-gas-money'), 'Gas money', 'only an exact match is marked');
+      var t = { charges: keyed([{ amount: 40, category: 'x-gas' }, { amount: 60, category: 'gas' }]) };
+      var labels = G.calc(t).lines.filter(function (l) { return l.paid > 0; }).map(function (l) { return l.label + ' ' + l.paid; }).sort();
+      eq(labels.join(' | '), 'Gas (added) 40 | Gas 60', 'the two lines can be told apart, and each keeps its own money');
+      // (Named on the book, the book's own name stands, whatever it is.)
+      eq(G.extraCategories({ extraCats: { 'x-gas': 'Gas!' } })[0].label, 'Gas!');
+    });
+
+    test('the closeout file names an added category, named on the book or not', function () {
+      var rowsOf = function (t) { return G.closeoutCSVs(t)['card-charges.csv'].split('\n').map(function (l) { return l.split(','); }); };
+      var cat = function (t) { return rowsOf(t).filter(function (r) { return r[1] === 'Guard Co'; })[0][3]; };
+      eq(cat(book()), 'Security guard', 'read out of the key');
+      eq(cat(book({ extraCats: { 'x-security-guard': 'Security' } })), 'Security', 'the book’s own name');
+      eq(G.closeoutCSVs(book())['expenses-budget-vs-actual.csv'].indexOf('x-security-guard') < 0, true, 'no raw key on the budget file');
+    });
+
+    test('a year of an Off Tour book keeps an unnamed added category on its line', function () {
+      var t = book({ offFrom: '2026-01-01' });
+      var y = G.calc(G.yearSlice(t, '2026'));
+      near(y.lines.filter(function (l) { return l.key === 'x-security-guard'; })[0].paid, 250, 'counted in its year');
+      eq(G.calc(G.yearSlice(t, '2025')).lines.some(function (l) { return l.key === 'x-security-guard'; }), false, 'and not in a year it has nothing in');
+    });
+  })();
+
   test('Credit card and Loan are plain categories that count', function () {
     var t = { expenses: { card: { projected: null, paid: 900 }, loan: { projected: null, paid: 400 } },
       crew: {}, debts: {}, commission: {}, extras: {}, shows: {}, charges: {}, imports: {} };
@@ -786,6 +904,155 @@
     // Ends that make no line are ignored, and an empty book still has no line at all.
     eq(G.balanceSeries(book, { from: '2026-10-11', to: '2026-07-13' }).length, 2, 'ends the wrong way round: read as a late start alone');
     eq(G.balanceSeries({ kind: 'offtour', shows: {}, expenses: {}, charges: {} }, { from: '2026-07-13', to: '2026-10-11' }).length, 0, 'nothing dated at all: no line');
+  });
+
+  /* ============ Month by month (the Off Tour book's graph) ============ */
+
+  // A year of an Off Tour book in which every entry has a date in 2026.
+  function yearBook() {
+    return {
+      kind: 'offtour', artist: 'I See Stars', shows: {}, expenses: {}, crew: {}, debts: {}, commission: {},
+      charges: {
+        jan1: { date: '2026-01-01', merchant: 'Storage', amount: 189.25, category: 'utilities' },
+        feb: { date: '2026-02-14', merchant: 'Studio', amount: 600, category: 'studio' },
+        may: { date: '2026-05-03', merchant: 'Strings', amount: 240.1, category: 'supplies' },
+        // A refund: it lowers its month.
+        mayBack: { date: '2026-05-20', merchant: 'Strings', amount: -40.1, category: 'supplies' },
+        // Filed for the record only: never counted.
+        mayDone: { date: '2026-05-21', merchant: 'Bus deposit', amount: 5000, category: 'bus', accounted: true },
+        dec31: { date: '2026-12-31', merchant: 'Storage', amount: 189.25, category: 'utilities' }
+      },
+      // Day by day costs and merch cash spent count where they are dated too.
+      extras: { x1: { date: '2026-08-09', label: 'Parking', amount: 22.5 } },
+      cashLog: { k1: { date: '2026-08-30', category: 'food', amount: 61 } },
+      // One of each kind of income the book takes.
+      otherIncome: {
+        i1: { date: '2026-01-01', amount: 310.4, kind: 'royalties' },
+        i2: { date: '2026-03-15', amount: 5000, kind: 'advance' },
+        i3: { date: '2026-05-05', amount: 412.35, kind: 'merch' },
+        i4: { date: '2026-05-28', amount: 750, kind: 'guarantee' },
+        i5: { date: '2026-12-31', amount: 99.99, kind: 'other', label: 'Sync licence' }
+      }
+    };
+  }
+  function sumOf(list, key) { return list.reduce(function (t, p) { return t + p[key]; }, 0); }
+
+  test('month by month: twelve months, each entry in the month of its own date, from January 1 to December 31', function () {
+    var m = G.monthSeries(yearBook(), '2026', '2026-10-12');
+    eq(m.length, 12, 'twelve months');
+    eq(m.map(function (p) { return p.month; }).join(','), '1,2,3,4,5,6,7,8,9,10,11,12', 'January to December');
+    eq(m[0].key, '2026-01', 'the first is January'); eq(m[11].key, '2026-12', 'the last is December');
+    near(m[0].spent, 189.25, 'a charge on January 1 is in January');
+    near(m[0].income, 310.4, 'and so is money in on January 1 (royalties)');
+    near(m[1].spent, 600, 'February');
+    near(m[2].spent, 0, 'nothing spent in March'); near(m[2].income, 5000, 'an advance in March');
+    near(m[4].spent, 200, 'May: $240.10 less the $40.10 refund, and the charge already accounted for is not counted');
+    near(m[4].income, 1162.35, 'May: merch and a guarantee logged onto the book');
+    near(m[7].spent, 83.5, 'August: a day by day cost and merch cash spent');
+    near(m[11].spent, 189.25, 'a charge on December 31 is in December');
+    near(m[11].income, 99.99, 'and so is money in on December 31 (other)');
+    // A month with nothing.
+    [3, 5, 6, 8, 9, 10].forEach(function (i) {
+      eq(m[i].spent, 0, m[i].key + ' has nothing spent'); eq(m[i].income, 0, m[i].key + ' has nothing in');
+    });
+  });
+
+  test('month by month: a year in which every entry is dated adds up to the book, to the cent', function () {
+    var book = yearBook(), c = G.calc(book), y = G.yearByMonth(book, '2026', '2026-10-12');
+    eq(Math.round(sumOf(y.months, 'spent') * 100), Math.round(c.out * 100), 'the twelve bars are the book’s "out"');
+    eq(Math.round(sumOf(y.months, 'income') * 100), Math.round(c.income * 100), 'the twelve dots are the book’s "in"');
+    eq(Math.round(y.spent * 100), Math.round(G.spentOf(c) * 100), 'the year’s spent is what the line counts as spent');
+    eq(Math.round(y.income * 100), Math.round(c.income * 100), 'the year’s money in');
+    eq(y.year, '2026');
+    ['undated', 'before', 'after'].forEach(function (k) {
+      eq(y[k].spent, 0, 'nothing spent is ' + k); eq(y[k].income, 0, 'nothing in is ' + k);
+    });
+    // Whatever day it is, the same twelve sums: today only says which months are still to come.
+    var jan = G.monthSeries(book, '2026', '2026-01-03'), dec = G.monthSeries(book, '2026', '2026-12-31');
+    jan.forEach(function (p, i) { eq(p.spent, dec[i].spent, 'spent in ' + p.key); eq(p.income, dec[i].income, 'in for ' + p.key); });
+  });
+
+  test('month by month: a month is what the day-by-day line gains in it', function () {
+    var book = yearBook();
+    // Something before the year, so the line is not at zero when the year begins.
+    book.charges.old = { date: '2025-12-30', merchant: 'Van', amount: 75, category: 'transport' };
+    var line = G.balanceSeries(book, { from: '2025-12-31', to: '2026-12-31' }), at = {};
+    line.forEach(function (p) { at[p.date] = p; });
+    var ends = ['2025-12-31', '2026-01-31', '2026-02-28', '2026-03-31', '2026-04-30', '2026-05-31', '2026-06-30',
+      '2026-07-31', '2026-08-31', '2026-09-30', '2026-10-31', '2026-11-30', '2026-12-31'];
+    G.monthSeries(book, '2026', '2026-10-12').forEach(function (p, i) {
+      near(p.spent, at[ends[i + 1]].spent - at[ends[i]].spent, 'spent in ' + p.key);
+      near(p.income, at[ends[i + 1]].income - at[ends[i]].income, 'money in for ' + p.key);
+    });
+  });
+
+  test('month by month: an entry from another year is in no month, and is told apart', function () {
+    var book = yearBook(), was = G.yearByMonth(book, '2026', '2026-10-12');
+    book.charges.old = { date: '2025-12-31', merchant: 'Van', amount: 75, category: 'transport' };
+    book.charges.next = { date: '2027-01-01', merchant: 'Studio', amount: 320, category: 'studio' };
+    book.otherIncome.oldIn = { date: '2025-06-01', amount: 1200, kind: 'royalties' };
+    book.otherIncome.nextIn = { date: '2027-02-01', amount: 45, kind: 'other', label: 'Tip jar' };
+    var y = G.yearByMonth(book, '2026', '2026-10-12'), c = G.calc(book);
+    y.months.forEach(function (p, i) { eq(p.spent, was.months[i].spent, 'spent in ' + p.key + ' is unchanged'); eq(p.income, was.months[i].income, 'in for ' + p.key + ' is unchanged'); });
+    near(y.before.spent, 75, 'spent before the year'); near(y.before.income, 1200, 'in before the year');
+    near(y.after.spent, 320, 'spent dated after the year'); near(y.after.income, 45, 'in dated after the year');
+    eq(y.undated.spent, 0); eq(y.undated.income, 0);
+    eq(Math.round((y.spent + y.before.spent + y.after.spent + y.undated.spent) * 100), Math.round(G.spentOf(c) * 100), 'the parts are the book’s spent');
+    eq(Math.round((y.income + y.before.income + y.after.income + y.undated.income) * 100), Math.round(c.income * 100), 'the parts are the book’s money in');
+    // The other years read the same book their own way.
+    var last = G.yearByMonth(book, '2025', '2026-10-12');
+    near(last.months[11].spent, 75, 'December 31 of the year before, asked for that year'); near(last.months[5].income, 1200);
+    near(last.after.spent, y.spent + 320, 'and this year is after it');
+    eq(last.months.some(function (p) { return p.future; }), false, 'a year gone by has no month still to come');
+    eq(G.monthSeries(book, '2027', '2026-10-12').every(function (p) { return p.future; }), true, 'a year ahead is all still to come');
+  });
+
+  test('month by month: money with no date is on no bar and is counted apart', function () {
+    var book = yearBook(), was = G.yearByMonth(book, '2026', '2026-10-12');
+    // A total typed straight into a category, a loan carried in, an entry with no date, and one whose date is not a day.
+    book.expenses = { studio: { projected: null, paid: 1200 } };
+    book.debts = { d1: { label: 'Gear loan', amount: 300, kind: 'loan' } };
+    book.charges.loose = { merchant: 'Cash', amount: 18.5, category: 'misc' };
+    book.charges.odd = { date: 'last June', merchant: 'Cab', amount: 11, category: 'transport' };
+    book.otherIncome.looseIn = { amount: 64, kind: 'other', label: 'Tip jar' };
+    var y = G.yearByMonth(book, '2026', '2026-10-12'), c = G.calc(book);
+    y.months.forEach(function (p, i) { eq(p.spent, was.months[i].spent, 'spent in ' + p.key + ' is unchanged'); eq(p.income, was.months[i].income, 'in for ' + p.key + ' is unchanged'); });
+    near(y.undated.spent, 1529.5, 'typed total, loan and the two entries without a day');
+    near(y.undated.income, 64, 'money in with no date');
+    eq(y.before.spent, 0, 'none of it is taken for an earlier year'); eq(y.after.spent, 0, 'or a later one');
+    eq(Math.round((y.spent + y.undated.spent) * 100), Math.round(G.spentOf(c) * 100), 'bars and undated are the book’s spent');
+    eq(Math.round((y.income + y.undated.income) * 100), Math.round(c.income * 100), 'dots and undated are the book’s money in');
+  });
+
+  test('month by month: a charge already inside a card’s balance moves category and adds nothing; asks to be paid back count in their month', function () {
+    var book = yearBook();
+    book.debts = { c1: { label: 'Gold ··1008', amount: 2000, kind: 'card', cutoff: '2026-06-30', breakdown: {}, feed: { name: 'Gold ··1008' } } };
+    book.charges.inside = { date: '2026-06-10', merchant: 'Hotel', amount: 450, category: 'hotels', account: 'Gold ··1008' };
+    book.charges.after = { date: '2026-07-04', merchant: 'Hotel', amount: 130, category: 'hotels', account: 'Gold ··1008' };
+    var asks = [{ amount: 60, date: '2026-09-02', status: 'open' }, { amount: 25, date: '2026-09-20', status: 'paid', how: 'cash' },
+      { amount: 999, date: '2026-09-21', status: 'withdrawn' }];
+    var y = G.yearByMonth(book, '2026', '2026-10-12', { reimbursements: asks }), c = G.calc(book, { reimbursements: asks });
+    near(y.months[5].spent, 0, 'June: the charge was already in the balance read on June 30');
+    near(y.months[6].spent, 130, 'July: a charge after the balance was read is new spending');
+    near(y.months[8].spent, 85, 'September: two asks, paid back or not; the withdrawn one is not counted');
+    near(y.undated.spent, 2000, 'the card balance carried in has no date');
+    eq(Math.round((y.spent + y.undated.spent) * 100), Math.round(G.spentOf(c) * 100), 'and it all still adds up to the book');
+  });
+
+  test('month by month: which months are still to come, an empty book, and a year that is not one', function () {
+    var m = G.monthSeries(yearBook(), '2026', '2026-10-12');
+    eq(m.map(function (p) { return p.future ? 'f' : '.'; }).join(''), '..........ff', 'October is the current month; November and December are to come');
+    near(m[11].spent, 189.25, 'a month to come still carries what is dated in it');
+    eq(G.monthSeries(yearBook(), '2026', '2026-01-01').filter(function (p) { return p.future; }).length, 11, 'on January 1 eleven months are to come');
+    eq(G.monthSeries(yearBook(), '2026', '2026-12-31').filter(function (p) { return p.future; }).length, 0, 'on December 31 none are');
+    var empty = G.yearByMonth({ kind: 'offtour', shows: {}, expenses: {}, charges: {} }, '2026', '2026-10-12');
+    eq(empty.months.length, 12, 'an empty book still has twelve months');
+    empty.months.forEach(function (p) { eq(p.spent, 0, p.key + ' spent'); eq(p.income, 0, p.key + ' in'); });
+    eq(empty.spent, 0); eq(empty.income, 0); eq(empty.undated.spent, 0); eq(empty.before.spent, 0); eq(empty.after.income, 0);
+    eq(G.monthSeries(null, '2026', '2026-10-12').length, 12, 'no book at all: twelve empty months, nothing thrown');
+    eq(G.yearByMonth(yearBook(), 'soon', '2026-10-12').year, '2026', 'a year that is not one: the year today is in');
+    eq(G.yearByMonth(yearBook(), 2026, '2026-10-12').year, '2026', 'a year given as a number');
+    eq(G.yearByMonth(yearBook(), '2026', 'not a day').months.length, 12, 'a day that is not one: today');
   });
 
   /* ============ The change chip ============ */

@@ -825,6 +825,43 @@ span.avatar { cursor: inherit; }
 .chart-wrap.scrubbing .chart-bus { transition: none; }
 @media (prefers-reduced-motion: reduce) { .chart-bus { transition: none; } }
 
+/* The Off Tour book's graph: this calendar year, a bar a month (drawMonths in app.js). Red is what was spent,
+   a green dot is money in, both on one scale from zero; a tour of the same artist is a lighter band behind
+   them; a month still to come is a dashed outline. A tap, or a finger drawn across, names a month under the
+   big number; up and down still scrolls the page (pan-y). Nothing here moves, so there is no transition or
+   animation for prefers-reduced-motion to switch off. */
+.month-wrap { position: relative; margin: 18px 0 2px; touch-action: pan-y; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.month-wrap:focus { outline: none; }
+.month-wrap:focus-visible { outline: 3px solid var(--brand); outline-offset: 4px; border-radius: 10px; }
+.mchart { display: block; width: 100%; height: auto; overflow: visible; }
+.mchart .mc-band { fill: var(--ink); opacity: .09; }
+.mchart .mc-tour { fill: var(--ink-2); font-size: 10.5px; font-weight: 600; letter-spacing: .01em; }
+.mchart .mc-zero { stroke: var(--ink-3); stroke-width: 1; opacity: .55; }
+.mchart .mc-bar { fill: var(--neg); }
+.mchart .mc-nil { fill: var(--ink-3); opacity: .8; }
+.mchart .mc-ghost { fill: none; stroke: var(--ink-3); stroke-width: 1.25; stroke-dasharray: 3 3; }
+/* (A ring in the card's own dark keeps a dot whole where it sits on a bar.) */
+.mchart .mc-dot { fill: var(--pos); stroke: var(--surface); stroke-width: 2; }
+.mchart .mc-m { fill: var(--ink-3); font-size: 11px; font-weight: 600; }
+.mchart .mc-m.now { fill: var(--ink-2); font-weight: 800; }
+.mchart .mc-m.on { fill: var(--ink); font-weight: 800; }
+.mchart .mc-pick { fill: var(--ink); fill-opacity: .05; stroke: var(--ink-2); stroke-opacity: .75; stroke-width: 1.25; opacity: 0; }
+.month-wrap.picked .mc-pick { opacity: 1; }
+.mc-ends { align-items: center; }
+.mc-key i { display: inline-block; flex: none; }
+.mc-key .k-s { width: 7px; height: 10px; border-radius: 3.5px 3.5px 0 0; background: var(--neg); }
+.mc-key .k-i { width: 8px; height: 8px; border-radius: 50%; background: var(--pos); margin-left: 8px; }
+.mc-key .k-t { width: 12px; height: 10px; border-radius: 2px; background: var(--ink); opacity: .2; margin-left: 8px; }
+/* What the book's totals count that is on no bar (money with no date, another year's): one quiet line, only when there is some. */
+.mc-off { margin: 8px 0 0; font-size: 12px; font-weight: 500; line-height: 1.4; color: var(--ink-3); }
+/* The month that is picked is named in the row under the big number: a little smaller there, so a long month
+   fits beside "net so far". With a plan typed into the book the words on the left are long, so the month has
+   the line under them to itself (always kept, so nothing shifts when it fills). */
+.hero.book .hero-note { font-size: 13.5px; }
+.hero.book.planned .cap-row { flex-direction: column; align-items: stretch; gap: 0; }
+.hero.book.planned .hero-note { flex: none; min-height: 22px; line-height: 22px; text-align: left; }
+
 .break-even {
   position: absolute; right: 6px; transform: translateY(-50%);
   padding: 1px 6px 2px; border-radius: 5px; background: var(--surface);
@@ -2131,6 +2168,34 @@ button.ivc-row:active { background: var(--surface-2); }
 @keyframes hsfly { 0% { opacity: 0; transform: translate(0, 0) scale(.3); } 18% { opacity: 1; }
   100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .splash-note.on .hs-horn { animation: none; } }
+/* One charge added from its own row: the horns again, small and quick (about 0.9s in all). The screen is not
+   dimmed and the card sits low, clear of the rows being worked at the top of the list; like every splash it
+   takes no taps, so the next Add goes straight through it. */
+.splash-note.quick { place-items: end center; padding: 0 16px calc(20vh + env(safe-area-inset-bottom, 0px)); transition: none; }
+.splash-note.quick, .splash-note.quick.on { background: none; }
+.splash-note.quick .sn-card { gap: 2px; padding: 12px 24px 14px; border-radius: 22px; background: var(--surface-2);
+  border: 1px solid color-mix(in oklab, var(--pos), transparent 55%); box-shadow: var(--shadow);
+  transform: scale(.8); transition: opacity .12s ease, transform .16s cubic-bezier(.2, 1.4, .4, 1); }
+.splash-note.quick.on .sn-card { opacity: 1; transform: scale(1); }
+.splash-note.quick .hs-horn { font-size: 44px; filter: none; }
+.splash-note.quick.on .hs-horn { animation: hsquick .3s cubic-bezier(.2, 1.4, .4, 1) both; }
+@keyframes hsquick { 0% { transform: scale(.4) rotate(-24deg); } 60% { transform: scale(1.15) rotate(10deg); } 100% { transform: none; } }
+.splash-note.quick .sn-sub { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) {
+  .splash-note.quick .sn-card { transform: none; transition: opacity .12s ease; }
+  .splash-note.quick.on .hs-horn { animation: none; }
+}
+/* A charge that has just been added or set aside holds its place for a quarter of a second (LEAVE_MS in
+   app.js): it fades, and only then closes up. A quick second tap so lands on the row that is leaving, where
+   nothing answers, and not on the next row sliding up under the finger. The app sets the height it closes
+   from, and takes the row away at the end. With reduced motion nothing moves: the row is dimmed, keeps its
+   space for the same time, and is gone. */
+.rv-row.rv-going.rv-shut { overflow: hidden; height: 0 !important; padding-top: 0; padding-bottom: 0;
+  border-top-width: 0; border-bottom-width: 0; opacity: 0;
+  transition: opacity .15s ease, height .09s ease-in .17s, padding .09s ease-in .17s, border-width .09s ease-in .17s; }
+@media (prefers-reduced-motion: reduce) { .rv-row.rv-going { opacity: .35; } }
+/* Beside the sheet's title while saves have been out for more than a second: "8 new charges · saving 3". */
+.rv-sheet .sh-title .rv-out { color: var(--ink-3); font-weight: 500; white-space: nowrap; }
 .t-undo { display: flex; gap: 14px; align-items: center; }
 .t-undo .linkbtn { min-height: 0; font-weight: 700; }
 #toast .t.t-undo.is-on { pointer-events: auto; }

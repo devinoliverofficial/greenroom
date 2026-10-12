@@ -648,12 +648,14 @@
      connection, and the app has already tried again), and keep a note of it
      to look at later. */
   var NO_SIGNAL = 'No connection right now, so that didn\u2019t save. Try again when you have signal.';
-  function saveFailed(place, e) {
+  // more: a sentence to say after it, when the screen put something back (it then stays up longer, and the
+  // next line does not wipe it off: see toast).
+  function saveFailed(place, e, more) {
     var B = window.GR_BACKEND;
     var offline = (e && (e.code === 'offline' || e.error === 'offline')) || (B && B.netTrouble && B.netTrouble());
     // Card calls keep their own note.
     if (B && B.noteError && !/^cards:/.test(place)) B.noteError(place, e);
-    toast(offline ? NO_SIGNAL : 'Couldn\u2019t save that. Try again.');
+    toast((offline ? NO_SIGNAL : 'Couldn\u2019t save that. Try again.') + (more ? ' ' + more : ''), more ? 5200 : 0, !!more);
   }
 
   var api = {
@@ -869,14 +871,37 @@
   /* ============================== Toast + sheets ============================== */
 
   var toastTimer = 0;
+  // What is up now: { parts, until, hold }.
+  var toastNow = null;
   // ms: how long it stays, for the few that take two sentences to say (the usual line is gone in three seconds).
-  function toast(msg, ms) {
+  // hold: a line that must be read (something went wrong: a save that did not go, charges that came back, not
+  // allowed; or news of a save that has just answered). There is one place for these lines, and the next one
+  // used to wipe it off. While a held line is up, whatever is said next is said after it, in the same place,
+  // and the two stay up together. The usual line is still simply replaced by the next.
+  function toast(msg, ms, hold) {
+    var now = Date.now(), stay = ms > 0 ? ms : 3200, parts = null;
+    if (typeof msg === 'string') {
+      parts = [msg];
+      if (toastNow && toastNow.hold && now < toastNow.until) {
+        // (The same words said again are said once. Three things at most: the oldest goes first.)
+        parts = toastNow.parts.filter(function (p) { return p !== msg; }).concat(parts).slice(-3);
+        hold = true; stay = Math.max(stay, 5200);
+      }
+      msg = parts.reduce(function (all, p) { return !all ? p : all + (/[.!?…]$/.test(all) ? ' ' : ' · ') + p; }, '');
+    }
     var root = $('#toast');
     var t = h('div', { class: 't' }, msg);
     root.replaceChildren(t);
     requestAnimationFrame(function () { t.classList.add('is-on'); });
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('is-on'); }, ms > 0 ? ms : 3200);
+    toastTimer = setTimeout(function () { t.classList.remove('is-on'); }, stay);
+    toastNow = parts ? { parts: parts, until: now + stay, hold: !!hold } : null;
+  }
+  // Said after whatever line is up now (a write's own reason for not saving), and held with it: what the screen
+  // did about it ("The charge is back in the list.").
+  function toastAfter(more, ms) {
+    if (toastNow && Date.now() < toastNow.until) toastNow.hold = true;
+    toast(more, ms > 0 ? ms : 5200, true);
   }
 
   var sheet = null;
@@ -1030,17 +1055,15 @@
     var st = G.stateOf(c);
     return st !== 'idle' && book && !bookPlanned(c) ? (heroNet(c, book) < 0 ? 'red' : 'green') : st;
   }
-  // How far back the Off Tour book's line goes (a tour's line starts with the tour; the book has no first night).
-  var BOOK_CHART_DAYS = 90;
   function heroNode(tour, tourId) {
     var book = isOffTour(tour);
     var c = G.calc(tour);
     var st = heroState(c, book);
-    // So far: the line stops at today while the tour is on. (The book's line: the last 90 days, ending
-    // today whatever its last entry was; everything before that is already in its first point, so its
-    // head is the book's totals, and the two dates under it are always 90 days ago and today.)
+    // A tour's graph is its line, so far: it stops at today while the tour is on. The Off Tour book has
+    // no line: it has no first night and no end, so its graph is this calendar year, month by month
+    // (monthChartNode, below). The line's code never runs for a book.
     var today = G.tourToday();
-    var series = G.balanceSeries(tour, book ? { until: today, from: G.addDays(today, -BOOK_CHART_DAYS), to: today } : { until: today });
+    var series = book ? [] : G.balanceSeries(tour, { until: today });
     var change = G.latestChange(tour);
     var pct = Math.max(0, Math.min(100, Math.floor(c.coverage * 100)));
     var net = heroNet(c, book);
@@ -1062,17 +1085,17 @@
     // The chart is measured and drawn once it is in the document, so circles stay
     // round and strokes keep their weight at whatever width the phone gives us.
     var chart = null;
-    if (series.length > 1) {
+    // (The book's: the graph itself and, when its totals count money that is on no bar, one quiet line under it.)
+    if (book) chart = monthChartNode(tour, today, c, tourId);
+    else if (series.length > 1) {
       chart = h('div', {
         class: 'chart-wrap', tabindex: '0', role: 'img',
         'aria-label': 'Money in against what\u2019s spent and owed, from ' + dayLong(series[0].date) + ' to ' +
           dayLong(series[series.length - 1].date) + '. Now ' + money(series[series.length - 1].income) + ' in and ' +
           money(series[series.length - 1].spent) + ' spent and owed. ' +
-          (book ? 'Use the left and right arrow keys to step through it day by day.'
-            : 'Use the left and right arrow keys to step through the tour night by night.')
+          'Use the left and right arrow keys to step through the tour night by night.'
       });
-      // (The book's line carries no nights and no comments: a day on it is just its date.)
-      chart.__data = { series: series, nights: loggedNights(tour), tourId: book ? null : tourId };
+      chart.__data = { series: series, nights: loggedNights(tour), tourId: tourId };
     }
 
     var fill = h('div', { class: 'prog-fill', id: 'prog-fill' });
@@ -1085,11 +1108,15 @@
 
     // Under the number: the day's take on the left, its comment on the right.
     // The row is always there at a fixed height, so nothing shifts when it fills.
-    var dayNote = h('div', { class: 'hero-note', id: 'hero-note' });
+    // (On the book it names the month that is picked on the graph, and says so to a screen reader.)
+    var dayNote = h('div', { class: 'hero-note', id: 'hero-note', 'aria-live': book ? 'polite' : null });
     var capRow = h('div', { class: 'cap-row' }, cap, dayNote);
-    var hero = h('section', { class: 'hero ' + st, id: 'hero', 'aria-label': book ? 'Off Tour balance' : 'Tour balance' },
+    // (book, planned: the book's note row names a month and is laid out for it, see .hero.book in index.html.)
+    var hero = h('section', { class: 'hero ' + st + (book ? ' book' + (bookPlanned(c) ? ' planned' : '') : ''), id: 'hero',
+      'aria-label': book ? 'Off Tour balance' : 'Tour balance' },
       odo, capRow, chip, chart, prog);
     hero.__calc = c;
+    // (A tour's line. A book has none: its year is on its graph, the .month-wrap's __months.)
     hero.__series = series;
     hero.__pct = pct;
     // Whose number this is (the Off Tour screen is not on the book's own route), and whether it is a book's.
@@ -1235,6 +1262,348 @@
     });
   }
 
+  /* ================== The Off Tour book's graph: month by month ==================
+     Devin, 2026-10-12, on the book's line: "off tour expenses will be all
+     throughout the calendar year and broken by tours", and then, shown three
+     sketches: "For the Off Tour graph, use option 1: month by month".
+
+     The calendar year today is in, January to December. For each month so
+     far: a bar for what was spent in it and, when money came in, a dot at
+     that amount, both on one dollar scale from zero. A month still to come
+     is an empty dashed outline with no figure. Every tour of the same artist
+     whose dates touch the year is a band behind the bars, first day to last,
+     with its name over it where there is room. The sums are the core's
+     (G.yearByMonth: the day-by-day line's own rules, read month by month),
+     so nothing about what counts is decided a second time here.
+
+     The big number, the words under it, the bar and "in / out" are the
+     book's totals, and nothing here touches them: picking a month (a tap, a
+     finger drawn across, the arrow keys) only names it in the note row under
+     the number. Nothing is animated. A tour's own graph (drawChart, above)
+     is not touched by any of this, and none of the line's code runs for a
+     book: a book's card has no .chart-wrap. */
+  var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  function svgEl(tag, attrs, text) {
+    var el = document.createElementNS(SVG_NS, tag);
+    Object.keys(attrs || {}).forEach(function (k) { el.setAttribute(k, String(attrs[k])); });
+    if (text != null) el.textContent = text;
+    return el;
+  }
+  /* The stretches of that year a tour of the book's artist is on: every live
+     tour (not deleted, and never the book itself: allTourEntries) that has a
+     first and a last day, from the first day its own calendar has (runStart:
+     travel and rehearsal days count) to its last (G.tourEnd), cut to the
+     year. A tour with no dates has no band. The earliest first.
+     (Not tourBands: that is the bands on a tour's bill.) */
+  function yearTourSpans(book, year) {
+    var who = artistOf(book).toLowerCase(), first = year + '-01-01', last = year + '-12-31';
+    if (!who) return [];
+    return allTourEntries().map(function (e) {
+      var t = e[1];
+      if (artistOf(t).toLowerCase() !== who) return null;
+      var a = runStart(t), b = G.tourEnd(t);
+      if (!a || !b || b < a || a > last || b < first) return null;
+      // (first, last: its real days, for the words; from, to: cut to the year, for the drawing.)
+      return { id: e[0], name: String(t.name || '').trim() || 'Tour', from: a < first ? first : a, to: b > last ? last : b, first: a, last: b };
+    }).filter(Boolean).sort(function (p, q) { return p.from < q.from ? -1 : p.from > q.from ? 1 : 0; });
+  }
+  // Where a day sits along the twelve months, from 0 to 12 (end: where that day ends).
+  function yearPos(day, end) {
+    var m = +day.slice(5, 7), d = +day.slice(8, 10), n = new Date(+day.slice(0, 4), m, 0).getDate();
+    return (m - 1) + (d - (end ? 0 : 1)) / n;
+  }
+  /* A month in words, for the note row: "May: $1,240 spent, $300 in". A month
+     with nothing says so; a month still to come says nothing is there yet
+     (or, when something on the book is dated in it, what, and that it is
+     dated ahead). A month whose refunds outweigh its charges reads
+     "refunded". short: the month's first three letters, for a narrow row. */
+  function monthWords(m, short) {
+    var name = MONTH_NAMES[m.month - 1] || '';
+    if (short) name = name.slice(0, 3);
+    // (To the dollar like every figure on the card; with cents only where a dollar figure would read as nothing.)
+    var amt = function (v) { v = Math.abs(v); return G.round(v) === 0 ? G.moneyCents(v) : money(v); };
+    var s = G.num(m.spent), i = G.num(m.income);
+    var spentW = s > 0 ? amt(s) + ' spent' : s < 0 ? amt(s) + ' refunded' : '';
+    var inW = i > 0 ? amt(i) + ' in' : i < 0 ? '-' + amt(i) + ' in' : '';
+    if (m.future) return name + ': ' + (spentW || inW ? [spentW, inW].filter(Boolean).join(', ') + ', dated ahead' : 'nothing there yet');
+    if (!spentW && !inW) return name + ': nothing in or out';
+    return name + ': ' + (spentW || 'nothing spent') + ', ' + (inW || 'nothing in');
+  }
+  /* What the book's totals count that is on no bar, as one sentence ('' when
+     there is none, which is the usual case): money with no date (a total
+     typed straight into a category, a balance or a loan carried in, an entry
+     saved without a day), entries dated in an earlier year, entries dated in
+     a month still to come, and a plan that is not spent yet. With these the
+     bars and the dots add up to the card's "in / out". */
+  function offBarsWords(y, c) {
+    var ahead = { spent: G.num(y.after.spent), income: G.num(y.after.income) };
+    y.months.forEach(function (m) { if (m.future) { ahead.spent += G.num(m.spent); ahead.income += G.num(m.income); } });
+    var part = function (p, tail) {
+      var s = G.round(G.num(p.spent)), i = G.round(G.num(p.income));
+      if (!s && !i) return null;
+      return [s ? money(s) + ' spent' : null, i ? money(i) + ' in' : null].filter(Boolean).join(' and ') + ' ' + tail;
+    };
+    var parts = [part(y.undated, 'with no date'), part(y.before, 'before ' + y.year), part(ahead, 'dated in months to come')];
+    var plan = c && bookPlanned(c) ? G.round(G.num(c.out) - G.spentOf(c)) : 0;
+    if (plan > 0) parts.push(money(plan) + ' planned and not spent yet');
+    parts = parts.filter(Boolean);
+    return parts.length ? 'Not on the bars: ' + parts.join('; ') + '.' : '';
+  }
+  // The month that is named on a book's graph, so a redraw of the same page (new data arriving) does not drop it.
+  var monthKept = null;
+  /* The graph's own element and, when there is something to say, the quiet
+     line under it. Like the line's, the graph is measured and drawn once it
+     is in the document (drawMonths, from mountHero). */
+  function monthChartNode(tour, today, c, tourId) {
+    var y = G.yearByMonth(tour, today.slice(0, 4), today);
+    var soFar = y.months.filter(function (m) { return !m.future; });
+    var total = function (k) { return soFar.reduce(function (t, m) { return t + Math.round(G.num(m[k]) * 100); }, 0) / 100; };
+    var spent = total('spent'), income = total('income');
+    var bands = yearTourSpans(tour, y.year);
+    var wrap = h('div', {
+      class: 'month-wrap', tabindex: '0', role: 'img',
+      'aria-label': 'Off Tour in ' + y.year + ', month by month: a bar for what was spent each month and a dot where money came in. ' +
+        (spent || income ? 'So far this year ' + (spent < 0 ? money(-spent) + ' refunded' : money(spent) + ' spent') + ' and ' + money(income) + ' in. ' : 'Nothing in or out yet this year. ') +
+        (bands.length ? 'On tour: ' + bands.map(function (b) {
+          return b.name + ', ' + dayMD(b.first) + (b.last !== b.first ? ' to ' + dayMD(b.last) : '');
+        }).join('; ') + '. ' : '') +
+        'Use the left and right arrow keys to step through the months.'
+    });
+    wrap.__months = { year: y.year, months: y.months, bands: bands, now: Math.max(0, Math.min(11, +today.slice(5, 7) - 1)),
+      key: String(tourId || '') + ':' + y.year };
+    wrap.__pick = monthKept && monthKept.route === S.route && monthKept.key === wrap.__months.key ? monthKept.i : -1;
+    var off = offBarsWords(y, c);
+    return [wrap, off ? h('p', { class: 'mc-off' }, off) : null];
+  }
+
+  function drawMonths(wrap) {
+    var d = wrap.__months;
+    if (!d) return;
+    var months = d.months, bands = d.bands;
+    var W = Math.max(260, Math.round(wrap.clientWidth || 340));
+    // TOP: the strip the tours' names sit in (a sliver when there is no tour to name). PH: how tall the tallest bar may be.
+    var PADX = 4, TOP = bands.length ? 18 : 6, PH = 104, FOOT = 20, GHOST = 34;
+    var y0 = TOP + PH, H = y0 + FOOT;
+    // Twelve slots; a thin bar in each with more room than bar between them (about 13 px in a 25 px slot at phone width).
+    var slot = (W - PADX * 2) / 12;
+    var bw = Math.max(8, Math.min(14, Math.round(slot * 0.52)));
+    var X = function (p) { return PADX + p * slot; };
+    var mid = function (i) { return X(i + 0.5); };
+    var f = function (n) { return n.toFixed(1); };
+
+    // One dollar scale from zero for the bars and the dots alike, set by the months drawn so far.
+    var top = 0;
+    months.forEach(function (m) { if (!m.future) top = Math.max(top, G.num(m.spent), G.num(m.income)); });
+    // (Nothing to set a scale by: nothing is divided by nothing.)
+    var bare = !(top > 0);
+    top = bare ? 1 : top * 1.12;
+    // A year with nothing in or out so far: all twelve are empty outlines. (A year whose only entries are
+    // refunds is not that: its months so far are flat marks, and a tap says what each one holds.)
+    var idle = months.every(function (m) { return m.future || (!G.num(m.spent) && !G.num(m.income)); });
+    var Y = function (v) { return y0 - Math.max(0, v) / top * PH; };
+    // A bar's outline: flat on the line, round on top. (open: no stroke along the line itself, for the dashed outlines.)
+    var barPath = function (i, tall, open) {
+      var x = mid(i) - bw / 2, r = Math.min(bw / 2, tall), t = y0 - tall;
+      return 'M' + f(x) + ' ' + f(y0) + 'V' + f(t + r) + 'A' + f(r) + ' ' + f(r) + ' 0 0 1 ' + f(x + r) + ' ' + f(t) +
+        'H' + f(x + bw - r) + 'A' + f(r) + ' ' + f(r) + ' 0 0 1 ' + f(x + bw) + ' ' + f(t + r) + 'V' + f(y0) + (open ? '' : 'Z');
+    };
+
+    var svg = svgEl('svg', { 'class': 'mchart', viewBox: '0 0 ' + W + ' ' + H, width: W, height: H, 'aria-hidden': 'true' });
+    // Behind everything: the tours.
+    var spans = bands.map(function (b) {
+      var x0 = X(yearPos(b.from)), x1 = X(yearPos(b.to, true));
+      // (A single night is still a mark that can be seen.)
+      if (x1 - x0 < 3) { var c0 = (x0 + x1) / 2; x0 = c0 - 1.5; x1 = c0 + 1.5; }
+      svg.appendChild(svgEl('rect', { 'class': 'mc-band', x: f(x0), y: f(TOP - 3), width: f(x1 - x0), height: f(y0 - TOP + 3), rx: 3 }));
+      return { x0: x0, x1: x1, cx: (x0 + x1) / 2 };
+    });
+    svg.appendChild(svgEl('line', { 'class': 'mc-zero', x1: PADX, y1: f(y0), x2: W - PADX, y2: f(y0) }));
+    // The month that is picked: an outline round its bar and its letter (shown by .month-wrap.picked).
+    var pick = svgEl('rect', { 'class': 'mc-pick', x: 0, y: f(TOP - 3), width: f(slot - 2), height: f(H - TOP + 2), rx: 7 });
+    svg.appendChild(pick);
+    months.forEach(function (m, i) {
+      if (m.future || idle) { svg.appendChild(svgEl('path', { 'class': 'mc-ghost', d: barPath(i, GHOST, true) })); return; }
+      if (G.num(m.spent) > 0) svg.appendChild(svgEl('path', { 'class': 'mc-bar', d: barPath(i, Math.max(3, y0 - Y(m.spent))) }));
+      // (Nothing spent that month: a flat mark on the line, so the month is there and reads as none.)
+      else svg.appendChild(svgEl('rect', { 'class': 'mc-nil', x: f(mid(i) - bw / 2), y: f(y0 - 2), width: bw, height: 2, rx: 1 }));
+    });
+    // Money in: a dot at that amount, on the bars' own scale (and never sunk into the line).
+    months.forEach(function (m, i) {
+      if (m.future || !(G.num(m.income) > 0)) return;
+      svg.appendChild(svgEl('circle', { 'class': 'mc-dot', cx: f(mid(i)), cy: f(Math.min(Y(m.income), y0 - 5)), r: 4 }));
+    });
+    var letters = months.map(function (m, i) {
+      var t = svgEl('text', { 'class': 'mc-m' + (i === d.now ? ' now' : ''), x: f(mid(i)), y: f(y0 + 15), 'text-anchor': 'middle' },
+        MONTH_NAMES[i].charAt(0));
+      svg.appendChild(t);
+      return t;
+    });
+    var names = bands.map(function (b) {
+      var t = svgEl('text', { 'class': 'mc-tour', x: 0, y: 11, 'text-anchor': 'middle' }, b.name);
+      svg.appendChild(t);
+      return t;
+    });
+
+    // Under it: the key, and which year this is. (The twelve letters are in the drawing, each under its own bar.)
+    wrap.replaceChildren(svg, h('div', { class: 'chart-ends mc-ends' },
+      h('span', { class: 'chart-key mc-key' }, h('i', { class: 'k-s' }), 'Spent', h('i', { class: 'k-i' }), 'Money in',
+        bands.length ? [h('i', { class: 'k-t' }), 'On tour'] : null),
+      h('span', null, d.year)));
+
+    /* A tour's name sits over its band: it may slide along, but only so far
+       that it still covers the middle of its own band, stays inside the
+       drawing, and keeps clear of the names beside it, so no two names ever
+       meet and each stays with its tour. While that can be done the names
+       are whole. Where it cannot (tours close together, or a long name by
+       an edge), the longest of the names in each other's way gives a letter
+       at a time and ends in an ellipsis; a name already down to three
+       letters, or one that no shortening would free, is left off instead
+       (its band is still drawn, and the label a screen reader is given
+       names every tour in full). */
+    var NAME_GAP = 6;
+    var widthOf = function (t) {
+      var n = 0;
+      try { if (typeof t.getComputedTextLength === 'function') n = t.getComputedTextLength(); } catch (e) { n = 0; }
+      // (Where it cannot be measured: about what letters of this size take.)
+      return n > 0 ? n : String(t.textContent || '').length * 6;
+    };
+    var shown = names.map(function (t, i) { return { t: t, cx: Math.max(0, Math.min(W, spans[i].cx)), cut: bands[i].name, w: widthOf(t) }; })
+      .sort(function (p, q) { return p.cx - q.cx; });
+    // How far left and how far right a name's left edge may sit.
+    var lo = function (l) { return Math.max(0, l.cx - l.w); };
+    var hi = function (l) { return Math.min(W - l.w, l.cx); };
+    for (;;) {
+      // Each as far left as it can go; the first that then cannot reach its own band is the one in trouble.
+      var most = [], bad = -1;
+      for (var k = 0; k < shown.length && bad < 0; k++) {
+        most[k] = Math.max(lo(shown[k]), k ? most[k - 1] + shown[k - 1].w + NAME_GAP : 0);
+        if (most[k] > hi(shown[k]) + 0.01) bad = k;
+      }
+      if (bad < 0) break;
+      // The names pressing on it: back to the first one that nothing before it pushes.
+      var head = bad;
+      while (head > 0 && most[head] > lo(shown[head]) + 0.01) head -= 1;
+      // Of those, the ones a shorter name would help (the one in trouble only if it is the right edge that
+      // holds it; the first only if it is the left edge; any between them always), and the longest of them.
+      var give = null;
+      for (var q = head; q <= bad; q++) {
+        var l = shown[q];
+        var helps = q === bad ? W - l.w < l.cx : q === head ? l.cx - l.w < 0 : true;
+        if (helps && (!give || l.w > give.w)) give = l;
+      }
+      // (A letter is a whole character: a name with a picture in it is never cut through the middle of one.)
+      var stem = give ? Array.from(give.cut).slice(0, -1).join('').replace(/\s+$/, '') : '';
+      if (!give || Array.from(stem).length < 3) {
+        var gone = give || shown[bad];
+        gone.t.remove();
+        shown.splice(shown.indexOf(gone), 1);
+        continue;
+      }
+      give.cut = stem;
+      give.t.textContent = give.cut + '…';
+      give.w = widthOf(give.t);
+    }
+    // Where each sits: centred on its band when it can be, then clear of the name before, then of the name after.
+    var lefts = shown.map(function (l) { return Math.max(lo(l), Math.min(hi(l), l.cx - l.w / 2)); });
+    for (var a = 1; a < lefts.length; a++) lefts[a] = Math.min(hi(shown[a]), Math.max(lefts[a], lefts[a - 1] + shown[a - 1].w + NAME_GAP));
+    for (var z = lefts.length - 2; z >= 0; z--) lefts[z] = Math.min(lefts[z], lefts[z + 1] - shown[z].w - NAME_GAP);
+    shown.forEach(function (l, n) { l.t.setAttribute('x', f(lefts[n] + l.w / 2)); });
+
+    wrap.__mgeo = { svg: svg, W: W, PADX: PADX, slot: slot, X: X, pick: pick, letters: letters };
+    wireMonths(wrap);
+    // (Drawn again, at a new width or with new data: the month that was named stays named.)
+    wrap.__said = -1;
+    pickMonth(wrap, wrap.__pick == null ? -1 : wrap.__pick);
+  }
+
+  // Names month i (0 to 11) in the note row under the big number and marks it on the graph; anything else lets go.
+  function pickMonth(wrap, i) {
+    var d = wrap.__months, g = wrap.__mgeo;
+    if (!d || !g) return;
+    var on = i >= 0 && i < d.months.length;
+    wrap.__pick = on ? i : -1;
+    monthKept = on ? { route: S.route, key: d.key, i: i } : null;
+    wrap.classList.toggle('picked', on);
+    if (on) g.pick.setAttribute('x', (g.X(i) + 1).toFixed(1));
+    g.letters.forEach(function (t, k) {
+      t.setAttribute('class', 'mc-m' + (k === d.now ? ' now' : '') + (on && k === i ? ' on' : ''));
+    });
+    var hero = wrap.closest('.hero'), note = hero ? $('#hero-note', hero) : null;
+    if (!note) return;
+    if (!on) { wrap.__said = -1; note.textContent = ''; note.removeAttribute('title'); return; }
+    // (The same month again, as a finger moves inside it: nothing to say twice.)
+    if (wrap.__said === i) return;
+    wrap.__said = i;
+    var full = monthWords(d.months[i]);
+    note.textContent = full;
+    // The row is one line: where the whole name of the month does not fit beside the words on the left, its first three letters.
+    if (note.scrollWidth > note.clientWidth + 1) note.textContent = monthWords(d.months[i], true);
+    note.setAttribute('title', full);
+  }
+
+  /* Touch and keys, set once on the graph's element (it is drawn again when
+     the window changes width). A tap names the month under it and a second
+     tap on that month lets it go; a finger drawn across names each month it
+     passes; left and right step a month, Home and End go to January and
+     December, Escape lets go, and so does moving the focus away.
+     A finger that lands on the graph may be the start of a scroll down the
+     page, so nothing is named when it lands: only when it lifts where it
+     landed (a tap), or once it has clearly been drawn sideways. A mouse
+     names the month the moment it is pressed. */
+  function wireMonths(wrap) {
+    if (wrap.__wired) return;
+    wrap.__wired = true;
+    var box = function () { return wrap.__mgeo.svg.getBoundingClientRect(); };
+    var at = function (e, r) {
+      var g = wrap.__mgeo, px = r.width ? (e.clientX - r.left) / r.width * g.W : 0;
+      return Math.max(0, Math.min(11, Math.floor((px - g.PADX) / g.slot)));
+    };
+    var down = null;
+    wrap.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      var r = box();
+      // (The key under the drawing is not a month.)
+      if (r.height && (e.clientY < r.top || e.clientY > r.bottom)) return;
+      // A refused capture must not cost the drag (as on the line).
+      try { wrap.setPointerCapture(e.pointerId); } catch (e2) { /* track anyway */ }
+      // (live: this press is naming months as it goes.)
+      down = { x: e.clientX, y: e.clientY, was: wrap.__pick, moved: false, live: e.pointerType === 'mouse' };
+      if (down.live) pickMonth(wrap, at(e, r));
+    });
+    wrap.addEventListener('pointermove', function (e) {
+      if (!down) return;
+      var dx = Math.abs(e.clientX - down.x), dy = Math.abs(e.clientY - down.y);
+      if (dx + dy > 8) down.moved = true;
+      if (!down.live && dx > 8 && dx > dy) down.live = true;
+      if (down.live) pickMonth(wrap, at(e, box()));
+    });
+    wrap.addEventListener('pointerup', function (e) {
+      if (!down) return;
+      if (!down.live) {
+        // A finger's tap: the month it lifted on, or, on the month already named, let go.
+        if (!down.moved) { var i = at(e, box()); pickMonth(wrap, down.was === i ? -1 : i); }
+      } else if (!down.moved && down.was === wrap.__pick) pickMonth(wrap, -1);
+      down = null;
+    });
+    // (The page took the finger for a scroll: whatever was named before it stays.)
+    wrap.addEventListener('pointercancel', function () {
+      if (!down) return;
+      pickMonth(wrap, down.was);
+      down = null;
+    });
+    wrap.addEventListener('keydown', function (e) {
+      var cur = wrap.__pick, n = wrap.__months.months.length;
+      if (e.key === 'ArrowRight') { e.preventDefault(); pickMonth(wrap, cur < 0 ? 0 : Math.min(n - 1, cur + 1)); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); pickMonth(wrap, cur < 0 ? wrap.__months.now : Math.max(0, cur - 1)); }
+      else if (e.key === 'Home') { e.preventDefault(); pickMonth(wrap, 0); }
+      else if (e.key === 'End') { e.preventDefault(); pickMonth(wrap, n - 1); }
+      else if (e.key === 'Escape') { pickMonth(wrap, -1); }
+    });
+    // (Only while it is on the page: a redraw that takes this element away must not drop the month it hands on.)
+    wrap.addEventListener('blur', function () { if (wrap.isConnected) pickMonth(wrap, -1); });
+  }
+
   function setHeroState(hero, st) {
     hero.classList.remove('red', 'green', 'idle');
     hero.classList.add(st);
@@ -1261,6 +1630,9 @@
 
     var wrap = $('.chart-wrap', hero);
     if (wrap) drawChart(wrap);
+    // (The Off Tour book's graph, month by month: it has no line.)
+    var monthWrap = $('.month-wrap', hero);
+    if (monthWrap) drawMonths(monthWrap);
     setupMinibar(id, c, net, st);
 
     var wasState = S.lastState[id];
@@ -1290,6 +1662,8 @@
     redrawTimer = setTimeout(function () {
       var wrap = $('#hero .chart-wrap');
       if (wrap) drawChart(wrap);
+      var monthWrap = $('#hero .month-wrap');
+      if (monthWrap) drawMonths(monthWrap);
       var pay = $('.pay-chart');
       if (pay) drawChart(pay);
     }, 180);
@@ -1334,6 +1708,7 @@
 
   /* Drag a finger along the line to see where the tour stood after any night.
      Arrow keys do the same thing for anyone not using a pointer. */
+  // (A tour's card only. The Off Tour book's card has no line to drag along: its graph has its own touch and keys, wireMonths.)
   function setupScrub(wrap) {
     var geo = wrap.__geo;
     var hero = wrap.closest('.hero');
@@ -1400,8 +1775,6 @@
       hero.classList.add('scrubbing');
       var px = geo.x(i), py = geo.y(p.income);
       var gap = p.income - p.spent;
-      // (A book with nothing planned: as the two figures under the number subtract, to the dollar, like its resting number.)
-      if (hero.__book && !bookPlanned(c)) gap = Math.round(G.num(p.income)) - Math.round(G.num(p.spent));
       var up = gap >= 0;
 
       cursor.setAttribute('x1', px); cursor.setAttribute('x2', px);
@@ -1432,7 +1805,7 @@
 
       // Where the comment used to sit: the night itself.
       var noteEl = $('#hero-note', hero);
-      if (noteEl) noteEl.textContent = hero.__book ? dayLong(p.date) : nightLabel(p.date, night);
+      if (noteEl) noteEl.textContent = nightLabel(p.date, night);
       if (geo.pins) {
         Array.prototype.forEach.call(geo.pins.children, function (pin) {
           pin.classList.toggle('on', Number(pin.getAttribute('data-i')) === i);
@@ -1442,8 +1815,7 @@
       var pct = p.out > 0 ? Math.max(0, Math.min(100, Math.floor(p.income / p.out * 100))) : 0;
       hero.style.setProperty('--cov', pct + '%');
       setProgress(hero, pct, p.out);
-      // (The book's words under the bar say what the bar is, not how far along: they stay.)
-      if (pctEl && !hero.__book) pctEl.textContent = pct + '% of the way to green';
+      if (pctEl) pctEl.textContent = pct + '% of the way to green';
     }
 
     function fromPointer(e) {
@@ -2064,18 +2436,122 @@
       }
     });
   }
+  /* Your own four numbers hold still (Devin, 2026-10-12: "the analytics on the
+     user profile (Shows, Tours, Cities, & Countries) are constantly changing").
+     One of the things moving them was this phone. The numbers come with your
+     profile card, the card is only held for the visit, and until it arrived
+     (every time the app was opened) the header drew a stand-in: one number,
+     how many Greenroom tours you have, where your tours, shows, countries and
+     cities belong. So the last numbers that really came from the server are
+     kept on the phone, under a key that carries your user id (the next person
+     to sign in here has their own key and never reads yours), and the header
+     draws those until a newer real answer arrives. An answer with no numbers
+     in it, or an ask that failed, changes nothing. The stand-in is only for a
+     phone that has never had a real answer for you.
+     What the header shows beside the numbers comes with the same card and is
+     kept with them, by the same rule: followers, following, and the check by
+     your name (they used to read "0 followers · 0 following" with no check
+     until the card arrived, on every open).
+     Kept with them too, and drawn nowhere: when the phone last got the numbers,
+     and the last 30 times it saw them change (when it saw the change, when it
+     had last got the numbers before, what they were). The database keeps its
+     own record of a change (road_counts_log for an artist page, road_person_log
+     for a person, migration 0142); this is the phone's side of it. */
+  var ROAD_NUMS = ['tours', 'shows', 'countries', 'cities'];
+  var ROAD_TRAIL = 30;
+  function roadKeptKey(uid) { return 'gr-road:' + uid; }
+  // The four numbers and the first year out of an answer; null unless it holds all four.
+  function roadReal(rs) {
+    if (!G.isObj(rs)) return null;
+    var out = {};
+    for (var i = 0; i < ROAD_NUMS.length; i++) {
+      var v = rs[ROAD_NUMS[i]];
+      if (typeof v === 'string' && /^\d+$/.test(v)) v = Number(v);
+      if (typeof v !== 'number' || !isFinite(v) || v < 0) return null;
+      out[ROAD_NUMS[i]] = v;
+    }
+    out.firstYear = G.num(rs.firstYear) > 1900 ? G.num(rs.firstYear) : null;
+    return out;
+  }
+  // A count that came with the card (followers, following): a whole number, or null.
+  function roadCount(v) {
+    if (typeof v === 'string' && /^\d+$/.test(v)) v = Number(v);
+    return typeof v === 'number' && isFinite(v) && v >= 0 ? v : null;
+  }
+  // What was kept beside the four numbers, read back from the phone: only what is well formed.
+  function roadBeside(out, raw) {
+    ['followers', 'following'].forEach(function (k) { var v = roadCount(raw[k]); if (v != null) out[k] = v; });
+    if (typeof raw.verified === 'boolean') out.verified = raw.verified;
+    if (typeof raw.at === 'number' && isFinite(raw.at) && raw.at > 0) out.at = raw.at;
+    out.trail = (Array.isArray(raw.trail) ? raw.trail : []).filter(function (t) {
+      return G.isObj(t) && typeof t.at === 'number' && isFinite(t.at) && G.isObj(t.was);
+    }).slice(-ROAD_TRAIL);
+    return out;
+  }
+  // What this phone has kept for this person (read from the phone once a visit).
+  function roadKept(uid) {
+    if (!uid) return null;
+    S.roadKept = S.roadKept || {};
+    if (!Object.prototype.hasOwnProperty.call(S.roadKept, uid)) {
+      var had = null;
+      try {
+        var raw = JSON.parse(lsGet(roadKeptKey(uid)) || 'null');
+        had = roadReal(raw);
+        if (had) roadBeside(had, raw);
+      } catch (e) { had = null; }
+      S.roadKept[uid] = had;
+    }
+    return S.roadKept[uid];
+  }
+  // A card arrived. When it is your own and carries real numbers, those are the ones kept from now on.
+  function keepRoad(uid, card) {
+    var B = window.GR_BACKEND, rs = roadReal(card && card.roadStats);
+    if (!rs || !uid || !B || !B.uid || B.uid() !== uid) return;
+    var had = roadKept(uid), now = Date.now();
+    // What came with the same card and is drawn beside the numbers; a blank among them keeps the one before.
+    ['followers', 'following'].forEach(function (k) {
+      var v = roadCount(card[k]);
+      if (v != null) rs[k] = v; else if (had && had[k] != null) rs[k] = had[k];
+    });
+    rs.verified = typeof card.verified === 'boolean' ? card.verified : !!(had && had.verified);
+    // When, and the trail: one more entry each time the four numbers differ from the ones kept before.
+    rs.at = now;
+    rs.trail = had && Array.isArray(had.trail) ? had.trail.slice() : [];
+    if (had && ROAD_NUMS.some(function (k) { return had[k] !== rs[k]; })) {
+      var was = {};
+      ROAD_NUMS.forEach(function (k) { was[k] = had[k]; });
+      rs.trail.push({ at: now, last: had.at || null, was: was });
+      rs.trail = rs.trail.slice(-ROAD_TRAIL);
+    }
+    S.roadKept = S.roadKept || {};
+    S.roadKept[uid] = rs;
+    // A phone with no room left refuses the write. The numbers without their trail are tried then: a copy
+    // no bigger than the one already there fits, so the next open does not draw an older set.
+    if (!lsSet(roadKeptKey(uid), JSON.stringify(rs))) {
+      var slim = {};
+      Object.keys(rs).forEach(function (k) { if (k !== 'trail') slim[k] = rs[k]; });
+      lsSet(roadKeptKey(uid), JSON.stringify(slim));
+    }
+  }
+  // What your own header draws: the card's numbers when it has them, else the kept ones, else null (the stand-in).
+  function myRoad(uid) {
+    if (!uid) return null;
+    var c = cardOf(uid).card;
+    return c && roadReal(c.roadStats) ? c.roadStats : roadKept(uid);
+  }
   function profileHead(tourCount) {
     var card = myCard(), roles = myRoles(), edit = canWrite() || S.mode === 'db';
     var stat = pfStat;
     var uid = socialOn() ? window.GR_BACKEND.uid() : null;
     var counts = myCounts();
     var unread = dmOn() ? dmUnread() : 0;
-    var checked = !!(uid && cardOf(uid).card && cardOf(uid).card.verified);
+    // (the check comes with the same card as the counts, and holds the same way: see myCounts)
+    var checked = !!(uid && counts.verified);
     syncSocial();
     return h('section', { class: 'pf', 'aria-label': 'Your profile' },
       (function () {
-        var own = uid ? cardOf(uid).card : null;
-        var rs = own && G.isObj(own.roadStats) ? own.roadStats : null;
+        // The card's own numbers; until it has them, the last ones this phone really got (see myRoad).
+        var rs = myRoad(uid);
         var B2 = window.GR_BACKEND, mine = flowersOn() && B2.myFlowers ? B2.myFlowers() : null;
         var fans = h('p', { class: 'hist-fans' },
           h('button', { class: 'hf-btn', type: 'button', onclick: function () { if (uid) openFollowList(uid, 'followers'); } },
@@ -2099,8 +2575,8 @@
         : (edit ? h('button', { class: 'pf-roles pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add your roles on tour') : null),
       card.bio ? h('p', { class: 'pf-bio' }, card.bio)
         : (edit ? h('button', { class: 'pf-bio pf-ask', type: 'button', onclick: function () { openProfileSheet(); } }, 'Add a short bio') : null),
-      // The same badge ladder the artists climb, on your own numbers.
-      roadLine(uid && cardOf(uid).card ? cardOf(uid).card.roadStats : null),
+      // The same badge ladder the artists climb, on your own numbers (the same ones the header draws).
+      roadLine(myRoad(uid)),
       edit ? h('div', { class: 'pf-actions three' + (tasksBtn() ? ' four' : '') },
         // On a narrow phone with four buttons, Edit profile and View profile drop the word "profile".
         h('button', { class: 'pf-btn', type: 'button', onclick: function () { openProfileSheet(); } },
@@ -2349,15 +2825,30 @@
       window.GR_BACKEND.profileCard(uid).then(function (card) {
         c.asking = false;
         if (c.again) { c.again = false; cardOf(uid, true); return; }
-        c.card = card; c.gone = !card; c.at = Date.now(); c.failed = false; render();
+        // Your own card coming back with nothing in it is an answer that went wrong, not a profile that is
+        // gone: the card already held stays (followers, the check, View profile) and it is asked for again in
+        // a minute, as after an ask that failed. Someone else's empty card still means their page is gone.
+        var B = window.GR_BACKEND;
+        if (!card && B && B.uid && B.uid() === uid) { c.failed = true; c.at = Date.now(); render(); return; }
+        c.card = card; c.gone = !card; c.at = Date.now(); c.failed = false;
+        // Your own numbers are kept on the phone as they arrive, so the next open has them at once (see myRoad).
+        keepRoad(uid, card);
+        render();
       }).catch(function () { c.asking = false; c.failed = true; c.at = Date.now(); if (c.again) { c.again = false; cardOf(uid, true); } render(); });
     }
     return c;
   }
+  // Followers, following and the check on your own header, by the same rule as the four numbers (see myRoad):
+  // the card's own when it is here, until then the last ones this phone really got. Zeros and no check are
+  // only for a phone that has never had an answer for you.
   function myCounts() {
-    if (!socialOn()) return { followers: 0, following: 0 };
-    var c = cardOf(window.GR_BACKEND.uid()).card;
-    return { followers: c ? G.num(c.followers) : 0, following: c ? G.num(c.following) : 0 };
+    if (!socialOn()) return { followers: 0, following: 0, verified: false };
+    var uid = window.GR_BACKEND.uid(), c = cardOf(uid).card, had = roadKept(uid);
+    var pick = function (k) {
+      var v = c ? roadCount(c[k]) : null;
+      return v != null ? v : (had && had[k] != null ? had[k] : 0);
+    };
+    return { followers: pick('followers'), following: pick('following'), verified: c ? !!c.verified : !!(had && had.verified) };
   }
   function openProfile(uid) {
     if (!uid || !socialOn()) return;
@@ -9342,8 +9833,9 @@
     return viewOffBook(fr, artist, view);
   }
   /* OFF TOUR: the artist's book between tours, on a tour's own Budget screens.
-     Expenses: the climbing line and the table. Cards/Links: the card feed's
-     way in and the cards. Income: the two bars and the income on the book.
+     Expenses: the year's graph, month by month (drawMonths), and the table.
+     Cards/Links: the card feed's way in and the cards. Income: the two bars
+     and the income on the book.
 
      A book that does not exist yet is started by its owner's tap, never by
      landing here (off tour, Budget opens on this screen by default, and that
@@ -9491,7 +9983,8 @@
   }
   // Log by hand on the Off Tour book: pick a category, then the same sheet a tour uses.
   function openOffLog(id) {
-    var cats = G.typedCategoriesFor(getTour(id)).filter(function (c) { return c.key !== 'offdebt' && !G.isDerived(c.key); });
+    // (Every category the artist has added, on any of its books, is here too.)
+    var cats = typedCats(getTour(id)).filter(function (c) { return c.key !== 'offdebt' && !G.isDerived(c.key); });
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'Log an expense'),
@@ -10213,7 +10706,7 @@
   function openCardCharges(id, c) {
     var t = getTour(id);
     var cats = {};
-    G.chargeCategoriesFor(t).forEach(function (x) { cats[x.key] = x.label; });
+    chargeCats(t).forEach(function (x) { cats[x.key] = x.label; });
     var list = cardCharges(t, c);
     var total = list.reduce(function (n, ch) { return ch.accounted ? n : n + G.num(ch.amount); }, 0);
     openSheet(function () {
@@ -10240,7 +10733,7 @@
     var sm = G.cardSummary(card, t);
     var bank = cardBank(card);
     var cats = {};
-    G.chargeCategoriesFor(t).forEach(function (c) { cats[c.key] = c.label; });
+    chargeCats(t).forEach(function (c) { cats[c.key] = c.label; });
     var byCat = {}, since = 0, sinceN = 0;
     G.rows(t.charges).forEach(function (ch) {
       if (ch.accounted || !ch.category || ch.account !== card.feed.name) return;
@@ -10461,6 +10954,8 @@
   function tabExpenses(id, t, c, o) {
     var off = !!(o && o.off), partsOnly = !!(o && o.parts), readOnly = !!(o && o.readOnly);
     if (!off && !partsOnly) syncCrew(id);
+    // (Money under an added category this book has no name for: the artist's name for it is written on, once.)
+    if (!partsOnly) healCatNames(id);
     // The Off Tour book leaves out what only a tour has.
     if (off) c = Object.assign({}, c, { lines: c.lines.filter(function (l) { return l.key !== 'offdebt' && !G.isDerived(l.key); }) });
     var edit = canEditTour(id) && !readOnly;
@@ -10717,7 +11212,7 @@
      vendorGroups.<category>. */
   var VENDOR_CATS = { utilities: true };
   function categoryGroups(t, key) {
-    var cat = (G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0] || {}).label || '';
+    var cat = (typedCats(t).filter(function (c) { return c.key === key; })[0] || {}).label || '';
     var list = categoryEntries(t, key).map(function (r) {
       var eid = r.chargeId || r.cashId || null;
       // A payment logged with its details left blank is stored under the
@@ -10923,7 +11418,7 @@
     if (!r) return;
     var home = r.tourId || id;
     var valid = {};
-    G.chargeCategoriesFor(getTour(home)).forEach(function (c) { valid[c.key] = true; });
+    chargeCats(getTour(home)).forEach(function (c) { valid[c.key] = true; });
     var was = ch.category === 'offdebt' ? ch.offCategory : ch.category;
     var row = { feedId: String(ch.id).replace(/^p/, ''), date: ch.date, posted: ch.posted || ch.date, merchant: ch.merchant,
       amount: G.num(ch.amount), account: ch.account || '', category: was && valid[was] && was !== 'offdebt' ? was : '',
@@ -10943,7 +11438,7 @@
     var ch = r.chargeId ? (t.charges || {})[r.chargeId] : null;
     var cl = r.cashId ? (t.cashLog || {})[r.cashId] : null;
     if (!r.typed && !ch && !cl) { toast('That entry isn\u2019t there anymore.'); return; }
-    var cats = G.chargeCategoriesFor(t).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; });
+    var cats = chargeCats(t).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; });
     var f = {
       amount: r.typed ? r.amount : G.num((ch || cl).amount),
       what: r.typed ? '' : String(ch ? ch.merchant || '' : cl.label || cl.note || ''),
@@ -10974,6 +11469,8 @@
             if (f.category !== 'crew' && cl.crewId) patch.cashLog[r.cashId].crewId = null;
           }
         }
+        // (Under a category the artist added on another book: this book gets its name first, or nothing is saved.)
+        if (!(await catOnBook(id, r.typed ? key : f.category, true))) return;
         if (await api.update(id, patch)) {
           delete S.drafts['exp:' + id];
           toast('Saved');
@@ -11010,7 +11507,7 @@
     };
     function build() {
       var t = getTour(id);
-      var cat = G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0] || { label: key };
+      var cat = typedCats(t).filter(function (c) { return c.key === key; })[0] || { label: catName(t, key) };
       var groups = VENDOR_CATS[key] ? categoryGroups(t, key) : null;
       if (groups && !groups.some(function (g) { return g.key; })) groups = null;
       // The one group asked for (if a move just emptied it, the whole category shows instead).
@@ -11022,7 +11519,8 @@
       if (key === 'crew' && o && o.crewId) list = list.filter(function (r) { return r.crewId === o.crewId; });
       // Crew entries that are nobody's yet (sorted before people could be picked, or filed by a learned merchant).
       var loose = key === 'crew' && !person ? list.filter(function (r) { return (r.chargeId || r.cashId) && !r.crewId; }).length : 0;
-      var canWho = function (r) { return key === 'crew' && canWrite() && canEditTour(id) && !!(r.chargeId || r.cashId) && G.rows(t.crew).length > 0; };
+      // (On the Off Tour book the people are the artist's: crewPool.)
+      var canWho = function (r) { return key === 'crew' && canWrite() && canEditTour(id) && !!(r.chargeId || r.cashId) && crewPool(id).all.length > 0; };
       var whoBtn = function (r) {
         return h('button', { class: 'sw-edit sw-group', type: 'button', 'aria-label': 'Say who ' + r.label + ' was for',
           onclick: function () { openCrewAssign(id, r, function () { reopen(); }); } }, icon('people', 16), 'Who');
@@ -11134,7 +11632,8 @@
      wrong pick. The band first, then the crew, then "no one person". */
   function openCrewAssign(id, r, done) {
     openSheet(function () {
-      var t = getTour(id), g = crewGroups(t);
+      // (The Off Tour book offers the artist's people; one picked from a tour is put on the book's own list first.)
+      var g = crewPool(id);
       var now = r.crewId || null, busy = false;
       var pick = async function (crewId) {
         if (busy) return;
@@ -11145,6 +11644,10 @@
         }
         busy = true;
         var ok;
+        if (crewId) {
+          crewId = await crewOnBook(id, g.all.filter(function (p) { return p.id === crewId; })[0]);
+          if (!crewId) { busy = false; toast('That didn\u2019t save. Try again.'); return; }
+        }
         if (r.cashId) { var cp = { cashLog: {} }; cp.cashLog[r.cashId] = { crewId: crewId || null }; ok = await api.update(id, cp); }
         else { var tg = {}; tg[r.chargeId] = crewId || null; ok = await tagChargesCrew(id, tg); }
         busy = false;
@@ -11208,6 +11711,8 @@
         patch.charges[newId()] = { date: f.date, merchant: f.what.trim() || label, amount: f.amount, category: key,
           accounted: false, manual: true, paid: paid, cash: cash || undefined, createdAt: Date.now() };
       }
+      // (A category the artist added on another book: this book gets its name first, or nothing is saved.)
+      if (!(await catOnBook(id, key, true))) return;
       if (await api.update(id, patch)) {
         delete S.drafts['exp:' + id];
         toast(money(f.amount) + ' logged as ' + kindWord + (asks && f.merch ? ' \u00b7 taken from the merch cash log' : ''));
@@ -11243,7 +11748,8 @@
 
   function openCategorySheet(id, key) {
     var t = getTour(id);
-    var cat = G.typedCategoriesFor(t).filter(function (c) { return c.key === key; })[0];
+    // (One the artist added on another book has no line here yet: it opens all the same, and gets its line with the first save.)
+    var cat = typedCats(t).filter(function (c) { return c.key === key; })[0] || { key: key, label: catName(t, key) };
     var rec = G.normExpenses(t && t.expenses)[key] || { projected: null, paid: 0 };
     var line = G.calc(t).lines.filter(function (l) { return l.key === key; })[0] || { paid: 0 };
     var f = { projected: rec.projected };
@@ -11310,6 +11816,7 @@
               patch.expenses[key] = { projected: next };
               patch.projLog[key] = {};
               patch.projLog[key][newId()] = { at: Date.now(), by: myName() || '', add: pmode === 'add' ? amt : null, total: next };
+              if (!(await catOnBook(id, key, true))) return;
               if (await api.update(id, patch)) {
                 delete S.drafts['exp:' + id];
                 closeSheet();
@@ -11479,9 +11986,94 @@
     var p = crewId && t && G.isObj(t.crew) ? t.crew[crewId] : null;
     return G.isObj(p) ? Object.assign({ id: crewId }, p) : null;
   }
-  // "Which crew member?": the band first, then the crew. o: { value, onPick, aria }.
+  /* "Which crew member?" on the Off Tour book (Devin, 2026-10-12: "when
+     logging off tour expenses and you are paying our crew it doesnt show the
+     which crew member tab which it should"). The book keeps no list of people
+     to begin with, so there was nobody to offer. It now offers the artist's
+     people: everyone on the list of one of the artist's tours (never a tour
+     that was taken down), each person once, beside anyone already on the
+     book's own list. The same person on two tours is one line: by email when
+     both rows carry one, else by name, capitals aside; the row used is the
+     one from the tour on the road today, else from the newest tour.
+     The rest of the app counts a Crew charge for a person only when that
+     person is on the SAME book's list (G.crewOf, and the database's
+     set_charge_crew). So a person picked for a charge on the book is put on
+     the book's own list first (crewOnBook): the id they have on the tour they
+     were read from, their name, their title, Member or crew, and when they
+     were added. Never their pay (the Off Tour book plans pay for nobody) and
+     never their email. Being on that list invites nobody and emails nobody.
+     On a tour nothing changes: its own list, as ever. */
+  function samePerson(a, b) {
+    var low = function (v) { return String(v || '').trim().toLowerCase(); };
+    var ea = low(a && a.email), eb = low(b && b.email);
+    if (ea && eb) return ea === eb;
+    var na = low(a && a.name);
+    return !!na && na === low(b && b.name);
+  }
+  // The artist's tours whose lists are read: the one on the road today first, then the newest.
+  function crewTours(artist) {
+    var key = String(artist || '').trim().toLowerCase(), today = G.tourToday();
+    if (!key) return [];
+    var onRoad = function (t) { var a = G.tourStart(t), b = G.tourEnd(t); return !!(a && b && a <= today && today <= b); };
+    // (A tour with no dates yet goes by the day it was made.)
+    var when = function (t) { return G.tourStart(t) || (t.createdAt ? G.ymd(new Date(t.createdAt)) : ''); };
+    return allTourEntries().filter(function (e) { return artistOf(e[1]).toLowerCase() === key; })
+      .sort(function (x, y) {
+        return (onRoad(y[1]) ? 1 : 0) - (onRoad(x[1]) ? 1 : 0) || String(when(y[1])).localeCompare(String(when(x[1]))) ||
+          (y[1].createdAt || 0) - (x[1].createdAt || 0);
+      });
+  }
+  // Everyone a Crew charge on the artist's Off Tour book can be for. The book's own people lead (the money
+  // already counted for them is under the id they have there); onBook marks them.
+  function offCrew(bookId, artist) {
+    var book = bookId ? getTour(bookId) : null, out = [];
+    crewGroups(book).all.forEach(function (p) { out.push(Object.assign({}, p, { onBook: true })); });
+    crewTours(artist || artistOf(book)).forEach(function (e) {
+      crewGroups(e[1]).all.forEach(function (p) {
+        if (out.some(function (q) { return q.id === p.id || samePerson(q, p); })) return;
+        out.push(Object.assign({}, p, { fromTour: e[0] }));
+      });
+    });
+    return out;
+  }
+  // The people a Crew charge on this book can be for, as the picker groups them. artist: whose Off Tour book
+  // it is, when the book itself is not on this phone yet.
+  function crewPool(bookId, artist) {
+    var t = bookId ? getTour(bookId) : null;
+    if (t ? !isOffTour(t) : !artist) return crewGroups(t);
+    var all = offCrew(t ? bookId : null, artist);
+    return { all: all, members: all.filter(G.isMember), crew: all.filter(function (p) { return !G.isMember(p); }) };
+  }
+  function crewPick(bookId, artist, crewId) {
+    return (crewId && crewPool(bookId, artist).all.filter(function (p) { return p.id === crewId; })[0]) || null;
+  }
+  /* The person a charge on this book is for, on the book's own list: answers
+     the id they have there, or null when they could not be put on it (the
+     caller then files the charge with no name, and says so). Already there
+     (the same id, or the same person by email or name): nothing is written.
+     The write is quiet: who may write the book is as it was, and a book this
+     account is known not to manage is not tried. */
+  async function crewOnBook(bookId, p) {
+    var t = getTour(bookId);
+    if (!t || !p || !p.id) return null;
+    if (!isOffTour(t)) return crewPerson(t, p.id) ? p.id : null;
+    var have = crewGroups(t).all.filter(function (q) { return q.id === p.id || samePerson(q, p); })[0];
+    if (have) return have.id;
+    if (!canWrite() || (S.mode === 'db' && roleKnown(bookId) && !canEditTour(bookId))) return null;
+    var patch = {};
+    patch[p.id] = { name: String(p.name || '').trim(), title: String(p.title || '').trim(), member: !!G.isMember(p),
+      createdAt: G.num(p.createdAt) || Date.now() };
+    if (S.mode !== 'db') return (await api.update(bookId, { crew: patch })) ? p.id : null;
+    try {
+      await enqueue(bookId, function () { return withRetry(function () { return store.db.doc('tours/' + bookId).update({ crew: patch }); }); });
+      return p.id;
+    } catch (e) { return null; }
+  }
+  // "Which crew member?": the band first, then the crew. o: { value, onPick, aria }. On the Off Tour book
+  // they are the artist's people (crewPool); o.artist says whose when the book is not there yet, and
+  // o.people hands over a list already worked out.
   function crewSelect(tourId, o) {
-    var g = crewGroups(getTour(tourId));
+    var g = o.people || crewPool(tourId, o.artist);
     if (!g.all.length) return null;
     var opt = function (p) { return h('option', { value: p.id }, (p.name || 'No name') + (p.title ? ' \u00b7 ' + p.title : '')); };
     var sel = h('select', { class: o.cls || 'input sm', 'aria-label': o.aria || 'Which crew member it was for',
@@ -11599,6 +12191,19 @@
           h('button', { class: 'linkbtn', type: 'button', style: 'min-height:32px',
             onclick: function () { openRosterManager(id); } }, 'Manage saved crew'));
       }
+      // The Off Tour book: the artist's people who are not on the book's own list yet, one tap each. They come
+      // with their name, title and group, and with no pay planned (crewOnBook): a payment is then logged to
+      // them here by hand, as on a tour.
+      var fromTours = isOffTour(t) && canWrite() && canEditTour(id) ? offCrew(id).filter(function (p) { return !p.onBook; }) : [];
+      var toursRow = fromTours.length ? h('div', { style: 'margin-top:16px' },
+        h('p', { class: 'note', style: 'margin:0 2px 8px' }, 'On ' + (artistOf(t) || 'the artist') + '’s tours. Tap one to add them here, with no pay planned:'),
+        h('div', { class: 'chips', style: 'margin:0' }, fromTours.map(function (p) {
+          return h('button', { class: 'chip', type: 'button',
+            onclick: async function () {
+              if (await crewOnBook(id, p)) { delete S.drafts['exp:' + id]; toast((p.name || 'They') + ' added'); openCrewSheet(id); render(true); }
+              else toast('That didn’t save. Try again.');
+            } }, (p.name || 'No name') + (p.title ? ' · ' + p.title : ''));
+        }))) : null;
       // People already on the tour (invited before this) who aren't listed yet.
       var onTour = ((S.crewCache && S.crewCache[id] && S.crewCache[id].rows) || []).filter(function (m) {
         var nm = m.name || m.username || '';
@@ -11621,6 +12226,7 @@
         addOnTour,
         canWrite() ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:12px',
           onclick: function () { openCrewPerson(id, null); } }, icon('plus', 18), 'Add someone') : null,
+        toursRow,
         benchRow ? h('div', { style: 'margin-top:16px' }, benchRow) : null,
         loggedButton(id, 'crew', function () { openCrewSheet(id); })
       ];
@@ -14251,7 +14857,7 @@
     if (bankCard) tasks.push(bankCard);
     // New expenses: what was logged, whoever sorted it, for both of you to see.
     var cats = {};
-    G.chargeCategoriesFor(t).forEach(function (c) { cats[c.key] = c.label; });
+    chargeCats(t).forEach(function (c) { cats[c.key] = c.label; });
     var fresh = [];
     G.rows(t.charges).forEach(function (ch) {
       var im = ch.importId ? imps[ch.importId] : null;
@@ -14795,7 +15401,7 @@
   function openNewCharges(tourId, list) {
     var t = getTour(tourId) || {};
     var cats = {};
-    G.chargeCategoriesFor(t).forEach(function (c) { cats[c.key] = c.label; });
+    chargeCats(t).forEach(function (c) { cats[c.key] = c.label; });
     var total = list.reduce(function (n, ch) { return n + G.num(ch.amount); }, 0);
     openSheet(function () {
       return [
@@ -15777,6 +16383,35 @@
       el.classList.remove('on');
       setTimeout(function () { el.remove(); }, 350);
     }, reduced() ? 1800 : 2300);
+  }
+  /* One charge added from its own row (Devin, 2026-10-12: "could happen faster
+     so you can kinda keep clicking add"): the same horns, small, up for under
+     a second in all, with no dimming, so the list under them stays readable
+     and the next Add can be tapped. Nothing on it takes a tap. Asked for again
+     while one is up, the one on screen says the new line and stays its short
+     while longer: never a stack of them. */
+  var quickHorns = null;
+  function hornQuick(sub) {
+    var q = quickHorns;
+    var horn = function () { return h('span', { class: 'hs-horn', 'aria-hidden': 'true' }, '🤘'); };
+    if (q && q.el.parentNode) {
+      clearTimeout(q.hold); clearTimeout(q.gone);
+      q.sub.textContent = sub || '';
+      // (A new one in its place, so it pops again.)
+      var again = horn();
+      q.horn.replaceWith(again); q.horn = again;
+      q.el.classList.add('on');
+    } else {
+      q = quickHorns = { horn: horn(), sub: h('div', { class: 'sn-sub' }, sub || '') };
+      q.el = h('div', { class: 'splash-note horns quick', role: 'status', 'aria-live': 'polite' },
+        h('div', { class: 'sn-card' }, q.horn, q.sub));
+      document.body.appendChild(q.el);
+      requestAnimationFrame(function () { q.el.classList.add('on'); });
+    }
+    q.hold = setTimeout(function () {
+      q.el.classList.remove('on');
+      q.gone = setTimeout(function () { q.el.remove(); if (quickHorns === q) quickHorns = null; }, 200);
+    }, 700);
   }
 
   // Straight to that day's day sheet.
@@ -18571,11 +19206,11 @@
   // Where merch cash can go: the Expenses categories (so it lands in their
   // Cash column), plus a deposit or a hand-off, which just move the cash.
   function cashCats(t) {
-    return G.chargeCategoriesFor(t).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; });
+    return chargeCats(t).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; });
   }
   function cashCatLabels(t) {
     var out = {};
-    G.chargeCategoriesFor(t).forEach(function (c) { out[c.key] = c.label; });
+    chargeCats(t).forEach(function (c) { out[c.key] = c.label; });
     Object.keys(G.CASH_MOVES).forEach(function (k) { out[k] = G.CASH_MOVES[k]; });
     return out;
   }
@@ -18675,14 +19310,24 @@
             if (!deposit && !f.category) { toast('Pick a category'); return; }
             if (deposit && !G.parseDay(f.date)) { toast('Pick the day it was deposited'); return; }
             var patch = {};
-            var who = !deposit && f.category === 'crew' ? crewPerson(getTour(id), f.crewId) : null;
+            var who = !deposit && f.category === 'crew' ? crewPick(id, null, f.crewId) : null, whoLost = false;
+            // (On the Off Tour book the person is one of the artist's: on the book's own list first, so the money
+            // counts for them. If that cannot be done it is logged with no name, and said.)
+            if (who) {
+              var whoId = await crewOnBook(id, who);
+              whoLost = !whoId && isOffTour(getTour(id));
+              who = whoId ? Object.assign({}, who, { id: whoId }) : null;
+            }
             patch[newId()] = Object.assign({ date: deposit ? f.date : G.tourToday(), amount: f.amount, showId: sh.id,
               label: deposit ? G.CASH_MOVES.deposit : (f.what.trim() || (who ? 'Pay: ' + (who.name || 'crew') : f.category === 'crew' ? 'Crew' : catLabel[f.category]) || 'Cash'),
               category: deposit ? 'deposit' : f.category, createdAt: Date.now() }, who ? { crewId: who.id } : {});
+            // (A category the artist added on another book: this tour gets its name first, or nothing is saved.)
+            if (!deposit && !(await catOnBook(id, f.category, true))) return;
             if (await api.update(id, { cashLog: patch })) {
               var leftNow = Math.round((left - f.amount) * 100) / 100;
               toast(cashMoney(f.amount) + (deposit ? ' deposit logged' : who ? ' paid to ' + (who.name || 'crew') : ' logged under ' + catLabel[f.category]) +
-                (leftNow > 0.004 ? ' · ' + cashMoney(leftNow) + ' of ' + place + ' left' : ' · ' + place + ' is all accounted for'));
+                (leftNow > 0.004 ? ' · ' + cashMoney(leftNow) + ' of ' + place + ' left' : ' · ' + place + ' is all accounted for') +
+                (whoLost ? ' · the crew member didn’t save: set it under Crew, Logged Card Transactions' : ''), whoLost ? 5200 : 0, whoLost);
               render(true);
               if (leftNow > 0.004) openCashNight(id, showId); else closeSheet();
             }
@@ -21005,13 +21650,135 @@
     function finishFail(title, msg) { readFail(title, msg, null, null); }
   }
 
+  /* ---------------- Added categories: one list per artist ----------------
+     Devin, 2026-10-12: a category made with "+ New category" "should show up
+     in that dropdown menu for now on". A category is still saved on a book
+     (extraCats), and a book only counts money under a name it has. So the
+     artist's list is read, not stored: every category added on any of the
+     artist's books this phone holds (its tours and its Off Tour book; not a
+     book that was taken down) is offered by every picker on every one of
+     them, and a book is given the name the moment something is saved under
+     it there (catOnBook). A tour with no artist filed keeps to its own.
+     There is no rename and no delete of an added category. */
+  // { key: label } for the artist whose book this is. The book's own name for a key leads.
+  function artistCatNames(t) {
+    var out = G.extraCatNames(t), artist = artistOf(t).toLowerCase();
+    if (!artist) return out;
+    var take = function (b) {
+      if (!b || b === t || b.deletedAt || artistOf(b).toLowerCase() !== artist) return;
+      var names = G.extraCatNames(b);
+      Object.keys(names).forEach(function (k) { if (!out[k]) out[k] = names[k]; });
+    };
+    S.tours.forEach(take);
+    Object.keys(S.pending).forEach(function (id) { if (!S.tours.has(id)) take(S.pending[id]); });
+    return out;
+  }
+  // The added categories of a book as its pickers list them: the artist's, and any the book's own
+  // entries use that nothing has named (those go by a label read out of the key), by name.
+  function addedCats(t) {
+    var names = artistCatNames(t);
+    G.extraCategories(t).forEach(function (c) { if (!names[c.key]) names[c.key] = c.label; });
+    return Object.keys(names).sort(function (a, b) { return names[a].localeCompare(names[b]); })
+      .map(function (k) { return { key: k, label: names[k] }; });
+  }
+  // (The built-in ones, named as this book names them: only its crew list has a say in that.)
+  function builtInOf(t) { return { crew: t && t.crew }; }
+  // What a charge can be filed under on this book (and where to find the name of what is already filed).
+  function chargeCats(t) { return G.chargeCategoriesFor(builtInOf(t)).concat(addedCats(t)); }
+  // The same for the Expenses categories (no Day by day, nothing that is figured).
+  function typedCats(t) { return G.typedCategoriesFor(builtInOf(t)).concat(addedCats(t)); }
+  // A category's name on this book, for something already filed there: never its raw key.
+  function catName(t, key) {
+    var hit = chargeCats(t).filter(function (c) { return c.key === key; })[0];
+    return hit ? hit.label : String(key || '').indexOf('x-') === 0 ? G.extraCatLabel(key) : String(key || '');
+  }
+  function catMadeWords(t, label) {
+    return '\u201c' + label + '\u201d is a category now' + (artistOf(t) ? ', on every tour and Off Tour.' : '.');
+  }
+  /* Before anything is saved under an added category on a book, the book is
+     given that category's name if it has none for it: the bank feed refuses
+     a category its pile's own book does not have, and a book only counts
+     money on a line it has a name for. Answers false when the name could not
+     be written (the write has said why): the caller then saves nothing.
+     must: the save cannot go without the name (the pile's own book, the book
+     a form is saving to). Without it, a book this account is known not to
+     manage is left alone: the money is still counted there (G.extraCategories)
+     and the name is written by the next person who may (healCatNames). */
+  async function catOnBook(bookId, keys, must) {
+    var t = getTour(bookId);
+    if (!t) return true;
+    var have = G.extraCatNames(t), names = null, patch = {}, n = 0;
+    [].concat(keys || []).forEach(function (k) {
+      if (typeof k !== 'string' || k.indexOf('x-') !== 0 || have[k] || patch[k]) return;
+      names = names || artistCatNames(t);
+      patch[k] = names[k] || G.extraCatLabel(k); n += 1;
+    });
+    if (!n) return true;
+    if (!must && S.mode === 'db' && roleKnown(bookId) && !canEditTour(bookId)) return true;
+    return api.update(bookId, { extraCats: patch });
+  }
+  // A write that is only a nicety (a name put right in the background): tried once, and a failure is not said.
+  async function quietUpdate(id, patch) {
+    if (!canWrite()) return false;
+    if (S.mode !== 'db') return api.update(id, patch);
+    try { await enqueue(id, function () { return store.db.doc('tours/' + id).update(patch); }); return true; }
+    catch (e) { return false; }
+  }
+  /* A book holding money under an added category it has no name for shows it
+     under a label read out of the key (G.extraCategories). When the artist's
+     list knows the real name, it is written onto the book: once a visit for
+     each, quietly, and only by an account that manages the book. */
+  function healCatNames(bookId) {
+    var t = getTour(bookId);
+    if (!t || t.deletedAt || !canWrite()) return;
+    var loose = G.unnamedExtraCats(t);
+    if (!loose.length) return;
+    S.catHealed = S.catHealed || {};
+    var names = artistCatNames(t), patch = {}, n = 0;
+    loose.forEach(function (k) {
+      if (!names[k] || S.catHealed[bookId + ':' + k]) return;
+      patch[k] = names[k]; n += 1;
+    });
+    // (Until the server has said what this account is on the book, nothing is written and nothing is marked as tried.)
+    if (!n || !canEditTour(bookId)) return;
+    Object.keys(patch).forEach(function (k) { S.catHealed[bookId + ':' + k] = true; });
+    // (After the screen that asked has finished drawing: this is called while a book's Expenses are being drawn.)
+    setTimeout(function () { quietUpdate(bookId, { extraCats: patch }); }, 0);
+  }
+  /* The bank feed starts an artist's Off Tour book itself when a charge is
+     sent there and there is none yet. The book reaches this phone a moment
+     later: its added categories are named then. A few looks, and after that
+     it is left to the next time the book is opened (tabExpenses). */
+  function healOffBookSoon(artist, n) {
+    var id = offTourOf(artist);
+    if (id) healCatNames(id);
+    if ((!id || G.unnamedExtraCats(getTour(id)).length) && (n || 0) < 8) {
+      setTimeout(function () { healOffBookSoon(artist, (n || 0) + 1); }, 900);
+    }
+  }
+
   /* A category picker that can grow: its last option turns into a small
-     name-it input, and the new category is saved on the tour (extraCats) and
-     counted like any built-in. */
+     name-it input, and the new category is saved on the book (extraCats),
+     counted like any built-in, and offered from then on by every picker of
+     the artist's (chargeCats).
+     o.onNew(key, label): a category was just made here (not one that was
+       already there under that name).
+     o.rebuild(): set here, for whoever holds several pickers: lists the
+       categories afresh, so one made in another picker is in this one at
+       once. A picker in the middle of naming one is left alone. */
   function categorySelect(tourId, o) {
     var holder = h('span', { class: 'catpick' });
-    var sel;
-    function build() {
+    var sel, naming = false, finish = null;
+    // o.skip: { key: true } for categories this picker never offers (the sorting sheet leaves out Off Tour
+    // Debt, which the bank feed sets itself and will not take from a pick).
+    // o.cats(fresh): the list, for whoever holds many pickers and has worked it out once for all of them
+    // (fresh: a category was just made here, so it is to be read again).
+    var skip = o.skip || {};
+    var cats = function (fresh) {
+      return (o.cats ? o.cats(fresh) : chargeCats(getTour(tourId))).filter(function (c) { return !skip[c.key]; });
+    };
+    function build(fresh) {
+      naming = false; finish = null;
       sel = h('select', { class: o.cls || 'input sm', 'aria-label': o.aria || 'Category',
         onchange: function (e) {
           if (e.target.value === '__new') { grow(); return; }
@@ -21019,36 +21786,63 @@
           o.onPick(e.target.value || null);
         } });
       sel.append(h('option', { value: '' }, o.noneLabel || 'Pick a category'));
-      G.chargeCategoriesFor(getTour(tourId)).forEach(function (c) {
+      cats(fresh === true).forEach(function (c) {
         sel.append(h('option', { value: c.key }, c.label));
       });
       sel.append(h('option', { value: '__new' }, '+ New category\u2026'));
       sel.value = o.value || '';
       holder.replaceChildren(sel);
     }
+    o.rebuild = function () { if (!naming) build(); };
+    /* While a name is being typed there are two buttons side by side that
+       read "Add": the small one that saves the name, and the row's own. The
+       row's own asks here first (o.finish): the name is saved and picked, and
+       only then is the charge added under it. Answers false when a name was
+       typed and could not be saved (the write has said why): the row's Add
+       then adds nothing. With no name being typed it answers true at once. */
+    o.finish = function () { return finish ? finish() : Promise.resolve(true); };
+    o.naming = function () { return naming; };
     function grow() {
+      naming = true;
+      var going = null;
       var inp = h('input', { class: 'input sm', type: 'text', maxlength: 30,
-        placeholder: 'Name it \u2014 e.g. Security', autocomplete: 'off',
+        placeholder: 'Name it, e.g. Security', autocomplete: 'off', 'aria-label': 'New category name',
         onkeydown: function (e) { if (e.key === 'Enter') { e.preventDefault(); commit(); } } });
-      async function commit() {
+      // (Enter, the button and the row's own Add together are one Add: whoever asks second waits on the first.)
+      function commit() {
+        if (!going) going = run().then(function (ok) { going = null; return ok; }, function () { going = null; return false; });
+        return going;
+      }
+      async function run() {
         var label = String(inp.value || '').trim();
         var key = G.slugCategory(label);
-        if (!label || !key) { build(); return; }
-        var t = getTour(tourId);
-        var clash = G.chargeCategoriesFor(t).filter(function (c) {
+        if (!label || !key) { build(); return true; }
+        var t = getTour(tourId), made = false;
+        // Already one of the artist's, under that name or that key: it is picked, and nothing new is made.
+        var clash = chargeCats(t).filter(function (c) {
           return c.key === key || c.label.toLowerCase() === label.toLowerCase() || (c.key === 'crew' && payName(label));
         })[0];
+        if (clash && skip[clash.key]) {
+          build();
+          toast('\u201c' + clash.label + '\u201d can\u2019t be picked here. Pick another category.', 4200);
+          return false;
+        }
         if (clash) key = clash.key;
         else {
           var patch = { extraCats: {} };
           patch.extraCats[key] = label;
-          if (!(await api.update(tourId, patch))) { build(); return; }
-          toast('\u201c' + label + '\u201d is a category now \u2014 on this tour everywhere');
+          var ok = await api.update(tourId, patch);
+          if (!ok) { build(); return false; }
+          made = true;
+          toast(catMadeWords(t, label), 4200);
         }
         o.value = key;
-        build();
+        build(made);
         o.onPick(key);
+        if (made && o.onNew) o.onNew(key, label);
+        return true;
       }
+      finish = commit;
       holder.replaceChildren(h('span', { class: 'af-row', style: 'display:flex;gap:8px' }, inp,
         h('button', { class: 'btn sm primary', type: 'button', onclick: commit }, 'Add')));
       setTimeout(function () { inp.focus(); }, 30);
@@ -21074,6 +21868,7 @@
     //   Current Tour: the tour being reviewed (from the Off Tour book, the
     //     band's tour running today);
     //   Upcoming Tour: any of the band's tours that hasn't started (pick one).
+    healCatNames(tourId);
     var base = getTour(tourId) || {};
     var baseOff = isOffTour(base);
     var band = artistOf(base);
@@ -21094,102 +21889,491 @@
       return curTour ? curTour.id : tourId;
     };
     var nameOf = function (id2) { var x = getTour(id2); return (x && x.name) || 'the tour'; };
+    // A category a row arrived with (learned on another book) is kept only if this book's pickers offer it:
+    // what the row shows picked is what would be filed.
+    var offered = {};
+    chargeCats(base).forEach(function (c) { offered[c.key] = true; });
+    // (Off Tour Debt is never picked: the bank feed sets it itself for a tour's charge sent to Off Tour, and
+    // refuses a whole save that asks for it. The chips never offered it; a row's own picker no longer does.)
+    var NOT_PICKED = { offdebt: true };
+    delete offered.offdebt;
+    // The bank lines this sheet holds or has held (by id), and the cards they are on: see adopt.
+    var mine = {}, cards = {};
+    rows.forEach(function (r, i) {
+      // (Its place in the sheet, so a row that comes back comes back where it was.)
+      r.ord = i;
+      if (r.category && !offered[r.category]) { r.category = ''; r.source = null; }
+      if (feed && r.feedId != null) { mine[r.feedId] = true; delete feedBack[r.feedId]; }
+      cards[r.account || ''] = true;
+    });
     var live = rows.slice();
-    var busy = false;
-    // What the plain set-aside link says when it worked: where the charge can be found again (its creator's list).
-    var asideSay = feed && createdTour(tourId) ? 'Set aside. It is listed under Left out and set aside, where you can put it back.' : null;
+    // (Still on the sheet? A row on its way out takes nothing more from any of its controls.)
+    var here = function (r) { return live.indexOf(r) >= 0; };
+    // What the plain set-aside link says when it worked: where the charge can be found again (its creator's
+    // list). Several tapped one after another go as one save, and are said as the number they were.
+    var ASIDE_ONE = 'Set aside. It is listed under Left out and set aside, where you can put it back.';
+    var asideSay = feed && createdTour(tourId) ? ASIDE_ONE : null;
+    var asideWords = function (n) {
+      return n === 1 ? ASIDE_ONE : n + ' charges set aside. They are listed under Left out and set aside, where you can put them back.';
+    };
 
-    // Add these charges to the tour (keep), or set them aside (feed only).
+    /* The line (Devin, 2026-10-12: "when i press add it sometimes doesnt make
+       the expense go away"). One save is the bank feed's answer, then the pile
+       read again: a second or three on a phone. A tap made while one was out
+       used to be dropped without a word. Now the rows a tap is for leave the
+       sheet at once and its save waits its turn: one request out at a time,
+       and every row "Add" waiting when the line moves goes in ONE request
+       (so do the plain set-asides, in one of their own). A save that did not
+       go through puts its rows back where they were, category still picked,
+       and says so. Nothing is passed off as saved. */
+    var line = [], moving = false, away = 0;
+    // The sheet is gone (closed by hand, or another one opened over it). Saves still out carry on.
+    var closed = false;
+    // When the first of the saves now out left the sheet. Out for more than a second, the title says how many.
+    var awaySince = 0, awayTick = 0;
+    /* Out of the sheet, on their way to being saved. A row that has left
+       takes nothing more from any of its controls, and it keeps its place on
+       screen for about a quarter of a second while it fades and then closes
+       up (LEAVE_MS). So a quick second tap lands on the row that is leaving,
+       where it does nothing, and never on the row that would otherwise have
+       slid up under the finger (the old sheet had taught him to tap Add
+       twice). With reduced motion the space is simply held that long, and
+       then the row is gone. */
+    var LEAVE_MS = 260, leavingUntil = 0;
+    function takeOut(list) {
+      var redraw = false, els = [];
+      list.forEach(function (r) {
+        var i = live.indexOf(r);
+        if (i < 0) return;
+        live.splice(i, 1);
+        if (!away) {
+          awaySince = Date.now();
+          clearTimeout(awayTick);
+          awayTick = setTimeout(function () { if (!closed && away > 0) { try { refreshBar(); } catch (e) { /* only the count */ } } }, 1050);
+        }
+        away += 1;
+        if (r.feedId != null) feedGoing[r.feedId] = true;
+        // (A fold's own button counts what is in it.)
+        if (r.duplicate || r.preCutoff) redraw = true;
+        if (r.el && r.el.parentNode) els.push(r.el);
+      });
+      // (Drawing comes second, and whatever it does, the save these rows are waiting for still joins the line.)
+      try {
+        els.forEach(leave);
+        if (els.length) leavingUntil = Date.now() + LEAVE_MS;
+        // Everything the search found is sorted: the search clears, the rest comes back.
+        if (query && !live.some(shown)) { query = ''; search.value = ''; redraw = true; }
+        // (The rows that stay are the very buttons they were, so the next tap lands. What has to be drawn afresh,
+        // a fold's count or the rest of the list behind a search that is done, is drawn once the rows have left.)
+        refreshBar();
+        if (redraw) drawSoon();
+      } catch (e) { /* the save goes on */ }
+    }
+    // One row leaving: dimmed and dead to the touch at once, closed up and gone LEAVE_MS later.
+    function leave(el) {
+      el.classList.add('rv-going');
+      el.setAttribute('aria-hidden', 'true');
+      Array.prototype.forEach.call(el.querySelectorAll('button, input, select, textarea'), function (c) { c.disabled = true; });
+      if (!reduced()) {
+        // (From the height it has now: the styles hold it there while it fades, then close it up.)
+        try { el.style.height = el.getBoundingClientRect().height + 'px'; void el.offsetHeight; el.classList.add('rv-shut'); } catch (e) { /* it just goes */ }
+      }
+      setTimeout(function () { el.remove(); }, LEAVE_MS);
+    }
+    // Is this row where he can see it? (Not behind the search, not in a fold that is closed.)
+    function inSight(r) { return shown(r) && (r.duplicate ? openDup : r.preCutoff ? openBefore : true); }
+    /* Back into the sheet, in their place: the save did not go through, or the
+       pile still holds them. A row that comes back where it cannot be seen
+       comes back unticked: the sheet's rule is that nothing out of sight is
+       ever added, and that rule only ran on rows that were in the list when
+       he searched or closed a fold. With the sheet gone, a bank line is still
+       in the pile, and the sheet now open on the same card takes it in (adopt). */
+    function putBack(list) {
+      list = list.filter(function (r) { return live.indexOf(r) < 0 && !r.tookIn; });
+      if (!list.length) return;
+      if (closed) {
+        if (!feed) return;
+        // (They are no longer on their way: the pile has them, and any sheet may show them.)
+        list.forEach(function (r) { if (r.feedId != null) { delete feedGoing[r.feedId]; feedBack[r.feedId] = r; } });
+        var took = feedBackTell ? feedBackTell() : {};
+        list.forEach(function (r) { if (r.feedId != null && took[r.feedId]) r.tookIn = true; });
+        return;
+      }
+      list.forEach(function (r) { if (!inSight(r)) r.pick = false; });
+      live = live.concat(list).sort(function (a, b) { return a.ord - b.ord; });
+      try { refreshBar(); drawSoon(); } catch (e) { /* they are in the list all the same, and drawn with the next redraw */ }
+    }
+    // Bank lines that a sheet since closed could not save are still in the pile. This sheet, open on the same
+    // card, takes them in where they belong, so it never closes and moves on with one of its card's still waiting.
+    function adopt() {
+      var took = {};
+      if (closed || !feed) return took;
+      var fresh = feedRows(tourId).filter(function (x) { return feedBack[x.feedId] && !mine[x.feedId] && cards[x.account || '']; });
+      if (!fresh.length) return took;
+      fresh.forEach(function (x) {
+        var was = feedBack[x.feedId];
+        delete feedBack[x.feedId];
+        took[x.feedId] = true; mine[x.feedId] = true;
+        x.pick = false; x.dest = baseOff ? 'off' : 'cur'; x.upTo = ups.length ? ups[0].id : null;
+        // (The category he had picked for it comes with it, when this book's pickers offer it.)
+        if (G.isObj(was) && was.category && offered[was.category]) { x.category = was.category; x.source = was.source || 'chosen'; }
+        else if (x.category && !offered[x.category]) { x.category = ''; x.source = null; }
+        rows.push(x); live.push(x);
+      });
+      // (Each in its place: the sheet's order is newest first.)
+      rows.sort(G.newestFirst).forEach(function (x, i) { x.ord = i; });
+      live.sort(function (a, b) { return a.ord - b.ord; });
+      try { refreshBar(); drawSoon(); } catch (e) { /* drawn with the next redraw */ }
+      return took;
+    }
+    // A redraw that is not the answer to his own tap waits for a finger that is down (a row swapped out mid-tap
+    // swallows the tap), for a row that is still leaving (it holds its place until it is gone), and a short
+    // while for a category that is being named in the list.
+    var drawWait = 0;
+    function drawSoon(n) {
+      clearTimeout(drawWait);
+      if (closed) return;
+      var a = document.activeElement;
+      var naming = !!(a && a.tagName === 'INPUT' && a.type === 'text' && listHost.contains(a));
+      var going = leavingUntil - Date.now();
+      if (going > 0) { drawWait = setTimeout(function () { drawSoon(n); }, going + 20); return; }
+      if ((fingerDown && Date.now() - fingerDown < 4000) || (naming && (n || 0) < 40)) {
+        drawWait = setTimeout(function () { drawSoon((n || 0) + 1); }, 200);
+        return;
+      }
+      draw();
+    }
+    // What is said of rows whose save did not go through, once they have been put back: where they are now.
+    function backSay(list) {
+      var n = list.length, one = n === 1;
+      var back = list.filter(function (r) { return live.indexOf(r) >= 0 || r.tookIn; }).length;
+      if (back < n) {
+        // (The sheet they were on is gone.)
+        if (back) return 'Those ' + n + ' charges are still waiting.';
+        return feed ? (one ? 'The charge is still waiting in the pile.' : 'Those ' + n + ' charges are still waiting in the pile.')
+          : (one ? 'The charge was not added.' : 'Those ' + n + ' charges were not added.');
+      }
+      // (A search typed while the save was out can be hiding them: they are not ticked, and it is said.)
+      var hid = closed ? 0 : list.filter(function (r) { return live.indexOf(r) >= 0 && !shown(r); }).length;
+      return (one ? 'The charge is back in the list.' : 'Those ' + n + ' charges are back in the list.') +
+        (hid ? ' Clear the search to see ' + (one ? 'it' : 'them') + '.' : '');
+    }
+    // A request that gets no answer in this long is taken as not having gone: its rows come back, he is told
+    // there is no connection, and the line moves on. (If the answer does come later, see lateAnswer.)
+    var GIVE_UP_MS = 25000, LATE = {};
+    function within(p, ms) {
+      return new Promise(function (res) {
+        var t = setTimeout(function () { res(LATE); }, ms);
+        Promise.resolve(p).then(function (v) { clearTimeout(t); res(v); }, function () { clearTimeout(t); res(null); });
+      });
+    }
+    // The next card, once: the sheet's own close and the "Next card" button (still on the page for the
+    // moment the sheet takes to slide away) are one go.
+    var nexted = false;
+    function goNext() {
+      if (nexted || !(opts && opts.next)) return;
+      nexted = true;
+      setTimeout(opts.next, 380);
+    }
+    /* A request that was given up on, whose answer comes after all. Its rows
+       are back on the sheet by then. If the bank feed did take them, the pile
+       no longer holds them: they leave the sheet and it is said, so he is not
+       left looking at charges that are already sorted. (A row he has sent
+       again in the meantime is left to that save's own answer.) */
+    function lateAnswer(asked, xs, keep) {
+      Promise.resolve(asked).then(async function (a) {
+        if (!a || !a.ok) return;
+        var P = S.pile && S.pile[tourId];
+        if (P && P.lead) await loadPile(tourId);
+        P = S.pile && S.pile[tourId];
+        // (Not judged when the pile could not be read.)
+        if (P && P.lead ? P.failed : (S.feed && S.feed.failed)) return;
+        var still = {};
+        feedWaiting(tourId).forEach(function (it) { still[it.id] = true; });
+        var gone = xs.filter(function (x) { return !still[x.feedId] && live.indexOf(x) >= 0; });
+        render(true);
+        if (!gone.length || closed) return;
+        live = live.filter(function (x) { return gone.indexOf(x) < 0; });
+        gone.forEach(function (x) { x.sentOnce = false; });
+        // (Who a Crew charge was for was never sent for these.)
+        var noWho = keep && gone.some(function (x) { return x.category === 'crew' && x.crewId; });
+        toast((gone.length === 1 ? '1 charge was ' : gone.length + ' charges were ') + (keep ? 'added' : 'set aside') + ' after all: the answer was late.' +
+          (noWho ? ' The crew member didn’t save: set it under Crew, Logged Card Transactions.' : ''), 5200, true);
+        refreshBar(); drawSoon();
+        if (!live.length && !away && !moving) { closeSheet(); goNext(); }
+      }).catch(function () { /* nothing to put right */ });
+    }
+    // job: { rows, lot, run(rows) }. lot 'add' (a row's own Add) or 'aside' (the plain set-aside): jobs of one
+    // lot that are waiting go together. Answers what run answers, once the job has had its turn.
+    function join(job) {
+      return new Promise(function (resolve) { job.done = resolve; line.push(job); move(); });
+    }
+    async function move() {
+      if (moving) return;
+      moving = true;
+      try {
+        while (line.length) {
+          var job = line.shift(), same = [job], res;
+          if (job.lot) {
+            same = same.concat(line.filter(function (j) { return j.lot === job.lot; }));
+            line = line.filter(function (j) { return j.lot !== job.lot; });
+          }
+          var rows2 = same.reduce(function (all, j) { return all.concat(j.rows); }, []);
+          try { res = await job.run(rows2); }
+          catch (e) {
+            // (Something this code did not expect. The rows are not lost with it.)
+            res = undefined;
+            putBack(rows2);
+            saveFailed(feed ? 'cards:file' : 'tour', e, backSay(rows2));
+          } finally {
+            away -= rows2.length;
+            if (away <= 0) { away = 0; awaySince = 0; }
+            rows2.forEach(function (r) { if (r.feedId != null) delete feedGoing[r.feedId]; });
+          }
+          // (The count of saves still out, beside the title, follows each answer.)
+          if (!closed) { try { refreshBar(); } catch (e) { /* only the count */ } }
+          same.forEach(function (j) { j.done(res); });
+        }
+      } finally {
+        // (Whatever happened, the line is never left standing: what still waits has its turn.)
+        moving = false;
+        if (line.length) setTimeout(move, 0);
+      }
+      // The line is empty. Nothing left on the sheet and nothing came back: it closes, and the next card opens.
+      if (closed) return;
+      if (!live.length) { closeSheet(); goNext(); }
+      else refreshBar();
+    }
+
+    // Before a save reaches the bank feed: the books these charges are going onto have the names of the added
+    // categories among them. The pile's own book first (the bank feed checks every category against it).
+    // Answers the rows that cannot go: the ones whose category could not be given its name on a book (the
+    // write has said why). Every other row of the save still goes: one name that cannot be written no longer
+    // holds back charges that never needed it.
+    async function namesFirst(list) {
+      var books = {}, order = [], held = [];
+      var want = function (x, id, must) {
+        var key = x.category;
+        if (!id || typeof key !== 'string' || key.indexOf('x-') !== 0) return;
+        if (!books[id]) { books[id] = { rows: [], must: false }; order.push(id); }
+        books[id].rows.push(x);
+        if (must) books[id].must = true;
+      };
+      list.forEach(function (x) {
+        want(x, tourId, true);
+        want(x, x.dest === 'off' ? (baseOff ? tourId : band ? offTourOf(band) : null) : landsOn(x), false);
+      });
+      for (var i = 0; i < order.length; i++) {
+        var b = books[order[i]], had = G.extraCatNames(getTour(order[i]));
+        // (Only the rows whose category this book has no name for wait on the write.)
+        var need = b.rows.filter(function (x) { return !had[x.category] && held.indexOf(x) < 0; });
+        if (!need.length) continue;
+        if (!(await catOnBook(order[i], need.map(function (x) { return x.category; }), b.must))) {
+          need.forEach(function (x) { if (held.indexOf(x) < 0) held.push(x); });
+        }
+      }
+      return held;
+    }
+
+    // Add these charges to the tour (keep), or set them aside (feed only). The rows leave the sheet at this
+    // tap and the save joins the line; answers what the save answers (see save), once it has had its turn.
     // say: other words for the line that says what happened (a charge matched to a reimbursement).
     // reason: why a charge is set aside, kept with it so the list of what was set aside can say:
     // 'same_as_typed' ("It's the one I typed"), 'paid_back' ("It's that reimbursement"); otherwise 'set_aside'.
-    async function file(list, keep, btn, say, reason) {
-      if (busy || !list.length) return;
+    // quick: one charge, from its own row's Add. The horns come at the tap, small and short, and when the save
+    // goes through with nothing to tell, nothing more is said.
+    function file(list, keep, say, reason, quick) {
+      // (A row already on its way out is not sent a second time.)
+      list = list.filter(function (r) { return live.indexOf(r) >= 0; });
+      if (!list.length) return Promise.resolve();
       if (keep) {
         var missing = list.filter(function (r) { return !r.category; });
         if (missing.length) {
           toast(list.length === 1 ? 'Pick a category first' : 'Pick a category for ' + plural(missing.length, 'checked charge'));
-          return;
+          return Promise.resolve();
         }
       }
-      busy = true;
-      var was = btn ? btn.textContent : '';
-      if (btn) { btn.disabled = true; btn.textContent = keep ? 'Adding\u2026' : 'Moving\u2026'; }
-      var said = '', addedN = 0, stuck = [];
+      takeOut(list);
+      // (The horns are a flourish: never the reason a save does not go.)
+      if (quick) { try { hornQuick(G.moneyCents(list[0].amount)); } catch (e) { /* no horns this time */ } }
+      return join({ rows: list, lot: quick ? 'add' : (!keep && reason === 'set_aside' ? 'aside' : ''),
+        run: function (all) { return save(all, keep, say, reason, !!quick); } });
+    }
+    // One request, at the head of the line: these charges are added (keep) or set aside. Rows that did not
+    // go are put back, and what happened is said. Answers what the card feed answered (null for a
+    // statement), or nothing when the save did not go through.
+    async function save(list, keep, say, reason, quick) {
+      // all: every row of this save. list: the ones that went (to the bank feed, or onto the books).
+      var all = list, said = '', addedN = 0, stuck = [], r = null, went = false;
+      // What a quick Add still has to tell: everything but "added", which the horns said at the tap.
+      var news = [];
+      // Something in what is said went wrong (a charge still waiting, a name that did not save): that line is
+      // held, so the next one is said after it and never over it (see toast).
+      var wrong = false;
       try {
         if (feed) {
-          var B = window.GR_BACKEND, r = null;
-          try {
-            // by 'hand': everything this sheet sends was a person's tap. The bank feed takes a set-aside
-            // only with that mark, so a phone still on a build that set look-alikes aside by itself is refused.
-            r = await B.feedCall('file', { tourId: tourId, by: 'hand', picks: list.map(function (x) {
-              return Object.assign({ id: x.feedId, keep: keep, category: keep ? x.category : null, accounted: false,
-                dest: x.dest === 'off' ? 'off' : 'tour', to: landsOn(x) }, keep ? {} : { reason: reason || 'set_aside' });
-            }) });
-          } catch (e) { r = null; }
-          if (!r || !r.ok) {
-            if (r && r.error === 'not_allowed') toast('Only the tour manager can sort card charges.');
-            else saveFailed('cards:file', r);
-            return;
+          var B = window.GR_BACKEND;
+          var hadOff = baseOff || !band || !!offTourOf(band);
+          if (keep) {
+            // Rows whose category could not be named on a book are not sent. The write has said why; where the
+            // rows are now is said after it, in the same line. The rest of the save goes on.
+            var held = await namesFirst(list);
+            if (held.length) {
+              putBack(held);
+              toastAfter(backSay(held));
+              list = list.filter(function (x) { return held.indexOf(x) < 0; });
+              if (!list.length) return;
+            }
           }
+          // One request to the bank feed. No answer within GIVE_UP_MS is taken as no connection.
+          var send = async function (xs) {
+            var asked = null, a = null;
+            try {
+              // by 'hand': everything this sheet sends was a person's tap. The bank feed takes a set-aside
+              // only with that mark, so a phone still on a build that set look-alikes aside by itself is refused.
+              asked = B.feedCall('file', { tourId: tourId, by: 'hand', picks: xs.map(function (x) {
+                return Object.assign({ id: x.feedId, keep: keep, category: keep ? x.category : null, accounted: false,
+                  dest: x.dest === 'off' ? 'off' : 'tour', to: landsOn(x) }, keep ? {} : { reason: reason || 'set_aside' });
+              }) });
+              a = await within(asked, GIVE_UP_MS);
+            } catch (e) { a = null; }
+            if (a === LATE) { a = { error: 'offline' }; lateAnswer(asked, xs, keep); }
+            // (No answer is not a no: the request may have reached the bank feed all the same.)
+            if (!a || a.error === 'offline') xs.forEach(function (x) { x.sentOnce = true; });
+            return a;
+          };
+          // Rows the bank feed did not take: back on the sheet, then said.
+          var refused = function (a, xs) {
+            putBack(xs);
+            if (a && a.error === 'not_allowed') toast('Only the tour manager can sort card charges. ' + backSay(xs), 5200, true);
+            else if (a && a.error === 'bad_category') toast('That category can’t be used for a card charge. Pick another one. ' + backSay(xs), 5200, true);
+            else saveFailed('cards:file', a, backSay(xs));
+          };
+          r = await send(list);
+          if (r && r.error === 'bad_category' && list.length > 1) {
+            /* One charge the bank feed will not take under its category refuses
+               the whole request, and rows tapped one after another go as one
+               request. So they are sent again one at a time: only the charge
+               it will not take comes back, with words of its own. */
+            var sum = { ok: true, filed: 0, skipped: 0, already: 0, refused: 0, total: 0, offTour: 0, upcoming: 0 };
+            var sent = [], bad = [], rest = list.slice(), stop = null;
+            while (rest.length && !stop) {
+              var one = await send([rest[0]]);
+              if (one && one.ok) {
+                // (Tried again after no answer and found already done: that was this save. As for a whole save, below.)
+                if (one.retried && keep && !one.filed && one.already) { one.filed = one.already; one.already = 0; one.total = G.num(rest[0].amount); }
+                ['filed', 'skipped', 'already', 'refused', 'total', 'offTour', 'upcoming'].forEach(function (k) { sum[k] += G.num(one[k]); });
+                sent.push(rest.shift());
+              } else if (one && one.error === 'bad_category') bad.push(rest.shift());
+              else stop = { answer: one };
+            }
+            sum.total = Math.round(sum.total * 100) / 100;
+            if (bad.length) refused({ error: 'bad_category' }, bad);
+            // (Something else stopped it part way: what was not sent comes back with that reason.)
+            if (stop) refused(stop.answer, rest);
+            list = sent; r = sum;
+            if (!list.length) return;
+          }
+          if (!r || !r.ok) { refused(r, list); return; }
           // Who each Crew charge was for. The bank feed's own filing keeps no
           // extra field, so it is said in a second step, by the database, and only
           // onto a charge that is really there under Crew.
-          var whoMissed = false;
+          var whoMissed = false, offWho = [], offLater = false;
+          // keep: a charge someone else sorted a moment earlier keeps the person they gave it.
+          var tag = async function (to, tg) { return (await within(tagChargesCrew(to, tg, true), GIVE_UP_MS)) === true; };
+          // Charges that went onto the Off Tour book: each person is put on the book's own list first
+          // (crewOnBook), then named on the charge. False when the book is not on this phone, or a name did not save.
+          var tagOff = async function () {
+            var book = baseOff ? tourId : band ? offTourOf(band) : null;
+            if (!book) return false;
+            var tg = {}, ok = true;
+            for (var i = 0; i < offWho.length; i++) {
+              var pid = await crewOnBook(book, crewPick(book, band, offWho[i].crewId));
+              if (pid) tg['p' + offWho[i].feedId] = pid; else ok = false;
+            }
+            if (Object.keys(tg).length && !(await tag(book, tg))) ok = false;
+            return ok;
+          };
           if (keep) {
             var tags = {};
             list.forEach(function (x) {
-              var to = crewTourOf(x);
-              if (to && x.category === 'crew' && x.crewId) (tags[to] = tags[to] || {})['p' + x.feedId] = x.crewId;
+              if (x.category !== 'crew' || !x.crewId) return;
+              if (x.dest === 'off') { offWho.push(x); return; }
+              var to = landsOn(x);
+              if (to) (tags[to] = tags[to] || {})['p' + x.feedId] = x.crewId;
             });
             var tks = Object.keys(tags);
-            // keep: a charge someone else sorted a moment earlier keeps the person they gave it.
-            for (var w = 0; w < tks.length; w++) { if (!(await tagChargesCrew(tks[w], tags[tks[w]], true))) whoMissed = true; }
-            // (Charges this call did not file are already reported as sorted by someone else.)
-            if (r.already && !r.retried) whoMissed = false;
+            for (var w = 0; w < tks.length; w++) { if (!(await tag(tks[w], tags[tks[w]]))) whoMissed = true; }
+            if (offWho.length) {
+              // (No Off Tour book on this phone: the bank feed has just started it. It is looked for again below.)
+              if (baseOff || (band && offTourOf(band))) { if (!(await tagOff())) whoMissed = true; }
+              else offLater = true;
+            }
+            // (A charge this call did not file is already reported as sorted by someone else. Only when the save
+            // was one charge: in a save of several, the charge someone else sorted and the charge whose person
+            // did not save need not be the same one.)
+            if (r.already && !r.retried && list.length === 1) whoMissed = false;
           }
-          if (S.pile && S.pile[tourId] && S.pile[tourId].lead) await loadPile(tourId);
+          var readOk = true;
+          if (S.pile && S.pile[tourId] && S.pile[tourId].lead) readOk = (await within(loadPile(tourId), GIVE_UP_MS)) !== LATE;
+          if (offLater) {
+            // The book the bank feed started reaches this phone a moment after the answer. A short wait for it;
+            // then the person is put on its list and the charge named. Not here by then: it is said, never guessed.
+            for (var look = 0; look < 12 && G.num(r.offTour) > 0 && !offTourOf(band); look++) await sleep(250);
+            if (!(await tagOff())) whoMissed = true;
+          }
           /* What the bank feed left where it was. The pile has just been read
              again: a charge still in it was not sorted, whatever the counts say
              (more than one save takes, a set-aside it refused, or a charge it
-             would not take from this pile). Those stay on the sheet and are
+             would not take from this pile). Those go back on the sheet and are
              said, never passed off as sorted by someone else. (Not judged when
              that read failed: the pile on screen is then the old one.) */
           var bounced = 0, Pm = S.pile && S.pile[tourId];
-          if (Pm && Pm.lead ? !Pm.failed : !(S.feed && S.feed.failed)) {
+          if (readOk && (Pm && Pm.lead ? !Pm.failed : !(S.feed && S.feed.failed))) {
             var still = {};
             feedWaiting(tourId).forEach(function (it) { still[it.id] = true; });
             stuck = list.filter(function (x) { return still[x.feedId]; });
             bounced = Math.max(0, stuck.length - G.num(r.refused));
           }
           r.already = Math.max(0, G.num(r.already) - bounced);
+          // A row sent once before with no answer back (sentOnce), and now found already done: most likely that
+          // first save did reach the bank feed. It is said as that, not as someone else's doing.
+          var again = Math.min(r.already, list.filter(function (x) { return x.sentOnce && stuck.indexOf(x) < 0; }).length);
+          r.already -= again;
+          list.forEach(function (x) { if (stuck.indexOf(x) < 0) x.sentOnce = false; });
           var bits = [];
           if (r.retried && keep && !r.filed && r.already) {
             r.filed = r.already; r.already = 0;
             r.total = Math.round(list.reduce(function (n, x) { return n + G.num(x.amount); }, 0) * 100) / 100;
           }
           addedN = r.filed || 0;
+          var tell = function (words) { bits.push(words); news.push(words); };
           if (r.filed) bits.push(plural(r.filed, 'charge') + ' added, ' + G.moneyCents(r.total));
           if (r.skipped) bits.push(plural(r.skipped, 'charge') + ' set aside');
-          if (r.already) bits.push(plural(r.already, 'charge') + ' already sorted by someone else');
+          if (r.already) tell(plural(r.already, 'charge') + ' already sorted by someone else');
+          if (again) tell(plural(again, 'charge') + ' had already gone through the first time');
+          if (stuck.length || whoMissed) wrong = true;
           if (stuck.length) {
             // (A charge from a tour that was taken down, on a bank feed that does not yet take it from another pile.
             // Taken down: the tour is in Deleted tours and can be restored. Not there at all: nothing to restore, and it is said so.)
             var orphanOf = stuck.filter(function (x) { return x.waitsOn && feedTourGone(x.waitsOn); });
             var orphans = orphanOf.length, lostTour = orphanOf.filter(function (x) { return !getTour(x.waitsOn); }).length;
             var were = orphans === stuck.length ? (orphans === 1 ? 'it was' : 'they were') : orphans === 1 ? '1 of them was' : orphans + ' of them were';
-            bits.push(plural(stuck.length, 'charge') + ' could not be sorted and ' + (stuck.length === 1 ? 'is' : 'are') + ' still waiting' +
+            tell(plural(stuck.length, 'charge') + ' could not be sorted and ' + (stuck.length === 1 ? 'is' : 'are') + ' still waiting' +
               (!orphans ? ''
                 : !lostTour ? ': ' + were + ' waiting on a tour that was taken down. Restore that tour from Settings to sort ' + (orphans === 1 ? 'it' : 'them')
                 : lostTour === orphans ? ': ' + were + ' waiting on a tour, and that tour is gone'
                 : ': ' + were + ' waiting on a tour that was taken down or is gone. Restoring a tour from Settings lets you sort the charges that were on it'));
           }
-          if (r.offTour) bits.push(r.offTour + ' to Off Tour');
-          if (r.upcoming) bits.push(r.upcoming + ' to ' + (list.length === 1 && landsOn(list[0]) ? nameOf(landsOn(list[0])) : 'another tour'));
-          if (whoMissed) bits.push('the crew member didn\u2019t save: set it under Crew, Logged Card Transactions');
+          if (r.offTour) tell(r.offTour + ' to Off Tour');
+          if (r.upcoming) tell(r.upcoming + ' to ' + (list.length === 1 && landsOn(list[0]) ? nameOf(landsOn(list[0])) : 'another tour'));
+          if (whoMissed) tell('the crew member didn\u2019t save: set it under Crew, Logged Card Transactions');
           said = bits.join(' \u00b7 ');
-          // (The caller's own words, only when every one of them was set aside here and now.)
-          if (say && !keep && r.skipped === list.length && !r.already) said = say;
+          // (The caller's own words, only when every one of them was set aside here and now. Plain set-asides
+          // tapped one after another went as one save: the words say how many.)
+          if (say && !keep && r.skipped === list.length && !r.already) said = reason === 'set_aside' && say === asideSay ? asideWords(list.length) : say;
+          // The bank feed started the artist's Off Tour book itself for this: its added categories get their names once it is here.
+          if (keep && !hadOff && r.offTour && list.some(function (x) { return x.dest === 'off' && String(x.category).indexOf('x-') === 0; })) healOffBookSoon(band);
         } else {
           // A statement: each charge goes where it was pointed.
           var offs = [], byTour = {};
@@ -21205,8 +22389,10 @@
               // Only ever these fields: no card numbers, no raw text, no file names.
               patch[newId() + k] = Object.assign({ date: x.date, merchant: x.merchant, amount: G.num(x.amount), category: x.category,
                 accounted: false, importId: importId, createdAt: Date.now() + k },
-                // (Who a Crew charge was for, on the tour that person is on.)
-                !extra && x.category === 'crew' && x.crewId && crewPerson(getTour(where), x.crewId) ? { crewId: x.crewId } : {},
+                // (Who a Crew charge was for, on the tour that person is on; on the Off Tour book, the id they
+                // were given on the book's own list just before: offWho.)
+                !extra && x.category === 'crew' && x.crewId && (where === offId && x.dest === 'off' ? x.offWho : crewPerson(getTour(where), x.crewId))
+                  ? { crewId: where === offId && x.dest === 'off' ? x.offWho : x.crewId } : {},
                 extra ? extra(x) : {});
               sum += G.num(x.amount);
             });
@@ -21218,30 +22404,56 @@
             return api.update(where, { charges: patch, imports: imports });
           };
           var offId = offs.length ? (baseOff ? tourId : await ensureOffTour(band)) : null;
-          if (offs.length && !offId) { toast('Only the tour\u2019s creator can start the Off Tour book.'); return; }
+          if (offs.length && !offId) {
+            putBack(list);
+            toast('Only the tour\u2019s creator can start the Off Tour book. ' + backSay(list), 5200, true);
+            return;
+          }
+          // A write that did not go has said why (api.update). The rows are back, and that is said after it: a
+          // statement's rows are in no pile, so with the sheet gone "try again" alone would not say they were not added.
+          var lost = function () { putBack(list); toastAfter(backSay(list)); };
           var tids = Object.keys(byTour);
-          for (var q = 0; q < tids.length; q++) { if (!(await put(tids[q], byTour[tids[q]]))) return; }
-          if (!(await put(offId, offs))) return;
+          // Every book these are going onto has the names of the added categories among them first: nothing is
+          // saved on any of them until each has its own. (The write says why when one cannot be given.)
+          var catsOf = function (xs) { return xs.map(function (x) { return x.category; }); };
+          for (var nb = 0; nb < tids.length; nb++) { if (!(await catOnBook(tids[nb], catsOf(byTour[tids[nb]]), true))) { lost(); return; } }
+          if (offId && !(await catOnBook(offId, catsOf(offs), true))) { lost(); return; }
+          // Who a Crew charge on the Off Tour book was for: on the book's own list first (crewOnBook). A name
+          // that cannot be put there is left off the charge, and it is said.
+          var whoLost = false;
+          for (var ow = 0; ow < offs.length; ow++) {
+            if (offs[ow].category !== 'crew' || !offs[ow].crewId) continue;
+            offs[ow].offWho = await crewOnBook(offId, crewPick(offId, band, offs[ow].crewId));
+            if (!offs[ow].offWho) whoLost = true;
+          }
+          for (var q = 0; q < tids.length; q++) { if (!(await put(tids[q], byTour[tids[q]]))) { lost(); return; } }
+          if (!(await put(offId, offs))) { lost(); return; }
           // Off-tour spending on this tour's card: the tour carries it as Off Tour Debt.
-          if (!baseOff && !(await put(tourId, offs, function (x) { return { category: 'offdebt', offTour: true, offCategory: x.category }; }))) return;
+          if (!baseOff && !(await put(tourId, offs, function (x) { return { category: 'offdebt', offTour: true, offCategory: x.category }; }))) { lost(); return; }
           for (var i = 0; i < list.length; i++) { await writeLabel(list[i].merchant, list[i].category); total += G.num(list[i].amount); }
-          var away = tids.filter(function (x) { return x !== tourId; });
+          var away2 = tids.filter(function (x) { return x !== tourId; });
           addedN = list.length;
-          said = plural(list.length, 'charge') + ' added, ' + G.moneyCents(total) +
-            (offs.length && !baseOff ? ' \u00b7 ' + offs.length + ' to Off Tour' : '') +
-            (away.length ? ' \u00b7 ' + away.map(function (x) { return byTour[x].length + ' to ' + nameOf(x); }).join(', ') : '');
+          if (offs.length && !baseOff) news.push(offs.length + ' to Off Tour');
+          if (away2.length) news.push(away2.map(function (x) { return byTour[x].length + ' to ' + nameOf(x); }).join(', '));
+          if (whoLost) { wrong = true; news.push('the crew member didn\u2019t save: set it under Crew, Logged Card Transactions'); }
+          said = [plural(list.length, 'charge') + ' added, ' + G.moneyCents(total)].concat(news).join(' \u00b7 ');
         }
-      } finally { busy = false; if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = was; } }
-      live = live.filter(function (x) { return list.indexOf(x) < 0 || stuck.indexOf(x) >= 0; });
-      // Everything the search found is sorted: the search clears, the rest comes back.
-      if (query && !live.some(shown)) { query = ''; search.value = ''; }
-      if (keep && addedN) { topCat = null; markChips(); hornSplash('Expenses Logged', said); }
-      else toast(said, (say && said === say) || stuck.length ? 5200 : 0);
+        went = true;
+      } finally {
+        // Not saved: every row of it is back. Saved, but the pile still holds some: those are back.
+        putBack(went ? stuck : all);
+      }
+      if (keep && addedN) { topCat = null; markChips(); }
+      // (News of a quick Add is held: the next save's news is said after it, not over it.)
+      if (quick) { if (news.length) toast(news.join(' \u00b7 '), stuck.length || wrong ? 5200 : 0, true); }
+      else if (keep && addedN) {
+        hornSplash('Expenses Logged', said);
+        // (The splash is gone in two seconds. What went wrong in it stays up to be read.)
+        if (wrong) toast(news.join(' \u00b7 '), 6500, true);
+      }
+      else if (said) toast(said, (say && !keep) || stuck.length || wrong ? 5200 : 0, wrong);
       render(true);
-      if (!live.length) {
-        closeSheet();
-        if (opts && opts.next) setTimeout(opts.next, 380);
-      } else draw();
+      if (!closed) refreshBar();
       // (What the card feed answered, for a caller that needs to know: null for a statement.)
       return feed ? r : null;
     }
@@ -21262,36 +22474,73 @@
     function backChanged(r) {
       r.rbArm = null;
       draw();
-      toast('That reimbursement has changed. Take another look.', 5200);
+      toast('That reimbursement has changed. Take another look.', 5200, true);
     }
+    /* One ask is paid back by ONE charge. The mark and the set-aside wait
+       their turn in the line, and the ask can change while they wait: two
+       bank lines of the same amount could both be armed and both get "Yes",
+       and the database takes a second mark of an ask that is already paid
+       (it only swaps the charge it names), so both charges were set aside as
+       its payback and the second one was counted nowhere. So: an ask this
+       sheet is marking (paying) or has marked (paidBy: with which charge) is
+       not offered to another row, and the ask is read again at the head of
+       the line, just before the mark is sent. */
+    var paying = {}, paidBy = {};
+    function backTaken(r, ask) {
+      return !!paying[ask.id] || (paidBy[ask.id] != null && paidBy[ask.id] !== String(r.feedId));
+    }
+    function backBusy(r) {
+      r.rbArm = null;
+      draw();
+      toast('That reimbursement is already being marked paid back with another charge. If this is a second payment, add it or set it aside.', 5200, true);
+    }
+    // (Arming only changes what is drawn: a save that is out never holds it up.)
     function armBack(r, ask) {
-      if (busy) return;
+      if (!here(r)) return;
+      if (backTaken(r, ask)) { backBusy(r); return; }
       if (!stillBack(r, ask)) { backChanged(r); return; }
       r.rbArm = ask.id; r.rbArmAt = Date.now();
       draw();
     }
-    async function payback(r, ask, btn) {
+    async function payback(r, ask) {
       // (Not the second half of a double tap: "Yes" is drawn where the first button was.)
-      if (busy || r.rbArm !== ask.id || Date.now() - G.num(r.rbArmAt) < 350) return;
+      if (live.indexOf(r) < 0 || r.rbArm !== ask.id || Date.now() - G.num(r.rbArmAt) < 350) return;
+      if (backTaken(r, ask)) { backBusy(r); return; }
       if (!stillBack(r, ask)) { backChanged(r); return; }
-      var B = window.GR_BACKEND, out = null;
-      busy = true; btn.disabled = true;
-      try { out = await B.reimburseMark(ask.id, true, 'card', String(r.feedId)); } catch (e) { out = null; } finally { busy = false; }
-      r.rbArm = null;
-      if (!out || !out.ok) {
-        toast(reimbWhy(out && out.why, 'mark') + ' Nothing was changed.', 5200);
-        draw();
-        return;
-      }
-      var res = await file([r], false, null, 'Marked paid back. The charge is set aside so it is not counted twice.', 'paid_back');
-      // (Marked, but the charge is still here: its line stays, and says what is left to do.)
-      if (live.indexOf(r) >= 0) {
-        toast('Marked paid back, but the charge couldn\u2019t be set aside. Set it aside here so it is not counted twice.', 6500);
-        draw();
-      } else if (res && res.already && !res.skipped) {
-        // Another Manager sorted this very charge a moment ago: it may be filed as an expense.
-        toast('Marked paid back. Someone else had already sorted that charge: check it isn\u2019t also filed as an expense.', 6500);
-      }
+      // Both writes take their turn in the line, after whatever is ahead; the row leaves now.
+      paying[ask.id] = true;
+      takeOut([r]);
+      await join({ rows: [r], lot: '', run: async function () {
+        var B = window.GR_BACKEND, out = null;
+        try {
+          // (Read again now that its turn has come: it may have been paid, matched or taken off while it waited.)
+          if (!stillBack(r, ask) || (paidBy[ask.id] != null && paidBy[ask.id] !== String(r.feedId))) {
+            r.rbArm = null;
+            putBack([r]);
+            toast('That reimbursement has changed. Take another look. ' + backSay([r]), 5200, true);
+            return;
+          }
+          try { out = await within(B.reimburseMark(ask.id, true, 'card', String(r.feedId)), GIVE_UP_MS); } catch (e) { out = null; }
+          if (out === LATE) out = null;
+          r.rbArm = null;
+          if (!out || !out.ok) {
+            putBack([r]);
+            toast(reimbWhy(out && out.why, 'mark') + ' Nothing was changed.', 5200, true);
+            return;
+          }
+          paidBy[ask.id] = String(r.feedId);
+        } finally { delete paying[ask.id]; }
+        var res = await save([r], false, 'Marked paid back. The charge is set aside so it is not counted twice.', 'paid_back', false);
+        // (Marked, but the charge is still here: its line stays, and says what is left to do.)
+        if (live.indexOf(r) >= 0) {
+          toast('Marked paid back, but the charge couldn\u2019t be set aside. Set it aside here so it is not counted twice.', 6500, true);
+        } else if (res && res.already && !res.skipped) {
+          // Another Manager sorted this very charge a moment ago: it may be filed as an expense.
+          toast('Marked paid back. Someone else had already sorted that charge: check it isn\u2019t also filed as an expense.', 6500, true);
+        }
+        // (The ask is paid back now: any other row that offered it is drawn without it.)
+        drawSoon();
+      } });
     }
     /* "It's the one I typed": this bank row is the bank's copy of an entry
        already on the tour (r.twin, paired by feedTwins and named on the row).
@@ -21307,27 +22556,27 @@
     function twinChanged(r) {
       r.twArm = false; r.twin = null; r.duplicate = feedMaybeIn(r.why);
       draw();
-      toast('The one you typed has changed. Take another look.', 5200);
+      toast('The one you typed has changed. Take another look.', 5200, true);
     }
     function armTwin(r) {
-      if (busy) return;
+      if (!here(r)) return;
       if (!feedTwinStands(tourId, r)) { twinChanged(r); return; }
       r.twArm = true; r.twArmAt = Date.now();
       draw();
     }
-    async function twinYes(r, btn) {
+    async function twinYes(r) {
       // (Not the second half of a double tap: "Yes" is drawn where the first button was.)
-      if (busy || !r.twArm || Date.now() - G.num(r.twArmAt) < 350) return;
+      if (live.indexOf(r) < 0 || !r.twArm || Date.now() - G.num(r.twArmAt) < 350) return;
       if (!feedTwinStands(tourId, r)) { twinChanged(r); return; }
       var tw = r.twin;
-      var res = await file([r], false, btn, 'Set aside. Only the one you typed is counted.', 'same_as_typed');
+      var res = await file([r], false, 'Set aside. Only the one you typed is counted.', 'same_as_typed');
       // (Not set aside: file has said why. The line asks again from the start.)
-      if (live.indexOf(r) >= 0) { r.twArm = false; draw(); }
+      if (live.indexOf(r) >= 0) { r.twArm = false; drawSoon(); }
       // (Its bank copy is set aside: that typed entry is not offered to another bank row.)
       else if (tw && res && res.skipped) twinUsed(tourId, tw);
     }
     function twinNo(r) {
-      if (busy) return;
+      if (!here(r)) return;
       S.notTwin = S.notTwin || {};
       if (r.feedId != null) S.notTwin[r.feedId] = true;
       r.twArm = false; r.twin = null; r.duplicate = false;
@@ -21345,7 +22594,7 @@
     // The categories this tour has a hand-typed total on (Expenses, "paid" typed as one number).
     function typedTotals() {
       var t = getTour(tourId) || base, exp = G.normExpenses(t.expenses), label = {};
-      G.chargeCategoriesFor(t).forEach(function (c) { label[c.key] = c.label; });
+      chargeCats(t).forEach(function (c) { label[c.key] = c.label; });
       return Object.keys(exp).filter(function (k) { return G.num(exp[k].paid) > 0; })
         .map(function (k) { return label[k] || 'a category'; });
     }
@@ -21375,8 +22624,10 @@
     var byHandOnly = function (r) { return !!r.duplicate || !!r.preCutoff || feedPutBackWhy(r.why); };
     var allBox = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check all',
       onchange: function (e) { live.filter(shown).forEach(function (r) { r.pick = e.target.checked && !byHandOnly(r); }); draw(); } });
+    // (What is ticked and in sight: ticked() is the one reading of that for the bar, the chips and ADD.)
+    var ticked = function () { return live.filter(function (r) { return r.pick && inSight(r); }); };
     var addTop = pressable(h('button', { class: 'btn primary sm rv-addall', type: 'button' }, 'ADD'),
-      function () { file(live.filter(function (r) { return r.pick; }), true, addTop); });
+      function () { file(ticked(), true); });
     var topCat = null;
     var chips = h('div', { class: 'rv-chips', role: 'group', 'aria-label': 'Sort the checked charges' });
     var markChips = function () {
@@ -21388,16 +22639,26 @@
       });
     };
     var applyCat = function (key, label) {
-      var picked = live.filter(function (r) { return r.pick; });
+      var picked = ticked();
       if (!picked.length) { toast('Check the charges first, then tap a category'); return; }
       picked.forEach(function (r) { r.category = key; r.source = 'chosen'; });
       topCat = key; markChips();
       draw();
       toast(plural(picked.length, 'charge') + ' \u2192 ' + label);
     };
-    // "+" first, then every category the tour has (its own included).
+    /* What a charge here can be filed under, read once for a whole draw.
+       Every row's picker lists it, and reading it looks through every charge
+       on the book (and every book of the artist's): with a few hundred rows
+       that was done a few hundred times for each redraw, on every key of a
+       search. fresh: a category was just made, so it is read again. */
+    var catList = null;
+    function sheetCats(fresh) {
+      if (fresh) catList = null;
+      return catList || (catList = chargeCats(getTour(tourId) || base));
+    }
+    // "+" first, then every category the book has, and every one the artist has added on any of its books.
     function buildChips() {
-      var list = G.chargeCategoriesFor(getTour(tourId) || base).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; });
+      var list = sheetCats(true).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; });
       chips.replaceChildren.apply(chips, [h('button', { class: 'rv-chip rv-plus', type: 'button', 'aria-label': 'Add a category',
         onclick: growChip }, '+')].concat(list.map(function (c) {
         return h('button', { class: 'rv-chip', type: 'button', 'data-key': c.key, 'aria-pressed': 'false',
@@ -21405,9 +22666,10 @@
       })));
       markChips();
     }
-    // "+": a category that isn't there yet. Name it and it's a category on
-    // the tour everywhere (Expenses too); checked charges go straight under it.
+    // "+": a category that isn't there yet. Name it and it's a category of the
+    // artist's everywhere (Expenses too); checked charges go straight under it.
     function growChip() {
+      var saving = false;
       var inp = h('input', { class: 'input sm rv-newcat', type: 'text', maxlength: 30, autocomplete: 'off',
         placeholder: 'New category, e.g. Security', 'aria-label': 'New category name',
         onkeydown: function (e) {
@@ -21415,21 +22677,32 @@
           if (e.key === 'Escape') buildChips();
         } });
       async function commit() {
+        // (Enter and the button together are one Add.)
+        if (saving) return;
         var label = String(inp.value || '').trim();
         var key = G.slugCategory(label);
         if (!label || !key) { buildChips(); return; }
-        var clash = G.chargeCategoriesFor(getTour(tourId)).filter(function (c) {
+        var t = getTour(tourId), made = false;
+        var clash = chargeCats(t).filter(function (c) {
           return c.key === key || c.label.toLowerCase() === label.toLowerCase() || (c.key === 'crew' && payName(label));
         })[0];
         if (clash) { key = clash.key; label = clash.label; }
         else {
           var patch = { extraCats: {} };
           patch.extraCats[key] = label;
-          if (!(await api.update(tourId, patch))) { buildChips(); return; }
+          saving = true;
+          var ok = await api.update(tourId, patch);
+          saving = false;
+          if (!ok) { buildChips(); return; }
+          made = true;
         }
         buildChips();
-        if (live.some(function (r) { return r.pick; })) applyCat(key, label);
-        else { draw(); toast('\u201c' + label + '\u201d is a category now. Check charges, then tap it.'); }
+        // (Either way every row is drawn again, so the new category is in each row's own picker too.)
+        if (ticked().length) applyCat(key, label);
+        else {
+          draw();
+          toast((made ? catMadeWords(t, label) : '\u201c' + label + '\u201d is already a category.') + ' Check charges, then tap it.', 4200);
+        }
       }
       chips.replaceChildren(h('div', { class: 'rv-newrow' }, inp,
         h('button', { class: 'btn sm primary', type: 'button', onclick: commit }, 'Add'),
@@ -21449,6 +22722,8 @@
     var typedLine = h('p', { class: 'note rv-typed', hidden: true });
 
     function refreshBar() {
+      // (Nothing out of sight stays ticked, however it came to be out of sight.)
+      live.forEach(function (r) { if (r.pick && !inSight(r)) r.pick = false; });
       var picked = live.filter(function (r) { return r.pick; });
       var total = picked.reduce(function (n, r) { return n + G.num(r.amount); }, 0);
       var vis = live.filter(shown);
@@ -21468,26 +22743,33 @@
       found.hidden = !query;
       addTop.textContent = picked.length ? 'ADD ' + picked.length + ' · ' + G.moneyCents(total) : 'ADD';
       addTop.disabled = !picked.length;
-      title.textContent = feed
-        ? plural(live.length, 'new charge')
+      // The last rows have left and their saves are still out: the title itself says so, until the line is
+      // empty (then the sheet closes). With rows still to sort, saves that have been out for more than a
+      // second are counted beside the title, so it never looks done while charges are still on their way.
+      var lastOnes = !live.length && away > 0;
+      title.textContent = lastOnes ? 'Saving the last ones.'
+        : feed ? plural(live.length, 'new charge')
         : 'Found ' + plural(live.length, 'charge');
+      if (!lastOnes && away > 0 && awaySince && Date.now() - awaySince >= 1000) {
+        title.append(h('span', { class: 'rv-out', role: 'status' }, ' · saving ' + away));
+      }
     }
 
     // Under the category: Log to Off Tour, Current Tour or Upcoming Tour (and
     // which one, when the band has more than one coming up).
-    // The tour whose people a Crew charge can be for: where it lands, and from
-    // the Off Tour book, the book itself (it keeps its own list).
-    function crewTourOf(x) { return x.dest === 'off' ? (baseOff ? tourId : null) : landsOn(x); }
+    // The book whose people a Crew charge can be for: the tour it lands on, or the artist's Off Tour book
+    // (null while that book is not on this phone: the artist's people are offered all the same, see crewPool).
+    function crewBookOf(x) { return x.dest === 'off' ? (baseOff ? tourId : band ? offTourOf(band) : null) : landsOn(x); }
     // More info: the categories a charge here can be filed under, from the
     // picker's own list (the same ones the chips above offer).
     function infoCats() {
-      return G.chargeCategoriesFor(getTour(tourId) || base).filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; })
+      return sheetCats().filter(function (c) { return !G.isDerived(c.key) && c.key !== 'offdebt'; })
         .map(function (c) { return { key: c.key, label: c.label }; });
     }
     function destRow(r) {
       if (!dests.length) return null;
       var upSel = ups.length ? h('select', { class: 'input sm rv-upsel', 'aria-label': 'Which upcoming tour',
-        onchange: function (e) { r.upTo = e.target.value; if (r.drawWho) r.drawWho(); } },
+        onchange: function (e) { if (!here(r)) return; r.upTo = e.target.value; if (r.drawWho) r.drawWho(); } },
         ups.map(function (u) { return h('option', { value: u.id }, u.name + ' \u00b7 starts ' + dayMD(u.start)); })) : null;
       if (upSel) { upSel.value = r.upTo || ''; upSel.hidden = r.dest !== 'up'; }
       return h('div', { class: 'rv-dwrap' },
@@ -21497,6 +22779,7 @@
             return h('button', { class: 'rv-dpill' + (r.dest === d[0] ? ' on' : '') + (d[2] ? ' na' : ''), type: 'button',
               title: d[2] || (d[0] === 'cur' && curTour ? curTour.name : null), 'aria-disabled': d[2] ? 'true' : null,
               onclick: function (e) {
+                if (!here(r)) return;
                 if (d[2]) { toast(d[2]); return; }
                 r.dest = d[0];
                 Array.prototype.forEach.call(e.currentTarget.parentNode.querySelectorAll('.rv-dpill'), function (b) {
@@ -21510,23 +22793,30 @@
     }
     function chargeRow(r) {
       var wrap = h('div', { class: 'rv-row rv-charge' + (r.pick ? ' on' : '') });
+      // (Kept, so the row alone can be taken off the screen the moment it is added or set aside.)
+      r.el = wrap;
       var cb = h('input', { type: 'checkbox', class: 'rv-check', 'aria-label': 'Check ' + r.merchant,
-        onchange: function (e) { r.pick = e.target.checked; wrap.classList.toggle('on', r.pick); refreshBar(); } });
+        onchange: function (e) { if (!here(r)) return; r.pick = e.target.checked; wrap.classList.toggle('on', r.pick); refreshBar(); } });
       cb.checked = !!r.pick;
       // Devin: "if you hit crew a drop down menu should come up where you can
-      // select which crew member". Under the category, for a charge going onto a
-      // tour (crew are listed per tour): the band first, then the crew. Left on
-      // "Which crew member?" it is a crew expense that is nobody's pay.
+      // select which crew member". Under the category: the band first, then the
+      // crew. For a charge going onto a tour they are that tour's own list. For
+      // one going onto the Off Tour book (its own pile, or "Log to: Off Tour"
+      // from a tour's) they are the artist's people, since the book keeps no
+      // list to begin with (crewPool). Left on "Which crew member?" it is a
+      // crew expense that is nobody's pay.
       var whoHost = h('div', { class: 'rv-who' });
       var drawWho = function () {
-        var to = r.category === 'crew' ? crewTourOf(r) : null;
-        var who = to ? crewSelect(to, { value: r.crewId, aria: 'Which crew member ' + r.merchant + ' was for',
-          onPick: function (v) { r.crewId = v; } }) : null;
+        var off = r.dest === 'off', to = r.category === 'crew' ? crewBookOf(r) : null;
+        var pool = r.category === 'crew' && (to || (off && band)) ? crewPool(to, off ? band : null) : null;
+        var who = pool ? crewSelect(to, { people: pool, value: r.crewId, aria: 'Which crew member ' + r.merchant + ' was for',
+          onPick: function (v) { if (here(r)) r.crewId = v; } }) : null;
+        var person = function () { return (pool && r.crewId && pool.all.filter(function (p) { return p.id === r.crewId; })[0]) || null; };
         // (A person on another tour's list is not this tour's person.)
-        if (!who || !crewPerson(getTour(to), r.crewId)) r.crewId = null;
+        if (!who || !person()) r.crewId = null;
         // (Said plainly, so a wrong pick is seen before Add: it becomes that person's pay.)
         var note = h('span', { class: 'hint rv-who-n' });
-        var sayWho = function () { var p = crewPerson(getTour(to), r.crewId); note.textContent = p ? 'Counts as pay to ' + (p.name || 'them') + '.' : ''; };
+        var sayWho = function () { var p = person(); note.textContent = p ? 'Counts as pay to ' + (p.name || 'them') + '.' : ''; };
         if (who) who.addEventListener('change', sayWho);
         sayWho();
         whoHost.replaceChildren.apply(whoHost, who ? [who, note] : []);
@@ -21544,21 +22834,31 @@
         // The Off Tour book has no shows of its own: the artist's tour that takes in the date, if there is one.
         tour: function () { return baseOff ? tourCovering(r.date, band, curTour && curTour.id, 2) : (getTour(tourId) || base); },
         picked: function () { return r.category || ''; },
-        onUse: function (key) { r.category = key; r.source = 'suggested'; draw(); }
+        onUse: function (key) { if (!here(r)) return; r.category = key; r.source = 'suggested'; draw(); }
       });
-      var sel = categorySelect(tourId, {
-        value: r.category || '', aria: 'Category for ' + r.merchant,
+      var catO = {
+        value: r.category || '', aria: 'Category for ' + r.merchant, skip: NOT_PICKED, cats: sheetCats,
         onPick: function (v) {
+          // (A row on its way out is filed as it was when it left.)
+          if (!here(r)) return;
           r.category = v; r.source = v ? 'chosen' : null; var f = $('.rv-flag.learned', wrap); if (f) f.remove(); drawWho();
           // (Picked by hand after "Use Gas": it is his choice now, so Suggested goes and the answer's note follows the picker.)
           var sg = $('.rv-flag.ci-sug', wrap); if (sg) sg.remove();
           if (info) info.paint();
+        },
+        // A category made in this row's picker is in the chips and in every other row's picker at once.
+        onNew: function () {
+          buildChips();
+          live.forEach(function (x) { if (x !== r && x.reCat) x.reCat(); });
         }
-      });
+      };
+      var sel = categorySelect(tourId, catO);
+      r.reCat = function () { catO.value = r.category || ''; catO.rebuild(); };
       drawWho();
       // Someone is owed exactly this amount: say so, under the row. Nothing is
       // picked or ticked by it; the button is the only thing that acts.
-      var backs = feed && !baseOff ? reimbMatches(tourId, r) : [];
+      // (Not an ask this sheet has already marked paid back with another charge: see payback.)
+      var backs = feed && !baseOff ? reimbMatches(tourId, r).filter(function (a) { return paidBy[a.id] == null || paidBy[a.id] === String(r.feedId); }) : [];
       // A possible double that this phone paired with one typed entry: say
       // which, and ask. Nothing is ticked or set aside by the line; the two
       // buttons are the only things that act (armTwin / twinYes / twinNo).
@@ -21569,8 +22869,8 @@
         if (r.twArm) {
           var twYes = h('button', { class: 'btn sm primary', type: 'button' }, 'Yes');
           var twNo = h('button', { class: 'btn sm ghost', type: 'button' }, 'No');
-          pressable(twYes, function () { twinYes(r, twYes); });
-          pressable(twNo, function () { if (busy) return; r.twArm = false; draw(); });
+          pressable(twYes, function () { twinYes(r); });
+          pressable(twNo, function () { if (!here(r)) return; r.twArm = false; draw(); });
           twinBox = h('div', { class: 'iv-hit rb-match tw-match' }, twLine,
             h('p', { class: 'iv-hit-t tw-ask' }, 'Set this bank copy aside? It will not be counted.'),
             h('span', { class: 'rb-acts' }, twYes, twNo));
@@ -21596,21 +22896,26 @@
         h('div', { class: 'rv-act' }, sel,
           (function () {
             var b = h('button', { class: 'btn sm primary rv-add1', type: 'button' }, 'Add');
-            return pressable(b, function () { file([r], true, b); });
+            return pressable(b, function () {
+              // A category being named in this row's picker is saved and picked first, so the charge goes
+              // under it and not under what the row showed before. If the name cannot be saved, nothing is added.
+              if (catO.naming()) { catO.finish().then(function (ok) { if (ok) file([r], true, null, null, true); }); return; }
+              file([r], true, null, null, true);
+            });
           })()),
         whoHost,
         destRow(r),
         // One tap, because it can be taken back: what is set aside is listed under "Left out and set aside"
         // (under Refresh Card), where Put back returns it to the pile.
-        feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false, null, asideSay, 'set_aside'); } },
+        feed ? h('button', { class: 'linkbtn rv-aside', type: 'button', onclick: function () { file([r], false, asideSay, 'set_aside'); } },
           'Not a tour charge: set it aside') : null,
         backs.length ? h('div', { class: 'iv-hit rb-match' }, backs.map(function (a) {
           // Armed by the first tap: the line asks, and only Yes does it.
           if (r.rbArm === a.id) {
             var yes = h('button', { class: 'btn sm primary', type: 'button' }, 'Yes');
             var no = h('button', { class: 'btn sm ghost', type: 'button' }, 'No');
-            pressable(yes, function () { payback(r, a, yes); });
-            pressable(no, function () { if (busy) return; r.rbArm = null; draw(); });
+            pressable(yes, function () { payback(r, a); });
+            pressable(no, function () { if (!here(r)) return; r.rbArm = null; draw(); });
             return h('div', { class: 'rb-match-row' },
               h('p', { class: 'iv-hit-t' }, 'Mark ' + (a.name || 'them') + ' paid back and set this charge aside?'),
               h('span', { class: 'rb-acts' }, yes, no));
@@ -21626,9 +22931,12 @@
     // (already inside a card balance going in), wait folded away.
     var openBefore = false, openDup = false;
     function draw() {
+      // (The categories are read once for this draw, and handed to every row's picker.)
+      catList = null;
       var main = live.filter(function (r) { return !r.duplicate && !r.preCutoff && shown(r); });
       var before = live.filter(function (r) { return r.preCutoff && !r.duplicate && shown(r); });
       var dup = live.filter(function (r) { return r.duplicate && shown(r); });
+      // (With every row gone and their saves still out, the title says "Saving the last ones.": see refreshBar.)
       var kids = [h('div', { class: 'review' }, main.map(chargeRow))];
       if (before.length) {
         var t2 = getTour(tourId);
@@ -21678,12 +22986,17 @@
         listHost,
         h('div', { class: 'stack', style: 'margin-top:14px' },
           opts && opts.next ? h('button', { class: 'btn quiet block', type: 'button',
-            onclick: function () { closeSheet(); setTimeout(opts.next, 380); } }, opts.nextLabel || 'Next card \u2192') : null,
+            onclick: function () { closeSheet(); goNext(); } }, opts.nextLabel || 'Next card \u2192') : null,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } },
             feed ? 'Not now' : 'Done'))
       ];
-      // (Closing stops any More info question still out.)
-    }, { label: 'Review card charges', onClose: chargeInfoClose });
+      // (Closing stops any More info question still out. Saves still out carry on: see the line.)
+    }, { label: 'Review card charges', onClose: function () {
+      closed = true; clearTimeout(drawWait); clearTimeout(awayTick); chargeInfoClose();
+      if (feedBackTell === adopt) feedBackTell = null;
+    } });
+    // (From here on, a bank line that a closed sheet could not save comes to this one, if it is on its card.)
+    if (feed) feedBackTell = adopt;
   }
 
   /* ---------------- The card feed (Plaid) ----------------
@@ -24131,13 +25444,19 @@
     feedWaiting(tourId).slice().sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); })
       .forEach(function (it) { var k = it.account || ''; if (cards.indexOf(k) < 0 && (only == null || k === only)) cards.push(k); });
     if (!cards.length) { if (after) after(); else toast('Nothing waiting'); return; }
-    var i = done || 0;
+    var i = done || 0, opened = false;
     var next = function () {
-      if (i >= cards.length) { if (after) after(); return; }
+      if (i >= cards.length) {
+        if (after) after();
+        // (Every line still waiting is one a sheet has already sent off: see feedGoing.)
+        else if (!opened) toast('Those are being saved.');
+        return;
+      }
       var card = cards[i];
       var here = feedRows(tourId).filter(function (r) { return (r.account || '') === card; });
       i += 1;
       if (!here.length) { next(); return; }
+      opened = true;
       // after: the deposits, once the last card is sorted (All New Card Activity).
       openImportReview(tourId, here, 'Card feed', { feed: true, card: card || 'Card',
         step: i, steps: cards.length + (after ? 1 : 0), next: i < cards.length ? next : (after || null),
@@ -24196,7 +25515,7 @@
     var cents = function (v) { return Math.round(G.num(v) * 100); };
     var not = S.notTwin || {};
     var catLabel = {};
-    G.chargeCategoriesFor(t).forEach(function (c) { catLabel[c.key] = c.label; });
+    chargeCats(t).forEach(function (c) { catLabel[c.key] = c.label; });
     var typed = {};
     var add = function (e) {
       if (!G.parseDay(String(e.date || '')) || !(e.amount > 0) || used[tourId + ':' + e.kind + ':' + e.id]) return;
@@ -24263,11 +25582,18 @@
     if (tw.kind === 'cash' && G.CASH_MOVES[x.category]) return false;
     return !!G.parseDay(String(x.date || '')) && Math.abs(G.daysBetween(String(x.date), String(r.date))) <= 3;
   }
+  // Bank lines a sorting sheet has sent off and not heard back about yet (by id). They are still in the pile
+  // this phone holds, so a sheet opened meanwhile leaves them out: none is offered, or sent, a second time.
+  var feedGoing = {};
+  // Bank lines whose save failed after their sheet had been closed (by id: the row as that sheet had it). They
+  // are still in the pile. feedBackTell: the sorting sheet open now, which takes in the ones on its card.
+  var feedBack = {}, feedBackTell = null;
   function feedRows(tourId) {
+    // (A category learned on another of the artist's books is kept: it is this book's the moment the charge is added.)
     var valid = {};
-    G.chargeCategoriesFor(getTour(tourId)).forEach(function (c) { valid[c.key] = true; });
+    chargeCats(getTour(tourId)).forEach(function (c) { valid[c.key] = true; });
     var waiting = feedWaiting(tourId), twins = feedTwins(tourId, waiting), not = S.notTwin || {};
-    return waiting.map(function (it) {
+    return waiting.filter(function (it) { return !feedGoing[it.id]; }).map(function (it) {
       var cat = it.category && valid[it.category] ? it.category : '';
       var amt = G.num(it.amount);
       // A look-alike of something already on the tour waits in its own fold,
@@ -24761,7 +26087,9 @@
         return String(a.date || '').localeCompare(String(b.date || '')) || (a.createdAt || 0) - (b.createdAt || 0);
       });
       var catLabel = {};
-      G.chargeCategoriesFor(getTour(tourId)).forEach(function (c) { catLabel[c.key] = c.label; });
+      chargeCats(getTour(tourId)).forEach(function (c) { catLabel[c.key] = c.label; });
+      // (A category made in one charge's picker is in every other one on this sheet at once.)
+      var pickers = [];
 
       if (!charges.length) {
         return [
@@ -24775,17 +26103,22 @@
         h('div', { class: 'ledger' }, charges.map(function (ch) {
           var right;
           if (canWrite()) {
-            right = categorySelect(tourId, {
+            var catO = {
               value: ch.category || '', cls: 'input sm slim', noneLabel: 'No category',
               aria: 'Category for ' + ch.merchant,
               onPick: async function (v) {
+                // (One the artist added on another book: this book gets its name first, or nothing is saved.)
+                if (v && !(await catOnBook(tourId, v, true))) return;
                 var patch = {}; patch[ch.id] = { category: v || null };
                 if (await api.update(tourId, { charges: patch })) {
                   if (v) await writeLabel(ch.merchant, v);
                   toast('Saved'); render(true);
                 }
-              }
-            });
+              },
+              onNew: function () { pickers.forEach(function (o) { if (o !== catO) o.rebuild(); }); }
+            };
+            pickers.push(catO);
+            right = categorySelect(tourId, catO);
           } else {
             right = h('span', { class: 'hint' }, catLabel[ch.category] || 'No category');
           }
@@ -24857,6 +26190,11 @@
       });
       var catLabel = {};
       G.CHARGE_CATEGORIES.forEach(function (c) { catLabel[c.key] = c.label; });
+      // (Labels carry across every tour: an added category goes by the name any book on this phone has for it.)
+      S.tours.forEach(function (t) {
+        var names = G.extraCatNames(t);
+        Object.keys(names).forEach(function (k) { if (!catLabel[k]) catLabel[k] = names[k]; });
+      });
 
       if (!keys.length) {
         return [h('h2', { class: 'sh-title' }, 'Learned labels'),
@@ -24870,8 +26208,7 @@
           var rec = S.labels[k];
           var cats = Object.keys(rec.cats || {}).filter(function (c) { return rec.cats[c] > 0; });
           var text = cats.length === 1
-            ? catLabel[cats[0]] || (String(cats[0]).indexOf('x-') === 0
-              ? cats[0].slice(2).replace(/-/g, ' ') : cats[0])
+            ? catLabel[cats[0]] || (String(cats[0]).indexOf('x-') === 0 ? G.extraCatLabel(cats[0]) : cats[0])
             : 'Labelled ' + cats.length + ' different ways — left blank';
           return h('div', { class: 'row' },
             h('div', { class: 'row-label' }, rec.merchant || k,

@@ -150,3 +150,22 @@ artist, which is why build item 6 waits on the reading-cost plan in TODO.md.
   letter in ARCHIVE.md step 3 still has to be sent.
 - The grounds table names a festival only where a festival has fixed grounds. A touring
   festival's stops and a one-off all-dayer still come from an announcement or from hand.
+
+## 8. After any change made by hand
+
+A person's page is counted from the nights each time it is opened. An artist page shows a
+count that was stored the last time the page was counted (`setlist_summarize`), and the
+record of its changes (`road_counts_log`, migration 0142) is written at that same moment.
+The nightly recount only counts pages that have a night dated that day. So a change made
+by hand moves the people's pages at once and leaves the artist page, the "confirmed" row
+under the artist on a member's page, and the record behind, sometimes for days.
+
+The rule: any change made by hand to nights (`artist_history_shows`), to tour names and
+folds (`artist_tour_edits`, night overrides), or to `place_aliases` ends with
+
+    select public.setlist_summarize(artist_id) from artist_history where artist_id in (...);
+
+for the pages it touched; for `place_aliases`, which can touch any page, every page that
+has nights. The record then gets its line at the time of the change (why `archive`), not
+at whatever later moment something else counts the page. Emptying a page on purpose
+(start again) writes no line of its own: say so in the commit that did it.
