@@ -236,18 +236,41 @@ shim = r"""<script>
     var H = window.__harness, iss = creditIss();
     if (!iss || H.creditSeeded) return;
     H.creditSeeded = true;
-    creditStore()[iss.id + ':u-brent'] = { approved: null, pending: { picks: [{ key: 'TRHS', mode: 'all' },
+    creditStore()[iss.id + ':u-brent'] = { approved: null, pending: { picks: [{ key: 'TRHS', mode: 'all', role: 'Backline tech, Driver' },
       { key: 'TJTL RNKT', mode: 'shows', shows: ['TJTL RNKT#0', 'TJTL RNKT#1'] }], until: '2026-10-07' },
       submittedAt: new Date(Date.now() - 36e5).toISOString(), declinedAt: null };
   }
   function creditExpand(claim) {
     if (!claim) return [];
     return CREDIT_TOURS.map(function (g) {
-      var n = 0;
+      var n = 0, role = '';
       if (claim.all) n = g.n;
-      else (claim.picks || []).forEach(function (p) { if (p.key === g.key) n = p.mode === 'shows' ? (p.shows || []).length : g.n; });
-      return n ? { key: g.key, name: g.name, year: g.year, total: g.n, n: n, first: g.first, last: g.last } : null;
+      else (claim.picks || []).forEach(function (p) { if (p.key === g.key) { n = p.mode === 'shows' ? (p.shows || []).length : g.n; role = p.role || ''; } });
+      return n ? { key: g.key, name: g.name, year: g.year, total: g.n, n: n, first: g.first, last: g.last, role: role } : null;
     }).filter(Boolean);
+  }
+  // "I was on this tour" (0146): the pretend archive's tour for a name the artist's page shows. A tour of the
+  // page's list that the pretend archive has no entry for is given one the first time it is claimed.
+  function creditTourKey(name) {
+    var low = String(name || '').trim().toLowerCase();
+    var g = CREDIT_TOURS.filter(function (x) { return !x.year && x.name.toLowerCase() === low; })[0];
+    return g ? g.key : 'T:' + low.toUpperCase();
+  }
+  function creditTourByName(artistId, name) {
+    var H = window.__harness, low = String(name || '').trim().toLowerCase();
+    var g = CREDIT_TOURS.filter(function (x) { return !x.year && x.name.toLowerCase() === low; })[0];
+    if (g) return g;
+    var hr = (H.histories || {})[artistId];
+    var t = ((hr && hr.summary && hr.summary.toursList) || []).filter(function (x) { return x.kind !== 'shows' && String(x.name || '').trim().toLowerCase() === low; })[0];
+    if (!t) return null;
+    g = { key: creditTourKey(t.name), name: t.name, year: false, n: t.n || 1, first: t.first || '2025-01-01', last: t.last || t.first || '2025-01-01' };
+    CREDIT_TOURS.push(g);
+    return g;
+  }
+  function creditPickOf(claim, key) {
+    if (!claim) return null;
+    if (claim.all) return { key: key, mode: 'all' };
+    return (claim.picks || []).filter(function (p) { return p.key === key; })[0] || null;
   }
   function creditCount(claim) {
     var l = creditExpand(claim);
@@ -265,7 +288,7 @@ shim = r"""<script>
       creditExpand(rows[k].approved).forEach(function (g) {
         var y = parseInt(g.first.slice(0, 4), 10);
         if (!out.first || y < out.first) out.first = y;
-        if (!g.year) out.list.push({ artistId: aid, artist: iss ? iss.name : 'Artist', key: g.key, name: g.name, n: g.n, first: g.first, last: g.last, kind: 'tour' });
+        if (!g.year) out.list.push({ artistId: aid, artist: iss ? iss.name : 'Artist', key: g.key, name: g.name, n: g.n, first: g.first, last: g.last, kind: 'tour', role: g.role || '' });
       });
     });
     return out;
@@ -501,6 +524,31 @@ shim = r"""<script>
                                    they are poked: the tours and the numbers show on their profile. With no
                                    I See Stars page yet one is made, run by somebody else on a ?newcrew
                                    phone, with the test person listed on it as crew.
+       __harness.crewOf(roles)     SEVERAL ROLES AND "I WAS ON THIS TOUR" (0146). The test person becomes crew on
+                                   the pretend I See Stars, endorsed, on a page somebody else runs (roles: the
+                                   line of roles they hold there; left out it is 'Production manager, Driver'),
+                                   and is poked. It answers the page's id. Open the page from the profile's
+                                   Artists tab (the I See Stars row), then Tours: every tour and festival has
+                                   the button "I was on this tour" (the year's loose shows have none). Tapping
+                                   it asks "What did you do on this tour?" with those roles ticked; Send puts
+                                   "Waiting on I See Stars" on the row at once. __harness.tourClaimsSent holds
+                                   what was sent. confirmTours() is then the artist's yes: the row reads "On
+                                   your profile" with the role, and the profile's Tours tab prints the role
+                                   under the tour. On the Artists tab the row for I See Stars reads "Confirm
+                                   the shows and tours..." only while nothing is confirmed or waiting; then
+                                   "Waiting on I See Stars to approve your tours"; then the count, as a fact,
+                                   which opens "Your tours with I See Stars".
+       __harness.artistSide()      the same page seen from the artist's side: the page is handed to the test
+                                   person (they run it, as a Member, Vocals), so what they sent as crew waits
+                                   on their own yes. Open the page (Manage): the card "... to approve" opens
+                                   the review, where each tour says "Role: ..." and what is new is marked. A
+                                   claim from Brent ("Backline tech, Driver" on Treehouse Tour) waits there too.
+                                   As a Member the test person gets no ask to confirm tours: no row on the
+                                   Artists tab and no Tasks card. (__harness.askMembers = true makes the fake
+                                   database send the ask anyway, as it did before 0146: the app still shows none.)
+       Several roles, anywhere a role with an artist is asked (the first run with ?newcrew, "Ask to be
+       listed" on an artist's page, the artist's Endorse / role sheet): tick up to six; what is ticked reads
+       back inside the question; __harness.frCalls holds the line that was sent (roles joined with ", ").
      A BRAND-NEW CREW ACCOUNT:  open the page with  ?newcrew  (it has to be the address: the account is set
      up before the app starts). No phone number, no role, no tour, nobody has endorsed it, and its first run
      is due with CREW ticked: Next, then "Your phone number" (the step this build adds; it is not shown to
@@ -573,6 +621,24 @@ shim = r"""<script>
     rows[k] = row;
     window.__harness.poke('credits');
     return true;
+  };
+  // Crew on a page somebody else runs, endorsed, with a line of roles (see crewOf above).
+  window.__harness.crewOf = function (roles) {
+    var H = window.__harness, a = issPage(true);
+    a.notMine = true; H.creditNotOwner = true;
+    a.members = a.members.filter(function (m) { return m.userId !== 'u-devin'; })
+      .concat([{ userId: 'u-devin', kind: 'crew', role: String(roles || 'Production manager, Driver').slice(0, 160), endorsed: true }]);
+    window.__harness.poke('listing,endorsement');
+    return a.id;
+  };
+  // The same page from the artist's side: the test person runs it, as a Member (see artistSide above).
+  window.__harness.artistSide = function () {
+    var H = window.__harness, a = issPage(false);
+    a.notMine = false; H.creditNotOwner = false;
+    a.members = a.members.filter(function (m) { return m.userId !== 'u-devin'; })
+      .concat([{ userId: 'u-devin', kind: 'band', role: 'Vocals', endorsed: true }]);
+    window.__harness.poke('listing,credits');
+    return a.id;
   };
   // A brand-new Crew account (see LIVE WITHOUT A RESTART above): set up before the app starts.
   var held = {};
@@ -1971,7 +2037,9 @@ shim = r"""<script>
       var H = window.__harness; H.acts = H.acts || [];
       // (notMine: a page somebody else runs, see issPage. It is in this list only while the test person is listed on it.)
       return Promise.resolve(H.acts.filter(function (a) { return !a.notMine || listedOn(a.id, 'u-devin'); }).map(function (a) {
-        var m = a.notMine ? a.members.filter(function (y) { return y.userId === 'u-devin'; })[0] : null;
+        // (askMembers, see artistSide: the real list says how a page you run lists you too, which is what the app
+        // goes by to leave a Member out of the asks. Without that switch a page you run says nothing here, as before.)
+        var m = a.notMine || H.askMembers ? a.members.filter(function (y) { return y.userId === 'u-devin' && !y.leftAt; })[0] : null;
         return { id: a.id, handle: a.handle, name: a.name, avatar: a.avatar, mine: !a.notMine, kind: m ? m.kind : null }; }));
     },
     /* Venues and festivals (0134). findPlaces answers from a few pretend
@@ -2051,7 +2119,8 @@ shim = r"""<script>
     requestArtist: function (artistId, kind, role) {
       var H = window.__harness; (H.frCalls = H.frCalls || []).push({ fn: 'requestArtist', args: [artistId, kind, role] });
       H.artistRequests = H.artistRequests || [];
-      var k = kind === 'crew' ? 'crew' : 'band', r = String(role || '').trim().slice(0, 40);
+      // (0146: one role or several joined with ", ", 160 characters.)
+      var k = kind === 'crew' ? 'crew' : 'band', r = String(role || '').trim().slice(0, 160);
       var a = (H.acts || []).filter(function (x) { return x.id === artistId; })[0];
       if (a && a.members.some(function (m) { return m.userId === 'u-devin' && !m.leftAt; })) return Promise.resolve({ ok: false, why: 'listed' });
       if (H.requestWhy) return Promise.resolve({ ok: false, why: H.requestWhy });
@@ -2157,7 +2226,7 @@ shim = r"""<script>
     setMemberRole: function (id, uid, role) {
       var H = window.__harness, a = (H.acts || []).filter(function (x) { return x.id === id; })[0];
       H.roleSaves = (H.roleSaves || []).concat([{ id: id, uid: uid, role: role }]);
-      if (a) a.members.forEach(function (m) { if (m.userId === uid) m.role = String(role || '').trim().slice(0, 40); });
+      if (a) a.members.forEach(function (m) { if (m.userId === uid) m.role = String(role || '').trim().slice(0, 160); });
       return Promise.resolve();
     },
     /* Tour credits. The test user runs every test artist, so their own claim
@@ -2167,6 +2236,9 @@ shim = r"""<script>
       if (!iss) return Promise.resolve([]);
       var me = iss.members.filter(function (m) { return m.userId === 'u-devin'; })[0];
       if (!me || !me.endorsed) return Promise.resolve([]);
+      // (0146) A Member has every night of the artist by rule: the database leaves that artist out of the asks.
+      // __harness.askMembers = true gives the answer from before that change (the app must still show no ask).
+      if (me.kind === 'band' && !H.askMembers) return Promise.resolve([]);
       var row = creditStore()[iss.id + ':u-devin'] || null, c = row && row.approved ? creditCount(row.approved) : { tours: 0, shows: 0 };
       return Promise.resolve([{ artistId: iss.id, artist: iss.name, handle: iss.handle, avatar: '', owner: !H.creditNotOwner,
         at: new Date(Date.now() - 6e5).toISOString(),
@@ -2223,6 +2295,45 @@ shim = r"""<script>
         url: 'https://www.setlist.fm', approvedAll: !!(row.approved && row.approved.all), approved: creditExpand(row.approved),
         pendingAll: !!(row.pending && row.pending.all), pending: row.pending ? creditExpand(row.pending) : null,
         submittedAt: row.submittedAt, declinedAt: row.declinedAt });
+    },
+    /* "I was on this tour" (0146). tourClaims: where the test person stands on each tour of a page that lists
+       them as crew and has endorsed them ({ crew: false } for a Member or a stranger). addTourCredit: the tour
+       is added, whole, with the role, to what they have waiting (else to what is confirmed), never in place of
+       it; it waits for the artist, or is confirmed at once when the test person runs the page. Every call is
+       kept in __harness.tourClaimsSent as { id, name, role }. __harness.addTourFails = true refuses it. */
+    tourClaims: function (id) {
+      var H = window.__harness, a = (H.acts || []).filter(function (x) { return x.id === id; })[0];
+      var me = a ? a.members.filter(function (m) { return m.userId === 'u-devin' && !m.leftAt; })[0] : null;
+      if (!me || me.kind !== 'crew' || !me.endorsed) return Promise.resolve({ crew: false, role: '', tours: [] });
+      var row = creditStore()[id + ':u-devin'] || {}, hr = (H.histories || {})[id];
+      var names = ((hr && hr.summary && hr.summary.toursList) || []).filter(function (t) { return t.kind !== 'shows'; }).map(function (t) { return t.name; });
+      CREDIT_TOURS.forEach(function (g) { if (!g.year && names.indexOf(g.name) < 0) names.push(g.name); });
+      var out = [];
+      names.forEach(function (nm) {
+        var key = creditTourKey(nm);
+        var ap = creditPickOf(row.approved, key), pe = creditPickOf(row.pending, key), de = creditPickOf(row.declined, key);
+        if (ap) out.push({ name: nm, state: 'approved', role: ap.role || '' });
+        else if (pe) out.push({ name: nm, state: 'pending', role: pe.role || '' });
+        else if (de) out.push({ name: nm, state: 'declined', role: de.role || '' });
+      });
+      return Promise.resolve({ crew: true, role: me.role || '', tours: out });
+    },
+    addTourCredit: function (id, name, role) {
+      var H = window.__harness, rows = creditStore(), k = id + ':u-devin', a = (H.acts || []).filter(function (x) { return x.id === id; })[0];
+      H.tourClaimsSent = (H.tourClaimsSent || []).concat([{ id: id, name: name, role: role }]);
+      if (H.addTourFails) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      var g = creditTourByName(id, name);
+      if (!g) return Promise.resolve({ ok: false, why: 'no_tour' });
+      var row = rows[k] || { approved: null, pending: null, submittedAt: null, declinedAt: null };
+      var base = row.pending || row.approved;
+      if (base && base.all) return Promise.resolve({ ok: true, covered: true });
+      var r = String(role || '').trim().slice(0, 160);
+      var norm = { picks: ((base && base.picks) || []).filter(function (p) { return p.key !== g.key; }).concat([{ key: g.key, mode: 'all', role: r }]), until: ymd(today) };
+      var own = !H.creditNotOwner && !(a && a.notMine);
+      if (own) { row.approved = norm; row.pending = null; } else row.pending = norm;
+      row.submittedAt = new Date().toISOString(); row.declinedAt = null; row.declined = null;
+      rows[k] = row;
+      return Promise.resolve({ ok: true, auto: own });
     },
     // Listing someone (again): their role and endorsement stay, and a day they left is cleared.
     // __harness.listFails = true refuses it the way the database does on a page Greenroom has not

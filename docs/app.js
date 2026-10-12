@@ -467,6 +467,8 @@
     // Tours to confirm and where each claim stands, claims waiting on your pages, pages waiting on Greenroom,
     // and a member someone asked to let go.
     askOver(S.creditAsks); askOver(S.creditQueue); askOver(S.claimQ); askOver(S.memberAsks);
+    // Where you stand on each tour of an artist's page ("I was on this tour": waiting, or on your profile).
+    each(S.tourClaims, askOver);
     // Who is on each tour with you (a seat changes who manages): each list is asked again the next time it is drawn.
     each(S.crewCache, function (c) { if (c) c.at = 0; });
     // What you are on each tour.
@@ -3050,9 +3052,9 @@
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title' }, a.name),
           // The role the artist gave them leads; then what the artist confirmed.
-          a.past ? h('span', { class: 'lr-sub' }, [a.role, a.kind === 'band' ? 'Former member' : 'Former crew',
+          a.past ? h('span', { class: 'lr-sub' }, [rolesShort(a.role), a.kind === 'band' ? 'Former member' : 'Former crew',
               conf ? tallyText(conf) + ' confirmed' : (n ? plural(n, 'tour') : '')].filter(Boolean).join(' \u00b7 '))
-            : h('span', { class: 'lr-sub vp-vouch' }, a.role || (a.kind === 'band' ? 'Member' : 'Crew'), verifiedBadge('sm'),
+            : h('span', { class: 'lr-sub vp-vouch' }, rolesShort(a.role) || (a.kind === 'band' ? 'Member' : 'Crew'), verifiedBadge('sm'),
               conf ? ' \u00b7 ' + tallyText(conf) + ' confirmed' : (n ? ' \u00b7 ' + plural(n, 'tour') : ''))),
         // Endorsed by this artist: the trophy on the right, the word under it.
         a.endorsed ? h('span', { class: 'vp-endorsed', 'aria-label': 'Endorsed by ' + a.name },
@@ -3075,8 +3077,19 @@
     }));
     // Every tour they've done: the ones on Greenroom, and the ones an artist
     // confirmed for them. The one they're out on right now leads, glowing.
-    var tourRows = G.tourTimeline(tours, Array.isArray(card.creditTours) ? card.creditTours : [], G.tourToday()).map(function (r) {
+    var creditList = Array.isArray(card.creditTours) ? card.creditTours : [];
+    var tourRows = G.tourTimeline(tours, creditList, G.tourToday()).map(function (r) {
       var t = r.tour;
+      // A tour they have a seat on is listed once, in place of the same tour confirmed by its artist
+      // (G.tourTimeline): the role said for the confirmed one is printed on it.
+      if (r.own && r.first) {
+        var conf = creditList.filter(function (p) {
+          var a = String((p && p.first) || ''), b = String((p && (p.last || p.first)) || '');
+          return p && p.role && p.kind !== 'festival' && p.kind !== 'shows' && !!a && a <= r.last && b >= r.first &&
+            String(p.artist || '').trim().toLowerCase() === String(r.artist || '').trim().toLowerCase();
+        })[0];
+        if (conf) r.role = conf.role;
+      }
       return timelineRow(r, r.own ? function () {
         if (!preview && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, uid, t);
       } : (t.artistId ? function () { openAct(t.artistId); } : null), true);
@@ -3346,7 +3359,8 @@
   }
   /* A tour from someone's profile: what's on the poster. Its name, the flyer
      if the tour has one, and the dates. Nothing else of the tour comes down. */
-  function openTourCard(tourId, userId, t, artistId) {
+  // say: on an artist's page, a function that gives the "I was on this tour" line for this tour (or nothing).
+  function openTourCard(tourId, userId, t, artistId, say) {
     var state = { card: null, failed: false };
     var draw = function () {
       openSheet(function () {
@@ -3368,6 +3382,7 @@
                   d.venue ? h('span', { class: 'tc-venue' }, d.venue) : null));
             })) : h('p', { class: 'note' }, 'No dates yet.')
           ],
+          typeof say === 'function' ? say() : null,
           h('div', { class: 'stack' },
             h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
         ];
@@ -3927,7 +3942,8 @@
     }) : personPhoto(card);
     var memberRow = function (m) {
       // The title this artist gave them leads; without one, their own roles.
-      var roles = m.role ? [m.role] : personRoles(m);
+      // (Several roles in a line that cannot wrap: the first two, then how many more.)
+      var roles = m.role ? [rolesShort(m.role)] : personRoles(m);
       var inner = [personPhoto(m, 'xs'),
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title fl-name' }, m.name || 'Someone', m.verified ? verifiedBadge() : null),
@@ -3974,12 +3990,35 @@
     // Every tour there is: the ones on Greenroom (they open) and the ones the
     // synced history knows by name; the tour being played today leads, glowing.
     var pastTours = hsum && Array.isArray(hsum.toursList) ? hsum.toursList : [];
+    /* "I was on this tour" (Devin, 2026-10-12): someone this artist lists as
+       crew and has endorsed says so on each tour and festival here, with the
+       role they played, and it goes to the artist to approve. Never a Member
+       (a Member has every night already), never someone who is not listed,
+       never on a year's loose shows. */
+    var meRow = B && B.uid ? members.filter(function (m) { return m.userId === B.uid() && !m.pending; })[0] : null;
+    var canSay = !!(meRow && meRow.kind === 'crew' && meRow.endorsed && creditsOn() && B.tourClaims && B.addTourCredit);
+    var stand = canSay ? tourClaims(id) : null;
+    if (stand && stand.d && stand.d.crew === false) canSay = false;
+    var sayLine = function (name) {
+      return canSay && name ? tourClaimLine(id, card.name, name, meRow.role || (stand.d && stand.d.role) || '') : null;
+    };
     var tourRows = G.tourTimeline(tours, pastTours, G.tourToday()).map(function (r) {
       var t = r.tour;
-      if (!r.own) return historyTourRow(id, r);
-      return timelineRow(r, function () {
-        if ((manage || !card.mine) && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, null, t, id);
+      if (!r.own) return historyTourRow(id, r, t.kind === 'shows' ? null : sayLine(r.name));
+      // A tour made in the app stands in for the archive's tour of the same dates (G.tourTimeline lists it once):
+      // the button speaks for that tour, by the name the archive has it under. It is under the row, and in the
+      // sheet the row opens.
+      var same = canSay && r.first ? pastTours.filter(function (p) {
+        var a = String((p && p.first) || ''), b = String((p && (p.last || p.first)) || '');
+        return p && p.kind !== 'festival' && p.kind !== 'shows' && !!a && a <= r.last && b >= r.first;
+      }).sort(function (x, y) { return G.num(y.n) - G.num(x.n); })[0] : null;
+      var li = timelineRow(r, function () {
+        if ((manage || !card.mine) && t.mine && getTour(t.id)) openTour(t.id);
+        else openTourCard(t.id, null, t, id, same ? function () { return sayLine(same.name); } : null);
       }, false);
+      var line = same ? sayLine(same.name) : null;
+      if (line) li.append(line);
+      return li;
     });
     // Anyone can follow an artist's page; shown at once, put back if it didn't take.
     var following = false;
@@ -4100,22 +4139,35 @@
     var presets = m.kind === 'band' ? G.BAND_ROLES : G.ARTIST_CREW_ROLES;
     var who = self ? 'you' : (m.name || 'they');
     openSheet(function () {
-      var input = h('input', { class: 'input', type: 'text', maxlength: 40, value: role, autocapitalize: 'words',
-        placeholder: m.kind === 'band' ? 'Or type it: Guitar and vocals…' : 'Or type it: Backline tech…',
-        'aria-label': 'Role with ' + artistName });
-      var chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Pick a role' }, presets.map(function (r) {
-        return h('button', { class: 'chip', type: 'button', 'aria-pressed': String(r === role),
-          onclick: function () { role = r; input.value = r; sync(); } }, r);
+      // Several roles (2026-10-12): each chip ticks or unticks one, and the line under them is the roles as they
+      // will be saved, joined with ", " (it can be typed in too). The line itself is the read-back.
+      var input = h('input', { class: 'input', type: 'text', maxlength: ROLE_ROOM, value: role, autocapitalize: 'words',
+        placeholder: m.kind === 'band' ? 'Or type it: Guitar, Vocals' : 'Or type it: Backline tech, Driver',
+        'aria-label': 'Roles with ' + artistName });
+      var lowPresets = presets.map(function (r) { return r.toLowerCase(); });
+      var has = function (r) { return rolesOf(role).some(function (x) { return x.toLowerCase() === r.toLowerCase(); }); };
+      var chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Pick their roles' }, presets.map(function (r) {
+        return h('button', { class: 'chip', type: 'button', 'aria-pressed': String(has(r)),
+          onclick: function () {
+            var now = rolesOf(input.value);
+            if (has(r)) now = now.filter(function (x) { return x.toLowerCase() !== r.toLowerCase(); });
+            else if (now.length >= ROLE_MOST) { toast('Six roles at most. Untick one first.'); return; }
+            else now.push(r);
+            // In the order of the list, then anything typed that is not on it.
+            role = rolesJoin(presets.filter(function (x) { return now.some(function (y) { return y.toLowerCase() === x.toLowerCase(); }); })
+              .concat(now.filter(function (y) { return lowPresets.indexOf(y.toLowerCase()) < 0; })));
+            input.value = role; sync();
+          } }, r);
       }));
       function sync() {
-        Array.prototype.forEach.call(chips.children, function (b) { b.setAttribute('aria-pressed', String(b.textContent === role)); });
+        Array.prototype.forEach.call(chips.children, function (b) { b.setAttribute('aria-pressed', String(has(b.textContent))); });
       }
       input.addEventListener('input', function () { role = input.value.trim(); sync(); });
       var busy = false;
       async function save(endorse, btn) {
         if (busy) return;
         busy = true; btn.disabled = true;
-        role = input.value.trim().slice(0, 40);
+        role = rolesJoin(rolesOf(input.value));
         try {
           if (role !== was && B.setMemberRole) { await B.setMemberRole(artistId, m.userId, role); was = role; }
           m.role = role;
@@ -4128,18 +4180,20 @@
         toast(endorse ? (self ? 'You’re endorsed ' : (m.name || 'They') + ' is endorsed ') + TROPHY : 'Role saved');
         if (o.after) o.after(endorse);
         render(true);
-        // Endorsed yourself: straight on to confirming your own tours.
-        if (endorse && self && creditsOn()) setTimeout(function () { openCreditClaim(artistId); }, 420);
+        // Endorsed yourself as crew: straight on to confirming your own tours. (Never a Member: a Member
+        // has every night of the artist by rule, so there is nothing to confirm and nothing is asked.)
+        if (endorse && self && m.kind !== 'band' && creditsOn()) setTimeout(function () { openCreditClaim(artistId); }, 420);
       }
       return [
         h('h2', { class: 'sh-title' }, roleOnly ? (self ? 'Your role' : (m.name || 'Their') + '’s role')
           : 'Endorse ' + (self ? 'yourself' : (m.name || 'them')) + '?'),
-        h('p', { class: 'sh-sub' }, 'What ' + (self ? 'is your' : 'was their') + ' role with ' + artistName + '? It shows under ' +
+        h('p', { class: 'sh-sub' }, 'What ' + (self ? 'is your' : 'was their') + ' role with ' + artistName + '? Tick every one that fits, up to six. It shows under ' +
           (self ? 'your' : 'their') + ' name on ' + artistName + '’s page.'),
         chips, input,
         roleOnly ? null : h('p', { class: 'note' }, 'Endorsing says ' + who + ' really worked for ' + artistName + '. It shows on ' +
-          (self ? 'your' : 'their') + ' page and can’t be taken back. Then ' + (self ? 'you confirm' : 'they’re asked to confirm') +
-          ' the tours and shows ' + who + ' did with ' + artistName + '.'),
+          (self ? 'your' : 'their') + ' page and can’t be taken back. ' + (m.kind === 'band'
+            ? 'A Member has every show ' + artistName + ' has played, so there is nothing to confirm.'
+            : 'Then ' + (self ? 'you confirm' : 'they’re asked to confirm') + ' the tours and shows ' + who + ' did with ' + artistName + '.')),
         h('div', { class: 'stack', style: 'margin-top:14px' },
           // What this page confirmed for them can be taken back (the trophy can't).
           roleOnly && m.hasCredits && B.decideCredits ? h('button', { class: 'linkbtn rv-aside tc-off', type: 'button',
@@ -4199,6 +4253,158 @@
       }).catch(function () { c.asking = false; c.at = Date.now(); if (c.again) { c.again = false; if (S.creditQueue === c) creditQueue(true); } });
     }
     return c;
+  }
+  /* The asks as the pages show them. An artist that lists you as a Member
+     never asks: a Member has every night of the artist by rule, so there is
+     nothing to confirm (Devin, 2026-10-12: "i keep getting asked on my user
+     profile to confirm the shows with I See Stars"). The database leaves
+     those out (0146); the same is done here, from the list of your artists,
+     so an answer from before that change is not shown either. */
+  function creditAskList() {
+    var mine = (myActs().list || []).filter(function (x) { return x && x.kind === 'band' && x.id; }).map(function (x) { return x.id; });
+    return (creditAsks().list || []).filter(function (a) { return a && mine.indexOf(a.artistId) < 0; });
+  }
+  /* "I was on this tour" (Devin, 2026-10-12): where you stand on each tour
+     of an artist's page that lists you as crew. One answer per artist,
+     { crew, role, tours: [{ name, state: 'approved' | 'pending' | 'declined',
+     role }] }, held a minute like the other lists and asked again when the
+     phone is told something changed (socialAgain). A tour that is not in the
+     list has the button. */
+  function tourClaims(artistId, fresh) {
+    var B = window.GR_BACKEND;
+    S.tourClaims = S.tourClaims || {};
+    var c = S.tourClaims[artistId] || (S.tourClaims[artistId] = { d: null, at: 0, asking: false });
+    if (!creditsOn() || !B.tourClaims) return c;
+    if (fresh && c.asking) c.again = true;
+    if (!c.asking && (fresh || Date.now() - c.at > 60e3)) {
+      c.asking = true;
+      var done = function () {
+        c.asking = false; c.at = Date.now();
+        if (c.again) { c.again = false; if (S.tourClaims && S.tourClaims[artistId] === c) tourClaims(artistId, true); }
+      };
+      B.tourClaims(artistId).then(function (d) { if (G.isObj(d)) c.d = d; done(); render(true); })
+        .catch(function () { done(); });
+    }
+    return c;
+  }
+  function tourClaimOf(artistId, name) {
+    var c = S.tourClaims && S.tourClaims[artistId], d = c && c.d, low = String(name || '').trim().toLowerCase();
+    if (!d) return null;   // not known yet: nothing is drawn until it is
+    return (Array.isArray(d.tours) ? d.tours : []).filter(function (x) { return x && String(x.name || '').trim().toLowerCase() === low; })[0]
+      || { name: name, state: '', role: '' };
+  }
+  // The line under a tour on the artist's page: the button, or where it stands.
+  function tourClaimLine(artistId, artist, name, myRole) {
+    var st = tourClaimOf(artistId, name);
+    if (!st) return null;
+    var as = st.role ? ' · ' + st.role : '';
+    // (part: only some of its nights are theirs so far, one festival day of it, say. The button stays, so the whole tour can still be said.)
+    var more = st.part ? h('button', { class: 'am-endorse', type: 'button',
+      onclick: function (e) { e.stopPropagation(); openTourClaim(artistId, artist, name, st.role || myRole); } }, 'I was on this tour') : null;
+    if (st.state === 'approved') {
+      return h('p', { class: 'tn-with tn-say' },
+        h('span', { class: 'am-endorsed', style: 'margin-left:0' }, icon('check', 14), st.part ? ' Some of it is on your profile' : ' On your profile'), as, more);
+    }
+    if (st.state === 'pending') return h('p', { class: 'tn-with tn-say' }, 'Waiting on ' + artist + as, more);
+    return h('p', { class: 'tn-with tn-say' },
+      h('button', { class: 'am-endorse', type: 'button', style: 'margin-left:0',
+        onclick: function (e) { e.stopPropagation(); openTourClaim(artistId, artist, name, st.role || myRole); } }, 'I was on this tour'),
+      st.state === 'declined' ? ' ' + artist + ' sent this one back. You can send it again.' : null);
+  }
+  // "What did you do on this tour?": the roles they have with the artist come ticked; one button sends it.
+  function openTourClaim(artistId, artist, name, myRole) {
+    var B = window.GR_BACKEND, busy = false;
+    openSheet(function () {
+      var send = h('button', { class: 'btn primary block', type: 'button' }, 'Send to ' + artist);
+      var said = rolesSaid('');
+      var pick = roleChoice(askCrewRoles(), myRole, function () { ready(); }, 'Your roles on ' + name);
+      function ready() { var v = pick.value(); said.set(v); send.disabled = busy || !v; }
+      send.addEventListener('click', async function () {
+        var role = pick.value();
+        if (busy || !role) return;
+        blurActive();
+        busy = true; ready();
+        var out = null, bad = null;
+        try { out = await B.addTourCredit(artistId, name, role); } catch (x) { bad = x; }
+        busy = false;
+        if (!out || !out.ok) {
+          ready();
+          if (out && out.why === 'no_tour') toast('Greenroom has no shows on file under that tour yet.');
+          else saveFailed('credits', bad || out);
+          return;
+        }
+        // The row changes at once; the fresh answer follows.
+        var c = tourClaims(artistId);
+        if (c.d && !out.covered) {
+          var low = String(name).trim().toLowerCase();
+          c.d.tours = (Array.isArray(c.d.tours) ? c.d.tours : []).filter(function (x) { return String(x.name || '').trim().toLowerCase() !== low; })
+            .concat([{ name: name, state: out.auto ? 'approved' : 'pending', role: role }]);
+        }
+        tourClaims(artistId, true);
+        S.creditAsks = null; S.creditQueue = null;
+        if (B.uid) cardOf(B.uid(), true);
+        closeSheet();
+        toast(out.covered ? 'That one is already with ' + artist + '.'
+          : out.auto ? name + ' is on your profile.'
+          : 'Sent. Once ' + artist + ' approves, it is on your profile.');
+        render(true);
+      });
+      ready();
+      return [
+        h('h2', { class: 'sh-title' }, 'What did you do on this tour?'),
+        h('p', { class: 'sh-sub' }, name + '. It goes to ' + artist + ' to approve, with what you have already confirmed. Nothing you have is replaced.'),
+        h('p', { class: 'field-label aq-q' }, 'Your role on this tour', said.node),
+        pick.nodes,
+        h('div', { class: 'stack' }, send,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
+      ];
+    }, { label: 'I was on this tour' });
+  }
+  /* Your tours with an artist, once any are confirmed or waiting: a list to
+     read, not a thing to do. Each tour with the role said for it; one quiet
+     line says where more are added. Changing which shows, or taking them
+     off, is a quiet link to the tick sheet. */
+  function openMyTours(a) {
+    var B = window.GR_BACKEND, artist = a.artist || 'this artist';
+    var host = h('div', { class: 'tc-host' }), d = null, failed = false;
+    function line(g, tag) {
+      return h('div', { class: 'row' },
+        h('div', { class: 'row-label' }, G.creditGroupName(g), tag ? h('span', { class: 'tn-tag', style: 'margin-left:8px' }, tag) : null,
+          h('span', { class: 'hint' }, [g.year ? '' : tourSpan(g.first, g.last),
+            G.num(g.n) >= G.num(g.total) ? (g.year ? 'all of them' : 'entire tour') : g.n + ' of ' + g.total + ' shows'].filter(Boolean).join(' · ')),
+          g.role ? h('span', { class: 'hint', style: 'overflow-wrap:anywhere' }, 'Role: ' + g.role) : null),
+        h('span', { class: 'amt num' }, plural(G.num(g.n), 'show')));
+    }
+    function draw() {
+      if (!d) { fillEl(host, h('p', { class: 'note' }, failed ? 'Couldn’t open this just now. Close and try again.' : 'Loading…')); return; }
+      var had = Array.isArray(d.approved) ? d.approved : [], pend = Array.isArray(d.pending) ? d.pending : [];
+      // Of what waits, only what is new: a tour not confirmed yet, or more of its nights.
+      var fresh = pend.filter(function (p) { return !had.some(function (g) { return g.key === p.key && G.num(g.n) >= G.num(p.n) && (g.role || '') === (p.role || ''); }); });
+      fillEl(host, [
+        had.length ? h('div', { class: 'ledger' }, had.map(function (g) { return line(g); })) : null,
+        d.approvedAll ? h('p', { class: 'note' }, 'ALL TOURS: every tour and show ' + artist + ' has played while you are listed.') : null,
+        !had.length && !pend.length ? h('p', { class: 'note' }, 'Nothing is confirmed with ' + artist + ' yet.') : null,
+        pend.length ? h('h3', { class: 'sh-h3' }, 'Waiting on ' + artist + ' to approve') : null,
+        fresh.length ? h('div', { class: 'ledger' }, fresh.map(function (g) { return line(g, 'waiting'); }))
+          : pend.length ? h('p', { class: 'note' }, d.pendingAll ? 'ALL TOURS, every show.' : 'A change to what is confirmed above.') : null,
+        a.state === 'approved' && a.declinedAt ? h('p', { class: 'note' }, artist + ' sent back the last thing you added. What is confirmed stays.') : null,
+        h('p', { class: 'note' }, 'Add another from ' + artist + '’s page: open a tour and tap I was on this tour.'),
+        setlistCredit(d.url)
+      ]);
+    }
+    var here = !!(S.route && S.route.name === 'act' && S.route.id === a.artistId);
+    openSheet(function (panel) {
+      panel.classList.add('rv-sheet');
+      return [h('h2', { class: 'sh-title' }, 'Your tours with ' + artist), host,
+        h('div', { class: 'stack tc-foot' },
+          here ? null : h('button', { class: 'btn primary block', type: 'button', onclick: function () {
+            closeSheet(true); S.actTab = { id: a.artistId, tab: 'tours' }; openAct(a.artistId); } }, 'Open ' + artist + '’s page'),
+          h('button', { class: 'linkbtn rv-aside tc-off', type: 'button', onclick: function () { closeSheet(true); openCreditClaim(a.artistId); } },
+            'Change which shows, or take them off'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))];
+    }, { label: 'Your tours with ' + artist });
+    draw();
+    B.creditDetail(a.artistId, B.uid()).then(function (x) { d = x; failed = !x; draw(); }).catch(function () { failed = true; draw(); });
   }
   function tallyText(t) { return plural(G.num(t.tours), 'tour') + ' · ' + plural(G.num(t.shows), 'show'); }
   // "Mar 8 – Jun 9, 2017", years said once when they match.
@@ -4268,8 +4474,11 @@
         var l = links();
         send.disabled = f.busy || !role.value() || l.bad || !(l.any || f.note.trim().length >= 3);
         said.textContent = l.bad ? 'One of the links doesn\u2019t look right. Fix it or clear it.' : '';
+        picked.set(role.value());
       };
-      var role = roleChoice(G.BAND_ROLES, '', function () { ready(); }, 'Your role in ' + card.name);
+      // (A claim of a page holds 40 characters of role: as many whole roles as fit in that.)
+      var picked = rolesSaid('');
+      var role = roleChoice(G.BAND_ROLES, '', function () { ready(); }, 'Your roles in ' + card.name, { room: 40 });
       var linkField = function (key, label, hint) {
         var mark = h('span', { class: 'ca-mark', 'aria-hidden': 'true' });
         var input = h('input', { class: 'ca-in', type: 'text', inputmode: key === 'instagram' ? null : 'url', maxlength: 200,
@@ -4322,7 +4531,7 @@
             else saveFailed('claim', x);
           }
         } },
-          h('p', { class: 'field-label aq-q' }, 'Your role in ' + card.name),
+          h('p', { class: 'field-label aq-q' }, 'Your role in ' + card.name, picked.node),
           role.nodes,
           h('p', { class: 'field-label aq-q clm-links-h' }, 'Links that show it'),
           linkField('spotify', 'Spotify', 'open.spotify.com/artist/\u2026'),
@@ -4588,30 +4797,90 @@
      so that it can add a space to be filled out." */
   // His 20 crew roles, then the two words for a hired player on stage.
   function askCrewRoles() { return G.CREW_ROLES.slice(0, 20).concat(['Band', 'Touring Musician']); }
-  // Role chips with Other, which opens a line to type it. value() is the role as it will be sent.
-  function roleChoice(presets, start, onChange, label) {
-    var cur = String(start || '').trim();
-    var other = !!cur && presets.indexOf(cur) < 0;
-    var input = h('input', { class: 'input aq-other', type: 'text', maxlength: 40, value: other ? cur : '', autocapitalize: 'words',
-      autocomplete: 'off', placeholder: 'Type the role', 'aria-label': 'The role, typed', hidden: other ? null : true,
+  /* Several roles with one artist (Devin, 2026-10-12: "When you get asked
+     what your roll is with an artist you should be able to choose multiple
+     rolls"). They are kept as one line, the roles joined with ", " in the
+     order of the list, what was typed under Other last: "Tour manager,
+     Driver". At least one, six at most, 160 characters (a claim of a page
+     still holds 40). */
+  var ROLE_MOST = 6, ROLE_ROOM = 160;
+  // The line back into its roles.
+  function rolesOf(s) {
+    return String(s || '').split(',').map(function (x) { return x.replace(/\s+/g, ' ').trim(); }).filter(Boolean);
+  }
+  // Roles into the line: each one once, six at most, and only whole roles (one that would not fit is left off, never cut).
+  function rolesJoin(list, room) {
+    var out = [], seen = {}, max = room || ROLE_ROOM;
+    (list || []).forEach(function (r) {
+      var v = String(r || '').replace(/\s+/g, ' ').trim(), k = v.toLowerCase();
+      if (!v || seen[k] || out.length >= ROLE_MOST) return;
+      if (out.concat([v]).join(', ').length > max) return;
+      seen[k] = true; out.push(v);
+    });
+    return out.join(', ');
+  }
+  // For a line that cannot wrap: the first two, then how many more ("Tour manager, Driver +2").
+  function rolesShort(s) {
+    var l = rolesOf(s);
+    return l.length <= 2 ? l.join(', ') : l.slice(0, 2).join(', ') + ' +' + (l.length - 2);
+  }
+  // The first role alone: the title on a tour seat and on the contact card, which is compared whole with "Tour manager".
+  function roleFirst(s) { return (rolesOf(s)[0] || '').slice(0, 40); }
+  // What is ticked, read back inside the question it answers. set(line) rewrites it.
+  function rolesSaid(line) {
+    var el = h('span', { class: 'aq-said', role: 'status', style: 'display:block;margin-top:6px;font-size:15px;font-weight:600;color:var(--pos);overflow-wrap:anywhere' });
+    var out = { node: el, set: function (v) { el.textContent = v ? 'You picked: ' + v : 'Tick every one that fits, up to six.'; } };
+    out.set(line || '');
+    return out;
+  }
+  /* Role chips, any number of them up to six, with Other, which opens a line
+     to type one more. start is the line they have now (its roles come back
+     ticked; one that is not in the list comes back under Other). value() is
+     the line as it will be sent. o.room: how long the line may be. */
+  function roleChoice(presets, start, onChange, label, o) {
+    var room = (o && o.room) || ROLE_ROOM;
+    var had = rolesOf(start), low = presets.map(function (r) { return r.toLowerCase(); });
+    var on = {};
+    had.forEach(function (r) { var i = low.indexOf(r.toLowerCase()); if (i >= 0) on[presets[i]] = true; });
+    var typed = had.filter(function (r) { return low.indexOf(r.toLowerCase()) < 0; }).join(', ');
+    var other = !!typed;
+    var list = function () {
+      return presets.filter(function (r) { return on[r]; }).concat(other ? rolesOf(input.value) : []);
+    };
+    var value = function () { return rolesJoin(list(), room); };
+    var input = h('input', { class: 'input aq-other', type: 'text', maxlength: 40, value: typed.slice(0, 40), autocapitalize: 'words',
+      autocomplete: 'off', placeholder: 'Type the role', 'aria-label': 'Another role, typed', hidden: other ? null : true,
       oninput: function () { if (onChange) onChange(); } });
-    var chips = h('div', { class: 'chips', role: 'group', 'aria-label': label || 'Pick a role' });
+    var chips = h('div', { class: 'chips', role: 'group', 'aria-label': label || 'Pick your roles' });
     var sync = function () {
       Array.prototype.forEach.call(chips.children, function (b) {
-        b.setAttribute('aria-pressed', String(other ? b.textContent === 'Other' : b.textContent === cur));
+        b.setAttribute('aria-pressed', String(b.textContent === 'Other' ? other : !!on[b.textContent]));
       });
       input.hidden = !other;
     };
+    // One more only while there is room for it: six roles, and the whole line within its length.
+    var full = function (r) {
+      var now = rolesOf(value());
+      return now.length >= ROLE_MOST ? 'Six roles at most. Untick one first.'
+        : now.concat([r]).join(', ').length > room ? 'There is no room for one more. Untick one first.' : '';
+    };
     presets.concat(['Other']).forEach(function (r) {
       chips.append(h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', onclick: function () {
-        if (r === 'Other') { other = true; cur = ''; sync(); input.focus(); }
-        else { other = false; cur = r; sync(); }
+        var no = '';
+        if (r === 'Other') {
+          if (!other && (no = full(''))) { toast(no); return; }
+          other = !other; sync();
+          if (other) input.focus();
+        } else if (on[r]) { delete on[r]; sync(); }
+        else {
+          if ((no = full(r))) { toast(no); return; }
+          on[r] = true; sync();
+        }
         if (onChange) onChange();
       } }, r));
     });
     sync();
-    return { nodes: [chips, input],
-      value: function () { return String(other ? input.value : cur).replace(/\s+/g, ' ').trim().slice(0, 40); } };
+    return { nodes: [chips, input], value: value };
   }
   // What you asked artists for: pending, run out (no answer in 30 days), declined or accepted.
   function myArtistRequests(fresh) {
@@ -4631,7 +4900,7 @@
   async function sendArtistRequest(artistId, artist, kind, role) {
     var B = window.GR_BACKEND, r = null;
     if (!B || typeof B.requestArtist !== 'function') { toast('Couldn’t send that. Try again.'); return 'retry'; }
-    try { r = await B.requestArtist(artistId, kind, String(role || '').replace(/\s+/g, ' ').trim().slice(0, 40)); }
+    try { r = await B.requestArtist(artistId, kind, rolesJoin(rolesOf(role))); }
     catch (e) { saveFailed('request', e); return 'retry'; }
     var why = r && r.ok ? '' : String((r && r.why) || 'failed');
     myArtistRequests(true);
@@ -4721,11 +4990,13 @@
     openSheet(function () {
       var host = h('div', { class: 'aq-roles' });
       var send = h('button', { class: 'btn primary block', type: 'button' }, 'Send request');
-      var ready = function () { send.disabled = f.busy || !pick || !pick.value(); };
+      // What is ticked reads back inside the question, before Send.
+      var said = rolesSaid('');
+      var ready = function () { var v = pick ? pick.value() : ''; said.set(v); send.disabled = f.busy || !v; };
       var draw = function () {
-        pick = roleChoice(f.kind === 'band' ? G.BAND_ROLES : askCrewRoles(), '', ready, 'Your role with ' + card.name);
-        fillEl(host, [h('p', { class: 'field-label aq-q' }, f.kind === 'band' ? 'What is your role in ' + card.name + '?' : 'Which of these best describes your role?'),
-          pick.nodes]);
+        pick = roleChoice(f.kind === 'band' ? G.BAND_ROLES : askCrewRoles(), '', ready, 'Your roles with ' + card.name);
+        fillEl(host, [h('p', { class: 'field-label aq-q' }, f.kind === 'band' ? 'What is your role in ' + card.name + '?' : 'Which of these describe your role with ' + card.name + '?',
+          said.node), pick.nodes]);
         ready();
       };
       send.addEventListener('click', async function () {
@@ -4775,7 +5046,7 @@
     var reqs = myArtistRequests().val, claims = myClaimList().val, rows = [];
     (Array.isArray(reqs) ? reqs : []).forEach(function (r) {
       if (!r || r.state === 'accepted') return;
-      var sub = r.state === 'pending' ? [r.kind === 'band' ? 'Member' : 'Crew', r.role, 'Pending'].filter(Boolean).join(' · ')
+      var sub = r.state === 'pending' ? [r.kind === 'band' ? 'Member' : 'Crew', rolesShort(r.role), 'Pending'].filter(Boolean).join(' · ')
         : r.state === 'expired' ? 'No answer in 30 days' : 'Declined';
       rows.push(waitingRow(r.artist, r.avatar, sub, function () { openMyRequest(r); }));
     });
@@ -5475,15 +5746,22 @@
   // On your own Artists tab: one line per artist that endorsed you.
   function creditAskCards() {
     if (!creditsOn()) return null;
-    var list = creditAsks().list || [];
+    var list = creditAskList();
     if (!list.length) return null;
+    /* Asked once (Devin, 2026-10-12: "This should only have to be done once
+       and confirmed by the artist once and then it is done"). The words
+       "Confirm the shows and tours..." are only for someone who has confirmed
+       nothing with that artist yet, or whose claim was sent back. A claim
+       that waits says so, once, here. Once the artist has confirmed anything
+       the row is a fact, not something to do, and opens their tours. */
     return h('div', { class: 'tc-asks' }, list.map(function (a) {
       var todo = a.state === 'ask' || a.state === 'declined';
       var main = a.state === 'ask' ? 'Confirm the shows and tours you’ve done with ' + a.artist
-        : a.state === 'declined' ? a.artist + ' sent your tours back — fix and resend'
+        : a.state === 'declined' ? a.artist + ' sent your tours back. Fix them and send again'
         : a.state === 'pending' ? 'Waiting on ' + a.artist + ' to approve your tours'
-        : tallyText(a) + ' confirmed with ' + a.artist;
-      return h('button', { class: 'tc-ask' + (todo ? ' on' : ''), type: 'button', onclick: function () { openCreditClaim(a.artistId); } },
+        : plural(G.num(a.shows), 'show') + ', ' + plural(G.num(a.tours), 'tour') + ' confirmed with ' + a.artist;
+      return h('button', { class: 'tc-ask' + (todo ? ' on' : ''), type: 'button',
+        onclick: function () { if (todo) openCreditClaim(a.artistId); else openMyTours(a); } },
         h('span', { class: 'tc-ask-t' }, main), icon('chevron', 16));
     }));
   }
@@ -5511,7 +5789,10 @@
         st.d = d; st.failed = !d;
         // Pick up where they left off: what's waiting, else what was sent back, else what's confirmed.
         if (d && d.mine) st.sel = G.creditSelection(d.mine.pending || d.mine.declined || d.mine.approved);
-        if (d) title.textContent = 'Confirm the shows and tours you’ve done with ' + d.artist;
+        // Asked once: "Confirm ..." is for someone who has confirmed nothing with this artist yet, or whose
+        // claim was sent back. With tours confirmed or waiting this is the same sheet under a plain name.
+        if (d) title.textContent = d.mine && (d.mine.approved || d.mine.pending)
+          ? 'Your tours with ' + d.artist : 'Confirm the shows and tours you’ve done with ' + d.artist;
         // A tour picked night by night before: its nights are needed to show the ticks.
         Object.keys(st.sel.picks).forEach(function (k) { if (st.sel.picks[k].mode === 'shows') loadShows(k); });
         draw();
@@ -5602,8 +5883,8 @@
       var named = gs.filter(function (g) { return !g.year; }), loose = gs.filter(function (g) { return g.year; });
       var status = !mine ? null
         : mine.pending ? 'Waiting on ' + d.artist + ' to approve what you sent. Sending again replaces it.'
-        : mine.declined ? d.artist + ' sent it back. It’s ticked the way you sent it — fix it and send it again.'
-        : mine.approved ? 'Confirmed. Change it and send again — ' + (d.owner ? 'it’s yours to confirm.' : d.artist + ' approves the change.') : null;
+        : mine.declined ? d.artist + ' sent it back. It’s ticked the way you sent it. Fix it and send it again.'
+        : mine.approved ? 'Confirmed. Change it and send again: ' + (d.owner ? 'it’s yours to confirm.' : d.artist + ' approves the change.') : null;
       fillEl(host, [
         status ? h('p', { class: 'note tc-status' }, status) : null,
         h('label', { class: 'rv-row tc-allrow' + (st.sel.all ? ' on' : '') },
@@ -5637,17 +5918,24 @@
       var waiting = Object.keys(st.sel.picks).some(function (k) {
         return !st.sel.all && st.sel.picks[k].mode === 'shows' && !(st.shows[k] && st.shows[k].list);
       });
-      if (waiting) { toast('Still loading a tour’s shows — one moment.'); return; }
+      if (waiting) { toast('Still loading a tour’s shows. One moment.'); return; }
       st.busy = true; draw();
       var out = null, bad = null;
-      try { out = await B.submitCredits(artistId, G.creditClaim(st.sel)); } catch (e) { bad = e; }
+      // The role said for a tour ("I was on this tour") stays with that tour through an edit here.
+      var claim = G.creditClaim(st.sel), said = {};
+      [d.mine && d.mine.approved, d.mine && d.mine.declined, d.mine && d.mine.pending].forEach(function (c) {
+        (c && Array.isArray(c.picks) ? c.picks : []).forEach(function (p) { if (p && p.key && p.role) said[p.key] = String(p.role); });
+      });
+      (Array.isArray(claim.picks) ? claim.picks : []).forEach(function (p) { if (said[p.key]) p.role = said[p.key]; });
+      try { out = await B.submitCredits(artistId, claim); } catch (e) { bad = e; }
       st.busy = false;
       if (!out || !out.ok) { draw(); saveFailed('credits', bad || out); return; }
       closeSheet();
       S.creditAsks = null; S.creditQueue = null;
+      if (S.tourClaims && S.tourClaims[artistId]) tourClaims(artistId, true);
       if (B.uid) cardOf(B.uid(), true);
       if (out.auto) hornSplash('Tours confirmed', tallyText(t) + ' on your page');
-      else toast('Sent — once ' + d.artist + ' approves, it’s on your page');
+      else toast('Sent. Once ' + d.artist + ' approves, it’s on your page');
       render(true);
     }
     async function withdraw() {
@@ -5661,6 +5949,7 @@
       if (!out) { draw(); saveFailed('credits', bad); return; }
       closeSheet();
       S.creditAsks = null; S.creditQueue = null;
+      if (S.tourClaims && S.tourClaims[artistId]) tourClaims(artistId, true);
       if (B.uid) cardOf(B.uid(), true);
       toast('Taken off your page');
       render(true);
@@ -5685,11 +5974,13 @@
       B.creditDetail(item.artistId, item.userId).then(function (d) { st.d = d; st.failed = !d; draw(); })
         .catch(function () { st.failed = true; draw(); });
     }
-    function line(g) {
+    function line(g, isNew) {
       return h('div', { class: 'row' },
-        h('div', { class: 'row-label' }, G.creditGroupName(g),
+        h('div', { class: 'row-label' }, G.creditGroupName(g), isNew ? h('span', { class: 'tn-tag', style: 'margin-left:8px' }, 'new') : null,
           h('span', { class: 'hint' }, [g.year ? '' : tourSpan(g.first, g.last),
-            G.num(g.n) >= G.num(g.total) ? (g.year ? 'all of them' : 'entire tour') : g.n + ' of ' + g.total + ' shows'].filter(Boolean).join(' · '))),
+            G.num(g.n) >= G.num(g.total) ? (g.year ? 'all of them' : 'entire tour') : g.n + ' of ' + g.total + ' shows'].filter(Boolean).join(' · ')),
+          // The role they say they played on it (several, as they ticked them).
+          g.role ? h('span', { class: 'hint', style: 'overflow-wrap:anywhere' }, 'Role: ' + g.role) : null),
         h('span', { class: 'amt num' }, plural(G.num(g.n), 'show')));
     }
     function total(list) {
@@ -5711,12 +6002,17 @@
         return;
       }
       var t = total(pend);
+      // "I was on this tour" adds to what is confirmed: what was approved before is in the list again, and the
+      // lines that are new (a tour not approved yet, more of its nights, or another role) are marked.
+      var same = function (p) { return had.some(function (g) { return g.key === p.key && G.num(g.n) >= G.num(p.n) && (g.role || '') === (p.role || ''); }); };
+      var keeps = had.length > 0 && !d.pendingAll && had.every(function (g) { return pend.some(function (p) { return p.key === g.key && G.num(p.n) >= G.num(g.n); }); });
       fillEl(host, [
         h('p', { class: 'note' }, who + ' says they worked these with ' + d.artist +
-          (d.pendingAll ? ' — ALL TOURS, every show through the day they sent it.' : ':')),
-        h('div', { class: 'ledger' }, pend.map(line),
+          (d.pendingAll ? '. ALL TOURS, every show through the day they sent it.' : ':')),
+        h('div', { class: 'ledger' }, pend.map(function (g) { return line(g, keeps && !same(g)); }),
           h('div', { class: 'row total' }, h('span', null, tallyText(t)), h('strong', { class: 'amt num' }, plural(t.shows, 'show')))),
-        had.length ? h('p', { class: 'note' }, 'This replaces what you approved before (' + tallyText(total(had)) + ').') : null,
+        had.length ? h('p', { class: 'note' }, keeps ? 'Everything you approved before (' + tallyText(total(had)) + ') is still in it. The lines marked new are what was added.'
+          : 'This replaces what you approved before (' + tallyText(total(had)) + ').') : null,
         setlistCredit(d.url)
       ]);
       fillEl(foot, [
@@ -5724,7 +6020,7 @@
           onclick: function () { decide('approve'); } }, st.busy ? 'Saving…' : 'Approve · it goes on ' + first + '’s page'),
         h('button', { class: 'btn danger block', type: 'button', disabled: st.busy || null,
           onclick: function () { if (!st.armed) { st.armed = true; draw(); return; } decide('decline'); } },
-          st.armed ? 'Send it back to ' + first + '?' : 'Not right — send it back'),
+          st.armed ? 'Send it back to ' + first + '?' : 'Not right, send it back'),
         close
       ]);
     }
@@ -5744,7 +6040,7 @@
       }
       closeSheet();
       cardOf(item.userId, true);
-      toast(verdict === 'approve' ? 'Approved — it’s on ' + first + '’s page' : 'Sent back to ' + first);
+      toast(verdict === 'approve' ? 'Approved. It’s on ' + first + '’s page' : 'Sent back to ' + first);
       render(true);
     }
     load();
@@ -5760,10 +6056,14 @@
       : (r.n ? plural(r.n, 'show') : 'No dates yet');
     // A festival from an artist's page is tagged one, as it is on that page.
     var festTag = r.tour && r.tour.kind === 'festival' ? h('span', { class: 'tn-tag tn-kind' }, 'festival') : null;
+    var played = rolesShort(r.role || (r.tour && !r.own && r.tour.role) || '');
     var inner = [h('span', { class: 'lr-text' },
       r.now ? h('span', { class: 'lr-title tl-title' }, h('span', { class: 'tl-name' }, r.name), h('span', { class: 'tl-now' }, 'Currently on'))
         : h('span', { class: 'lr-title' }, r.name, festTag),
-      h('span', { class: 'lr-sub' }, [withArtist ? r.artist : '', span].filter(Boolean).join(' · '))),
+      h('span', { class: 'lr-sub' }, [withArtist ? r.artist : '', span].filter(Boolean).join(' · ')),
+      // The role they played on it, as the artist confirmed it ("I was on this tour"): a line of its own, so the
+      // tour's name and its dates are never cut to make room.
+      played ? h('span', { class: 'lr-sub tl-role' }, played) : null),
       onTap ? icon('chevron', 18) : null];
     return h('li', { class: r.now ? 'tl-live' : null },
       onTap ? h('button', { class: 'list-row tour-row', type: 'button', onclick: onTap }, inner)
@@ -5784,7 +6084,8 @@
     }
     return c;
   }
-  function historyTourRow(artistId, r) {
+  // say: the "I was on this tour" line for this row, when the person looking may say so (see viewAct).
+  function historyTourRow(artistId, r, say) {
     S.tnOpen = S.tnOpen || {};
     // The page's own tour object rides in r.tour; a year's loose shows are asked for by key ("year:2009").
     var src0 = r.tour && typeof r.tour === 'object' ? r.tour : r;
@@ -5832,7 +6133,7 @@
         onclick: function () { S.tnOpen[k] = !open; render(true); } },
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name, festTag, tag), h('span', { class: 'lr-sub' }, span)),
         icon('chevron', 16)),
-      withLine, body);
+      say || null, withLine, body);
     // Devin: "slide a tour to the left and it will say 'edit'" — the page's owner only.
     // A year's loose shows are not a tour: nothing to rename or take off.
     if (!manage || src.kind === 'shows') return h('li', { class: 'tn-li' }, inner);
@@ -8002,8 +8303,10 @@
   }
   // The role just given to an artist is the role on the person's own card too, when the card has none. (Never
   // waited on, and never a reason the request fails: the card can be filled in from Settings.)
+  // (Of several roles the card takes the first: the card's role is the title a tour falls back on, and who may sort a
+  // tour's card charges is decided by that title being exactly "Tour manager". A second role in it would take that away.)
   function keepCardRole(role) {
-    var B = window.GR_BACKEND, r = String(role || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    var B = window.GR_BACKEND, r = roleFirst(role);
     if (!r || S.mode !== 'db' || !B || typeof B.saveProfile !== 'function' || typeof B.myProfile !== 'function') return;
     cardPatch(function (p) { return String(p.tourRole || '').trim() ? null : { tourRole: r }; })
       .then(function () { forgetCrew(); }, function () { /* the card keeps what it had */ });
@@ -8212,7 +8515,7 @@
     fr.pick = { id: id, name: String((card && card.name) || it.name || 'this artist'), unclaimed: card ? !!card.unclaimed : !!it.unclaimed,
       mine: card ? !!card.mine : !!it.mine, unchecked: made && !(card && card.checkmark) };
     fr.claim = false;
-    Object.assign(fr.f, { role: '', other: false, otherText: '', spotify: '', instagram: '', website: '', note: '' });
+    Object.assign(fr.f, { role: '', roles: [], other: false, otherText: '', spotify: '', instagram: '', website: '', note: '' });
     frGo(step === 'm-find' && fr.pick.unclaimed ? 'm-unclaimed' : step.charAt(0) + '-role');
   }
   /* "If the artist hasn't been claimed yet it should say 'This page hasn't
@@ -8226,10 +8529,15 @@
       onBack: frBack, next: { label: 'Claim this page', onTap: on(true) },
       alt: { label: 'Not now, just ask to be listed', onTap: on(false) }, skip: frNextKind });
   }
-  // The role as it will be sent: the chip, or what was typed under Other.
+  // The roles as they will be sent: the chips ticked, in the order of the list, then what was typed under Other,
+  // joined with ", ". (A claim of a page holds 40 characters of role; asking to be listed holds 160.)
+  function frRoleList(member) {
+    var f = S.firstRun.f, roles = member ? G.BAND_ROLES : askCrewRoles(), on = Array.isArray(f.roles) ? f.roles : [];
+    return roles.filter(function (r) { return on.indexOf(r) >= 0; }).concat(f.other ? rolesOf(f.otherText) : []);
+  }
   function frRoleValue() {
-    var f = S.firstRun.f;
-    return f.other ? String(f.otherText || '').trim().slice(0, 40) : String(f.role || '');
+    var fr = S.firstRun, member = /^m-/.test(String(fr.step || ''));
+    return rolesJoin(frRoleList(member), member && fr.claim ? 40 : ROLE_ROOM);
   }
   /* "What is your role under this entity?" (a member: vocalist, guitarist,
      bassist...) and "Which of these best describes your role" (crew: his 20
@@ -8238,29 +8546,51 @@
   function frRole(fr) {
     var member = fr.step === 'm-role', f = fr.f, p = fr.pick;
     var claiming = member && fr.claim;
-    var roles = member ? G.BAND_ROLES : G.CREW_ROLES.slice(0, 20).concat(['Band', 'Touring Musician']);
+    // Several roles (2026-10-12: "you should be able to choose multiple rolls"): each chip ticks or unticks one,
+    // six at most, and what is ticked reads back inside the question before they go on.
+    var roles = member ? G.BAND_ROLES : askCrewRoles();
+    var room = claiming ? 40 : ROLE_ROOM;
+    if (!Array.isArray(f.roles)) f.roles = [];
     var nx = { label: claiming ? 'Next' : 'Send request', ready: !!frRoleValue(),
       onTap: function () { if (claiming) frGo('m-proof'); else frAsk(member ? 'band' : 'crew'); } };
+    var said = rolesSaid(frRoleValue());
     var otherIn = h('input', { class: 'fr-in', type: 'text', 'data-k': 'fr-other', maxlength: 40, value: f.otherText || '', autocapitalize: 'words',
-      autocomplete: 'off', enterkeyhint: 'done', placeholder: member ? 'Guitar and vocals' : 'Backline tech', 'aria-label': 'Your role',
-      oninput: function (e) { f.otherText = e.target.value; frSay(''); nx.set(!!frRoleValue()); } });
-    var otherBox = frField('Your role', otherIn);
-    var chips = h('div', { class: 'chips fr-chips', role: 'group', 'aria-label': 'Pick a role' });
+      autocomplete: 'off', enterkeyhint: 'done', placeholder: member ? 'Backing vocals' : 'Backline tech', 'aria-label': 'Another role',
+      oninput: function (e) { f.otherText = e.target.value; frSay(''); said.set(frRoleValue()); nx.set(!!frRoleValue()); } });
+    var otherBox = frField('Another role', otherIn);
+    var chips = h('div', { class: 'chips fr-chips', role: 'group', 'aria-label': 'Pick your roles' });
     var sync = function () {
       Array.prototype.forEach.call(chips.children, function (b) {
-        b.setAttribute('aria-pressed', String(f.other ? b === otherChip : b.textContent === f.role));
+        b.setAttribute('aria-pressed', String(b === otherChip ? !!f.other : f.roles.indexOf(b.textContent) >= 0));
       });
       otherBox.hidden = !f.other;
+      said.set(frRoleValue());
       nx.set(!!frRoleValue());
+    };
+    // One more only while there is room: six roles, and the whole line within its length.
+    var full = function (r) {
+      var now = rolesOf(frRoleValue());
+      return now.length >= ROLE_MOST ? 'Six roles at most. Untick one first.'
+        : now.concat([r]).join(', ').length > room ? 'There is no room for one more. Untick one first.' : '';
     };
     roles.forEach(function (r) {
       chips.append(h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false',
-        onclick: function () { f.role = r; f.other = false; frSay(''); sync(); } }, r));
+        onclick: function () {
+          var i = f.roles.indexOf(r), no = i < 0 ? full(r) : '';
+          if (no) { frSay(no); return; }
+          if (i >= 0) f.roles.splice(i, 1); else f.roles.push(r);
+          frSay(''); sync();
+        } }, r));
     });
     var otherChip = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false',
-      onclick: function () { f.other = true; f.role = ''; frSay(''); sync(); otherIn.focus(); } }, 'Other');
+      onclick: function () {
+        var no = f.other ? '' : full('');
+        if (no) { frSay(no); return; }
+        f.other = !f.other; frSay(''); sync();
+        if (f.other) otherIn.focus();
+      } }, 'Other');
     chips.append(otherChip);
-    var page = frShell({ title: member ? 'What is your role in ' + p.name + '?' : 'Which of these best describes your role?',
+    var page = frShell({ title: [member ? 'What is your role in ' + p.name + '?' : 'Which of these describe your role?', said.node],
       sub: member ? 'It shows under your name on ' + p.name + '’s page.'
         : 'Your role with ' + p.name + '. A hired player on stage is Band or Touring Musician.',
       body: [chips, otherBox], onBack: frBack, next: nx, skip: frNextKind });
@@ -8295,11 +8625,12 @@
       frStale(p.id);
       keepCardRole(role);
       if (r.listed) myActs(true);
-      frSent(r.listed ? { title: 'You’re listed', sub: 'You’re listed on ' + p.name + '.' }
-        : { title: 'Request sent', sub: p.unclaimed
+      // (The roles they ticked are said back whole; this line wraps.)
+      frSent(r.listed ? { title: 'You’re listed', sub: 'You’re listed on ' + p.name + ' as ' + role + '.' }
+        : { title: 'Request sent', sub: 'You asked ' + p.name + ' to list you as ' + role + '. ' + (p.unclaimed
             ? 'Nobody runs ' + p.name + '’s page yet, so nobody can answer for now. It shows as pending on your Artists tab.'
             : p.name + ' can see your request on their page. If there’s no answer in 30 days it runs out and you can ask again. ' +
-              'Until then it shows as pending on your Artists tab.' });
+              'Until then it shows as pending on your Artists tab.') });
       return;
     }
     // Already on the page: nothing to ask, so on they go.
@@ -15115,12 +15446,13 @@
     // Not this tour's, but yours: tours to confirm with an artist that endorsed
     // you, and (for an artist page you run) credits waiting on your yes.
     if (creditsOn()) {
-      (creditAsks().list || []).forEach(function (a) {
+      creditAskList().forEach(function (a) {
+        // (Only someone with nothing confirmed yet, or a claim sent back. Never while one waits, never once one is confirmed.)
         if (a.state !== 'ask' && a.state !== 'declined') return;
         var stamp = a.declinedAt || a.at || '';
         tasks.push({ key: 'credit:' + a.artistId + ':' + stamp, standing: true, at: when(stamp), emoji: TROPHY, title: 'Tour credits',
           main: 'Confirm the shows and tours you\u2019ve done with ' + a.artist,
-          sub: a.state === 'declined' ? 'Sent back \u2014 fix it and send it again' : a.artist + ' endorsed you',
+          sub: a.state === 'declined' ? 'Sent back. Fix it and send it again' : a.artist + ' endorsed you',
           open: function () { openCreditClaim(a.artistId); } });
       });
       (creditQueue().list || []).forEach(function (x) {

@@ -775,7 +775,8 @@
     // The title an artist's page gives one of its people (what the public
     // sees there, whatever they are behind the scenes). The page's owner only.
     setMemberRole: async function (artistId, userId, role) {
-      var q = await sb.from('artist_members').update({ role: String(role || '').trim().slice(0, 40) })
+      // (Several roles in one line, joined with ", ": 160 characters since 0146.)
+      var q = await sb.from('artist_members').update({ role: String(role || '').trim().slice(0, 160) })
         .eq('artist_id', artistId).eq('user_id', userId).select('user_id');
       if (q.error) throw mapError(q.error);
       if (!q.data || !q.data.length) throw err('permission'); // RLS said no
@@ -822,6 +823,25 @@
       var q = await sb.rpc('credit_detail', { a_id: artistId, u_id: userId });
       if (q.error) throw mapError(q.error);
       return isObj(q.data) ? q.data : null;
+    },
+    /* "I was on this tour" (0146). tourClaims: where the caller stands on
+       each tour of an artist's page that lists them as crew, { crew, role,
+       tours: [{ name, state: 'approved' | 'pending' | 'declined', role }] }
+       (a tour that is not in the list has the button). addTourCredit: one
+       tour, by the name the page shows it under, with the role played; the
+       database adds it to what the person already has and sends it to the
+       artist as any claim goes. { ok, auto }, { ok: true, covered: true }
+       when there was nothing to add, { ok: false, why: 'no_tour' }. */
+    tourClaims: async function (artistId) {
+      var q = await sb.rpc('my_tour_claims', { a_id: artistId });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : null;
+    },
+    addTourCredit: async function (artistId, tourName, role) {
+      var q = await sb.rpc('add_tour_credit', { a_id: artistId, tour_name: String(tourName || ''),
+        r: String(role || '').trim().slice(0, 160) });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
     },
     /* ---- Square (MODEL7MERCH, sandbox phase). The token is write-only:
        the table's column grants let it be saved, never read back. ---- */
@@ -1164,8 +1184,9 @@
        answer, not a failure: 'listed' (already on the page), 'former_member',
        'wait' (declined in the last week), 'many' (ten already waiting). ---- */
     requestArtist: async function (artistId, kind, role) {
+      // (role: one role, or several joined with ", ". 160 characters since 0146.)
       var q = await sb.rpc('request_artist', { a_id: artistId, k: kind === 'crew' ? 'crew' : 'band',
-        r: String(role || '').trim().slice(0, 40) });
+        r: String(role || '').trim().slice(0, 160) });
       // Someone who left as a member cannot come back as crew yet (0132 says so with an error).
       if (q.error && /former_member/.test(String(q.error.message || ''))) return { ok: false, why: 'former_member' };
       if (q.error) throw knownError(q.error);
