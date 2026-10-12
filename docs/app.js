@@ -704,6 +704,20 @@
     if (route.name === 'tour' && route.view === 'details') S.dsIndex = null;
     // The tour you were last in is the one the menu's tour rows open.
     if (route.name === 'tour' && route.id) rememberTour(route.id);
+    // Moving between the Off Tour book's own three tabs (and MY PAY beside them), the tour you came to it from rides
+    // along (its name stays on the left tab while that tour is on the road), and with it the way back to the list
+    // that tour was opened from. The list of tours itself is where that way back leads: nothing rides there.
+    if (route.name === 'offtour' && route.host === undefined && S.route && S.route.name === 'offtour' && S.route.host &&
+        ['costs', 'cards', 'money', 'mypay'].indexOf(route.view) >= 0) {
+      route = Object.assign({}, route, { host: S.route.host, list: S.route.list || null });
+    }
+    // A tour opened from a list of tours keeps its way back to that list on every screen of it, and on coming back
+    // to it from the OFF TOUR screen reached from it (tourTopbar, offBand). It lasts until you leave that tour: by
+    // the arrow itself, by your photo and the profile's Overview, by the menu, or for another tour.
+    if (route.name === 'tour' && !route.list && S.route && S.route.list &&
+        ((S.route.name === 'tour' && S.route.id === route.id) || (S.route.name === 'offtour' && S.route.host === route.id))) {
+      route = Object.assign({}, route, { list: S.route.list });
+    }
     // A page reached from the menu (or its Tours / Artists lists) goes back
     // there, however many tabs you visit inside it. Home wipes the slate.
     if (route.name === 'home') S.fromMap = {};
@@ -754,9 +768,12 @@
     if (t && t.deletedAt) { toast('That tour was deleted. Its creator can restore it from Settings.'); return; }
     // Coming in from the menu or its lists is a fresh visit: today, not the day you last flipped to.
     if (from) { S.dsIndex = null; S.glTour = null; S.glShow = null; }
-    // Its money pages open without its shows, so the book skips the setup detour.
+    // Its money pages open without its shows, so the book skips the setup detour. (So does 'frame': the profile's
+    // Overview while no tour is on the road, which never opens the wizard.)
     if (t && !t.setupDone && canEditTour(id) && !book) go({ name: 'wizard', id: id, step: clampStep(t.setupStep), from: from || null, fromLabel: fromLabel || null });
-    else go({ name: 'tour', id: id, view: typeof view === 'string' ? view : 'menu', from: from || null, fromLabel: fromLabel || null });
+    // (book 'list': opened from the off tour frame's list of budgets. The top bar keeps the way back to it: tourTopbar.)
+    else go({ name: 'tour', id: id, view: typeof view === 'string' ? view : 'menu', from: from || null, fromLabel: fromLabel || null,
+      list: book === 'list' && from ? { to: from, label: fromLabel || 'Back' } : null });
   }
   // A hard close and reopen always lands on the Artists screen — the top of
   // the app, not wherever the last session wandered.
@@ -804,6 +821,7 @@
     else if (firstRunDue()) node = viewFirstRun();
     else if (S.route.name === 'wizard') node = viewWizard();
     else if (S.route.name === 'tour') node = viewTour();
+    else if (S.route.name === 'offtour') node = viewOffFrame();
     else if (S.route.name === 'artist') node = viewArtist();
     else if (S.route.name === 'newartist') node = viewNewArtist();
     else if (S.route.name === 'profile') node = viewProfile();
@@ -836,7 +854,7 @@
   });
 
   function afterRender() {
-    if (S.route.name === 'tour') mountHero();
+    if (S.route.name === 'tour' || S.route.name === 'offtour') mountHero();
     // MY PAY's own climbing graph (the Income side).
     var payChart = $('.pay-chart');
     if (payChart) drawChart(payChart);
@@ -983,16 +1001,52 @@
 
   /* ============================== The hero ============================== */
 
-  function heroNode(tour, tourId) {
-    var c = G.calc(tour);
+  /* The words under the big number and under the bar. A tour is working its
+     way to break even; an artist's Off Tour book has no shows to get it
+     there, so it says plainly what the number and the bar are: the net so
+     far, and money in against what is spent and owed. */
+  // (A plan typed into the book counts in the number as it does on a tour; then the words say so.)
+  function bookPlanned(c) { return !!G.spentOf && G.round(c.out) > G.round(G.spentOf(c)); }
+  function heroCaption(c, book) {
+    if (!book) return G.caption(c);
+    if (G.stateOf(c) === 'idle') return 'Nothing in or out yet';
+    return bookPlanned(c) ? 'net, counting what is planned' : 'net so far';
+  }
+  function heroBarWords(pct, c, book) {
+    if (!book) return c.out > 0 ? pct + '% of the way to green' : 'No costs added yet';
+    if (!(c.out > 0)) return 'Nothing spent yet';
+    return bookPlanned(c) ? 'Money in against spent, owed and planned' : 'Money in against spent and owed';
+  }
+  /* The big number. A tour's is its net. A book with nothing planned shows
+     the two figures beside the bar subtracted as they read there (money in,
+     to the dollar, less what is out, to the dollar), so it agrees to the
+     dollar with "Ahead" / "Behind" on the book's Income tab; cents alone
+     could put the two a dollar apart. Nothing counted changes. */
+  function heroNet(c, book) {
+    return book && !bookPlanned(c) ? Math.round(G.num(c.income)) - Math.round(G.num(c.out)) : c.net;
+  }
+  // (And the card's colour goes by the number it shows.)
+  function heroState(c, book) {
     var st = G.stateOf(c);
-    // So far: the line stops at today while the tour is on.
-    var series = G.balanceSeries(tour, { until: G.tourToday() });
+    return st !== 'idle' && book && !bookPlanned(c) ? (heroNet(c, book) < 0 ? 'red' : 'green') : st;
+  }
+  // How far back the Off Tour book's line goes (a tour's line starts with the tour; the book has no first night).
+  var BOOK_CHART_DAYS = 90;
+  function heroNode(tour, tourId) {
+    var book = isOffTour(tour);
+    var c = G.calc(tour);
+    var st = heroState(c, book);
+    // So far: the line stops at today while the tour is on. (The book's line: the last 90 days, ending
+    // today whatever its last entry was; everything before that is already in its first point, so its
+    // head is the book's totals, and the two dates under it are always 90 days ago and today.)
+    var today = G.tourToday();
+    var series = G.balanceSeries(tour, book ? { until: today, from: G.addDays(today, -BOOK_CHART_DAYS), to: today } : { until: today });
     var change = G.latestChange(tour);
     var pct = Math.max(0, Math.min(100, Math.floor(c.coverage * 100)));
+    var net = heroNet(c, book);
 
-    var odo = h('div', { class: 'odo num', id: 'odo', role: 'text', 'aria-label': money(c.net, true) });
-    var cap = h('div', { class: 'hero-cap', id: 'hero-cap' }, G.caption(c));
+    var odo = h('div', { class: 'odo num', id: 'odo', role: 'text', 'aria-label': money(net, true) });
+    var cap = h('div', { class: 'hero-cap', id: 'hero-cap' }, heroCaption(c, book));
 
     var chip = null;
     if (change) {
@@ -1014,28 +1068,34 @@
         'aria-label': 'Money in against what\u2019s spent and owed, from ' + dayLong(series[0].date) + ' to ' +
           dayLong(series[series.length - 1].date) + '. Now ' + money(series[series.length - 1].income) + ' in and ' +
           money(series[series.length - 1].spent) + ' spent and owed. ' +
-          'Use the left and right arrow keys to step through the tour night by night.'
+          (book ? 'Use the left and right arrow keys to step through it day by day.'
+            : 'Use the left and right arrow keys to step through the tour night by night.')
       });
-      chart.__data = { series: series, nights: loggedNights(tour), tourId: tourId };
+      // (The book's line carries no nights and no comments: a day on it is just its date.)
+      chart.__data = { series: series, nights: loggedNights(tour), tourId: book ? null : tourId };
     }
 
     var fill = h('div', { class: 'prog-fill', id: 'prog-fill' });
     var prog = h('div', { class: 'prog' },
       h('div', { class: 'prog-track', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100',
-        'aria-valuenow': String(pct), 'aria-label': pct + '% of the way to green' }, fill),
+        'aria-valuenow': String(pct), 'aria-label': book ? 'Money in covers ' + pct + '% of what is counted as out' : pct + '% of the way to green' }, fill),
       h('div', { class: 'prog-cap' },
-        h('span', { id: 'prog-pct' }, c.out > 0 ? pct + '% of the way to green' : 'No costs added yet'),
+        h('span', { id: 'prog-pct' }, heroBarWords(pct, c, book)),
         h('span', { class: 'num' }, money(c.income) + ' in / ' + money(c.out) + ' out')));
 
     // Under the number: the day's take on the left, its comment on the right.
     // The row is always there at a fixed height, so nothing shifts when it fills.
     var dayNote = h('div', { class: 'hero-note', id: 'hero-note' });
     var capRow = h('div', { class: 'cap-row' }, cap, dayNote);
-    var hero = h('section', { class: 'hero ' + st, id: 'hero', 'aria-label': 'Tour balance' },
+    var hero = h('section', { class: 'hero ' + st, id: 'hero', 'aria-label': book ? 'Off Tour balance' : 'Tour balance' },
       odo, capRow, chip, chart, prog);
     hero.__calc = c;
     hero.__series = series;
     hero.__pct = pct;
+    // Whose number this is (the Off Tour screen is not on the book's own route), and whether it is a book's.
+    hero.__id = tourId;
+    hero.__book = book;
+    hero.__net = net;
     return hero;
   }
 
@@ -1183,13 +1243,15 @@
   function mountHero() {
     var hero = $('#hero');
     if (!hero) { teardownMinibar(); return; }
-    var id = S.route.id;
+    var id = hero.__id || S.route.id;
     var c = hero.__calc;
-    var st = G.stateOf(c);
+    var st = heroState(c, hero.__book);
 
     var odo = $('#odo', hero);
     var prev = S.lastNet[id];
-    var target = money(c.net, true);
+    // (The number the card shows: heroNet.)
+    var net = hero.__net == null ? c.net : hero.__net;
+    var target = money(net, true);
     // First look at a tour this session: roll in from zero rather than landing flat.
     var from = prev === undefined ? 0 : prev;
     renderOdo(odo, target, money(from, true));
@@ -1199,10 +1261,11 @@
 
     var wrap = $('.chart-wrap', hero);
     if (wrap) drawChart(wrap);
-    setupMinibar(id, c);
+    setupMinibar(id, c, net, st);
 
     var wasState = S.lastState[id];
-    if (prev !== undefined && prev < 0 && G.round(c.net) >= 0 && wasState !== 'green') {
+    // (Crossing into the green is a tour's moment; the Off Tour book has no break even to reach.)
+    if (!hero.__book && prev !== undefined && prev < 0 && G.round(c.net) >= 0 && wasState !== 'green') {
       confetti();
       if (!reduced()) {
         hero.classList.remove('celebrate');
@@ -1210,7 +1273,7 @@
         hero.classList.add('celebrate');
       }
     }
-    S.lastNet[id] = c.net;
+    S.lastNet[id] = net;
     S.lastState[id] = st;
   }
 
@@ -1305,8 +1368,8 @@
       return nxt ? 'Day off \u00b7 next ' + (String(schedule[nxt].city || 'show').split(',')[0]) : 'Day off';
     }
 
-    var restText = money(c.net, true);
-    var restCap = G.caption(c);
+    var restText = money(hero.__net == null ? c.net : hero.__net, true);
+    var restCap = heroCaption(c, hero.__book);
     var restPct = hero.__pct;
     var restPctText = pctEl ? pctEl.textContent : '';
     var cur = -1;
@@ -1337,6 +1400,8 @@
       hero.classList.add('scrubbing');
       var px = geo.x(i), py = geo.y(p.income);
       var gap = p.income - p.spent;
+      // (A book with nothing planned: as the two figures under the number subtract, to the dollar, like its resting number.)
+      if (hero.__book && !bookPlanned(c)) gap = Math.round(G.num(p.income)) - Math.round(G.num(p.spent));
       var up = gap >= 0;
 
       cursor.setAttribute('x1', px); cursor.setAttribute('x2', px);
@@ -1367,7 +1432,7 @@
 
       // Where the comment used to sit: the night itself.
       var noteEl = $('#hero-note', hero);
-      if (noteEl) noteEl.textContent = nightLabel(p.date, night);
+      if (noteEl) noteEl.textContent = hero.__book ? dayLong(p.date) : nightLabel(p.date, night);
       if (geo.pins) {
         Array.prototype.forEach.call(geo.pins.children, function (pin) {
           pin.classList.toggle('on', Number(pin.getAttribute('data-i')) === i);
@@ -1377,7 +1442,8 @@
       var pct = p.out > 0 ? Math.max(0, Math.min(100, Math.floor(p.income / p.out * 100))) : 0;
       hero.style.setProperty('--cov', pct + '%');
       setProgress(hero, pct, p.out);
-      if (pctEl) pctEl.textContent = pct + '% of the way to green';
+      // (The book's words under the bar say what the bar is, not how far along: they stay.)
+      if (pctEl && !hero.__book) pctEl.textContent = pct + '% of the way to green';
     }
 
     function fromPointer(e) {
@@ -1404,7 +1470,7 @@
         Array.prototype.forEach.call(geo.pins.children, function (pin) { pin.classList.remove('on'); });
       }
       renderOdo(odo, restText, restText);
-      setHeroState(hero, G.stateOf(c));
+      setHeroState(hero, heroState(c, hero.__book));
       cap.textContent = restCap;
       hero.style.setProperty('--cov', restPct + '%');
       setProgress(hero, restPct, c.out);
@@ -1449,13 +1515,14 @@
     });
   }
 
-  function setupMinibar(id, c) {
+  // net, st: the number the card above it shows and its colour, when they are the book's own (heroNet, heroState).
+  function setupMinibar(id, c, net, st) {
     var bar = $('#minibar');
     var t = getTour(id);
     if (!bar || !t) return;
-    bar.setAttribute('data-state', G.stateOf(c));
+    bar.setAttribute('data-state', st || G.stateOf(c));
     $('.name', bar).textContent = t.name || '';
-    $('.num', bar).textContent = money(c.net, true);
+    $('.num', bar).textContent = money(net == null ? c.net : net, true);
     if (S.io) S.io.disconnect();
     var hero = $('#hero');
     if (!hero || !('IntersectionObserver' in window)) return;
@@ -1656,6 +1723,17 @@
     if (S.mode !== 'db') return true;
     if (offTourOf(artist)) return true;
     return bandTours(artist).some(function (e) { var r = tourRole(e[0]); return r === 'owner' || r === 'editor'; });
+  }
+  /* May this account open the artist's Off Tour screen? Whoever sees the
+     artist's money: the book's own people, or the creator or a Manager of one
+     of the artist's tours. Checked on this phone as well as by the server, so
+     Crew never reach it by any route, even holding a copy of the book. */
+  function mayOpenOff(artist) {
+    artist = String(artist || '').trim();
+    if (!artist || !canSeeOffTour(artist)) return false;
+    if (S.mode !== 'db') return true;
+    var book = offTourOf(artist);
+    return (!!book && canSeeMoney(book)) || bandTours(artist).some(function (e) { return canSeeMoney(e[0]); });
   }
   async function ensureOffTour(artist) {
     var id = offTourOf(artist);
@@ -6290,9 +6368,30 @@
       // The magnifying glass opens Search without the keyboard (Devin, 2026-10-08): tap the box to type.
       if (current !== 'search') go({ name: 'search', back: S.route });
     }) : null;
-    var tid = profileTourId();
-    var overview = tid ? tabButton(false, 'Overview', 'tabmap', function () { openTour(tid, 'details', S.route, 'Back'); }) : null;
-    return dock([search], [overview], current, 'social|' + (tid || ''), { cls: 'social-bar' });
+    var to = overviewRoute();
+    var overview = to ? tabButton(false, 'Overview', 'tabmap', function () {
+      // (Off tour it opens the tour's own pages, never its setup wizard: openTour's 'frame'.)
+      if (to.name === 'tour') openTour(to.id, 'details', S.route, 'Back', offNow() ? 'frame' : null); else go(to);
+    }) : null;
+    return dock([search], [overview], current, 'social|' + (to ? to.name + ':' + (to.id || '') : ''), { cls: 'social-bar' });
+  }
+  /* Where Overview goes. The tour you picked, else the one on the road, as
+     before. Off tour (none on the road) it is still there: it opens the next
+     tour on the calendar, whose Overview says it is next; with nothing on the
+     calendar, the same frame with every tab, each saying so (viewOffEmpty).
+     Not the last finished tour, and not nothing. Only a tour with a dated show
+     is on the calendar: off tour, one with no dates yet is never what Overview
+     opens (picked or not), and its setup wizard never is; it has a row of its
+     own under "No tour on the calendar yet". (Someone with no tour who is not
+     in music, a fan, has no tour pages: no button.) */
+  function overviewRoute() {
+    var entries = scopedTours(), off = offNow();
+    var picked = S.pfTour ? entries.filter(function (e) { return e[0] === S.pfTour; })[0] : null;
+    if (picked && !(off && !firstNight(picked[1]))) return { name: 'tour', id: S.pfTour };
+    if (!off) { var tid = roadTourId(); return tid ? { name: 'tour', id: tid } : null; }
+    var next = nextTourEntry();
+    if (next) return { name: 'tour', id: next.id };
+    return entries.length || actingAs() || inMusic() ? { name: 'offtour', view: 'details' } : null;
   }
   /* Search, the way a social app does it: a back arrow and one rounded box
      across the top. Before you type, it lists what you opened lately
@@ -7904,7 +8003,7 @@
   function historyArtists() {
     var acting = actingAs() ? actingCard() : null;
     var names = acting ? (acting.name ? [acting.name] : []) : Array.from(tourGroups().byArtist.keys());
-    return names.filter(function (n) { return n && canSeeOffTour(n); });
+    return names.filter(function (n) { return n && mayOpenOff(n); });
   }
   function historyYears() {
     var now = String(new Date().getFullYear()), by = {};
@@ -7912,7 +8011,7 @@
     scopedTours().forEach(function (e) { var y = tourYear(e[1]); if (y) slot(y).tours.push(e); });
     historyArtists().forEach(function (name) {
       var id = offTourOf(name), t = id ? getTour(id) : null;
-      // This year's Off Tour is the page that already exists.
+      // This year's Off Tour is the live book: Budget's OFF TOUR screen (viewOffBook).
       slot(now).off.push({ artist: name, live: true });
       if (t) G.bookYears(t).forEach(function (y) { if (y < now) slot(y).off.push({ artist: name, live: false }); });
     });
@@ -7941,7 +8040,7 @@
           ] : null,
           y.off.map(function (o) {
             return menuRow('tabcost', 'Off Tour' + (several ? ' \u00b7 ' + o.artist : ''), function () {
-              if (o.live) go({ name: 'artist', artist: o.artist, view: 'off', from: here, fromLabel: 'Budget History' });
+              if (o.live) go(offRoute(o.artist));
               else go({ name: 'history', back: backTo, year: y.year, off: o.artist });
             }, o.live ? 'The live book' : null);
           }));
@@ -7952,7 +8051,7 @@
   function viewHistoryOff(name, year, here) {
     var id = offTourOf(name), t = id ? getTour(id) : null;
     var body;
-    if (!t || !canSeeOffTour(name)) {
+    if (!t || !mayOpenOff(name)) {
       body = emptyState('Nothing off tour in ' + year, name + '\u2019s Off Tour book has nothing dated that year.');
     } else {
       var c = G.calc(G.yearSlice(t, year));
@@ -8506,9 +8605,10 @@
     var trashed = trashedEntries().length;
     // Linked Cards: the tour's cards for whoever linked them, else your own cards (MY PAY's). Never shown to a fan.
     var payTour = currentTourId();
-    // The page the menu was opened from: on an artist's Off Tour book, its card settings are here too.
+    // The page the menu was opened from: on an artist's Off Tour book (Budget's OFF TOUR screen), its card settings are here too.
     var behind = S.route && S.route.name === 'mainmenu' ? S.route.back : S.route;
-    var offId = behind && behind.name === 'artist' && behind.view === 'off' ? offTourOf(behind.artist || '') : null;
+    var offId = behind && behind.name === 'offtour' && ['costs', 'cards', 'money'].indexOf(behind.view) >= 0
+      ? (offTourOf(offArtistFor(behind.artist)) || null) : null;
     var cardsDoor = function () {
       var hasFeed = !!(S.feed && S.feed.row);
       return !signedIn ? null
@@ -8975,19 +9075,10 @@
   }
 
   /* One artist's tours. */
-  function bandHead(name, sub) {
-    return h('div', { class: 'headband' },
-        h('header', { class: 'topbar' },
-          h('span', { class: 'top-side' }),
-          h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
-          h('span', { class: 'top-side right' }, menuBtn())),
-        h('div', { class: 'band-row' },
-          h('h1', { class: 'band-name' }, name),
-          sub ? h('p', { class: 'band-sub' }, sub) : null));
-  }
   function viewArtist() {
     var name = S.route.artist || '';
-    if (S.route.view === 'off' && canSeeOffTour(name)) return viewOffTour(name);
+    // OFF TOUR is a screen of the Budget tab now: anything still holding the old way in lands there.
+    if (S.route.view === 'off' && mayOpenOff(name)) { S.route = offRoute(name); return viewOffFrame(); }
     var entries = allTourEntries().filter(function (e) { return artistOf(e[1]) === name; });
     var pill = homePill();
     var tabs = artistTabs(name, 'tours');
@@ -9022,28 +9113,381 @@
       tabs);
   }
 
-  /* OFF TOUR: the band's spending between tours, on the same Expenses screen
-     a tour has (Projected, Spent, Paid), with the card feed's charges from
-     off the road to sort. The owner's first visit starts the book. */
-  function viewOffTour(name) {
-    var id = offTourOf(name);
-    if (!id && ownsBand(name) && canWrite()) ensureOffTour(name).then(function (made) { if (made) render(true); });
+  /* ============================== The off tour frame ==============================
+     Devin, 2026-10-11: "we need to work on the 'Off Tour' tab - this tab should
+     look exactly like the on tour budget tab but showing the 'off tour' income
+     and expenese. Also there is a wall you hit if you click the 'off tour' tab
+     where there it takes you back to the 'old' way that these tabs use to be.
+     This needs to be remedied. The 'Off Tour' tab should be the same when you
+     are in the overview tab area as well as when you go to it in the '3
+     horizontal line' tab." And: "when you are off tour and you hit the
+     overview tab that opens all the other tabs they should be visible.
+     Basically the overview tab will say what tour is next on the calendar.
+     When you go to the budgets tab when you are off tour it will by default be
+     in the off tour tab (the tab to the right). The tab to the left that says
+     the tour name will just say 'Tours' and you can click that where it will
+     show budgets from tours in the past you can open up and look at."
+
+     So OFF TOUR is one screen, inside the Budget tab's own frame: the slim
+     top bar, Budget's three tabs with OFF TOUR lit, the strip (Expenses,
+     Cards/Links, Income) switching three bodies for the artist's Off Tour
+     book, and a tour's bottom bar with Budget lit. Every way in opens it: the
+     OFF TOUR tab, the artist page's OFF TOUR, Budget History's Off Tour for
+     this year, the links on Cards and in Tasks, and the old route.
+
+     Whose frame it wears: while a tour is on the road, the tour you came to
+     it from (its name on the left tab), else the one on the road. Off tour
+     (none of the tours the Overview button would follow is on the road today)
+     the left tab reads "Tours" and lists every tour's budget, MY PAY sits in
+     the middle, and the bottom bar is the next tour's, so Day sheet, Guest
+     list, Crew Stats and Chat open for the tour that is coming. With nothing
+     on the calendar each of those says so plainly. Crew never get the book or
+     the list: they keep MY PAY alone. */
+  var NO_TOUR = 'No tour on the calendar yet';
+  /* On the road, for the frame: today is inside the tour's own span, its first
+     day to its last (G.tourStart to G.tourEnd), which takes in the travel and
+     rehearsal days added before the first show or after the last. On those
+     days the app is in tour mode: the tour's name on the left tab, Budget
+     opening on the tour. (tourIsLive, first show to last show, is untouched
+     and still says "On the road" wherever it did.) */
+  // (A run's first day as its own calendar has it: travel days, and rehearsal days added before the first show, as overviewDays reads them.)
+  function runStart(t) {
+    var a = G.tourStart(t);
+    return a && G.parseDay(t && t.rehearsalStart) && t.rehearsalStart < a ? t.rehearsalStart : a;
+  }
+  function onRoad(t) {
+    var a = runStart(t), b = G.tourEnd(t), today = G.tourToday();
+    return !!a && !!b && a <= today && today <= b;
+  }
+  // Off tour: none of the tours this account's Overview would follow is on the road today.
+  function offNow() { return !scopedTours().some(function (e) { return onRoad(e[1]); }); }
+  // The tour on the road that the frame wears: the one Overview already follows when it is on the road, else the first that is.
+  function roadTourId() {
+    var id = profileTourId(), t = id ? getTour(id) : null;
+    if (t && onRoad(t)) return id;
+    var e = scopedTours().filter(function (x) { return onRoad(x[1]); })[0];
+    return e ? e[0] : null;
+  }
+  // A run's first night ('' until it has a dated show).
+  function firstNight(t) {
+    return G.rows(t && t.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort()[0] || '';
+  }
+  /* The next tour on the calendar, of those same tours: the one that starts
+     soonest and has not started yet (as nextTourOf has it). Only a tour with
+     a dated show can be next: one with no dates yet is on no calendar, and
+     has a row of its own under "No tour on the calendar yet" (undatedTours). */
+  function nextTourEntry() {
+    var today = G.tourToday(), best = null;
+    scopedTours().forEach(function (e) {
+      var st = runStart(e[1]);
+      if (!st || st <= today) return;
+      if (!best || st < best.start) best = { id: e[0], t: e[1], start: st };
+    });
+    return best;
+  }
+  // The tours with no dated show yet, the newest first.
+  function undatedTours() {
+    return scopedTours().filter(function (e) { return !firstNight(e[1]); })
+      .sort(function (a, b) { return (b[1].createdAt || 0) - (a[1].createdAt || 0); });
+  }
+  // While no tour is on the road, the next tour's pages are the frame's own: its Budget tab opens OFF TOUR first.
+  function offFrameTour() {
+    if (!offNow()) return null;
+    var n = nextTourEntry();
+    return n ? n.id : null;
+  }
+  // Has the server said what this account is on each of those tours? (Until then nobody is taken for Crew.)
+  function scopeRolesKnown() { return scopedTours().every(function (e) { return roleKnown(e[0]); }); }
+  // Does this account see any budget at all: an artist's Off Tour book, or the money of one of those tours? (Crew do not.)
+  function seesBudgets() {
+    return historyArtists().length > 0 || scopedTours().some(function (e) { return canSeeMoney(e[0]); });
+  }
+  /* Whose book OFF TOUR opens. An artist asked for (a tour's own artist, the
+     artist page, Budget History's row, a link from a waiting bank line or a
+     Tasks card, which name the BOOK's artist): that artist whenever this
+     account may open its book (mayOpenOff), spelled as the book spells it,
+     else as one of its tours does; and never another artist in its place.
+     When it may not be opened the answer is nobody, and the screen is the
+     list of budgets (or MY PAY alone, for Crew). Only with nothing asked for
+     (Budget landing off tour) does the app choose: the one last picked with
+     "Change"; else the next tour's artist; else the most recent tour's; else
+     the first there is. */
+  function offArtistFor(want) {
+    want = String(want || '').trim();
+    if (want) {
+      var key = want.toLowerCase(), book = offTourOf(want);
+      var spelled = (book ? [artistOf(getTour(book))] : [])
+        .concat(allTourEntries().map(function (e) { return artistOf(e[1]); }).filter(function (n) { return n.toLowerCase() === key; }), [want]);
+      return spelled.filter(function (n) { return n && mayOpenOff(n); })[0] || '';
+    }
+    var list = historyArtists();
+    var pick = function (n) {
+      n = String(n || '').trim().toLowerCase();
+      return (n && list.filter(function (x) { return x.toLowerCase() === n; })[0]) || '';
+    };
+    var nx = nextTourEntry(), recent = scopedTours()[0];
+    return pick(S.offArtist) || pick(nx && artistOf(nx.t)) || pick(recent && artistOf(recent[1])) || list[0] || '';
+  }
+  // view: 'costs' (Expenses), 'cards', 'money' (Income) for the book; 'tours' and 'mypay' beside it. host: the tour you came from.
+  function offRoute(artist, view, host) {
+    var r = { name: 'offtour', view: view || 'costs', artist: String(artist || '').trim() };
+    if (host) r.host = host;
+    return r;
+  }
+  /* The frame around the screen, from where you are. host: the tour whose
+     name is on the left tab and whose bottom bar it wears: only while a tour
+     is on the road (the one you came from, else the one on the road). Off
+     tour there is no host, whichever tour OFF TOUR was reached from: the left
+     tab reads "Tours", never a past tour's name, and next is the tour that is
+     coming, if there is one. bar: the tour the bottom bar is for (none: the
+     plain bar that says there is no tour yet). */
+  function offFrame() {
+    var r = S.route || {}, entries = scopedTours(), off = offNow();
+    var has = function (x) { return !!x && entries.some(function (e) { return e[0] === x; }); };
+    var host = !off && has(r.host) ? r.host : null;
+    if (!host && !off) host = roadTourId();
+    var next = host ? null : nextTourEntry();
+    return { host: host, next: next, bar: host || (next ? next.id : null) };
+  }
+  // The frame's top bar: a tour's slim band, without a tour's own options (this is no one tour's page).
+  // ls: the way back to the list of tours, on the OFF TOUR screen reached from a tour that was opened from it.
+  function offBand(center, ls) {
+    return h('div', { class: 'headband slim' }, h('header', { class: 'topbar' },
+      h('span', { class: 'top-side' }, G.isObj(ls) ? listBack(ls) : null),
+      center || h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+      h('div', { class: 'topbar-actions' }, menuBtn())));
+  }
+  /* Budget's three tabs on the frame's own screens. With a tour behind it: its
+     name, its MY PAY, OFF TOUR. Off tour: Tours, MY PAY, OFF TOUR. current:
+     'tours', 'mypay' or 'off'. */
+  function offTopTabs(fr, artist, current) {
+    var tabs = [];
+    if (fr.host) {
+      var ht = getTour(fr.host) || {};
+      // (Back to the tour it came from, still carrying the way back to the list that tour was opened from.)
+      var back = function (view) { return function () { go({ name: 'tour', id: fr.host, view: view, list: (S.route && S.route.list) || null }); }; };
+      // (The tour's name is its book: only for whoever sees that tour's money. Its Crew get MY PAY and OFF TOUR, as on its own Budget.)
+      if (canSeeMoney(fr.host)) tabs.push({ label: ht.name || 'Untitled tour', on: false, go: back('costs') });
+      tabs.push({ label: 'MY PAY', on: false, go: back('mypay') });
+    } else {
+      if (seesBudgets()) tabs.push({ label: 'Tours', on: current === 'tours', go: function () { if (current !== 'tours') go(offRoute(artist, 'tours')); } });
+      tabs.push({ label: 'MY PAY', on: current === 'mypay', go: function () { if (current !== 'mypay') go(offRoute(artist, 'mypay')); } });
+    }
+    if (artist) tabs.push({ label: 'OFF TOUR', on: current === 'off',
+      go: function () { if (current !== 'off' || S.route.view !== 'costs') go(offRoute(artist, 'costs')); } });
+    return payTabRow(tabs);
+  }
+  // The frame's bottom bar: the tour's own tabs (or the plain ones), Budget lit.
+  function offBar(fr) { return tourTabs(fr.bar, 'costs', { off: true }); }
+  /* With several artists (a personal account that sees more than one
+     artist's money): whose book this is, and "Change" to pick another. It is
+     remembered until the app is closed. One artist, and this is its book:
+     nothing to say. A book that is not one of those (reached by a link from
+     a waiting bank line, or on another artist's account) always says whose
+     it is. */
+  function offArtistBar(name) {
+    var list = historyArtists(), key = String(name || '').toLowerCase();
+    var listed = list.some(function (n) { return n.toLowerCase() === key; });
+    if (list.length < 2 && listed) return null;
+    return h('div', { class: 'pt-tourbar' },
+      h('span', { class: 'pt-tourname' }, h('span', null, 'Off Tour book: ' + name)),
+      list.length > 1 || (list.length && !listed) ? h('button', { class: 'mn-change', type: 'button', 'aria-label': 'Change artist',
+        onclick: function () { openOffArtistPicker(name); } }, 'Change') : null);
+  }
+  function openOffArtistPicker(cur) {
+    var list = historyArtists();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Which artist?'),
+        h('p', { class: 'sh-sub' }, 'OFF TOUR opens this artist’s book.'),
+        h('div', { class: 'fl-list' }, list.map(function (n) {
+          var on = n === cur;
+          return h('button', { class: 'fl-row', type: 'button', 'aria-pressed': on ? 'true' : 'false',
+            onclick: function () { S.offArtist = n; closeSheet(); go(offRoute(n, 'costs')); } },
+            h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, n)),
+            on ? h('span', { class: 'acct-on', 'aria-hidden': 'true' }, icon('check', 14)) : null);
+        })),
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: 'Which artist?' });
+  }
+  function viewOffFrame() {
+    var r = S.route, view = r.view || 'details', fr = offFrame();
+    // Overview, Day sheet, Guest list, Crew Stats and Chat are a tour's own pages: the one on the road, or the one that is coming.
+    if (['costs', 'cards', 'money', 'tours', 'mypay'].indexOf(view) < 0) {
+      if (['details', 'day', 'guests', 'stats', 'chat'].indexOf(view) < 0) view = 'details';
+      if (fr.bar) { S.route = { name: 'tour', id: fr.bar, view: view }; return viewTour(); }
+      return viewOffEmpty(view);
+    }
+    var artist = offArtistFor(r.artist);
+    if (!artist && !seesBudgets()) {
+      // Not known yet who this is on the tours: nothing of anyone's money is drawn on a guess.
+      if (!scopeRolesKnown()) {
+        return h('div', { class: 'page tour has-tabs exp-page' }, offBand(), dbBanner(),
+          h('p', { class: 'note pay-note' }, 'Loading…'), offBar(fr));
+      }
+      // Crew: MY PAY alone, as on a tour. Never the book, never the list of budgets.
+      if (fr.bar) { S.route = { name: 'tour', id: fr.bar, view: 'costs' }; return viewTour(); }
+      return viewOffPay(fr, '');
+    }
+    // (A tour's own name is on the left tab: the list of budgets is the off tour frame's. No book to open: the list.)
+    if (view === 'tours' && fr.host) view = 'costs';
+    if (!artist && view !== 'mypay') view = 'tours';
+    if (view === 'mypay') {
+      if (fr.host) { S.route = { name: 'tour', id: fr.host, view: 'mypay', list: r.list || null }; return viewTour(); }
+      return viewOffPay(fr, artist);
+    }
+    if (view === 'tours') return viewOffTours(fr, artist);
+    return viewOffBook(fr, artist, view);
+  }
+  /* OFF TOUR: the artist's book between tours, on a tour's own Budget screens.
+     Expenses: the climbing line and the table. Cards/Links: the card feed's
+     way in and the cards. Income: the two bars and the income on the book.
+
+     A book that does not exist yet is started by its owner's tap, never by
+     landing here (off tour, Budget opens on this screen by default, and that
+     must not make a book by itself): the OFF TOUR tab of a tour's Budget and
+     of the artist's page start it, as the old page did (route.start), and
+     everywhere else there is one button, "Start the Off Tour book". */
+  function viewOffBook(fr, name, view) {
+    var r = S.route, id = offTourOf(name);
+    var mine = ownsBand(name) && canWrite();
+    if (!id && mine && r.start && !S.offMaking) startOffBook(name);
     var t = id ? getTour(id) : null;
     var body;
     if (!t) {
-      body = ownsBand(name) ? h('p', { class: 'note', style: 'margin-top:24px' }, 'Starting the Off Tour book\u2026')
-        : emptyState('Nothing off tour yet', 'Once the tour manager starts ' + name + '\u2019s Off Tour book, it shows up here.');
+      body = !mine ? emptyState('Nothing off tour yet', 'Once the tour’s creator starts ' + name + '’s Off Tour book, it shows up here.')
+        : r.start || S.offMaking ? h('p', { class: 'note', style: 'margin-top:24px' }, 'Starting the Off Tour book…')
+        : [emptyState('Nothing off tour yet', 'What ' + name + ' spends and earns between tours is kept in its Off Tour book.'),
+            h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'button',
+              onclick: function () { startOffBook(name); render(true); } }, icon('plus', 18), 'Start the Off Tour book'))];
     } else {
-      var oc = G.calc(t);
-      body = [h('p', { class: 'note off-intro' }, 'What ' + name + ' spends between tours. Card charges from off the road land here to sort; ' +
-        'anything for the next tour can go straight to it.'),
-        // Income catalogued onto the Off Tour book (royalties, advances)
-        // sits above the spending, so the money in is never invisible.
-        otherIncomeList(id, oc),
-        tabExpenses(id, t, oc, { off: true })];
+      var c = G.calc(t);
+      body = view === 'cards' ? tabCards(id, t)
+        : view === 'money' ? offIncome(id, t, c, name)
+        : [heroNode(t, id), tabExpenses(id, t, c, { off: true })];
     }
-    return h('div', { class: 'page home has-tabs exp-page off-page' },
-      bandHead(name, 'Off Tour'), dbBanner(), body, artistTabs(name, 'off'));
+    return h('div', { class: 'page tour has-tabs ' + (view === 'money' ? 'budget-page' : 'exp-page') },
+      offBand(null, r.list),
+      offTopTabs(fr, name, 'off'),
+      bookStrip(id, view, function (v) { return offRoute(name, v); }),
+      dbBanner(),
+      offArtistBar(name),
+      body,
+      offBar(fr));
+  }
+  // Starts the artist's Off Tour book (its owner's tap). If it could not be started, the button is there to try again.
+  function startOffBook(name) {
+    ensureOffTour(name).then(function (made) {
+      if (!made && S.route && S.route.name === 'offtour' && S.route.start) S.route = Object.assign({}, S.route, { start: false });
+      render(true);
+    });
+  }
+  /* The book's Income, laid out as a tour's: the two bars up top, then the
+     income list. A tour's list is its nights; the book has none, so its list
+     is the income logged onto the book itself (royalties, an advance, his own
+     words for anything else), every entry of it. Nothing here asks for a show. */
+  function offIncome(id, t, c, name) {
+    var cls = { guarantee: 'guar', royalties: 'guar', merch: 'merch', advance: 'merch' };
+    var kinds = [];
+    (c.otherRows || []).forEach(function (x) {
+      var label = G.otherKindLabel(x && x.kind);
+      var hit = kinds.filter(function (k) { return k.label === label; })[0];
+      if (!hit) kinds.push(hit = { label: label, v: 0, cls: cls[x && x.kind] || 'inother' });
+      hit.v += G.num(x && x.amount);
+    });
+    var bars = expenseSummary(Object.assign({}, c, { incParts: kinds }), tabExpenses(id, t, c, { off: true, parts: true }), false);
+    var list = otherIncomeList(id, c, { title: 'Income', all: true });
+    return [
+      bars,
+      h('div', { class: 'shows-panel' },
+        list || emptyState('No income off tour yet', 'Royalties, an advance or anything else that comes in for ' + name + ' between tours shows up here once it is logged.'),
+        // (The deposits are on the account of whoever created the book: nobody else is sent to Cards/Links for them.)
+        createdTour(id) ? h('p', { class: 'feed-checked' }, 'Income is logged from its bank deposit. ',
+          h('button', { class: 'linkbtn feed-catchup', type: 'button', onclick: function () { go(offRoute(name, 'cards')); } }, 'Open Cards/Links')) : null)
+    ];
+  }
+  /* "Tours", off tour: every tour of this account's scope, newest first under
+     its year (the rows Budget History draws). A tour opens its own Budget, its
+     name on the left tab, with the way straight back here in the top bar. */
+  function viewOffTours(fr, artist) {
+    var here = offRoute(artist, 'tours');
+    var years = historyYears().filter(function (y) { return y.tours.length; });
+    return h('div', { class: 'page tour has-tabs exp-page' },
+      offBand(),
+      offTopTabs(fr, artist, 'tours'),
+      dbBanner(),
+      years.length ? years.map(function (y) {
+        return h('section', { class: 'hist-year' },
+          h('h2', { class: 'mn-h mn-over hist-y' }, y.year),
+          h('ul', { class: 'tour-list rows mn-list' }, y.tours.map(function (e) {
+            return h('li', null, tourListRow(e, function () { openTour(e[0], 'costs', here, 'Tours', 'list'); }));
+          })));
+      }) : emptyState('No tours yet', 'Once there is a tour, its budget shows up here, year by year.'),
+      offBar(fr));
+  }
+  /* MY PAY, off tour: the next tour's when there is one (the pay that is
+     still to come, on the tour the bottom bar is already for), otherwise the
+     most recent tour's (the last pay there was; a tour with no dates yet only
+     when there is no other). Under the tabs it says which tour that is. Any
+     other tour's is two taps away: Tours, the tour, MY PAY. */
+  function viewOffPay(fr, artist) {
+    var all = scopedTours();
+    var e = fr.next ? [fr.next.id, fr.next.t] : (all.filter(function (x) { return !!firstNight(x[1]); })[0] || all[0] || null);
+    return h('div', { class: 'page tour has-tabs exp-page pay-page' },
+      offBand(null, S.route.list),
+      offTopTabs(fr, artist, 'mypay'),
+      dbBanner(),
+      e ? [h('p', { class: 'hist-who', style: 'margin-top:0' }, 'Your pay for ' + (e[1].name || 'Untitled tour')), myPayBody(e[0], e[1])]
+        : emptyState(NO_TOUR, 'Your pay shows up here once you are on a tour.'),
+      offBar(fr));
+  }
+  /* Nothing on the calendar: the frame is still all there, and each tab says
+     so. Overview offers the way to make a tour to whoever may start one, and
+     under it lists every tour that has no dates yet (such a tour is on no
+     calendar, so it is never what Overview opens): its name, "no dates yet",
+     and for whoever may edit it "Add its shows", which opens what the app
+     already uses for that (its Add shows page, or the rest of its setup). */
+  function viewOffEmpty(view) {
+    var bar = tourTabs(null, view);
+    var page = function (title, body, extra) {
+      return h('div', { class: 'page tour has-tabs' }, offBand(),
+        h('h1', { class: 'tour-title' }, title), dbBanner(), emptyState(NO_TOUR, body), extra || null, bar);
+    };
+    if (view === 'chat') {
+      return h('div', { class: 'page tour has-tabs' },
+        offBand(h('h1', { class: 'band-brand' },
+          h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }), h('span', { class: 'band-brand-t' }, 'Chat'))),
+        dbBanner(), emptyState(NO_TOUR, 'The tour’s chat opens once a tour is on the calendar.'), bar);
+    }
+    if (view === 'stats') return page('Crew Stats', 'Flowers are given on a tour. They show up here once one is on the calendar.');
+    if (view === 'day') return page('Day sheet', 'Each day of a tour gets its own day sheet here once a tour has dates.');
+    if (view === 'guests') return page('Guest list', 'Each night gets its own guest list here once a tour has dates.');
+    var here = { name: 'offtour', view: 'details' }, undated = undatedTours();
+    return page('Off tour', artistSide() ? 'Create a tour and give it dates, and it shows up here: its name, its first show and how far off that is.'
+      : 'Once you are on a tour that is coming up, it shows up here: its name, its first show and how far off that is.',
+      [artistSide() ? h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'button', onclick: createTourFromMenu },
+        icon('plus', 18), 'Create a tour')) : null,
+      undated.length ? h('div', { class: 'ledger', style: 'margin-top:18px' }, undated.map(function (e) {
+        var nm = e[1].name || 'Untitled tour';
+        return h('div', { class: 'row' },
+          h('div', { class: 'row-label' }, nm + ' · no dates yet'),
+          canEditTour(e[0]) ? h('button', { class: 'mn-change', type: 'button', 'aria-label': 'Add shows to ' + nm,
+            onclick: function () { openTour(e[0], 'addshows', here, 'Back'); } }, 'Add its shows') : null);
+      })) : null]);
+  }
+  /* Off tour, the next tour's Overview says it is next: its first show and
+     how far off that is (its name is the page's title; under this, that show
+     and its crew, as on any tour that has not started). */
+  function nextTourLine(id, t) {
+    if (offFrameTour() !== id) return null;
+    var first = firstNight(t);
+    if (!first) return null;
+    var n = G.daysBetween(G.tourToday(), first);
+    return h('p', { class: 'pt-next', style: 'margin:-4px 0 12px' },
+      h('span', { class: 'pt-chip on' }, 'Next on the calendar'), ' ',
+      'First show ' + dayLong(first) + ' · ' + (n === 1 ? 'tomorrow' : 'in ' + n + ' days'));
   }
   // Log by hand on the Off Tour book: pick a category, then the same sheet a tour uses.
   function openOffLog(id) {
@@ -9658,8 +10102,9 @@
     S.cardSync[id] = Date.now();
     B.feedCall('status').then(async function (st) {
       var t = getTour(id);
-      // (What each account is set to, for the Cards tab's line about accounts that do not log expenses.)
-      if (st && st.ok && Array.isArray(st.accounts)) S.feedStatus = { accounts: st.accounts, at: Date.now() };
+      // (What each account is set to, for the Cards tab's line about accounts that do not log expenses; and
+      // the banks' names, for the cards an artist's Off Tour book lists straight from here: bookCards.)
+      if (st && st.ok && Array.isArray(st.accounts)) S.feedStatus = { accounts: st.accounts, banks: Array.isArray(st.banks) ? st.banks : [], at: Date.now() };
       if (!st || !st.ok || st.test || !t) return;
       var accounts = Array.isArray(st.accounts) && !st.needsConnect ? st.accounts : [];
       var banks = {};
@@ -9677,6 +10122,9 @@
       // Connected but its questions never answered: it gets a "needs your answers" line, not a guess.
       S.cardUnasked = S.cardUnasked || {};
       S.cardUnasked[id] = accounts.filter(function (a) { return a && a.id && !a.asked && a.mode !== 'off'; });
+      // An artist's Off Tour book keeps no list of cards and carries no card balance: looking at its Cards
+      // tab writes nothing onto it. The tab lists the cards from this answer instead (bookCards).
+      if (isOffTour(t)) { render(true); return; }
       accounts.forEach(function (a) {
         // Cards that log expenses (answered, and not switched off).
         if (!a || !a.id || !a.asked || a.mode === 'off') return;
@@ -9707,6 +10155,20 @@
       if (missing.length && running) await readCardBalances(id, missing);
       render(true);
     }).catch(function () { S.cardSync[id] = 0; });
+  }
+  /* The cards an artist's Off Tour book lists on its Cards tab: the ones that
+     log expenses, as the card feed last answered (the creator's phone; the
+     book itself keeps no list). Shaped like tourCards' own. */
+  function bookCards() {
+    var st = S.feedStatus || {}, banks = {};
+    (Array.isArray(st.banks) ? st.banks : []).forEach(function (b) { if (b && b.id) banks[b.id] = String(b.name || ''); });
+    return (Array.isArray(st.accounts) ? st.accounts : []).filter(function (a) {
+      return a && a.id && a.asked && a.mode !== 'off' && !isMyPayAccount(a.id);
+    }).map(function (a) {
+      var name = String(a.name || 'Card'), bank = banks[a.bank] || '';
+      return { id: String(a.id), name: name, names: [name], bank: bank, kind: a.card === 'debit' ? 'debit' : 'credit', debt: null,
+        income: a.card === 'debit' && Array.isArray(a.income) ? a.income.map(String).sort() : [], label: cardShort(name, bank) };
+    });
   }
   function cardRow(id, t, card, paidCell, creditCell, cashCell) {
     var sm = G.cardSummary(card, t);
@@ -9837,6 +10299,20 @@
     }, { label: card.label || 'Credit card', cls: 'cat-sheet' });
   }
 
+  /* What a line of an artist's Off Tour book is called beside the right-hand
+     bar of its Income tab. That margin holds 12 characters (expenseSummary's
+     clip, which stays as it is for tours), so the longer names have short
+     ones; a name that fits is left alone; a category he named himself keeps
+     its whole words that fit. */
+  var BOOK_PART_NAMES = { transport: 'Transport', utilities: 'Utilities', interest: 'Interest', 'card-other': 'Card' };
+  function bookPartName(key, label) {
+    label = String(label || '').trim();
+    if (BOOK_PART_NAMES[key]) return BOOK_PART_NAMES[key];
+    if (label.length <= 12) return label;
+    var out = '';
+    label.split(/\s+/).some(function (w) { var next = out ? out + ' ' + w : w; if (next.length > 11) return true; out = next; return false; });
+    return out ? out + '…' : label;
+  }
   /* The plan stays put in its column and what's actually been paid sits next
      to it, so over and under are there to read at a glance. */
   /* Up top on Expenses: a flow. Income comes in on the left by source
@@ -9845,8 +10321,9 @@
      linked card by its name, commission, the merch bill, everything else, and
      what's left over (Ahead). Spent more than came in, and the shortfall
      joins the left as Behind, so both sides always add up to the same height.
-     Each side's total sits on top of its bar. The Off Tour book has no
-     income: the trunk fans straight out into its expenses. */
+     Each side's total sits on top of its bar. off: the Expenses side alone,
+     the trunk fanning straight out (a past year of an artist's Off Tour book,
+     in Budget History; the live book's Income tab draws both sides). */
   function expenseSummary(c, expParts, off) {
     var by = G.isObj(c.incomeBy) ? c.incomeBy : {};
     // (A guarantee logged to the tour with no night, sorted yet or not, is still
@@ -10097,6 +10574,22 @@
     var expParts = named.map(function (x) { return { label: x[0], v: Math.max(0, byRow[x[1]] || 0), cls: x[2] }; });
     expParts.push({ label: 'Other', cls: 'other',
       v: Math.max(0, spentAll - expParts.reduce(function (n, x) { return n + x.v; }, 0)) });
+    /* An artist's live Off Tour book spends on other things than a tour does
+       (a studio, storage, the van: no crew, no bus, no commission), so on its
+       Income tab the bars name what it actually spent on, the biggest first,
+       and fold the small rest into Other. The same rows and the same total. */
+    if (off && partsOnly) {
+      // (The bar's margin holds 12 characters and cuts a longer name there, mid-word: the book's lines get names that fit whole.)
+      var rowName = {};
+      entries.forEach(function (e) { var k = e.l.label === 'Credit card (other)' ? 'card-other' : e.l.key; rowName[k] = bookPartName(k, e.l.label); });
+      feedCards.forEach(function (card) { rowName['feed:' + card.id] = cardShort(card.feed.name || card.label, cardBank(card)); });
+      var tints = ['crew', 'lcard', 'bus', 'members', 'mbill', 'comm'];
+      var biggest = Object.keys(byRow).filter(function (k) { return byRow[k] > 0.004; }).sort(function (a, b) { return byRow[b] - byRow[a]; });
+      var bookParts = biggest.slice(0, tints.length).map(function (k, i) { return { label: rowName[k] || 'Other', v: byRow[k], cls: tints[i] }; });
+      var small = biggest.slice(tints.length).reduce(function (n, k) { return n + byRow[k]; }, 0);
+      if (small > 0.004) bookParts.push({ label: 'Other', v: small, cls: 'other' });
+      return bookParts;
+    }
     if (partsOnly) return expParts;
     var projTotal = 0, paidTotal = 0;
     c.lines.forEach(function (l) { projTotal += l.projected || 0; paidTotal += l.paid; });
@@ -10116,10 +10609,10 @@
           icon('copy', 18), 'Start from a previous tour’s budget')
       : null;
     return [
-      // (On a tour the two bars lead the Income tab and the climbing line leads this one; the Off Tour book keeps its bars.)
-      off ? expenseSummary(c, expParts, off) : null,
-      // On a tour, Refresh Card Expenses lives on the Cards tab; the Off Tour book keeps it here.
-      off && !readOnly ? feedEntry(id) : null,
+      // (The two bars lead the Income tab and the climbing line leads this one, on a tour and on the live Off Tour
+      // book alike. Only a past year of the book, read only in Budget History, still has its bars here.)
+      off && readOnly ? expenseSummary(c, expParts, off) : null,
+      // (Refresh Card lives on the Cards tab, for a tour and for the book.)
       baselineOffer,
       // The chart says it all: nothing under the Total.
       h('div', { class: 'ledger' }, rows)
@@ -11795,17 +12288,27 @@
     return h('div', { class: 'headband slim' }, tourTopbar(t, id, view, center));
   }
   // Budget's three tabs, above the chart: Expenses, Cards in the middle, Income.
-  function bookStrip(id, current) {
+  // to: where a tab goes, for a book that is not on a tour's own route (an artist's Off Tour book).
+  function bookStrip(id, current, to) {
     return h('div', { class: 'vp-tabs pt-tabs bk-tabs three', role: 'tablist' }, BOOK_STRIP.map(function (t) {
       var v = t.view, on = v === current;
       return h('button', { class: 'vp-tab pt-tab' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false',
-        onclick: function () { if (!on || S.route.view !== v) go({ name: 'tour', id: id, view: v }); } },
+        onclick: function () { if (!on || S.route.view !== v) go(to ? to(v) : { name: 'tour', id: id, view: v }); } },
         icon(t.icon, 20), h('span', null, t.label));
     }));
   }
+  // The way back to a list of tours (openTour's 'list'), in the left wing of the top bar: a tour's, and the OFF TOUR screen's.
+  function listBack(ls) {
+    // (margin: the wing clips what hangs outside it, and the old back button's style hangs 10px to the left.)
+    return h('button', { class: 'iconbtn back', type: 'button', style: 'margin-left:0', 'aria-label': 'Back to ' + ls.label,
+      onclick: function () { go(ls.to); } }, icon('back', 20), h('span', null, ls.label));
+  }
   function tourTopbar(t, id, view, center) {
     // No back button: your photo at the bottom takes you home, the three lines open the menu.
-    return h('header', { class: 'topbar' }, h('span', { class: 'top-side' }),
+    // (One exception: a tour opened from a list of tours carries the way back to that list, on every screen of it.)
+    var ls = S.route && S.route.name === 'tour' && S.route.id === id && G.isObj(S.route.list) ? S.route.list : null;
+    return h('header', { class: 'topbar' },
+      h('span', { class: 'top-side' }, ls ? listBack(ls) : null),
       center || h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
       h('div', { class: 'topbar-actions' },
         canEditTour(id) ? h('button', {
@@ -11829,19 +12332,25 @@
      PAY; crew get MY PAY alone, with no tab for the tour's book. The
      artist's Off Tour book (spending between tours) used to be reached from
      Budget in the three-lines menu; it is the third tab here now, for the
-     people who could already open it. */
+     people who could already open it, and opens in this same frame (see
+     "The off tour frame"). */
   function payTabs(id, t, current) {
     var money = canSeeMoney(id), artist = artistOf(t);
-    var tabs = (money ? [{ view: 'costs', label: t.name || 'Untitled tour' }] : []).concat([{ view: 'mypay', label: 'MY PAY' }]);
-    if (money && artist && !isOffTour(t) && canSeeOffTour(artist)) tabs.push({ off: true, label: 'OFF TOUR' });
+    var to = function (view) { return function () { if (current !== view || S.route.view !== view) go({ name: 'tour', id: id, view: view }); }; };
+    var tabs = (money ? [{ label: t.name || 'Untitled tour', on: current === 'costs', go: to('costs') }] : [])
+      .concat([{ label: 'MY PAY', on: current === 'mypay', go: to('mypay') }]);
+    // OFF TOUR is the artist's book in this same frame (viewOffBook), this tour's name still on the left tab.
+    // (start: this tab is a tap on purpose, so for the artist's owner it starts a book that does not exist yet, as it always did.)
+    if (money && artist && !isOffTour(t) && mayOpenOff(artist)) {
+      tabs.push({ label: 'OFF TOUR', on: false, go: function () { go(Object.assign(offRoute(artist, 'costs', id), { list: S.route.list || null, start: true })); } });
+    }
+    return payTabRow(tabs);
+  }
+  // The row itself: [{ label, on, go }]. One tab alone reads as the page's name.
+  function payTabRow(tabs) {
     return h('div', { class: 'vp-tabs pt-tabs pay-tabs' + (tabs.length === 1 ? ' one' : tabs.length === 3 ? ' three' : ''), role: 'tablist' }, tabs.map(function (x) {
-      var on = !x.off && x.view === current;
-      return h('button', { class: 'vp-tab pt-tab' + (on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false',
-        onclick: function () {
-          if (x.off) { go({ name: 'artist', artist: artist, view: 'off', from: S.route, fromLabel: 'Budget' }); return; }
-          if (!on || S.route.view !== x.view) go({ name: 'tour', id: id, view: x.view });
-        } },
-        h('span', { class: 'pay-tab-t' }, x.label));
+      return h('button', { class: 'vp-tab pt-tab' + (x.on ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': x.on ? 'true' : 'false',
+        onclick: x.go }, h('span', { class: 'pay-tab-t' }, x.label));
     }));
   }
   // Your slice (from the server) and your own book, asked for together and kept a minute.
@@ -12678,21 +13187,44 @@
   var BOOK_STRIP = [{ view: 'costs', label: 'Expenses', icon: 'tabcost' }, { view: 'cards', label: 'Cards/Links', icon: 'card' },
     { view: 'money', label: 'Income', icon: 'tabmoney' }];
   var BUDGET_TAB = { view: 'costs', label: 'Budget', icon: 'tabmoney', book: true };
-  function tourTabs(id, current) {
+  /* id: the tour (none: the off tour frame with nothing on the calendar, whose
+     tabs each say so). o.off: drawn under one of the off tour frame's own
+     screens (OFF TOUR, Tours, MY PAY), where Budget is lit and a tap on it goes
+     back to where Budget opens. */
+  function tourTabs(id, current, o) {
     // Everyone gets the Budget tab now (Devin, 2026-10-07): Crew open it to
     // MY PAY; the tour's own book inside stays for Managers only.
     var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
     tabs.splice(1, 0, BUDGET_TAB);
+    var framed = !!(o && o.off);
     var buttons = tabs.map(function (t) {
       // Budget is lit on Expenses and Income (their own two tabs sit above the chart).
       var on = t.book ? BOOK_TABS.indexOf(current) >= 0 : t.view === current;
       return tabButton(on, t.label, t.icon, function () {
-        if (!on || (S.route.view || 'details') !== t.view) go({ name: 'tour', id: id, view: t.view });
+        // (Inside a tour's own Budget the lit tab goes back to that tour's Expenses, as it always did.)
+        var fromList = !!id && S.route.name === 'tour' && S.route.id === id && !!S.route.list;
+        var to = t.book ? ((on && !framed && id) || fromList ? { name: 'tour', id: id, view: 'costs' } : budgetLanding(id))
+          : id ? { name: 'tour', id: id, view: t.view } : { name: 'offtour', view: t.view };
+        var there = S.route.name === to.name && (S.route.id || null) === (to.id || null) && (S.route.view || 'details') === to.view &&
+          (to.name !== 'offtour' || !to.artist || S.route.artist === to.artist);
+        if (!on || !there) go(to);
       });
     });
     var half = Math.ceil(buttons.length / 2);
     return dock(buttons.slice(0, half), buttons.slice(half), '',
-      id + '|' + current + '|' + tabs.map(function (t) { return t.label; }).join(','), { label: 'Tour sections' });
+      (framed ? 'off:' : '') + (id || '') + '|' + current + '|' + tabs.map(function (t) { return t.label; }).join(','), { label: 'Tour sections' });
+  }
+  /* Where the Budget tab lands. A tour's: its own Budget (Expenses; MY PAY
+     for Crew). Off tour, on the next tour's bar or the bar with no tour:
+     OFF TOUR first (Devin: "by default be in the off tour tab (the tab to the
+     right)"), for whoever may open an artist's book; with no book to open, the
+     list of budgets; Crew keep MY PAY alone. */
+  function budgetLanding(id) {
+    if (id && offFrameTour() !== id) return { name: 'tour', id: id, view: 'costs' };
+    var artist = offArtistFor(S.route && S.route.name === 'offtour' ? S.route.artist : '');
+    if (artist) return offRoute(artist, 'costs');
+    if (seesBudgets()) return offRoute('', 'tours');
+    return id ? { name: 'tour', id: id, view: 'costs' } : offRoute('', 'mypay');
   }
   function tabButton(on, label, iconName, goThere, face) {
         var down = null;
@@ -12719,10 +13251,11 @@
   }
   // The band page's two tabs either side of your photo: TOUR and OFF TOUR (the owner and Managers only).
   function artistTabs(name, current) {
-    if (!canSeeOffTour(name)) return dock([], [], '', 'band|' + name);
+    if (!mayOpenOff(name)) return dock([], [], '', 'band|' + name);
     var tabs = [{ view: 'tours', label: 'TOUR', icon: 'tabmap' }, { view: 'off', label: 'OFF TOUR', icon: 'tabcost' }].map(function (t) {
       var on = t.view === current;
-      return tabButton(on, t.label, t.icon, function () { if (!on) go({ name: 'artist', artist: name, view: t.view }); });
+      // (OFF TOUR opens the Budget tab's own screen for this artist's book; a tap on purpose, so it starts the book as it always did.)
+      return tabButton(on, t.label, t.icon, function () { if (!on) go(t.view === 'off' ? Object.assign(offRoute(name), { start: true }) : { name: 'artist', artist: name, view: t.view }); });
     });
     return dock([tabs[0]], [tabs[1]], '', 'band|' + name + '|' + current, { cls: 'band-tabs', label: name + ' sections' });
   }
@@ -13057,8 +13590,9 @@
       B.myRole(id).then(function (r) {
         S.roles[id] = r;
         // (Crew too, when they are waiting on Budget: it opens MY PAY once the answer is in.)
-        if (r !== 'viewer' || (S.route && S.route.name === 'tour' && S.route.id === id)) render(true);
-      }).catch(function () { S.roles[id] = 'viewer'; if (S.route && S.route.name === 'tour' && S.route.id === id) render(true); });
+        // (And the off tour frame, which waits to hear what you are before it draws anyone's money.)
+        if (r !== 'viewer' || (S.route && (S.route.name === 'offtour' || (S.route.name === 'tour' && S.route.id === id)))) render(true);
+      }).catch(function () { S.roles[id] = 'viewer'; if (S.route && (S.route.name === 'offtour' || (S.route.name === 'tour' && S.route.id === id))) render(true); });
     }
     return 'viewer';
   }
@@ -13224,6 +13758,12 @@
         h('header', { class: 'topbar' }),
         emptyState('This tour isn’t here anymore', 'It may have been deleted.'),
         socialBar(''));
+    }
+    // An artist's Off Tour book is never drawn as a tour: its own screen, for whoever may open it.
+    if (isOffTour(t)) {
+      if (mayOpenOff(artistOf(t))) S.route = offRoute(artistOf(t), ['cards', 'money'].indexOf(view) >= 0 ? view : 'costs');
+      else S.route = { name: 'offtour', view: 'details' };
+      return viewOffFrame();
     }
     if (view === 'addshows' && canEditTour(id)) return viewAddShows(id, t);
     if (view === 'menu' || view === 'addshows') view = 'details';
@@ -14453,6 +14993,7 @@
         h('div', { class: 'title-row' },
           h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
           offCounter(t)),
+        nextTourLine(id, t),
         dbBanner(),
         overviewBody(id, t),
         tourTabs(id, view));
@@ -14722,13 +15263,16 @@
   }
   // What an other-income entry is called: its own words when it has them. (With an older core.js still on the phone: the kind's name.)
   function otherName(x) { return G.otherEntryLabel ? G.otherEntryLabel(x) : G.otherKindLabel(x && x.kind); }
-  function otherIncomeList(id, c) {
+  // o.title: what the list is called (an artist's Off Tour book has no nights: there it is simply its income).
+  // o.all: every entry, with nothing kept for another list.
+  function otherIncomeList(id, c, o) {
+    var title = (o && o.title) || 'Other income';
     // (Guarantees still to sort have their own place, under Tonight.)
-    var list = ((c && c.otherRows) || []).filter(function (x) { return !(x && x.unsorted === true && x.kind === 'guarantee'); });
+    var list = ((c && c.otherRows) || []).filter(function (x) { return !!(o && o.all) || !(x && x.unsorted === true && x.kind === 'guarantee'); });
     if (!list.length) return null;
     var total = list.reduce(function (t, x) { return t + G.num(x.amount); }, 0);
     return [
-      h('h3', { class: 'oi-head' }, 'Other income'),
+      h('h3', { class: 'oi-head' }, title),
       h('div', { class: 'ledger oi-list' },
         list.map(function (x) {
           // (An "Other" deposit goes by the words typed for it: "Sync licence".)
@@ -14742,7 +15286,8 @@
             'aria-label': label + ' ' + money(G.num(x.amount)),
             onclick: function () { openOtherIncome(id, x); } }, inner);
         }).concat(h('div', { class: 'row total' },
-          h('span', null, 'Other income'),
+          // (Named by a title of its own, the list ends on "Total": the title is already over it.)
+          h('span', null, o && o.title ? 'Total' : title),
           h('strong', { class: 'amt num' }, money(total)))))
     ];
   }
@@ -21539,7 +22084,7 @@
   async function openAccountByName(name, tourId) {
     var B = window.GR_BACKEND, st = null;
     try { st = await B.feedCall('status'); } catch (e) { st = null; }
-    if (st && st.ok && Array.isArray(st.accounts)) S.feedStatus = { accounts: st.accounts, at: Date.now() };
+    if (st && st.ok && Array.isArray(st.accounts)) S.feedStatus = { accounts: st.accounts, banks: Array.isArray(st.banks) ? st.banks : [], at: Date.now() };
     var a = st && st.ok && Array.isArray(st.accounts) ? st.accounts.filter(function (x) { return x && x.name === name; })[0] : null;
     if (a) openAccountQuestions([a], 0, tourId); else openFeedSheet(tourId);
   }
@@ -21601,7 +22146,7 @@
         if (i) parts.push(', ');
         parts.push(link(x.kind === 'offtour' ? x.n + ' ' + x.name : x.n + ' on ' + x.name, function () {
           var ot = getTour(x.id);
-          if (x.kind === 'offtour') go({ name: 'artist', artist: artistOf(ot), view: 'off', from: S.route, fromLabel: 'Cards' });
+          if (x.kind === 'offtour') go(offRoute(artistOf(ot), 'cards'));
           else go({ name: 'tour', id: x.id, view: 'cards' });
         }));
       });
@@ -21699,7 +22244,7 @@
     if (createdTour(tourId)) { go({ name: 'tour', id: tourId, view: 'cards' }); return; }
     var to = where.filter(function (x) { return (x.kind === 'tour' || x.kind === 'offtour') && createdTour(x.id); })
       .sort(function (a, b) { return b.n - a.n; })[0];
-    if (to && to.kind === 'offtour') { go({ name: 'artist', artist: artistOf(getTour(to.id)), view: 'off', from: S.route, fromLabel: 'Tasks' }); return; }
+    if (to && to.kind === 'offtour') { go(offRoute(artistOf(getTour(to.id)), 'cards')); return; }
     var own = to ? to.id : (allTourEntries(false).filter(function (e) { return createdTour(e[0]); })[0] || [])[0];
     if (own) go({ name: 'tour', id: own, view: 'cards' }); else openFeedSheet(null);
   }
@@ -22216,7 +22761,9 @@
         kind: mk ? 'merch' : 'guarantee', show: '', showTouched: false, later: false, armed: false };
     }) : ((S.incomeNew && S.incomeNew.items) || []).map(function (d) {
       return { id: String(d.id), date: String(d.date || ''), amount: G.num(d.amount), av: !!d.atvenu, watch: String(d.watch || ''),
-        dest: curTour ? 'cur' : 'off', upTo: ups.length ? ups[0].id : null,
+        // (Opened from the Off Tour screen it starts on Off Tour, so Log writes to the book he is looking at unless
+        // he picks a tour; opened from a tour it starts on that tour, as ever. Nothing is logged without his tap.)
+        dest: isOffTour(base) ? 'off' : curTour ? 'cur' : 'off', upTo: ups.length ? ups[0].id : null,
         // Nothing is chosen for him: not what it was, not which night ("see and approve and log").
         // (what: the few words he types when it is "Other".)
         kind: '', what: '', show: '', showTouched: false, later: false, armed: false };
@@ -23375,6 +23922,11 @@
     syncCards(id);
     var waiting = feedWaiting(id);
     var cards = tourCards(t);
+    // (An artist's Off Tour book keeps no list of its own: the cards that log expenses, as the card feed has them.)
+    if (isOffTour(t) && createdTour(id)) {
+      bookCards().forEach(function (c) { if (!cards.some(function (x) { return x.names.indexOf(c.name) >= 0; })) cards.push(c); });
+      cards.sort(function (a, b) { return (a.kind === b.kind ? 0 : a.kind === 'credit' ? -1 : 1) || a.label.localeCompare(b.label); });
+    }
     // A card with charges waiting that isn't on the list yet still shows.
     waiting.forEach(function (it) {
       var nm = String(it.account || '').trim();
@@ -23420,7 +23972,8 @@
         toast(on ? 'atVenu is on: merch logs itself from the reports' : 'atVenu is off for this tour');
       } });
     avBox.checked = avOn;
-    rows.unshift(h('label', { class: 'row card-line av-link', for: 'av-sync-' + id },
+    // (An artist's Off Tour book has no nights, so nothing of atVenu's could land on it: no switch there.)
+    if (!isOffTour(t)) rows.unshift(h('label', { class: 'row card-line av-link', for: 'av-sync-' + id },
       h('img', { class: 'brand-logo', src: 'logo-atvenu.png', alt: '' }),
       h('div', { class: 'row-label' }, 'atVenu',
         h('span', { class: 'hint' }, avOn ? 'Merch logs itself from the atVenu reports' : 'Off \u2014 merch is typed by hand on this tour')),
@@ -23447,7 +24000,10 @@
     return [
       entry,
       rows.length ? h('div', { class: 'ledger cards-list' }, rows)
-        : entry || loading ? null : emptyState('No cards linked', 'Cards linked to this tour show up here.')
+        : entry || loading ? null
+        // (A book keeps no list of cards: they are on the account of whoever created it, and nobody else is told "none".)
+        : isOffTour(t) && !createdTour(id) ? h('p', { class: 'note', style: 'margin-top:24px' }, 'The book’s cards are linked on its creator’s account.')
+        : emptyState('No cards linked', isOffTour(t) ? 'Cards linked to the Off Tour book show up here.' : 'Cards linked to this tour show up here.')
     ];
   }
 
@@ -23480,7 +24036,8 @@
     if (S.mode !== 'db' || !B || !B.feedCall || createdTour(id) || !bookLead(id)) return;
     var P = S.pile && S.pile[id];
     if ((!P || Date.now() - P.at > 120e3) && !(S.pileBusy && S.pileBusy[id])) {
-      loadPile(id).then(function (np) { if (np.lead || np.failed || (P && P.lead)) render(true); });
+      // (The first read always draws again: a Cards tab with nothing else on it, the Off Tour book's, holds a blank while it waits.)
+      loadPile(id).then(function (np) { if (np.lead || np.failed || !P || P.lead) render(true); });
     }
   }
   function tmFeedEntry(id) {

@@ -724,6 +724,70 @@
     eq(G.balanceSeries(t, { until: '2026-10-06' }).slice(-1)[0].date, '2026-10-06', 'stops at today while the tour is on');
   });
 
+  test('the chart can start late: a book with no shows shows its last stretch, with all before it in the first point', function () {
+    var book = {
+      kind: 'offtour', shows: {}, expenses: {}, crew: {}, debts: {}, commission: {}, extras: {},
+      charges: keyed([
+        { date: '2026-01-10', merchant: 'Studio', amount: 400, category: 'studio' },
+        { date: '2026-09-28', merchant: 'Storage', amount: 100, category: 'utilities' },
+        { date: '2026-10-02', merchant: 'Strings', amount: 50, category: 'supplies' }]),
+      otherIncome: { o1: { id: 'o1', date: '2026-03-01', amount: 900, kind: 'royalties' }, o2: { id: 'o2', date: '2026-10-01', amount: 200, kind: 'other', label: 'Sync licence' } }
+    };
+    var whole = G.balanceSeries(book), late = G.balanceSeries(book, { from: '2026-09-25' });
+    eq(whole[0].date, '2026-01-10', 'left alone it starts with the first entry');
+    eq(late[0].date, '2026-09-25', 'asked to, it starts later');
+    near(late[0].spent, 400, 'what was spent before is already in the first point');
+    near(late[0].income, 900, 'and so is what came in before');
+    eq(late[late.length - 1].date, whole[whole.length - 1].date, 'it ends where it always did');
+    late.forEach(function (p) {
+      var same = whole.filter(function (w) { return w.date === p.date; })[0];
+      near(p.income, same.income, 'money in on ' + p.date + ' is the same sum');
+      near(p.spent, same.spent, 'spent on ' + p.date + ' is the same sum');
+      near(p.net, same.net, 'net on ' + p.date + ' is the same sum');
+    });
+    eq(G.balanceSeries(book, { from: '2025-01-01' })[0].date, '2026-01-10', 'a day before the first entry changes nothing');
+    eq(G.balanceSeries(book, { from: '2026-12-01' }).length, 2, 'a day after the last entry leaves the two points a flat line needs');
+  });
+
+  test('the chart can be given both ends: an Off Tour book shows its last 90 days ending today, whatever is dated inside them', function () {
+    var book = {
+      kind: 'offtour', shows: {}, expenses: {}, crew: {}, debts: {}, commission: {}, extras: {},
+      charges: keyed([
+        { date: '2026-02-10', merchant: 'Studio', amount: 400, category: 'studio' },
+        { date: '2026-03-02', merchant: 'Storage', amount: 50, category: 'utilities' }]),
+      otherIncome: { o1: { id: 'o1', date: '2026-02-20', amount: 1500, kind: 'royalties' } }
+    };
+    // Nothing in the window: a flat line from 90 days ago to today, never two days picked from nowhere.
+    var quiet = G.balanceSeries(book, { until: '2026-10-11', from: '2026-07-13', to: '2026-10-11' });
+    eq(quiet[0].date, '2026-07-13', 'it starts 90 days ago');
+    eq(quiet[quiet.length - 1].date, '2026-10-11', 'it ends today');
+    eq(quiet.length, 91, 'one point for each day');
+    quiet.forEach(function (p) { near(p.income, 1500, 'money in is flat on ' + p.date); near(p.spent, 450, 'spent is flat on ' + p.date); });
+    // Entries inside the window: the same two ends, and every point is the sum the whole line has for that day.
+    book.charges.r9 = { date: '2026-10-05', merchant: 'Strings', amount: 25, category: 'supplies' };
+    var live = G.balanceSeries(book, { until: '2026-10-11', from: '2026-07-13', to: '2026-10-11' });
+    eq(live[0].date, '2026-07-13', 'still 90 days ago'); eq(live[live.length - 1].date, '2026-10-11', 'still today, past the last entry');
+    near(live[live.length - 1].spent, 475, 'the last point is the book as it stands');
+    near(live.filter(function (p) { return p.date === '2026-10-04'; })[0].spent, 450, 'the day before the charge does not have it');
+    var whole = G.balanceSeries(book);
+    live.forEach(function (p) {
+      var same = whole.filter(function (w) { return w.date === p.date; })[0];
+      if (same) { near(p.income, same.income, 'money in on ' + p.date + ' is the same sum'); near(p.spent, same.spent, 'spent on ' + p.date + ' is the same sum'); }
+    });
+    // A book whose first entry is inside the window: nothing before it, so the line starts flat at zero.
+    var fresh = { kind: 'offtour', shows: {}, expenses: {}, crew: {}, debts: {}, commission: {}, extras: {},
+      charges: keyed([{ date: '2026-10-09', merchant: 'Van', amount: 80, category: 'transport' }]) };
+    var f = G.balanceSeries(fresh, { until: '2026-10-11', from: '2026-07-13', to: '2026-10-11' });
+    eq(f[0].date, '2026-07-13'); near(f[0].spent, 0, 'nothing yet 90 days ago'); near(f[f.length - 1].spent, 80, 'and the charge by today');
+    // Something dated ahead is not in a line that ends today.
+    fresh.charges.r7 = { date: '2026-11-20', merchant: 'Deposit', amount: 300, category: 'studio' };
+    var ahead = G.balanceSeries(fresh, { until: '2026-10-11', from: '2026-07-13', to: '2026-10-11' });
+    eq(ahead[ahead.length - 1].date, '2026-10-11', 'it still ends today'); near(ahead[ahead.length - 1].spent, 80, 'without what is dated ahead');
+    // Ends that make no line are ignored, and an empty book still has no line at all.
+    eq(G.balanceSeries(book, { from: '2026-10-11', to: '2026-07-13' }).length, 2, 'ends the wrong way round: read as a late start alone');
+    eq(G.balanceSeries({ kind: 'offtour', shows: {}, expenses: {}, charges: {} }, { from: '2026-07-13', to: '2026-10-11' }).length, 0, 'nothing dated at all: no line');
+  });
+
   /* ============ The change chip ============ */
 
   test('the change chip reports the last show net of commission', function () {

@@ -1704,7 +1704,13 @@
   /* The chart, day by day: money in (it only climbs) against what's spent
      and owed. It starts the day the tour does; anything spent before that is
      already in its first point. opts.until stops it there (today, while the
-     tour is on). */
+     tour is on). opts.from: it starts no earlier than that day. opts.from
+     with opts.to: the line covers exactly those days, whatever is dated
+     inside them (an artist's Off Tour book has no first night and runs for
+     years: its chart is the last stretch, ending today; all that came before
+     is in the first point, and days on which nothing happened are flat, which
+     is true). Only where the line starts and ends changes; every point is the
+     same sum as ever. */
   function balanceSeries(tour, opts) {
     var o = opts || {};
     // (The asks to be paid back are read once and handed to every day's sum.)
@@ -1729,8 +1735,11 @@
     var start = days[0], end = days[days.length - 1];
     var ts = tourStart(tour);
     if (ts && ts > start) start = ts;
+    if (o.from && parseDay(o.from) && o.from > start) start = o.from;
     if (end < start) end = start;
     if (o.until && parseDay(o.until) && o.until >= start && o.until < end) end = o.until;
+    // (Both ends given: those two days, wherever the first and last entries fall.)
+    if (o.from && o.to && parseDay(o.from) && parseDay(o.to) && o.from < o.to) { start = o.from; end = o.to; }
     var span = daysBetween(start, end);
     if (span < 0) return [];
     // One day of activity would be a single point and no line at all. Start the

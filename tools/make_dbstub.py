@@ -56,7 +56,23 @@ shim = r"""<script>
         s2: { id: 's2', date: ymd(new Date(today.getTime() + 3 * 864e5)), city: 'Phoenix, AZ', venue: 'Crescent' } },
       // Merch cash spent on food and gas: the Expenses tab's Cash column.
       cashLog: { k1: { id: 'k1', date: ymd(new Date(today.getTime() - 3 * 864e5)), category: 'food', amount: 120, note: 'Catering run' },
-        k2: { id: 'k2', date: ymd(new Date(today.getTime() - 3 * 864e5)), category: 'gas', amount: 85.5, note: 'Fill up' } } }
+        k2: { id: 'k2', date: ymd(new Date(today.getTime() - 3 * 864e5)), category: 'gas', amount: 85.5, note: 'Fill up' } } },
+    // The harness artist's Off Tour book (Budget, OFF TOUR): a few invented charges between tours (on
+    // credit, by debit and in cash) and two deposits logged as income, one of them "Other" with the words
+    // typed for it. Nothing is planned on it, so its big number reads "net so far"; type a projection on a
+    // line and it reads "net, counting what is planned". See THE OFF TOUR FRAME below for the switches.
+    off1: { kind: 'offtour', artist: 'I See Stars', name: 'Off Tour', setupDone: true, createdAt: 3,
+      offFrom: ymd(new Date(today.getTime() - 60 * 864e5)).slice(0, 8) + '01',
+      shows: {}, expenses: {},
+      charges: {
+        o1: { id: 'o1', date: ymd(new Date(today.getTime() - 41 * 864e5)), merchant: 'Rehearsal Room B', amount: 600, category: 'studio', manual: true, paid: true },
+        o2: { id: 'o2', date: ymd(new Date(today.getTime() - 33 * 864e5)), merchant: 'String and Stick Supply', amount: 219.5, category: 'supplies', manual: true, paid: false },
+        o3: { id: 'o3', date: ymd(new Date(today.getTime() - 21 * 864e5)), merchant: 'PUBLIC STORAGE 28511', amount: 189, category: 'utilities', manual: true, paid: true },
+        o4: { id: 'o4', date: ymd(new Date(today.getTime() - 12 * 864e5)), merchant: 'Van service', amount: 840.75, category: 'transport', manual: true, paid: false },
+        o5: { id: 'o5', date: ymd(new Date(today.getTime() - 6 * 864e5)), merchant: 'Parking', amount: 40, category: 'transport', manual: true, paid: true, cash: true } },
+      otherIncome: {
+        i1: { id: 'i1', date: ymd(new Date(today.getTime() - 30 * 864e5)), amount: 1850, kind: 'royalties' },
+        i2: { id: 'i2', date: ymd(new Date(today.getTime() - 9 * 864e5)), amount: 500, kind: 'other', label: 'Sync licence' } } }
   };
   var subs = [];
   // Same merge-write as the real backend: nested objects merge.
@@ -296,6 +312,91 @@ shim = r"""<script>
   try { if (/[?&]crew\b/.test(String(location.search || ''))) window.__harness.asCrew = true; } catch (e) { /* no address to read */ }
   // A Manager who did not create the tour (tour role Tour Manager): __harness.asManager = true before the tour is opened, or ?manager.
   try { if (/[?&]manager\b/.test(String(location.search || ''))) window.__harness.asManager = true; } catch (e) { /* no address to read */ }
+  /* ---- THE OFF TOUR FRAME: the Off Tour book, and an account with no tour on the road ----
+     As the page opens, the harness tour ("Harness run") is on the road today and its artist has an Off Tour
+     book (off1 above: five charges and two income entries, Royalties and an "Other" called Sync licence).
+     TO SEE OFF TOUR INSIDE A TOUR: Overview (bottom right of the profile), Budget, then the OFF TOUR tab: the
+     same top tabs with OFF TOUR lit, Expenses | Cards/Links | Income for the book, the tour's bottom bar; the
+     left tab (the tour's name) goes back to the tour's Budget.
+     SWITCHES:
+       __harness.offTour('next')   no tour is on the road and one is on the calendar: the harness tour's shows
+                                   move a month into the past, "Winter run" starts in 26 days, and "Spring run"
+                                   (last year) joins the list so "Tours" has two years. The profile's Overview
+                                   button opens Winter run ("Next on the calendar"); its Budget tab lands on
+                                   OFF TOUR with Tours | MY PAY | OFF TOUR on top.
+       __harness.offTour('none')   the same with nothing on the calendar: Overview opens the frame that says
+                                   "No tour on the calendar yet" on every tab, and offers Create a tour.
+       __harness.offTour('travel') like 'next', but Winter run's own days have begun: two days were added before
+                                   its first show (they started yesterday) and the first show is in two days.
+                                   Nobody is on a stage today, yet the app is in tour mode: Overview opens Winter
+                                   run with no "Next on the calendar" line, and its Budget tab opens the tour's
+                                   own Budget with Winter run | MY PAY | OFF TOUR on top.
+       __harness.offTour(false)    back to the harness tour on the road today (the two extra tours go).
+       (Setting it works too:  __harness.offTour = 'next'  /  'none'  /  'travel'  /  false. What it is now:
+       __harness.offTourNow.)
+       Or open the page with  ?offtour=next ,  ?offtour=none  or  ?offtour=travel  (add &crew or &manager for
+       those phones).
+       __harness.undated(true)     adds two tours that have no dates yet: "Idea for a run" (its setup finished
+                                   long ago) and "Half-made run" (still in setup). Neither is ever "next on the
+                                   calendar". With offTour('none') the Overview page lists them under "No tour on
+                                   the calendar yet", each with "Add its shows" (the first opens its Add shows
+                                   page, the second the rest of its setup).  undated(false)  takes them away.
+                                   Or add  &undated  to the address.
+       __harness.offBook(false)    takes the Off Tour book away, as for an artist who has never opened OFF TOUR.
+                                   Off tour, Budget then lands on "Start the Off Tour book" (one button, for the
+                                   artist's owner; nothing is started by landing there). The OFF TOUR tab of a
+                                   tour's own Budget still starts an empty one on the tap, as it always did.
+                                   offBook(true)  puts the seeded book back.
+     (elsewhere(), further down, still swaps the book for the empty one it always made, with a row waiting on it.) */
+  var inDays = function (n) { return ymd(new Date(today.getTime() + n * 864e5)); };
+  var runDays = { s0: -4, s00: -2, s1: 0, s1b: 1, s2: 3 };
+  var seededBook = JSON.stringify(tours.off1);
+  var setOffTour = function (kind) {
+    var off = kind === 'next' || kind === 'none' || kind === 'travel';
+    Object.keys(runDays).forEach(function (k) { if (tours.t1.shows[k]) tours.t1.shows[k].date = inDays(runDays[k] - (off ? 31 : 0)); });
+    delete tours.tnext; delete tours.tpast;
+    if (off) {
+      tours.tpast = { name: 'Spring run', artist: tours.t1.artist, setupDone: true, setupStep: 5, createdAt: 0, expenses: { bus: { projected: 30000 } }, commission: {},
+        crew: {}, debts: {}, extras: {}, imports: {},
+        charges: { q1: { id: 'q1', date: (today.getFullYear() - 1) + '-04-10', merchant: 'Coach hire', amount: 28500, category: 'bus', manual: true, paid: true } },
+        shows: { p1: { id: 'p1', date: (today.getFullYear() - 1) + '-04-11', city: 'Tulsa, OK', venue: 'Cain\u2019s', loggedAt: 1, income: { guarantee: 9000, merch: 2100 } },
+          p2: { id: 'p2', date: (today.getFullYear() - 1) + '-04-12', city: 'Wichita, KS', venue: 'The Cotillion', loggedAt: 1, income: { guarantee: 12000, merch: 2600 } } } };
+    }
+    if (kind === 'next' || kind === 'travel') {
+      // ('travel': the run's own days began yesterday, two days before its first show.)
+      var first = kind === 'travel' ? 2 : 26;
+      tours.tnext = { name: 'Winter run', artist: tours.t1.artist, setupDone: true, setupStep: 5, createdAt: 5, expenses: { bus: { projected: 42000 } }, commission: {},
+        crew: {}, debts: {}, extras: {}, charges: {}, imports: {}, bands: ['I See Stars'], ourBand: 'I See Stars',
+        shows: { n1: { id: 'n1', date: inDays(first), city: 'Chicago, IL', venue: 'Metro', daySheet: { doors: '6:30 PM', venueAddress: '3730 N Clark St, Chicago, IL 60613' } },
+          n2: { id: 'n2', date: inDays(first + 1), city: 'Detroit, MI', venue: 'Saint Andrew\u2019s Hall' },
+          n3: { id: 'n3', date: inDays(first + 3), city: 'Cleveland, OH', venue: 'House of Blues' } } };
+      if (kind === 'travel') tours.tnext.spanStart = inDays(-1);
+    }
+    window.__harness.offTourNow = off ? kind : '';
+    emit();
+  };
+  // (Called or set: both say which state the account is in.)
+  Object.defineProperty(window.__harness, 'offTour', { get: function () { return setOffTour; }, set: function (kind) { setOffTour(kind); } });
+  window.__harness.offBook = function (on) {
+    if (on === false) delete tours.off1; else tours.off1 = JSON.parse(seededBook);
+    emit();
+  };
+  // Two tours with no dates yet (see THE OFF TOUR FRAME above).
+  window.__harness.undated = function (on) {
+    delete tours.tidea; delete tours.thalf;
+    if (on !== false) {
+      tours.tidea = { name: 'Idea for a run', artist: tours.t1.artist, setupDone: true, setupStep: 5, createdAt: 1, expenses: {}, commission: {},
+        crew: {}, debts: {}, extras: {}, charges: {}, imports: {}, shows: {} };
+      tours.thalf = { name: 'Half-made run', artist: tours.t1.artist, setupDone: false, setupStep: 2, createdAt: 2, expenses: {}, commission: {},
+        crew: {}, debts: {}, extras: {}, charges: {}, imports: {}, shows: {} };
+    }
+    emit();
+  };
+  try {
+    var offAsk = /[?&]offtour=(next|none|travel)\b/.exec(String(location.search || ''));
+    if (offAsk) window.__harness.offTour(offAsk[1]);
+    if (/[?&]undated\b/.test(String(location.search || ''))) window.__harness.undated(true);
+  } catch (e) { /* no address to read */ }
   // Asks to be paid back (see reimbursementsFor below).
   function reimbList() {
     var H = window.__harness, ago = function (ms) { return new Date(Date.now() - ms).toISOString(); };
@@ -2385,6 +2486,8 @@ shim = r"""<script>
         return window.claude.use('db').then(function (db) {
           var key = 'p' + fid;
           var tids = ['t1'].concat([H2.offTourId, H2.nextTourId].filter(Boolean));
+          // (And any other tour or Off Tour book that holds it: one filed from the book's own screen, or sent on to the next tour.)
+          Object.keys(tours).forEach(function (tid) { if (tids.indexOf(tid) < 0 && tours[tid] && tours[tid].charges && tours[tid].charges[key]) tids.push(tid); });
           return Promise.all(tids.map(function (tid) {
             var c = {}; c[key] = null; var aw = {}; aw[key] = null;
             return db.doc('tours/' + tid).update({ charges: c, cardAway: aw });
