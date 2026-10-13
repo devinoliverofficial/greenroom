@@ -261,10 +261,11 @@ Devin: "is it possible when sorting through deposits and charges to add kinda di
 - [ ] Crew (not band) still see only the tours an artist confirmed for them, counted from their claim; festivals and loose shows are a band-member thing for now
 - [ ] `countriesList` on the artist page (not shown anywhere yet) still groups by the raw country name
 
-## The status on every page from the start (Devin, 2026-10-12)
-Devin: "the silver, bronze, diamond, legacy status isnt showing up in everyones profile. This should applied the moment a page is made and adjust as shows/tours/cities/countries get added."
-- [x] Why: his ladder of Oct 7 started Bronze at 50 shows, so a page under 50 showed no status (two of the four crew accounts). Bronze now starts the moment a page is made, for a person and for an artist; Silver 250, Gold 500, Diamond 800 and Legacy (850 shows, 50 tours, 30 countries, 250 cities) are as they were, and the status moves up as the numbers do
-- [ ] Decision made for him: the starting status is Bronze. If he wants a new name under Bronze instead (and Bronze back at 50), it is one line in src/core.js
+## The status ladder, as he set it (Devin, 2026-10-12)
+Devin: "the silver, bronze, diamond, legacy status isnt showing up in everyones profile. This should applied the moment a page is made and adjust as shows/tours/cities/countries get added.", then, as his answer: "Green: where everyone starts. Bronze: 50 shows. Silver: 250 shows. Gold: 500 shows. Diamond: 1000 shows. Legacy: 1500 shows, 50 tours, 30 countries and 250 cities together"
+- [x] Built exactly so (src/core.js `HISTORY_TIERS`, `LEGACY_BAR`): every page, a person's or an artist's, has a status from the moment it is made, and it moves up as the numbers do. The ladder of Oct 7 started at Bronze 50 with nothing under it (two crew accounts at 18 shows showed no status), had Diamond at 800 and Legacy at 850 shows
+- [x] What moved when it landed: he and Brent (1,350 shows, with the tours, countries and cities for Legacy) read Diamond, 150 shows short of Legacy; the two crew accounts at 18 shows read Green; the one at 51 reads Bronze
+- [ ] Decision made for him: Green is the house green as an outline and Legacy is the house green filled in (Legacy used to be the outline), so the top of the ladder never looks like the bottom
 - [ ] On a phone that has never loaded the profile card, the status appears with the card (a moment after the page opens), not before
 
 ## Several roles, "I was on this tour", confirm asked once (Devin, 2026-10-12, migration 0146, applied)

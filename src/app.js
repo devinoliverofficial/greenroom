@@ -6880,7 +6880,7 @@
     var row = c.row;
     var sum = row && G.isObj(row.summary) ? row.summary : null;
     var has = !!(sum && G.num(sum.shows) > 0);
-    // (An artist's page has its status from the moment it is made: Bronze until its shows carry it up.)
+    // (An artist's page has its status from the moment it is made: Green until its shows carry it up.)
     var tier = G.historyTier(has ? sum : {});
     var since = has && G.num(sum.firstYear) > 0 ? G.num(sum.firstYear) : 0;
     if (!since) {

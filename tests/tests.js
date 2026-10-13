@@ -1893,22 +1893,29 @@
     });
   })();
 
-  /* ---- Road badges: shows climb the rungs; Legacy takes the whole
-     spread at once (850 shows, 50 tours, 30 countries, 250 cities). ---- */
+  /* ---- Road badges (Devin's ladder of 2026-10-12): Green where everyone
+     starts, Bronze 50, Silver 250, Gold 500, Diamond 1000; Legacy takes the
+     whole spread at once (1500 shows, 50 tours, 30 countries, 250 cities). ---- */
   test('road badges land on the right rung', function () {
-    eq(G.historyTier({ shows: 0 }).label, 'Bronze', 'the moment a page is made');
-    eq(G.historyTier({}).label, 'Bronze', 'a page with no numbers yet');
-    eq(G.historyTier(null).label, 'Bronze', 'no summary at all');
-    eq(G.historyTier({ shows: 49 }).label, 'Bronze', 'still the first rung');
+    eq(G.historyTier({ shows: 0 }).label, 'Green', 'the moment a page is made');
+    eq(G.historyTier({}).label, 'Green', 'a page with no numbers yet');
+    eq(G.historyTier(null).label, 'Green', 'no summary at all');
+    eq(G.historyTier({ shows: 49 }).label, 'Green', 'one show short of Bronze');
+    eq(G.historyTier({ shows: 50 }).label, 'Bronze', 'Bronze at 50');
     eq(G.historyTier({ shows: 249 }).label, 'Bronze', 'one show short of Silver');
     eq(G.historyTier({ shows: 250 }).label, 'Silver', 'Silver at 250');
-    eq(G.historyTier({ shows: 290 }).label, 'Silver', 'Michael Jackson solo');
-    eq(G.historyTier({ shows: 736, tours: 33, countries: 33, cities: 259 }).label, 'Gold', 'I See Stars today');
-    eq(G.historyTier({ shows: 800 }).label, 'Diamond', 'the fourth rung');
-    eq(G.historyTier({ shows: 1400, tours: 20, countries: 20, cities: 200 }).label, 'Diamond',
-      'even the Beatles hold at Diamond without the spread');
-    eq(G.historyTier({ shows: 850, tours: 50, countries: 30, cities: 250 }).label, 'Legacy', 'the full spread');
+    eq(G.historyTier({ shows: 499 }).label, 'Silver', 'one show short of Gold');
+    eq(G.historyTier({ shows: 500 }).label, 'Gold', 'Gold at 500');
+    eq(G.historyTier({ shows: 999, tours: 60, countries: 40, cities: 400 }).label, 'Gold', 'one show short of Diamond, whatever the spread');
+    eq(G.historyTier({ shows: 1000 }).label, 'Diamond', 'Diamond at 1000');
+    eq(G.historyTier({ shows: 1350, tours: 57, countries: 34, cities: 388 }).label, 'Diamond', 'I See Stars today: the spread is there, 150 shows short of Legacy');
+    eq(G.historyTier({ shows: 1499, tours: 50, countries: 30, cities: 250 }).label, 'Diamond', 'one show short of Legacy');
+    eq(G.historyTier({ shows: 1500, tours: 50, countries: 30, cities: 250 }).label, 'Legacy', 'the full spread');
+    eq(G.historyTier({ shows: 1500, tours: 49, countries: 30, cities: 250 }).label, 'Diamond', 'the shows without the tours');
+    eq(G.historyTier({ shows: 1500, tours: 50, countries: 29, cities: 250 }).label, 'Diamond', 'the shows without the countries');
+    eq(G.historyTier({ shows: 1500, tours: 50, countries: 30, cities: 249 }).label, 'Diamond', 'the shows without the cities');
     eq(G.historyTier({ shows: 3000, tours: 60, countries: 45, cities: 500 }).label, 'Legacy', 'the lifers');
+    eq(G.historyTier({ shows: 0 }).key, 'green', 'the key the look goes by');
   });
 
   /* ---- Tour credits: the confirm page's selection, and a page's Tours tab. ---- */
