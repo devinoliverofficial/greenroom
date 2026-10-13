@@ -261,6 +261,12 @@ Devin: "is it possible when sorting through deposits and charges to add kinda di
 - [ ] Crew (not band) still see only the tours an artist confirmed for them, counted from their claim; festivals and loose shows are a band-member thing for now
 - [ ] `countriesList` on the artist page (not shown anywhere yet) still groups by the raw country name
 
+## The status on every page from the start (Devin, 2026-10-12)
+Devin: "the silver, bronze, diamond, legacy status isnt showing up in everyones profile. This should applied the moment a page is made and adjust as shows/tours/cities/countries get added."
+- [x] Why: his ladder of Oct 7 started Bronze at 50 shows, so a page under 50 showed no status (two of the four crew accounts). Bronze now starts the moment a page is made, for a person and for an artist; Silver 250, Gold 500, Diamond 800 and Legacy (850 shows, 50 tours, 30 countries, 250 cities) are as they were, and the status moves up as the numbers do
+- [ ] Decision made for him: the starting status is Bronze. If he wants a new name under Bronze instead (and Bronze back at 50), it is one line in src/core.js
+- [ ] On a phone that has never loaded the profile card, the status appears with the card (a moment after the page opens), not before
+
 ## Several roles, "I was on this tour", confirm asked once (Devin, 2026-10-12, migration 0146, applied)
 Devin: "When you get asked what your roll is with an artist you should be able to choose multiple rolls", "when a crew member goes to an artist they are endorsed by and they hit the tours on that artists page there should be a claim (if there is a better word use it) ... a way for a crew member to say I was apart of this tour and again they get asked the role they played on the tour and then it's sent to the artist to approve", and "i keep getting asked on my user profile to confirm the shows with I See Stars. This should only have to be done once and confirmed by the artist once and then it is done"
 - [x] Several roles: up to six ticked wherever a role with an artist is asked (sign-up, "Ask to be listed", the artist's own sheet), read back before sending, kept as one line of up to 160 characters (it was cut at 40, in the app and by two checks in the database)

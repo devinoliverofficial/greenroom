@@ -218,16 +218,19 @@
   }
 
   /* Road badges (Devin's ladder, 2026-10-07). Shows carry you up the
-     rungs — Bronze 50, Silver 250, Gold 500, Diamond 800 — but LEGACY is
+     rungs — Bronze, Silver 250, Gold 500, Diamond 800 — but LEGACY is
      the whole spread at once: 850 shows AND 50 tours AND 30 countries AND
-     250 cities. The badge rewards the grind, not the fame: Michael
+     250 cities. Bronze is where every page starts (Devin, 2026-10-12: the
+     status "should be applied the moment a page is made and adjust as
+     shows/tours/cities/countries get added"; it used to start at 50 shows,
+     so a page under 50 showed no status at all). The badge rewards the grind, not the fame: Michael
      Jackson's solo career sits at Silver, and even the Beatles (~1,400
      shows, but few runs around the world) hold at Diamond. */
   var HISTORY_TIERS = [
     { key: 'diamond', label: 'Diamond', n: 800 },
     { key: 'gold', label: 'Gold', n: 500 },
     { key: 'silver', label: 'Silver', n: 250 },
-    { key: 'bronze', label: 'Bronze', n: 50 }
+    { key: 'bronze', label: 'Bronze', n: 0 }
   ];
   var LEGACY_BAR = { key: 'legacy', label: 'Legacy', shows: 850, tours: 50, countries: 30, cities: 250 };
   function historyTier(sum) {

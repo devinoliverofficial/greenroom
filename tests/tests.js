@@ -1896,9 +1896,12 @@
   /* ---- Road badges: shows climb the rungs; Legacy takes the whole
      spread at once (850 shows, 50 tours, 30 countries, 250 cities). ---- */
   test('road badges land on the right rung', function () {
-    eq(G.historyTier({ shows: 0 }), null, 'nothing yet');
-    eq(G.historyTier({ shows: 49 }), null, 'under the first rung');
-    eq(G.historyTier({ shows: 50 }).label, 'Bronze', 'a real touring act');
+    eq(G.historyTier({ shows: 0 }).label, 'Bronze', 'the moment a page is made');
+    eq(G.historyTier({}).label, 'Bronze', 'a page with no numbers yet');
+    eq(G.historyTier(null).label, 'Bronze', 'no summary at all');
+    eq(G.historyTier({ shows: 49 }).label, 'Bronze', 'still the first rung');
+    eq(G.historyTier({ shows: 249 }).label, 'Bronze', 'one show short of Silver');
+    eq(G.historyTier({ shows: 250 }).label, 'Silver', 'Silver at 250');
     eq(G.historyTier({ shows: 290 }).label, 'Silver', 'Michael Jackson solo');
     eq(G.historyTier({ shows: 736, tours: 33, countries: 33, cities: 259 }).label, 'Gold', 'I See Stars today');
     eq(G.historyTier({ shows: 800 }).label, 'Diamond', 'the fourth rung');
