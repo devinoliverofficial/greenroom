@@ -273,7 +273,8 @@ Devin: "By default if no one has "claimed" an artist page the request by crew sh
 
 ## Passwords of 8, and the notification functions ready to paste (2026-10-15)
 - [x] A new password is 8 characters or more in the app (`PASS_MIN` in site/backend.js: sign-up with a code, the invited person's first password, the gate's sign-up, a reset). Signing in with an older, shorter password still works. A password the server turns down as weak or leaked says "That password is too easy to guess" (sgPassSay)
-- [ ] Devin's Supabase step: Authentication, Sign In / Providers (Email), minimum length 8; leaked-password protection if the plan allows it
+- [x] Devin's Supabase step (Oct 15): minimum password length 8 is set. Leaked-password protection could not be switched on (it needs the Pro plan): turn it on if the plan changes
+- [ ] Still waiting on his paste, whenever he wants it: the notify and ari functions below; until then "in the green" notifications stay off
 - [x] notify and ari (not yet pasted): the sender is checked by the server (`admin.auth.getUser`), not read out of the token; what a phone sends is cut to size (names 60, ticket count 1 to 99, amounts 24); "in the green" reaches every Manager whatever group their phone is on; both files are plain ASCII for the paste
 
 ## The status ladder, as he set it (Devin, 2026-10-12)
