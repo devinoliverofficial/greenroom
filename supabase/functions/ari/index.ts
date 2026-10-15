@@ -2,12 +2,12 @@
 // the cron key from Vault); a signed-in member can also tap it for one tour
 // right after posting a day sheet, so DAY SHEET AVAILABLE goes out at once.
 //
-//   LOAD IN              10 min before the day sheet's load in    → Crew + All
-//   SHOW TIME            30 min before our band's set             → Artist + All
-//   DAY SHEET AVAILABLE  show day, once the day sheet is up       → everyone
-//   MERCH NUMBERS        a night's merch number arrives / changes → phones that asked
-//   DAY-OFF POLL         a poll goes up → everyone; 2 hours before it closes
-//                        (noon the day before) → everyone who hasn't voted
+//   LOAD IN              10 min before the day sheet's load in    -> Crew + All
+//   SHOW TIME            30 min before our band's set             -> Artist + All
+//   DAY SHEET AVAILABLE  show day, once the day sheet is up       -> everyone
+//   MERCH NUMBERS        a night's merch number arrives / changes -> phones that asked
+//   DAY-OFF POLL         a poll goes up -> everyone; 2 hours before it closes
+//                        (noon the day before) -> everyone who hasn't voted
 //   GAME BALL            the first show, every 7 days after, and the last
 //                        show: a vote opens that day (everyone), closes at
 //                        noon the next day, and the winner is announced
@@ -109,9 +109,9 @@ function addDays(ymd: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/* "6:00PM", "6:30 pm", "18:30", "6" → minutes past midnight. A bare hour
+/* "6:00PM", "6:30 pm", "18:30", "6" -> minutes past midnight. A bare hour
    without AM/PM (an import, say) is read the way a show day runs: a set is
-   always afternoon or night; a load in at 8-11 is morning. TBA → null. */
+   always afternoon or night; a load in at 8-11 is morning. TBA -> null. */
 function minutesOf(v: unknown, morningLoadIn = false): number | null {
   const t = String(v ?? "").trim();
   const m = /^(\d{1,2})(?:[:.]?(\d{2}))?\s*(?:([ap])\.?\s*m?\.?)?$/i.exec(t);
@@ -362,11 +362,14 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
   return sent;
 }
 
-function senderOf(req: Request): string {
+/* Who is asking: the server checks the sign-in itself (getUser), not only the
+   gateway's "Verify JWT" switch, so a token nobody signed is never trusted. */
+async function senderOf(req: Request): Promise<string> {
   try {
     const jwt = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-    const b64 = jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return String(JSON.parse(atob(b64 + "===".slice((b64.length + 3) % 4))).sub ?? "");
+    if (!jwt) return "";
+    const { data, error } = await admin.auth.getUser(jwt);
+    return error || !data?.user ? "" : String(data.user.id);
   } catch { return ""; }
 }
 
@@ -383,7 +386,7 @@ Deno.serve(async (req) => {
     if (ok.data !== true) return reply(401, { error: "bad_key" });
   } else {
     // A member nudging their own tour (right after posting a day sheet).
-    const uid = senderOf(req);
+    const uid = await senderOf(req);
     const tourId = String(body.tourId ?? "");
     if (!uid || !tourId) return reply(401, { error: "not_signed_in" });
     const { data: t } = await admin.from("tours").select("owner_id").eq("id", tourId).maybeSingle();

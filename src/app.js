@@ -3979,7 +3979,8 @@
     var people = function (list, kind) {
       return [
         list.length ? h('ul', { class: 'tour-list rows vp-list am-list' }, list.map(memberRow))
-          : unclaimed ? emptyState('Nobody runs this page yet', 'Once ' + card.name + ' claims it, their ' + (kind === 'band' ? 'members' : 'crew') + ' show up here.')
+          : unclaimed ? emptyState('Nobody runs this page yet', kind === 'band' ? 'Once ' + card.name + ' claims it, their Members show up here.'
+              : 'Crew who ask to be listed show up here. Whoever claims the page can keep them or take them off.')
           : emptyState(kind === 'band' ? 'No members yet' : 'No crew yet',
               manage ? 'Search for their Greenroom account to add them.' : card.name + ' hasn\u2019t added anyone here yet.'),
         manage ? h('div', { class: 'am-more' },
@@ -3999,12 +4000,15 @@
     var canSay = !!(meRow && meRow.kind === 'crew' && meRow.endorsed && creditsOn() && B.tourClaims && B.addTourCredit);
     var stand = canSay ? tourClaims(id) : null;
     if (stand && stand.d && stand.d.crew === false) canSay = false;
-    var sayLine = function (name) {
-      return canSay && name ? tourClaimLine(id, card.name, name, meRow.role || (stand.d && stand.d.role) || '') : null;
+    // (fest: a festival's row says "I played this festival" (Devin, 2026-10-15: festivals are their own thing).
+    // On a page nobody runs, what is said is confirmed at once (0147), and the sheet says so.)
+    var sayLine = function (name, fest) {
+      return canSay && name ? tourClaimLine(id, card.name, name, meRow.role || (stand.d && stand.d.role) || '',
+        { fest: !!fest, free: !!unclaimed }) : null;
     };
     var tourRows = G.tourTimeline(tours, pastTours, G.tourToday()).map(function (r) {
       var t = r.tour;
-      if (!r.own) return historyTourRow(id, r, t.kind === 'shows' ? null : sayLine(r.name));
+      if (!r.own) return historyTourRow(id, r, t.kind === 'shows' ? null : sayLine(r.name, t.kind === 'festival'));
       // A tour made in the app stands in for the archive's tour of the same dates (G.tourTimeline lists it once):
       // the button speaks for that tour, by the name the archive has it under. It is under the row, and in the
       // sheet the row opens.
@@ -4110,6 +4114,8 @@
       manage ? creditQueueCards(id) : null,
       // And whoever is asking to be listed as a member or as crew.
       manage ? artistRequestCards(id, card.name) : null,
+      // And whoever joined while nobody ran the page, until each is kept or taken off (0147).
+      manage ? joinedCards(id) : null,
       // For a Greenroom admin: whoever is asking to run this page.
       unclaimed ? claimQueueCards(id) : null,
       h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Members', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
@@ -4294,13 +4300,16 @@
       || { name: name, state: '', role: '' };
   }
   // The line under a tour on the artist's page: the button, or where it stands.
-  function tourClaimLine(artistId, artist, name, myRole) {
+  // o: { fest: a festival's row ("I played this festival"), free: nobody runs the page (confirmed at once) }.
+  function tourClaimLine(artistId, artist, name, myRole, o) {
     var st = tourClaimOf(artistId, name);
     if (!st) return null;
+    o = o || {};
     var as = st.role ? ' · ' + st.role : '';
+    var said = o.fest ? 'I played this festival' : 'I was on this tour';
     // (part: only some of its nights are theirs so far, one festival day of it, say. The button stays, so the whole tour can still be said.)
     var more = st.part ? h('button', { class: 'am-endorse', type: 'button',
-      onclick: function (e) { e.stopPropagation(); openTourClaim(artistId, artist, name, st.role || myRole); } }, 'I was on this tour') : null;
+      onclick: function (e) { e.stopPropagation(); openTourClaim(artistId, artist, name, st.role || myRole, o); } }, said) : null;
     if (st.state === 'approved') {
       return h('p', { class: 'tn-with tn-say' },
         h('span', { class: 'am-endorsed', style: 'margin-left:0' }, icon('check', 14), st.part ? ' Some of it is on your profile' : ' On your profile'), as, more);
@@ -4308,16 +4317,19 @@
     if (st.state === 'pending') return h('p', { class: 'tn-with tn-say' }, 'Waiting on ' + artist + as, more);
     return h('p', { class: 'tn-with tn-say' },
       h('button', { class: 'am-endorse', type: 'button', style: 'margin-left:0',
-        onclick: function (e) { e.stopPropagation(); openTourClaim(artistId, artist, name, st.role || myRole); } }, 'I was on this tour'),
+        onclick: function (e) { e.stopPropagation(); openTourClaim(artistId, artist, name, st.role || myRole, o); } }, said),
       st.state === 'declined' ? ' ' + artist + ' sent this one back. You can send it again.' : null);
   }
-  // "What did you do on this tour?": the roles they have with the artist come ticked; one button sends it.
-  function openTourClaim(artistId, artist, name, myRole) {
+  // "What did you do on this tour?" (on a festival's row, "What did you do at this festival?"): the roles they
+  // have with the artist come ticked; one button sends it. o as tourClaimLine's.
+  function openTourClaim(artistId, artist, name, myRole, o) {
     var B = window.GR_BACKEND, busy = false;
+    o = o || {};
+    var fest = !!o.fest;
     openSheet(function () {
-      var send = h('button', { class: 'btn primary block', type: 'button' }, 'Send to ' + artist);
+      var send = h('button', { class: 'btn primary block', type: 'button' }, o.free ? 'Add to my profile' : 'Send to ' + artist);
       var said = rolesSaid('');
-      var pick = roleChoice(askCrewRoles(), myRole, function () { ready(); }, 'Your roles on ' + name);
+      var pick = roleChoice(askCrewRoles(), myRole, function () { ready(); }, (fest ? 'Your roles at ' : 'Your roles on ') + name);
       function ready() { var v = pick.value(); said.set(v); send.disabled = busy || !v; }
       send.addEventListener('click', async function () {
         var role = pick.value();
@@ -4345,20 +4357,23 @@
         if (B.uid) cardOf(B.uid(), true);
         closeSheet();
         toast(out.covered ? 'That one is already with ' + artist + '.'
+          : out.auto && out.unclaimed ? name + ' is on your profile. Whoever claims ' + artist + '’s page will see it and can keep it or take it off.'
           : out.auto ? name + ' is on your profile.'
-          : 'Sent. Once ' + artist + ' approves, it is on your profile.');
+          : 'Sent. Once ' + artist + ' approves, it is on your profile.', out.unclaimed ? 6000 : 0);
         render(true);
       });
       ready();
       return [
-        h('h2', { class: 'sh-title' }, 'What did you do on this tour?'),
-        h('p', { class: 'sh-sub' }, name + '. It goes to ' + artist + ' to approve, with what you have already confirmed. Nothing you have is replaced.'),
-        h('p', { class: 'field-label aq-q' }, 'Your role on this tour', said.node),
+        h('h2', { class: 'sh-title' }, fest ? 'What did you do at this festival?' : 'What did you do on this tour?'),
+        h('p', { class: 'sh-sub' }, name + '. ' + (o.free
+          ? 'Nobody runs ' + artist + '’s page yet, so it goes on your profile now, with what you have already confirmed. Whoever claims the page will see it and can keep it or take it off.'
+          : 'It goes to ' + artist + ' to approve, with what you have already confirmed.') + ' Nothing you have is replaced.'),
+        h('p', { class: 'field-label aq-q' }, fest ? 'Your role at this festival' : 'Your role on this tour', said.node),
         pick.nodes,
         h('div', { class: 'stack' }, send,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
       ];
-    }, { label: 'I was on this tour' });
+    }, { label: fest ? 'I played this festival' : 'I was on this tour' });
   }
   /* Your tours with an artist, once any are confirmed or waiting: a list to
      read, not a thing to do. Each tour with the role said for it; one quiet
@@ -4388,7 +4403,7 @@
         fresh.length ? h('div', { class: 'ledger' }, fresh.map(function (g) { return line(g, 'waiting'); }))
           : pend.length ? h('p', { class: 'note' }, d.pendingAll ? 'ALL TOURS, every show.' : 'A change to what is confirmed above.') : null,
         a.state === 'approved' && a.declinedAt ? h('p', { class: 'note' }, artist + ' sent back the last thing you added. What is confirmed stays.') : null,
-        h('p', { class: 'note' }, 'Add another from ' + artist + '’s page: open a tour and tap I was on this tour.'),
+        h('p', { class: 'note' }, 'Add another from ' + artist + '’s page: tap I was on this tour under a tour, or I played this festival under a festival.'),
         setlistCredit(d.url)
       ]);
     }
@@ -4647,7 +4662,8 @@
         h('div', { class: 'stack' },
           h('button', { class: 'btn primary block', type: 'button', onclick: function () {
             confirmSheet({ title: 'Give ' + x.artist + ' to ' + (x.name || 'them') + '?',
-              body: 'They\u2019ll run the page: its photo, bio, members, crew and tour history. It gets marked verified.',
+              body: 'They\u2019ll run the page: its photo, bio, members, crew and tour history. It gets marked verified. ' +
+                'Anyone who joined as crew while nobody ran it is theirs to keep or take off.',
               action: 'Approve', onConfirm: function () { return answer(true); } });
           } }, 'Approve'),
           h('button', { class: 'btn danger block', type: 'button', onclick: function () { answer(false); } }, 'Decline'),
@@ -4726,8 +4742,118 @@
      profile beside the other things waiting on your yes. */
   function artistAsks(fresh) {
     var B = window.GR_BACKEND;
+    // (Asked for with these, wherever these are: the people who joined a page before you claimed it.)
+    joinedAsks(fresh);
     if (!socialOn() || !B || typeof B.artistRequestQueue !== 'function') return NO_ANSWER;
     return kept('aq:all', function () { return B.artistRequestQueue(null); }, fresh);
+  }
+  /* People who joined a page before you claimed it (Devin, 2026-10-15: "When the page is claimed by that
+     artist they should be prompted with all the people who have requests to be crew as well as tours").
+     While nobody ran the page, crew who asked were listed at once and their tours confirmed at once (0147).
+     Whoever runs it now answers for each one: Keep, or Take off. Asked for with the other things waiting on
+     your yes (it rides on artistAsks), and held under an 'aq:' key so a poke asks for it again. */
+  function joinedAsks(fresh) {
+    var B = window.GR_BACKEND;
+    if (!socialOn() || !B || typeof B.unclaimedJoins !== 'function') return NO_ANSWER;
+    return kept('aq:joined', function () { return B.unclaimedJoins(null); }, fresh);
+  }
+  // The people waiting on an answer, page by page: [{ artistId, artist, people: [...] }].
+  function joinedPages(artistId) {
+    var list = joinedAsks().val, by = {}, out = [];
+    (Array.isArray(list) ? list : []).forEach(function (x) {
+      if (!x || !x.userId || !x.artistId || (artistId && x.artistId !== artistId)) return;
+      if (!by[x.artistId]) { by[x.artistId] = { artistId: x.artistId, artist: x.artist || 'your page', people: [] }; out.push(by[x.artistId]); }
+      by[x.artistId].people.push(x);
+    });
+    return out;
+  }
+  function joinedTitle(artist) { return 'People who joined ' + artist + ' before you claimed it'; }
+  // One card for each page you run that has people to answer for (artistId: that page only).
+  function joinedCards(artistId) {
+    var pages = joinedPages(artistId);
+    if (!pages.length) return null;
+    return h('div', { class: 'tc-asks' }, pages.map(function (pg) {
+      return h('button', { class: 'tc-ask on', type: 'button', onclick: function () { openJoined(pg.artistId, pg.artist); } },
+        h('span', { class: 'tc-ask-t' }, joinedTitle(pg.artist) + ' · ' + plural(pg.people.length, 'person').replace('persons', 'people')),
+        icon('chevron', 16));
+    }));
+  }
+  /* The prompt: each person with their roles and the tours they confirmed, and Keep or Take off. Take off asks
+     twice, as taking someone off does. It stays until each one is answered; answered, the person's phone is
+     told. */
+  function openJoined(artistId, artist) {
+    var B = window.GR_BACKEND, busy = {}, armed = {}, done = {};
+    if (!B || typeof B.answerUnclaimedJoin !== 'function') return;
+    var host = h('div', { class: 'tc-host' });
+    function tourLine(g) {
+      return h('div', { class: 'row' },
+        h('div', { class: 'row-label' }, G.creditGroupName(g),
+          h('span', { class: 'hint' }, [g.year ? '' : tourSpan(g.first, g.last),
+            G.num(g.n) >= G.num(g.total) ? (g.year ? 'all of them' : 'entire tour') : g.n + ' of ' + g.total + ' shows'].filter(Boolean).join(' · ')),
+          g.role ? h('span', { class: 'hint', style: 'overflow-wrap:anywhere' }, 'Role: ' + g.role) : null),
+        h('span', { class: 'amt num' }, plural(G.num(g.n), 'show')));
+    }
+    async function answer(x, keep) {
+      var first = String(x.name || 'They').split(' ')[0];
+      if (busy[x.userId]) return;
+      if (!keep && !armed[x.userId]) { armed[x.userId] = true; draw(); return; }
+      busy[x.userId] = true; draw();
+      var out = null, bad = null;
+      try { out = await B.answerUnclaimedJoin(artistId, x.userId, keep); } catch (e) { bad = e; }
+      busy[x.userId] = false; armed[x.userId] = false;
+      if (!out) { draw(); saveFailed('request', bad); return; }
+      done[x.userId] = true;
+      // Answered: the cards, the page's own lists and the person's page are read again.
+      joinedAsks(true); actOf(artistId, true); cardOf(x.userId, true);
+      S.creditQueue = null;
+      toast(out.ok === false ? 'Already answered.'
+        : keep ? first + ' stays on ' + artist + '.'
+        : x.listed ? first + ' is off ' + artist + '. Their tours there are taken back.'
+        : first + '\u2019s tours on ' + artist + ' are taken back.');
+      if (!people().length) closeSheet();
+      else draw();
+      render(true);
+    }
+    function people() {
+      var pg = joinedPages(artistId)[0];
+      return (pg ? pg.people : []).filter(function (x) { return !done[x.userId]; });
+    }
+    function draw() {
+      var list = people();
+      if (!list.length) { fillEl(host, h('p', { class: 'note' }, joinedAsks().at ? 'Everyone here has been answered.' : 'Loading…')); return; }
+      fillEl(host, list.map(function (x) {
+        var name = x.name || 'Someone', tours = Array.isArray(x.list) ? x.list : [];
+        var roles = String(x.role || '').trim();
+        return h('div', { class: 'ledger cq-card' },
+          h('div', { class: 'row' }, personPhoto({ name: x.name, avatar: x.avatar }, 'xs'),
+            h('div', { class: 'row-label' }, name,
+              h('span', { class: 'hint' }, [x.handle ? '@' + x.handle : '', 'Crew'].filter(Boolean).join(' · ')))),
+          h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'Their roles with ' + artist,
+            h('span', { class: 'hint cq-said', style: 'overflow-wrap:anywhere' }, roles || 'None given'))),
+          tours.length ? tours.map(tourLine)
+            : h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'Tours', h('span', { class: 'hint cq-said' }, 'None confirmed'))),
+          tours.length ? h('div', { class: 'row total' }, h('span', null, tallyText(x)), h('strong', { class: 'amt num' }, plural(G.num(x.shows), 'show'))) : null,
+          h('div', { class: 'stack', style: 'margin-top:10px' },
+            h('button', { class: 'btn primary block', type: 'button', disabled: busy[x.userId] || null,
+              onclick: function () { answer(x, true); } }, 'Keep'),
+            h('button', { class: 'btn danger block', type: 'button', disabled: busy[x.userId] || null,
+              onclick: function () { answer(x, false); } },
+              armed[x.userId] ? 'Take ' + name.split(' ')[0] + ' off ' + artist + '?' : 'Take off')));
+      }));
+    }
+    draw();
+    joinedAsks(true);
+    openSheet(function (panel) {
+      panel.classList.add('rv-sheet');
+      return [h('h2', { class: 'sh-title' }, joinedTitle(artist)),
+        h('p', { class: 'sh-sub' }, 'Nobody ran ' + artist + '’s page when they asked, so Greenroom listed them as crew and put the tours they said on their page. ' +
+          'Keep them, and their listing and tours stand. Take them off, and they come off the page with the tours they confirmed here.'),
+        host,
+        h('div', { class: 'stack tc-foot' }, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))];
+    }, { label: joinedTitle(artist) });
+    // The answer may land while the sheet is open: draw it then.
+    var c = joinedAsks();
+    if (c && c.asking) { var t0 = Date.now(), wait = function () { if (!host.isConnected) return; if (!c.asking || Date.now() - t0 > 15000) { draw(); return; } setTimeout(wait, 250); }; setTimeout(wait, 250); }
   }
   function artistAskCards() {
     var list = artistAsks().val;
@@ -4897,6 +5023,12 @@
   // One place for what the server can say back to "list me": it says it, has
   // the lists that show it read again, and answers 'sent', 'stop' (no use
   // asking this again now) or 'retry'.
+  // Crew asking a page nobody runs are listed at once (Devin, 2026-10-15: "if no one has claimed an artist page
+  // the request by crew should be accepted until someone claims a page"). This is what they are told.
+  function unclaimedListedLine(artist) {
+    return artist + '’s page isn’t run by anyone yet, so you’re listed for now. ' +
+      'Whoever claims the page will see you and can keep you or take you off.';
+  }
   async function sendArtistRequest(artistId, artist, kind, role) {
     var B = window.GR_BACKEND, r = null;
     if (!B || typeof B.requestArtist !== 'function') { toast('Couldn’t send that. Try again.'); return 'retry'; }
@@ -4907,8 +5039,10 @@
     if (S.actCards && S.actCards[artistId]) actOf(artistId, true);
     if (!why) {
       keepCardRole(role);
-      // (You run that page: there is nobody to ask, you are simply on it.)
-      if (r.listed) { myActs(true); staleCards(); toast('You are on ' + artist + '’s page.'); }
+      // (You run that page: there is nobody to ask, you are simply on it. Or nobody runs it and you asked as
+      // crew (0147): you are listed now, and whoever claims the page keeps you or takes you off.)
+      if (r.listed && r.unclaimed) { myActs(true); staleCards(); toast(unclaimedListedLine(artist), 7000); }
+      else if (r.listed) { myActs(true); staleCards(); toast('You are on ' + artist + '’s page.'); }
       else toast('Request sent. It waits on ' + artist + '’s page for an answer.');
       return 'sent';
     }
@@ -4987,9 +5121,18 @@
       return;
     }
     var f = { kind: 'band', busy: false }, pick = null;
+    // What happens to the ask: on a page nobody runs a Member's waits for whoever claims it, and crew are listed
+    // at once (0147), for whoever claims it to keep or take off.
+    var howLine = function () {
+      return 'A Member is in ' + card.name + '. Crew work for ' + card.name + ', hired players on stage too. ' +
+        (!card.unclaimed ? 'Whoever runs the page says yes or no.'
+          : f.kind === 'crew' ? 'Nobody runs this page yet, so crew are listed at once. Whoever claims it will see you and can keep you or take you off.'
+          : 'Nobody runs this page yet, so your request waits until someone does.');
+    };
     openSheet(function () {
       var host = h('div', { class: 'aq-roles' });
-      var send = h('button', { class: 'btn primary block', type: 'button' }, 'Send request');
+      var sub = h('p', { class: 'sh-sub' }, howLine());
+      var send = h('button', { class: 'btn primary block', type: 'button' }, f.kind === 'crew' && card.unclaimed ? 'List me as crew' : 'Send request');
       // What is ticked reads back inside the question, before Send.
       var said = rolesSaid('');
       var ready = function () { var v = pick ? pick.value() : ''; said.set(v); send.disabled = f.busy || !v; };
@@ -4997,6 +5140,8 @@
         pick = roleChoice(f.kind === 'band' ? G.BAND_ROLES : askCrewRoles(), '', ready, 'Your roles with ' + card.name);
         fillEl(host, [h('p', { class: 'field-label aq-q' }, f.kind === 'band' ? 'What is your role in ' + card.name + '?' : 'Which of these describe your role with ' + card.name + '?',
           said.node), pick.nodes]);
+        sub.textContent = howLine();
+        send.textContent = f.kind === 'crew' && card.unclaimed ? 'List me as crew' : 'Send request';
         ready();
       };
       send.addEventListener('click', async function () {
@@ -5010,8 +5155,7 @@
       draw();
       return [
         h('h2', { class: 'sh-title' }, 'Ask ' + card.name + ' to list you'),
-        h('p', { class: 'sh-sub' }, 'A Member is in ' + card.name + '. Crew work for ' + card.name + ', hired players on stage too. ' +
-          (card.unclaimed ? 'Nobody runs this page yet, so your request waits until someone does.' : 'Whoever runs the page says yes or no.')),
+        sub,
         h('div', { class: 'aq-seg' }, segmented(['Member', 'Crew'], 0, function (i) { f.kind = i === 0 ? 'band' : 'crew'; draw(); }, 'Member or crew')),
         host,
         h('div', { class: 'stack' }, send,
@@ -5784,6 +5928,13 @@
     var host = h('div', { class: 'tc-host' }), foot = h('div', { class: 'stack tc-foot' });
     var title = h('h2', { class: 'sh-title' }, 'Confirm your tours');
     var st = { d: null, failed: false, sel: { all: false, picks: {} }, shows: {}, busy: false, armed: false };
+    // A page nobody runs confirms at once (0147); whoever claims it sees what was confirmed and keeps it or takes it off.
+    var pageFree = function () { var c = actOf(artistId); return !!(c && c.card && c.card.unclaimed); };
+    var subLine = function () {
+      return pageFree() ? 'Tick what you were on. Nobody runs this artist’s page yet, so it goes on your page now. Whoever claims the page will see it and can keep it or take it off.'
+        : 'Tick what you were on. Nothing shows on your page until the artist says yes.';
+    };
+    var sub = h('p', { class: 'sh-sub' }, subLine());
     function load() {
       B.creditTours(artistId).then(function (d) {
         st.d = d; st.failed = !d;
@@ -5868,6 +6019,7 @@
     }
     function draw() {
       var d = st.d;
+      sub.textContent = subLine();
       if (!d) {
         fillEl(host, h('p', { class: 'note' }, st.failed ? 'Couldn’t open this just now. Close and try again.' : 'Loading…'));
         fillEl(foot, h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'));
@@ -5905,7 +6057,7 @@
       fillEl(foot, [
         h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || !t.shows || null, onclick: send },
           st.busy ? 'Sending…' : !t.shows ? 'Tick the tours you were on'
-            : (d.owner ? 'Confirm · ' : 'Send to ' + d.artist + ' · ') + tallyText(t)),
+            : (d.owner || pageFree() ? 'Confirm · ' : 'Send to ' + d.artist + ' · ') + tallyText(t)),
         mine && (mine.approved || mine.pending) ? h('button', { class: 'linkbtn rv-aside tc-off', type: 'button', disabled: st.busy || null,
           onclick: withdraw }, st.armed ? 'Take them off for good?' : 'Take my tours with ' + d.artist + ' off my page') : null,
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now')
@@ -5957,9 +6109,7 @@
     draw(); load();
     openSheet(function (panel) {
       panel.classList.add('rv-sheet');
-      return [title,
-        h('p', { class: 'sh-sub' }, 'Tick what you were on. Nothing shows on your page until the artist says yes.'),
-        host, foot];
+      return [title, sub, host, foot];
     }, { label: 'Confirm your tours' });
   }
   /* The artist's side: what someone says they worked, laid out, and the yes
@@ -8627,7 +8777,8 @@
       keepCardRole(role);
       if (r.listed) myActs(true);
       // (The roles they ticked are said back whole; this line wraps.)
-      frSent(r.listed ? { title: 'You’re listed', sub: 'You’re listed on ' + p.name + ' as ' + role + '.' }
+      frSent(r.listed && r.unclaimed ? { title: 'You’re listed', sub: unclaimedListedLine(p.name) }
+        : r.listed ? { title: 'You’re listed', sub: 'You’re listed on ' + p.name + ' as ' + role + '.' }
         : { title: 'Request sent', sub: 'You asked ' + p.name + ' to list you as ' + role + '. ' + (p.unclaimed
             ? 'Nobody runs ' + p.name + '’s page yet, so nobody can answer for now. It shows as pending on your Artists tab.'
             : p.name + ' can see your request on their page. If there’s no answer in 30 days it runs out and you can ask again. ' +
@@ -9519,7 +9670,7 @@
       })),
       // A member of one of your artists that someone asked to let go: it waits on your answer, on every tab.
       // So does anyone asking to be listed on a page you run (the same cards that page shows when you run it).
-      h('div', { class: 'pt-body', role: 'tabpanel', style: S.pfMinH > 0 ? 'min-height:' + S.pfMinH + 'px' : null }, memberAskCards(), artistAskCards(), body)
+      h('div', { class: 'pt-body', role: 'tabpanel', style: S.pfMinH > 0 ? 'min-height:' + S.pfMinH + 'px' : null }, memberAskCards(), artistAskCards(), joinedCards(null), body)
     ];
   }
   // Back at the top of the profile: the room kept for a tab switch is given up,
@@ -15462,6 +15613,14 @@
           sub: (x.all ? 'All tours \u00b7 ' : '') + tallyText(x), open: function () { openCreditReview(x); } });
       });
     }
+    // For an artist page you claimed: the people who joined it before you did, until each is kept or taken off.
+    // (One card a page; it comes back while anyone there is still to answer, and with each new person.)
+    joinedPages(null).forEach(function (pg) {
+      var newest = pg.people.reduce(function (m, x) { return Math.max(m, when(x.at)); }, 0);
+      tasks.push({ key: 'joined:' + pg.artistId + ':' + pg.people.map(function (x) { return x.userId; }).sort().join(','), standing: true, at: newest,
+        emoji: '👋', title: joinedTitle(pg.artist), main: plural(pg.people.length, 'person').replace('persons', 'people') + ' · ' + pg.artist,
+        sub: 'Keep them or take them off', open: function () { openJoined(pg.artistId, pg.artist); } });
+    });
     // For a Greenroom admin: people asking to run an artist's page.
     (claimQ().list || []).forEach(function (x) {
       tasks.push({ key: 'claim:' + x.id + ':' + (x.at || ''), standing: true, at: when(x.at), emoji: '\ud83c\udfa4', title: 'Page claim',

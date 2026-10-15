@@ -1215,6 +1215,25 @@
       if (q.error) throw mapError(q.error);
       return isObj(q.data) ? q.data : { ok: false };
     },
+    /* ---- A page nobody ran (0147). Crew who asked it to list them were listed
+       at once (requestArtist answers { ok, listed, unclaimed }), and tours they
+       claimed there were confirmed at once (submitCredits / addTourCredit
+       answer { ok, auto, unclaimed }). Whoever runs the page now answers for
+       each: unclaimedJoins lists them, on one page you run or (no id) on every
+       one, each { artistId, artist, userId, name, handle, avatar, kind, role,
+       listed, onPage, at, list: the tours confirmed there, tour by tour, tours,
+       shows }; answerUnclaimedJoin keeps them (true) or takes them off (false),
+       { ok, kept } or { ok: false, why: 'gone' }. ---- */
+    unclaimedJoins: async function (artistId) {
+      var q = await sb.rpc('unclaimed_join_queue', { a_id: artistId || null });
+      if (q.error) throw mapError(q.error);
+      return Array.isArray(q.data) ? q.data : [];
+    },
+    answerUnclaimedJoin: async function (artistId, userId, keep) {
+      var q = await sb.rpc('answer_unclaimed_join', { a_id: artistId, u_id: userId, keep: !!keep });
+      if (q.error) throw mapError(q.error);
+      return isObj(q.data) ? q.data : { ok: false };
+    },
     /* ---- Fans: the nights of one tour (or festival entry) on an artist's
        history, each with whether you were there, and saying you were. Only a
        night already played can be marked. ---- */
@@ -2693,6 +2712,9 @@
     } catch (e) { return null; }
   }
   // What the server said about a password it would not take.
+  // A new password is 8 characters or more (Supabase checks the same number).
+  // Only a password being made: signing in with an older, shorter one still works.
+  var PASS_MIN = 8;
   function sgPassSay(msg) {
     var n = /at least (\d+)/i.exec(msg);
     if (/weak|easy to guess|pwned|compromised/i.test(msg)) return 'That password is too easy to guess. Pick a different one.';
@@ -3054,14 +3076,14 @@
     var ui = sgScreen(host, {
       first: nav.first, onBack: nav.back,
       title: 'Create a password',
-      sub: 'At least 6 letters or numbers. Something others can’t guess.',
+      sub: 'At least 8 letters or numbers. Something others can’t guess.',
       fields: [{ label: 'Password', type: 'password', value: a.pass, attrs: { autocomplete: 'new-password',
         autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' } }],
       next: nav.label,
-      onInput: function (u, inp) { a.pass = String(inp.value || ''); ui.ok(0, a.pass.length >= 6); },
+      onInput: function (u, inp) { a.pass = String(inp.value || ''); ui.ok(0, a.pass.length >= PASS_MIN); },
       onNext: function () {
         a.pass = String(ui.inputs[0].value || '');
-        if (a.pass.length < 6) { ui.say('Password needs at least 6 characters.'); ui.inputs[0].focus(); return; }
+        if (a.pass.length < PASS_MIN) { ui.say('Password needs at least ' + PASS_MIN + ' characters.'); ui.inputs[0].focus(); return; }
         return nav.next(ui);
       }
     });
@@ -3078,7 +3100,7 @@
       who.value = nav.email;
       ui.form.insertBefore(who, ui.form.firstChild);
     }
-    ui.ok(0, a.pass.length >= 6);
+    ui.ok(0, a.pass.length >= PASS_MIN);
   }
 
   /* ---------------- The documents ----------------
@@ -4175,7 +4197,7 @@
         if (phoneI && phone.replace(/\D/g, '').length < 7) { errEl.textContent = 'Type a phone number the tour can reach you on.'; phoneI.focus(); return; }
         if (roleI && !tourRole) { errEl.textContent = 'Pick your role on the tour.'; wrap.querySelector('#gr-gate-role-btn').focus(); return; }
         if (email.indexOf('@') < 1) { errEl.textContent = 'Type your email address.'; emailI.focus(); return; }
-        if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
+        if (pass.length < (signin ? 1 : PASS_MIN)) { errEl.textContent = signin ? 'Type your password.' : 'Password needs at least ' + PASS_MIN + ' characters.'; passI.focus(); return; }
         btn.disabled = true;
         try {
           // With a limit (sgLimit): no answer in time lands in the catch below, and the button comes back.
@@ -4208,7 +4230,7 @@
           } else if (/not confirmed/i.test(msg)) {
             errEl.textContent = 'That account isn\u2019t set up yet. Tap \u201cForgot password?\u201d below and we\u2019ll email you a link to finish.';
           } else if (/at least|password/i.test(msg)) {
-            errEl.textContent = 'Pick a longer password (6 characters or more).';
+            errEl.textContent = sgPassSay(msg);
           } else {
             errEl.textContent = 'Couldn’t reach the server. Check your connection and try again.';
           }
@@ -4555,7 +4577,7 @@
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
       var pass = String(passI.value || '');
-      if (pass.length < 6) { errEl.textContent = 'Password needs at least 6 characters.'; passI.focus(); return; }
+      if (pass.length < PASS_MIN) { errEl.textContent = 'Password needs at least ' + PASS_MIN + ' characters.'; passI.focus(); return; }
       form.querySelector('button').disabled = true;
       try {
         var q = await sb.auth.updateUser({ password: pass });
@@ -4572,6 +4594,8 @@
         errEl.textContent = /different from the old/i.test(String(e2 && e2.message || ''))
           ? (must ? 'Pick a different password from the one this account started with.'
                   : 'That\u2019s the password you already had. Pick a new one, or just keep going.')
+          : /password/i.test(String(e2 && e2.message || '')) && /at least|short|weak|characters|guess/i.test(String(e2 && e2.message || ''))
+          ? sgPassSay(String(e2.message))
           : 'Couldn\u2019t save it. Try again.';
       }
     });

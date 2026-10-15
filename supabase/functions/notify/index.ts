@@ -26,15 +26,21 @@ const admin = createClient(
 
 interface NotifyBody { tourId?: string; type?: string; data?: Record<string, unknown> }
 
+/* What a phone sends is cut to size here, so one sender cannot push a page of
+   text (or a ticket count of a million) to everyone on the tour. */
+const cut = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+
 function message(type: string, d: Record<string, unknown>, tourName: string): { title: string; body: string } | null {
-  const city = String(d.city ?? "");
+  const city = cut(d.city, 60);
   switch (type) {
-    case "guest":
-      return { title: tourName, body: `${d.name ?? "Someone"} was added to the ${city || "show"} guest list (${d.tickets ?? 1} ticket${Number(d.tickets ?? 1) === 1 ? "" : "s"})` };
+    case "guest": {
+      const n = Math.min(99, Math.max(1, Math.floor(Number(d.tickets ?? 1)) || 1));
+      return { title: tourName, body: `${cut(d.name, 60) || "Someone"} was added to the ${city || "show"} guest list (${n} ticket${n === 1 ? "" : "s"})` };
+    }
     case "green":
-      return { title: tourName, body: `You're in the green — ${d.net ?? ""} and climbing 🎉` };
+      return { title: tourName, body: `You're in the green: ${cut(d.net, 24)} and climbing \u{1F389}` };
     case "merch":
-      return { title: tourName, body: `MERCH NUMBERS! ${city || "Tonight"}: ${d.amount ?? ""} in merch.` };
+      return { title: tourName, body: `MERCH NUMBERS. ${city || "Tonight"}: ${cut(d.amount, 24)} in merch.` };
     case "soldout":
       return { title: tourName, body: `${city || "Tonight"} is SOLD OUT` };
     case "alert": {
@@ -86,14 +92,15 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return reply(405, { error: "method_not_allowed" });
 
-  // Who's talking? Supabase already verified the JWT; read the subject.
+  // Who's talking? The server checks the sign-in itself (getUser), not only
+  // the gateway's "Verify JWT" switch, so a token nobody signed is never trusted.
   const jwt = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   let senderId = "";
   try {
-    // The token's middle is base64url: - and _ instead of + and /, and no
-    // padding. Plain atob throws on those, which turned nearly every sender away.
-    const b64 = jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    senderId = JSON.parse(atob(b64 + "===".slice((b64.length + 3) % 4))).sub ?? "";
+    if (jwt) {
+      const { data: who } = await admin.auth.getUser(jwt);
+      if (who?.user) senderId = String(who.user.id);
+    }
   } catch { /* fall through */ }
   if (!senderId) return reply(401, { error: "not_signed_in" });
 
@@ -123,7 +130,7 @@ Deno.serve(async (req) => {
     return reply(403, { error: "not_manager" });
   }
 
-  const tourName = String((tour.doc as Record<string, unknown>)?.name ?? "Greenroom");
+  const tourName = cut((tour.doc as Record<string, unknown>)?.name, 80) || "Greenroom";
   if (type === "request") {
     // The asker's own name, never one sent along with the request.
     const { data: prof } = await admin.from("profiles").select("full_name, username").eq("user_id", senderId).maybeSingle();
@@ -153,7 +160,9 @@ Deno.serve(async (req) => {
       if (prefs.soldout !== true) continue;
     } else if (type === "merch") {
       if (prefs.merchnums !== true) continue;
-    } else if (group !== "all") continue;   // guest list, in the green: ALL only
+    } else if (type === "green") {
+      // Only the tour's Managers get it (above), whatever group their phone is on.
+    } else if (group !== "all") continue;   // guest list: ALL only
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },

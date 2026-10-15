@@ -246,7 +246,7 @@ shim = r"""<script>
       var n = 0, role = '';
       if (claim.all) n = g.n;
       else (claim.picks || []).forEach(function (p) { if (p.key === g.key) { n = p.mode === 'shows' ? (p.shows || []).length : g.n; role = p.role || ''; } });
-      return n ? { key: g.key, name: g.name, year: g.year, total: g.n, n: n, first: g.first, last: g.last, role: role } : null;
+      return n ? { key: g.key, name: g.name, year: g.year, fest: !!g.fest, total: g.n, n: n, first: g.first, last: g.last, role: role } : null;
     }).filter(Boolean);
   }
   // "I was on this tour" (0146): the pretend archive's tour for a name the artist's page shows. A tour of the
@@ -263,7 +263,8 @@ shim = r"""<script>
     var hr = (H.histories || {})[artistId];
     var t = ((hr && hr.summary && hr.summary.toursList) || []).filter(function (x) { return x.kind !== 'shows' && String(x.name || '').trim().toLowerCase() === low; })[0];
     if (!t) return null;
-    g = { key: creditTourKey(t.name), name: t.name, year: false, n: t.n || 1, first: t.first || '2025-01-01', last: t.last || t.first || '2025-01-01' };
+    // (fest: a festival's entry. 0147: it is its own thing, listed as a festival on the profile and never counted as a tour.)
+    g = { key: creditTourKey(t.name), name: t.name, year: false, fest: t.kind === 'festival', n: t.n || 1, first: t.first || '2025-01-01', last: t.last || t.first || '2025-01-01' };
     CREDIT_TOURS.push(g);
     return g;
   }
@@ -274,7 +275,7 @@ shim = r"""<script>
   }
   function creditCount(claim) {
     var l = creditExpand(claim);
-    return { tours: l.filter(function (g) { return !g.year; }).length, shows: l.reduce(function (n, g) { return n + g.n; }, 0) };
+    return { tours: l.filter(function (g) { return !g.year && !g.fest; }).length, shows: l.reduce(function (n, g) { return n + g.n; }, 0) };
   }
   // What's approved for one person, across artists: the sums a profile card carries.
   function creditSums(uid) {
@@ -288,7 +289,9 @@ shim = r"""<script>
       creditExpand(rows[k].approved).forEach(function (g) {
         var y = parseInt(g.first.slice(0, 4), 10);
         if (!out.first || y < out.first) out.first = y;
-        if (!g.year) out.list.push({ artistId: aid, artist: iss ? iss.name : 'Artist', key: g.key, name: g.name, n: g.n, first: g.first, last: g.last, kind: 'tour', role: g.role || '' });
+        // (0147) A festival is listed as one, on its own, with its role; it is not one of their tours.
+        if (!g.year) out.list.push({ artistId: aid, artist: iss ? iss.name : 'Artist', key: g.fest ? '' : g.key, name: g.name, n: g.n, first: g.first, last: g.last,
+          kind: g.fest ? 'festival' : 'tour', role: g.role || '' });
       });
     });
     return out;
@@ -546,6 +549,29 @@ shim = r"""<script>
                                    As a Member the test person gets no ask to confirm tours: no row on the
                                    Artists tab and no Tasks card. (__harness.askMembers = true makes the fake
                                    database send the ask anyway, as it did before 0146: the app still shows none.)
+     UNCLAIMED PAGES AND FESTIVALS (0147):
+       A crew ask to a page nobody runs is accepted at once. Open Sleeping With Sirens (an unclaimed page: search
+       "sleeping"), Ask to be listed, Crew: the sheet says crew are listed at once and the button reads "List me
+       as crew"; sending it says "Sleeping With Sirens's page isn't run by anyone yet, so you're listed for now.
+       Whoever claims the page will see you and can keep you or take you off." The page's Crew tab lists the test
+       person, and so does their profile's Artists tab, endorsed. The same through the first run on a ?newcrew
+       phone (Crew, search "sleeping", the role, Send): the last screen says "You're listed" with those words.
+       A Member's ask (Ask to be listed, Member) still waits, as before. __harness.joined holds who joined how.
+       __harness.joinedBeforeClaim()   the page is then claimed: two crew joined Sleeping With Sirens while nobody
+                                   ran it (Ana Reyes, FOH engineer, with the whole Feel Tour confirmed; Brent Allen,
+                                   Backline tech, Driver, no tours), and the test person's claim on it is approved
+                                   by a Greenroom admin, so the page is theirs (a Promise of its id, 'pub1'). The
+                                   prompt "People who joined Sleeping With Sirens before you claimed it" shows at
+                                   the top of the profile, on the page itself (Manage) and as a Tasks card. It opens
+                                   each person with their roles and the tours they confirmed; Keep, or Take off
+                                   (tap twice). Kept, they stay on the page's Crew tab; taken off, they come off
+                                   it with their tours. The card stays until both are answered.
+                                   __harness.joinedAnswers holds each answer; __harness.joinedWhy = 'gone' makes
+                                   one come back as already answered.
+       A festival's row: crewOf() first, open I See Stars, Tours: "Aftershock 2025" (tagged festival) has
+       "I played this festival", which asks "What did you do at this festival?" ("Your role at this festival").
+       Send, then confirmTours(): the profile's Tours tab lists Aftershock 2025 as a festival, on its own, with
+       the role; it is not counted as a tour (the tours number on the pretend card goes up by tours only).
        Several roles, anywhere a role with an artist is asked (the first run with ?newcrew, "Ask to be
        listed" on an artist's page, the artist's Endorse / role sheet): tick up to six; what is ticked reads
        back inside the question; __harness.frCalls holds the line that was sent (roles joined with ", ").
@@ -639,6 +665,26 @@ shim = r"""<script>
       .concat([{ userId: 'u-devin', kind: 'band', role: 'Vocals', endorsed: true }]);
     window.__harness.poke('listing,credits');
     return a.id;
+  };
+  // A page nobody ran, claimed by the test person, with crew who joined before (see UNCLAIMED PAGES above).
+  window.__harness.joinedBeforeClaim = function () {
+    var H = window.__harness, g = ghostList().filter(function (x) { return x.id === 'pub1'; })[0];
+    if (!g || g.owner) return null;
+    H.ghostCrew = H.ghostCrew || {};
+    H.ghostCrew.pub1 = ((H.ghostCrew.pub1 || []).filter(function (m) { return m.userId !== 'u-ana' && m.userId !== 'u-brent'; }))
+      .concat([{ userId: 'u-ana', kind: 'crew', role: 'FOH engineer', endorsed: true },
+               { userId: 'u-brent', kind: 'crew', role: 'Backline tech, Driver', endorsed: true }]);
+    var ago = function (h) { return new Date(Date.now() - h * 36e5).toISOString(); };
+    H.joined = (H.joined || []).filter(function (j) { return j.artistId !== 'pub1' || j.userId === 'u-devin'; })
+      .concat([{ artistId: 'pub1', userId: 'u-ana', listed: true, at: ago(30) }, { artistId: 'pub1', userId: 'u-brent', listed: true, at: ago(5) }]);
+    // Ana said she was on the whole Feel Tour, and it went on her page at once.
+    var feel = creditTourByName('pub1', 'Feel Tour');
+    if (feel) creditStore()['pub1:u-ana'] = { approved: { picks: [{ key: feel.key, mode: 'all', role: 'FOH engineer' }], until: ymd(today) },
+      pending: null, submittedAt: ago(29), declinedAt: null };
+    // The test person's claim, approved by a Greenroom admin: the page is theirs, and the people come with it.
+    H.claims = (H.claims || []).filter(function (c) { return !(c.artistId === 'pub1' && c.userId === 'u-devin'); })
+      .concat([{ id: 'cl-joined', artistId: 'pub1', userId: 'u-devin', note: 'I sing in it.', link: '', role: 'Vocals', links: {}, code: 'GR-J01NED', status: 'pending', at: ago(1) }]);
+    return window.GR_BACKEND.decideClaim('cl-joined', true).then(function () { window.__harness.poke('listing,joined'); return 'pub1'; });
   };
   // A brand-new Crew account (see LIVE WITHOUT A RESTART above): set up before the app starts.
   var held = {};
@@ -2020,7 +2066,10 @@ shim = r"""<script>
         // Theirs now: it moves in with the pages the test user runs, history and all.
         H.ghosts = H.ghosts.filter(function (x) { return x.id !== g.id; });
         H.acts = H.acts || [];
-        H.acts.push({ id: g.id, handle: slug, name: g.name, avatar: '', bio: '', members: [], mbid: g.mbid, verified: true, about: g.about, country: g.country });
+        // (0147) Crew listed while nobody ran it come with it, still waiting on the new owner's answer (H.joined).
+        H.acts.push({ id: g.id, handle: slug, name: g.name, avatar: '', bio: '', mbid: g.mbid, verified: true, about: g.about, country: g.country,
+          members: ((H.ghostCrew || {})[g.id] || []).filter(function (m) { return m.userId !== 'u-devin'; }).map(function (m) { return Object.assign({}, m); }) });
+        H.joined = (H.joined || []).filter(function (j) { return !(j.artistId === g.id && j.userId === 'u-devin'); });
       } else { g.owner = c.userId; g.handle = slug; }
       return Promise.resolve({ ok: true });
     },
@@ -2129,6 +2178,19 @@ shim = r"""<script>
       if (a) {
         a.members = a.members.filter(function (m) { return m.userId !== 'u-devin'; }).concat([{ userId: 'u-devin', kind: k, role: r }]);
         return Promise.resolve({ ok: true, listed: true });
+      }
+      // (0147) Crew asking a page nobody runs are listed at once, endorsed, and written down for whoever claims it.
+      var gh = ghostList().filter(function (x) { return x.id === artistId; })[0];
+      if (gh && !gh.owner && k === 'crew') {
+        H.ghostCrew = H.ghostCrew || {};
+        if ((H.ghostCrew[gh.id] || []).some(function (m) { return m.userId === 'u-devin'; })) return Promise.resolve({ ok: false, why: 'listed' });
+        H.ghostCrew[gh.id] = (H.ghostCrew[gh.id] || []).concat([{ userId: 'u-devin', kind: 'crew', role: r, endorsed: true }]);
+        H.joined = (H.joined || []).concat([{ artistId: gh.id, userId: 'u-devin', listed: true, at: new Date().toISOString() }]);
+        H.artistRequests = H.artistRequests.filter(function (x) { return !(x.artistId === artistId && x.userId === 'u-devin'); });
+        H.devinActs = devinActs().filter(function (y) { return y.id !== gh.id; }).concat([
+          { id: gh.id, name: gh.name, handle: /^mb\./.test(gh.handle || '') ? '' : (gh.handle || ''), avatar: '', kind: 'crew', role: r, endorsed: true, eid: 'e-' + gh.id }]);
+        window.__harness.poke('listing,endorsement');
+        return Promise.resolve({ ok: true, listed: true, unclaimed: true });
       }
       // (Asking again replaces the ask that was waiting.)
       H.artistRequests = H.artistRequests.filter(function (x) { return !(x.artistId === artistId && x.userId === 'u-devin'); });
@@ -2417,6 +2479,41 @@ shim = r"""<script>
       if (accept) a.members = a.members.filter(function (m) { return m.userId !== userId; }).concat([{ userId: userId, kind: x.kind, role: x.role || '', endorsed: true }]);
       return Promise.resolve({ ok: true, accepted: !!accept });
     },
+    /* People who joined a page before the test user claimed it (0147). The notes are
+       kept in __harness.joined as { artistId, userId, listed, at }; only the pages the
+       test user runs are answered here, as live. Every answer is kept in
+       __harness.joinedAnswers as { artistId, userId, keep }. Keep lets the listing and
+       the tours stand; Take off takes the listing, the endorsement and the tours
+       confirmed there away. __harness.joinedWhy = 'gone' makes an answer come back
+       refused that way. */
+    unclaimedJoins: function (artistId) {
+      var H = window.__harness, P = window.GR_BACKEND.people, rows = creditStore();
+      var mine = (H.acts || []).filter(function (a) { return !a.notMine; });
+      return Promise.resolve((H.joined || []).filter(function (j) {
+        return j.userId !== 'u-devin' && (!artistId || j.artistId === artistId) && mine.some(function (a) { return a.id === j.artistId; });
+      }).map(function (j) {
+        var a = mine.filter(function (y) { return y.id === j.artistId; })[0], p = P[j.userId] || {};
+        var m = a.members.filter(function (y) { return y.userId === j.userId && !y.leftAt; })[0];
+        var row = rows[j.artistId + ':' + j.userId], c = row && row.approved ? creditCount(row.approved) : { tours: 0, shows: 0 };
+        return { artistId: a.id, artist: a.name, userId: j.userId, name: p.name || 'Someone', handle: p.handle || '', avatar: '',
+          kind: m ? m.kind : 'crew', role: m ? m.role || '' : '', listed: !!j.listed, onPage: !!m, at: j.at,
+          list: row && row.approved ? creditExpand(row.approved) : [], tours: c.tours, shows: c.shows };
+      }));
+    },
+    answerUnclaimedJoin: function (artistId, userId, keep) {
+      var H = window.__harness, a = (H.acts || []).filter(function (y) { return y.id === artistId; })[0];
+      H.joinedAnswers = (H.joinedAnswers || []).concat([{ artistId: artistId, userId: userId, keep: !!keep }]);
+      if (H.joinedWhy) return Promise.resolve({ ok: false, why: H.joinedWhy });
+      var j = (H.joined || []).filter(function (x) { return x.artistId === artistId && x.userId === userId; })[0];
+      if (!a || !j) return Promise.resolve({ ok: false, why: 'gone' });
+      H.joined = H.joined.filter(function (x) { return x !== j; });
+      if (!keep) {
+        delete creditStore()[artistId + ':' + userId];
+        if (j.listed) a.members = a.members.filter(function (m) { return m.userId !== userId; });
+      }
+      window.__harness.poke('listing');
+      return Promise.resolve({ ok: true, kept: !!keep });
+    },
     /* A fan's shows (0134). The nights are the ones tourNights pretends for
        any entry, plus one still to come (so the row with no button can be
        seen); the ones ticked are kept in __harness.attended as
@@ -2597,6 +2694,10 @@ shim = r"""<script>
         }).map(function (c) {
           return Object.assign({ userId: c.userId, kind: 'band', role: c.role || '', avatar: '', endorsed: false, pending: true }, P[c.userId], c.userId === 'u-devin' ? { handle: H.handle || '' } : {});
         });
+        // (0147) Crew listed while nobody runs the page: on its Crew tab for everyone.
+        if (!g.owner) waiting = waiting.concat(((H.ghostCrew || {})[g.id] || []).map(function (m) {
+          return Object.assign({ userId: m.userId, kind: 'crew', role: m.role || '', avatar: '', endorsed: true }, P[m.userId], m.userId === 'u-devin' ? { handle: H.handle || '' } : {});
+        }));
         return Promise.resolve({ id: g.id, handle: g.handle, name: g.name, bio: '', avatar: '', mine: false,
           // (The check follows the encyclopedia's answer: a page made a moment ago has none until a nudge confirms it.)
           unclaimed: !g.owner, verified: !!g.owner, checkmark: !!g.checked, claimed: !!g.owner, about: g.about || '', country: g.country || '', myClaim: mc ? mc.status : null,
