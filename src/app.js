@@ -1519,8 +1519,11 @@
     });
 
     // Under it: the key, and which year this is. (The twelve letters are in the drawing, each under its own bar.)
+    // (noSpent: a drawing with no spent bars, the crew pay page's, keys the dot alone as "Paid".)
     wrap.replaceChildren(svg, h('div', { class: 'chart-ends mc-ends' },
-      h('span', { class: 'chart-key mc-key' }, h('i', { class: 'k-s' }), 'Spent', h('i', { class: 'k-i' }), 'Money in',
+      h('span', { class: 'chart-key mc-key' + (d.noSpent ? ' pays' : '') },
+        d.noSpent ? null : [h('i', { class: 'k-s' }), 'Spent'],
+        h('i', { class: 'k-i' }), d.noSpent ? 'Paid' : 'Money in',
         bands.length ? [h('i', { class: 'k-t' }), 'On tour'] : null),
       h('span', null, d.year)));
 
@@ -1737,6 +1740,9 @@
       if (wrap) drawChart(wrap);
       var monthWrap = $('#hero .month-wrap');
       if (monthWrap) drawMonths(monthWrap);
+      // The crew pay page's months live in a sheet, not under the hero.
+      var sheetMonths = $('.sheet .month-wrap');
+      if (sheetMonths) drawMonths(sheetMonths);
       var pay = $('.pay-chart');
       if (pay) drawChart(pay);
     }, 180);
@@ -2489,6 +2495,15 @@
   // "claimed", in a whisper, beside an artist page's check: the act's own
   // people run it. (Every page made from the encyclopedia wears the check.)
   function claimedTag(cls) { return h('span', { class: 'pf-claimed' + (cls ? ' ' + cls : '') }, 'claimed'); }
+  /* Devin (2026-10-15): a person who has reached Bronze and holds at least
+     one artist endorsement wears the green check too. One endorsement from
+     any artist is enough, and the check goes with it if it is taken away.
+     An account Greenroom itself checked keeps its check either way. */
+  function personChecked(verified, rs, endorsements) {
+    if (verified) return true;
+    var tier = G.isObj(rs) ? G.historyTier(rs) : null;
+    return !!(tier && tier.key !== 'green' && G.num(endorsements) >= 1);
+  }
   function artistMarks(card, cls) {
     if (!card) return null;
     var check = card.checkmark != null ? !!card.checkmark : !!card.verified;
@@ -2634,7 +2649,8 @@
             G.num(counts.following) + ' following'));
         return roadHead({
           name: (card.handle && profileName()) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, profileName()),
-            checked ? verifiedBadge() : null) : null,
+            // Bronze plus an endorsement earns the check too (see personChecked).
+            personChecked(checked, rs, mine && !mine.error && mine.counts ? mine.counts.endorsements : null) ? verifiedBadge() : null) : null,
           photo: h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
             card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
           left: rs ? [stat(G.num(rs.tours), G.num(rs.tours) === 1 ? 'tour' : 'tours'), stat(G.num(rs.shows), G.num(rs.shows) === 1 ? 'show' : 'shows')]
@@ -3090,19 +3106,27 @@
         })[0];
         if (conf) r.role = conf.role;
       }
-      return timelineRow(r, r.own ? function () {
+      // A confirmed tour drops its dates down right here, the artist page's own dropdown
+      // (Devin, 2026-10-15). Never the "I was on this tour" line: that lives on the artist
+      // page only. An old row with no artist page behind it has no dates to ask for.
+      if (!r.own) return t.artistId
+        ? historyTourRow(t.artistId, r, null, { artist: r.artist, role: rolesShort(r.role || t.role || '') })
+        : timelineRow(r, null, true);
+      return timelineRow(r, function () {
         if (!preview && t.mine && getTour(t.id)) openTour(t.id); else openTourCard(t.id, uid, t);
-      } : (t.artistId ? function () { openAct(t.artistId); } : null), true);
+      }, true);
     });
     var peer = { name: card.name, handle: card.handle, avatar: card.avatar, verified: card.verified };
+    // Bronze plus an endorsement earns a person the check here too (see personChecked).
+    var pChecked = personChecked(card.verified, card.roadStats, card.endorsements);
     return h('div', { class: 'page home profile has-tabs' },
-      head(card.handle || card.name || 'Profile', card.verified),
+      head(card.handle || card.name || 'Profile', pChecked),
       h('section', { class: 'pf vp', 'aria-label': (card.name || 'Their') + ' profile' },
         (function () {
           var rs = G.isObj(card.roadStats) ? card.roadStats : null;
           return roadHead({
             name: (card.handle && card.name) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, card.name),
-              card.verified ? verifiedBadge() : null) : null,
+              pChecked ? verifiedBadge() : null) : null,
             photo: h('div', { class: 'pf-photo-wrap' }, personPhoto(card)),
             left: rs ? [pfStat(G.num(rs.tours), G.num(rs.tours) === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
                         pfStat(G.num(rs.shows), G.num(rs.shows) === 1 ? 'show' : 'shows')]
@@ -3509,7 +3533,11 @@
      crew and tours; only whoever made it can change it. */
   function accountTitle(who) {
     var card = myCard(), uid = socialOn() ? window.GR_BACKEND.uid() : null;
-    var checked = !!(uid && cardOf(uid).card && cardOf(uid).card.verified);
+    // The same rule as the name by the photo: verified, or Bronze plus an
+    // endorsement (personChecked), so the page never argues with itself.
+    var B2 = window.GR_BACKEND, mine = uid && flowersOn() && B2.myFlowers ? B2.myFlowers() : null;
+    var checked = !!(uid && personChecked(cardOf(uid).card && cardOf(uid).card.verified,
+      myRoad(uid), mine && !mine.error && mine.counts ? mine.counts.endorsements : null));
     var can = !!(uid && window.GR_BACKEND.myArtists);
     var inner = [h('span', { class: 'vp-user-t' }, card.handle || who), checked ? verifiedBadge() : null,
       can ? h('span', { class: 'acct-arrow', 'aria-hidden': 'true' }, icon('chevron', 16)) : null];
@@ -6235,7 +6263,10 @@
     return c;
   }
   // say: the "I was on this tour" line for this row, when the person looking may say so (see viewAct).
-  function historyTourRow(artistId, r, say) {
+  // o (profile rows): { artist, role } puts the artist's name in the sub line and the role under it,
+  // the way timelineRow prints them, so the same dropdown fits a person's Tours tab.
+  function historyTourRow(artistId, r, say, o) {
+    o = o || {};
     S.tnOpen = S.tnOpen || {};
     // The page's own tour object rides in r.tour; a year's loose shows are asked for by key ("year:2009").
     var src0 = r.tour && typeof r.tour === 'object' ? r.tour : r;
@@ -6281,7 +6312,9 @@
     var inner = h('div', { class: 'pt-run tn-run' + (open ? ' open' : '') + (conflict ? ' has-conflict' : '') },
       h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
         onclick: function () { S.tnOpen[k] = !open; render(true); } },
-        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name, festTag, tag), h('span', { class: 'lr-sub' }, span)),
+        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, r.name, festTag, tag),
+          h('span', { class: 'lr-sub' }, [o.artist || '', span].filter(Boolean).join(' · ')),
+          o.role ? h('span', { class: 'lr-sub tl-role' }, o.role) : null),
         icon('chevron', 16)),
       say || null, withLine, body);
     // Devin: "slide a tour to the left and it will say 'edit'" — the page's owner only.
@@ -7394,20 +7427,23 @@
       'data-sig': 'dock|' + sig + '|' + current + '|' + me.photo.length + '|' + profileName() + '|' + actingSig() },
       h('div', { class: 'dock-half left' }, left), homeFace(current), h('div', { class: 'dock-half right' }, right));
   }
-  // The social pages' bar: Search on the left of your photo, and on its right
-  // a shortcut to the Overview of the tour you're on (the one the profile's
-  // Today follows).
-  function socialBar(current) {
-    var search = socialOn() ? tabButton(current === 'search', 'Search', 'search', function () {
+  // The Search tab, on every bar. Only a signed-in build has Search.
+  function searchTab(current) {
+    if (!socialOn()) return null;
+    return tabButton(current === 'search', 'Search', 'search', function () {
       // The magnifying glass opens Search without the keyboard (Devin, 2026-10-08): tap the box to type.
       if (current !== 'search') go({ name: 'search', back: S.route });
-    }) : null;
+    });
+  }
+  /* The social pages' bar is the tour's own bar now (Devin, 2026-10-15: "all
+     the tabs in overview are always visible"): Search far left, your photo in
+     the middle, and every tab of the tour the old Overview button followed,
+     each one tap from anywhere. A fan (no tour, no artist, not in music) has
+     no tour pages, so their bar is Search and the photo alone. */
+  function socialBar(current) {
     var to = overviewRoute();
-    var overview = to ? tabButton(false, 'Overview', 'tabmap', function () {
-      // (Off tour it opens the tour's own pages, never its setup wizard: openTour's 'frame'.)
-      if (to.name === 'tour') openTour(to.id, 'details', S.route, 'Back', offNow() ? 'frame' : null); else go(to);
-    }) : null;
-    return dock([search], [overview], current, 'social|' + (to ? to.name + ':' + (to.id || '') : ''), { cls: 'social-bar' });
+    if (!to) return dock([searchTab(current)], [], current, 'social|fan', { cls: 'social-bar' });
+    return tourTabs(to.name === 'tour' ? to.id : null, '', { cur: current, away: true });
   }
   /* Where Overview goes. The tour you picked, else the one on the road, as
      before. Off tour (none on the road) it is still there: it opens the next
@@ -9348,7 +9384,7 @@
     return [
       pfTourBar(id, t, count, 'details'),
       dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, city, place, address,
-        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, pfOffCount(t)),
+        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, pfCorner(t)),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
         [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
       sheet ? h('div', { class: 'pt-sheet' }, sheet) : null,
@@ -9366,6 +9402,20 @@
       h('b', null, c.last ? 'Last show' : 'Day off'), h('span', null, c.last ? 'tonight' : 'tomorrow'));
     return h('p', { class: 'pt-off', 'aria-label': c.n + ' days until day off' },
       h('b', { class: 'num' }, String(c.n)), h('span', null, 'days until'), h('span', null, 'day off'));
+  }
+  /* Beside it, how long until the band is home: every day to the end of the
+     run plus the travel day home after it, off days included (Devin's rule).
+     Gone when the tour has no dates, hasn't started, or is over. */
+  function pfLeftCount(t) {
+    var n = G.daysLeftOnTour(t);
+    if (!n) return null;
+    return h('p', { class: 'pt-off pt-left', 'aria-label': n + (n === 1 ? ' day' : ' days') + ' left on tour' },
+      h('b', { class: 'num' }, String(n)), h('span', null, n === 1 ? 'day left' : 'days left'), h('span', null, 'on tour'));
+  }
+  // Today's right corner holds both counts, the day off over the days left.
+  function pfCorner(t) {
+    var off = pfOffCount(t), left = pfLeftCount(t);
+    return off || left ? h('div', { class: 'pt-corner' }, off, left) : null;
   }
   /* A day in three columns: what and where in the left corner (the tag, the
      date, the city), the venue and its address in the middle, and corner
@@ -9603,7 +9653,11 @@
     var credited = G.tourTimeline(ownSpans, meCard && Array.isArray(meCard.creditTours) ? meCard.creditTours : [], G.tourToday())
       .filter(function (r) { return !r.own; });
     var creditedList = credited.length ? h('ul', { class: 'tour-list rows tl-credited' }, credited.map(function (r) {
-      return timelineRow(r, r.tour.artistId ? function () { openAct(r.tour.artistId); } : null, true);
+      // Tap a confirmed tour and its dates drop down, the artist page's own dropdown
+      // (Devin, 2026-10-15; never its "I was on this tour" line). An old row with no
+      // artist page behind it has no dates to ask for, so it sits still.
+      return r.tour.artistId ? historyTourRow(r.tour.artistId, r, null, { artist: r.artist, role: rolesShort(r.role || r.tour.role || '') })
+        : timelineRow(r, null, true);
     })) : null;
     if (!entries.length) {
       return creditedList || emptyState('No tours yet', canWrite()
@@ -9741,6 +9795,28 @@
      day: the Touring Logistics pages "can be edited and deleted and
      restored", so the tours you deleted are listed here as Deleted tours,
      and only when there are any. */
+  // Dressed like the rest of the app (Devin, 2026-10-15: the settings sheet
+  // "looks a bit lofi compared to the rest of the app"): the same rows the
+  // Your profiles sheet wears, an icon in a circle, grouped under small
+  // headings. Nothing behind the rows changed, only their clothes.
+  function stRow(ic, label, onTap, o) {
+    o = o || {};
+    return h('button', { class: 'acct-row' + (o.danger ? ' danger' : ''), type: 'button',
+      hidden: o.hidden || null, onclick: onTap },
+      h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon(ic, 18)),
+      h('span', { class: 'lr-text' },
+        h('span', { class: 'lr-title' }, label),
+        o.sub || null),
+      icon('chevron', 16));
+  }
+  // A group with a small heading over it; a group with nothing in it isn't drawn.
+  function stGroup(head, rows) {
+    rows = (rows || []).filter(Boolean);
+    if (!rows.length) return null;
+    return h('div', { class: 'st-group' },
+      head ? h('p', { class: 'st-head' }, head) : null,
+      h('div', { class: 'acct-list' }, rows));
+  }
   function openSettingsSheet() {
     var B = window.GR_BACKEND;
     var signedIn = S.mode === 'db' && B && B.signOut;
@@ -9769,79 +9845,77 @@
     openSheet(function () {
       // Invite codes: a Greenroom admin's row. It is only shown once the server has answered with a list
       // (anyone else is answered null), and sits on top so nothing under a finger moves when it appears.
-      var codesRow = signedIn && B.inviteCodes ? h('button', { class: 'btn ghost block', type: 'button', hidden: true,
-        onclick: function () { openInviteCodes(); } }, icon('tag', 18), 'Invite codes') : null;
-      // (The second question, "is there a list of who has agreed?", is only asked once this one has said admin.)
-      var askAgreed = function () {};
-      if (codesRow) inviteCodesKnown(function (list) { codesRow.hidden = !Array.isArray(list); if (Array.isArray(list)) askAgreed(); });
+      var codesRow = signedIn && B.inviteCodes ? stRow('tag', 'Invite codes', function () { openInviteCodes(); }, { hidden: true }) : null;
       // Who has agreed: the same admin's row, directly under Invite codes and shown the same way, only once the
       // server has answered with a list (0139 answers null to anyone else, and then there is no row at all).
-      var agreedRow = signedIn && typeof B.legalList === 'function' ? h('button', { class: 'btn ghost block', type: 'button', hidden: true,
-        onclick: function () { openLegalList(); } }, icon('check', 18), 'Who has agreed') : null;
+      var agreedRow = signedIn && typeof B.legalList === 'function' ? stRow('check', 'Who has agreed', function () { openLegalList(); }, { hidden: true }) : null;
+      // Their group's heading hides with them: an admin's rows, nobody else's heading.
+      var adminGroup = codesRow || agreedRow ? h('div', { class: 'st-group', hidden: true },
+        h('p', { class: 'st-head' }, 'Admin'),
+        h('div', { class: 'acct-list' }, [codesRow, agreedRow].filter(Boolean))) : null;
+      var adminSeen = function () {
+        if (adminGroup) adminGroup.hidden = (!codesRow || codesRow.hidden) && (!agreedRow || agreedRow.hidden);
+      };
+      // (The second question, "is there a list of who has agreed?", is only asked once this one has said admin.)
+      var askAgreed = function () {};
+      if (codesRow) inviteCodesKnown(function (list) { codesRow.hidden = !Array.isArray(list); adminSeen(); if (Array.isArray(list)) askAgreed(); });
       if (agreedRow) {
         var askedAgreed = false;
-        askAgreed = function () { if (askedAgreed) return; askedAgreed = true; legalListKnown(function (yes) { agreedRow.hidden = !yes; }); };
+        askAgreed = function () { if (askedAgreed) return; askedAgreed = true; legalListKnown(function (yes) { agreedRow.hidden = !yes; adminSeen(); }); };
         if (S.inviteCodes && Array.isArray(S.inviteCodes.list)) askAgreed();
       }
       // The documents agreed to at sign-up: shown once the server says there is an acceptance on file, and
       // last in the list, so nothing under a finger moves when it appears.
-      var legalSaid = h('p', { class: 'hint', style: 'margin:-4px 0 0;text-align:center' }, '');
-      var legalRow = signedIn && typeof B.legal === 'function' && typeof B.legalDocs === 'function'
-        ? h('div', { style: 'display:grid;gap:10px', hidden: true },
-            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLegalDocs(); } },
-              icon('tabsheet', 18), 'Documents you agreed to'),
-            legalSaid) : null;
-      if (legalRow) legalKnown(function (st) {
+      var legalSaid = h('span', { class: 'lr-sub' }, '');
+      var legalGroup = signedIn && typeof B.legal === 'function' && typeof B.legalDocs === 'function'
+        ? h('div', { class: 'st-group', hidden: true },
+            h('div', { class: 'acct-list' },
+              stRow('tabsheet', 'Documents you agreed to', function () { openLegalDocs(); }, { sub: legalSaid }))) : null;
+      if (legalGroup) legalKnown(function (st) {
         var day = st && st.ready && st.acceptedAt ? legalDay(st.acceptedAt) : '';
-        legalRow.hidden = !day;
+        legalGroup.hidden = !day;
         legalSaid.textContent = day ? 'You accepted on ' + day : '';
       });
       return [
         h('h2', { class: 'sh-title' }, 'Settings'),
         who ? h('p', { class: 'sh-sub' }, 'Signed in as ' + who) : null,
-        h('div', { class: 'stack' },
-          codesRow,
-          agreedRow,
-          offId ? cardMenuItem(offId) : null,
-          signedIn ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { openUsernameSheet(); } },
-            icon('people', 18),
-            (B.myProfile && B.myProfile().tourRole) ? 'Your contact card' : 'Add your details') : null,
+        adminGroup,
+        stGroup('Your account', [
+          signedIn ? stRow('people', (B.myProfile && B.myProfile().tourRole) ? 'Your contact card' : 'Add your details',
+            function () { openUsernameSheet(); }) : null,
           // The sign-up question, to change the answer (member, crew, fan, promoter). What was asked for
           // during it is read again afterwards, so the Artists tab shows it at once.
           // (Only with a backend.js that can read the answer and save it: an older one still on the phone gets no row.)
-          signedIn && typeof B.firstRun === 'function' && typeof B.saveKinds === 'function' ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () {
+          signedIn && typeof B.firstRun === 'function' && typeof B.saveKinds === 'function' ? stRow('edit', 'What I do on Greenroom',
+            function () {
               closeSheet(true);
               if (S.kept) { delete S.kept.myreq; delete S.kept.myclaims; delete S.kept.attended; }
               startFirstRunAgain();
-            } }, icon('edit', 18), 'What I do on Greenroom') : null,
-          signedIn ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { openNotifications(null); } },
-            icon('bell', 18), 'Notifications') : null,
-          cards ? h('button', { class: 'btn ghost block', type: 'button', onclick: cards }, icon('card', 18), 'Linked Cards') : null,
+            }) : null,
+          signedIn ? stRow('bell', 'Notifications', function () { openNotifications(null); }) : null]),
+        stGroup('Your tours', [
+          offId ? cardMenuItem(offId, true) : null,
+          cards ? stRow('card', 'Linked Cards', cards) : null,
           // A tour's Touring Logistics pages can be deleted and restored; the ones you deleted wait here.
-          trashed ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { closeSheet(); openTrash(); } },
-            icon('trash', 18), 'Deleted tours (' + trashed + ')') : null,
-          signedIn ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () {
-              confirmSheet({
-                title: 'Sign out of Greenroom?',
-                body: (who ? 'You\u2019re signed in as ' + who + '. ' : '') +
-                  'Your tours stay safe in your account.',
-                action: 'Sign out',
-                // Say so at once: the sign-in page follows in a moment.
-                onConfirm: function () { toast('Signing out\u2026'); B.signOut(); return false; }
-              });
-            } }, icon('back', 18), 'Sign out') : null,
+          trashed ? stRow('trash', 'Deleted tours (' + trashed + ')', function () { closeSheet(); openTrash(); }) : null]),
+        stGroup(null, [
+          signedIn ? stRow('back', 'Sign out', function () {
+            confirmSheet({
+              title: 'Sign out of Greenroom?',
+              body: (who ? 'You\u2019re signed in as ' + who + '. ' : '') +
+                'Your tours stay safe in your account.',
+              action: 'Sign out',
+              // Say so at once: the sign-in page follows in a moment.
+              onConfirm: function () { toast('Signing out\u2026'); B.signOut(); return false; }
+            });
+          }) : null,
           // (An artist's account is never deleted: "Those just exist". Yours can be, from your own account.)
-          signedIn && B.deleteAccount && !asArtist ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { openDeleteAccount(); } }, icon('trash', 18), 'Delete my account') : null,
-          legalRow),
+          signedIn && B.deleteAccount && !asArtist ? stRow('trash', 'Delete my account',
+            function () { openDeleteAccount(); }, { danger: true }) : null]),
+        legalGroup,
         h('p', { class: 'hint', style: 'margin:14px 0 0;opacity:.7;text-align:center' }, 'Version ' + (window.GREENROOM_BUILD || 'dev'))
       ];
-    }, { label: 'Settings' });
+    }, { label: 'Settings', cls: 'st-sheet' });
   }
   /* The documents everyone agrees to on the way in (Devin, 2026-10-10:
      Settings shows "You accepted on [date]"). The gate that asks for them is
@@ -12780,6 +12854,25 @@
   function crewPaidTo(t, p) {
     return Math.round(crewPayments(t, p).reduce(function (a, x) { return a + x.amount; }, 0) * 100) / 100;
   }
+  /* The profile photo for a person on the crew pay list: the tour member they
+     match (their email first, else the name as typed, capitals aside), through
+     the same faces the Overview's crew list uses. '' where there is none, and
+     the initial circle stands in. */
+  function crewFaceOf(tourId, p) {
+    var B = window.GR_BACKEND;
+    if (!(S.mode === 'db' && B && B.facesFor)) return '';
+    var rows = (S.crewCache && S.crewCache[tourId] && S.crewCache[tourId].rows) || [];
+    var em = String(p.email || '').trim().toLowerCase(), nm = String(p.name || '').trim().toLowerCase();
+    var hit = rows.filter(function (r) {
+      var re = String(r.invitedEmail || r.email || '').trim().toLowerCase();
+      return em && re === em;
+    })[0] || rows.filter(function (r) {
+      var rn = String(r.name || r.username || '').trim().toLowerCase();
+      return nm && rn === nm;
+    })[0];
+    var faces = B.facesFor(tourId) || {};
+    return hit && hit.userId ? (faces[hit.userId] || '') : '';
+  }
   var crewKind = {};
   function openCrewSheet(id, fresh) {
     if (fresh) crewKind[id] = null;
@@ -12792,15 +12885,27 @@
       var cNow = G.calc(t), paidBand = linePaid(cNow, 'members');
       var paidCrew = linePaid(cNow, 'crew') + paidBand;
 
+      /* A person's row (Devin, 2026-10-15): photo, name and role on the left;
+         projected and paid on the right. No Edit button: the row itself opens
+         their pay page, and a swipe left keeps Name & role (with Remove)
+         reachable, since the pay page no longer carries them. */
       var rowOf = function (p) {
         var got = crewPaidTo(t, p), pay = G.crewPay(t, p);
-        var sub = [p.title || 'No title', got > 0 ? money(got) + ' of ' + money(pay) + ' paid' : ''].filter(Boolean).join(' \u00b7 ');
-        return h('div', { class: 'row cw-row' },
+        var kids = [
+          personPhoto({ name: p.name || 'Crew', avatar: crewFaceOf(id, p) }, 'xs crew-face'),
           h('div', { class: 'row-label' }, p.name || 'Crew',
-            h('span', { class: 'hint' + (got >= pay && got > 0 ? ' done' : '') }, sub)),
-          canWrite() ? h('button', { class: 'btn sm quiet cw-edit', type: 'button', 'aria-label': 'Edit ' + (p.name || 'crew'),
-            onclick: function () { openCrewPayEdit(id, p.id); } }, 'Edit') : null,
-          h('span', { class: 'amt num' }, pay > 0 ? money(pay) : '\u2014'));
+            h('span', { class: 'hint' }, p.title || 'No title')),
+          h('div', { class: 'cwp-nums' },
+            h('span', { class: 'cwp-n num' }, pay > 0 ? money(pay) : '\u2014', h('i', { class: 'cwp-k' }, 'projected')),
+            h('span', { class: 'cwp-n num' + (got >= pay && got > 0 ? ' done' : '') }, money(got), h('i', { class: 'cwp-k' }, 'paid')))];
+        if (!canWrite()) return h('div', { class: 'row cw-row cwp-row' }, kids);
+        var line = h('button', { class: 'row rowbtn cw-row cwp-row', type: 'button',
+          'aria-label': (p.name || 'Crew') + ': ' + money(pay) + ' projected, ' + money(got) + ' paid. Opens their pay page.',
+          onclick: function () { openCrewPayEdit(id, p.id); } }, kids);
+        return swipeRow(line, [
+          h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Name and role for ' + (p.name || 'crew'),
+            onclick: function () { openCrewPerson(id, p); } }, icon('edit', 16), 'Name')
+        ], { noTapOpen: true });
       };
       // The band under its own heading, then the crew, each with what it adds up to.
       var grp = crewGroups(t);
@@ -12821,29 +12926,7 @@
             ? 'Add everyone out with you. What each one is paid adds up to your crew projection.'
             : 'No crew has been added.');
 
-      var onTour = {};
-      crew.forEach(function (pp) { onTour[G.crewKey(pp.name)] = true; });
-      var bench = rosterList().filter(function (r) { return !onTour[G.crewKey(r.name)]; });
-      var benchRow = null;
-      if (canWrite() && bench.length) {
-        benchRow = h('div', { style: 'margin-bottom:16px' },
-          h('p', { class: 'note', style: 'margin:0 2px 8px' }, 'From past tours — tap to add:'),
-          h('div', { class: 'chips', style: 'margin:0' }, bench.map(function (r) {
-            return h('button', { class: 'chip', type: 'button',
-              onclick: async function () {
-                var patch = {};
-                patch[newId()] = Object.assign({ name: r.name, title: r.title || '', pay: G.num(r.pay), createdAt: Date.now() },
-                  r.member === true || r.member === false ? { member: r.member } : r.band === true || r.band === false ? { member: r.band } : {});
-                if (await api.update(id, { crew: patch })) {
-                  delete S.drafts['exp:' + id];
-                  toast(r.name + ' added' + (r.pay ? ' at ' + money(G.num(r.pay)) : ''));
-                  openCrewSheet(id); render(true);
-                }
-              } }, r.name + (r.title ? ' · ' + r.title : ''));
-          })),
-          h('button', { class: 'linkbtn', type: 'button', style: 'min-height:32px',
-            onclick: function () { openRosterManager(id); } }, 'Manage saved crew'));
-      }
+      // (The "from past tours" chips live inside Add someone now: Devin, 2026-10-15.)
       // The Off Tour book: the artist's people who are not on the book's own list yet, one tap each. They come
       // with their name, title and group, and with no pay planned (crewOnBook): a payment is then logged to
       // them here by hand, as on a tour.
@@ -12874,13 +12957,13 @@
       return [
         h('h2', { class: 'sh-title' }, grp.members.length ? 'Members & Crew' : 'Crew'),
         h('p', { class: 'sh-sub' }, paidCrew > 0 ? 'Paid so far: ' + money(paidCrew) + ' of ' + money(total) + '.'
-          : 'Everyone on the tour and what they\u2019re paid. Tap Edit to set someone\u2019s pay and log payments.'),
+          : 'Everyone on the tour and what they\u2019re paid. Tap someone to set their pay and log payments.'),
         list,
+        crew.length && canWrite() ? h('p', { class: 'note sw-hint', style: 'margin-top:8px' }, 'Swipe someone left to change their name or role.') : null,
         addOnTour,
         canWrite() ? h('button', { class: 'btn quiet block', type: 'button', style: 'margin-top:12px',
           onclick: function () { openCrewPerson(id, null); } }, icon('plus', 18), 'Add someone') : null,
         toursRow,
-        benchRow ? h('div', { style: 'margin-top:16px' }, benchRow) : null,
         loggedButton(id, 'crew', function () { openCrewSheet(id); })
       ];
     }
@@ -12925,6 +13008,31 @@
     };
     var backTo = function () { if (person) openCrewPayEdit(id, person.id); else openCrewSheet(id); };
     openSheet(function () {
+      /* Adding someone: the people Greenroom remembers from past tours, one
+         tap each (they live here now, not on the crew list: Devin, 2026-10-15). */
+      var benchRow = null;
+      if (!person && canWrite()) {
+        var onTour = {};
+        G.rows(getTour(id) && getTour(id).crew).forEach(function (pp) { onTour[G.crewKey(pp.name)] = true; });
+        var bench = rosterList().filter(function (r) { return !onTour[G.crewKey(r.name)]; });
+        if (bench.length) benchRow = h('div', { style: 'margin-bottom:16px' },
+          h('p', { class: 'note', style: 'margin:0 2px 8px' }, 'From past tours. Tap one to add them:'),
+          h('div', { class: 'chips', style: 'margin:0' }, bench.map(function (r) {
+            return h('button', { class: 'chip', type: 'button',
+              onclick: async function () {
+                var patch = {};
+                patch[newId()] = Object.assign({ name: r.name, title: r.title || '', pay: G.num(r.pay), createdAt: Date.now() },
+                  r.member === true || r.member === false ? { member: r.member } : r.band === true || r.band === false ? { member: r.band } : {});
+                if (await api.update(id, { crew: patch })) {
+                  delete S.drafts['exp:' + id];
+                  toast(r.name + ' added' + (r.pay ? ' at ' + money(G.num(r.pay)) : ''));
+                  openCrewSheet(id); render(true);
+                }
+              } }, r.name + (r.title ? ' · ' + r.title : ''));
+          })),
+          h('button', { class: 'linkbtn', type: 'button', style: 'min-height:32px',
+            onclick: function () { openRosterManager(id); } }, 'Manage saved crew'));
+      }
       var titleInput;
       var nameInput = h('input', {
         class: 'input', type: 'text', value: f.name, maxlength: 60, autocomplete: 'off',
@@ -13011,6 +13119,7 @@
       };
       return [
         h('h2', { class: 'sh-title' }, person ? 'Name & role' : 'Add someone'),
+        benchRow,
         h('form', { class: 'sh-form', onsubmit: submit, novalidate: true },
           field('Name', nameInput),
           field('Title', titleInput),
@@ -13060,7 +13169,51 @@
         : h('div', null, h('span', null, 'Left to pay'), h('strong', { class: 'num' }, money(Math.max(0, pay - got)))));
   }
 
-  /* Edit one person: their total projection, and Payments. */
+  /* The pay page's graph: the Off Tour book's month-by-month drawing
+     (drawMonths), cut to this tour. The year is the tour's own (its first
+     day's); months the tour is not on are the dashed outlines, and a green
+     dot marks each month a payment landed in. No spent bars: the only series
+     is the dots (__months.noSpent, which also keys the dot alone). */
+  function crewPayChartNode(t, p) {
+    var a = runStart(t), b = G.tourEnd(t);
+    var today = G.tourToday();
+    var year = String((a || today).slice(0, 4));
+    var pays = crewPayments(t, p).filter(function (r) { return G.parseDay(r.date); });
+    var inMonth = {};
+    pays.forEach(function (r) { var k = r.date.slice(0, 7); inMonth[k] = (inMonth[k] || 0) + Math.round(r.amount * 100); });
+    var months = [];
+    for (var m = 1; m <= 12; m++) {
+      var key = year + '-' + (m < 10 ? '0' : '') + m;
+      var on = a && b ? key >= a.slice(0, 7) && key <= b.slice(0, 7) : true;
+      var inc = (inMonth[key] || 0) / 100;
+      // A month the tour is not on draws as an outline, unless a payment is dated in it: paid money must show.
+      months.push({ month: m, key: key, spent: 0, income: inc, future: !on && !(inc > 0) });
+    }
+    var first = year + '-01-01', last = year + '-12-31';
+    var bands = a && b && a <= last && b >= first
+      ? [{ name: String((t && t.name) || '').trim() || 'Tour', from: a < first ? first : a, to: b > last ? last : b, first: a, last: b }] : [];
+    var wrap = h('div', {
+      class: 'month-wrap cwp-months', tabindex: '0', role: 'img',
+      'aria-label': (p.name || 'Crew') + '\u2019s pay in ' + year + ', month by month: a dot on each month a payment was made. ' +
+        (pays.length ? plural(pays.length, 'payment') + ' so far. ' : 'No payments yet. ') +
+        'Use the left and right arrow keys to step through the months.'
+    });
+    wrap.__months = { year: year, months: months, bands: bands, noSpent: true,
+      now: today.slice(0, 4) === year ? Math.max(0, Math.min(11, +today.slice(5, 7) - 1)) : -1,
+      key: 'crewpay:' + String(p.id || '') + ':' + year };
+    wrap.__pick = -1;
+    // In a sheet, not under the hero: drawn as soon as it is on the page.
+    requestAnimationFrame(function () { if (wrap.isConnected) drawMonths(wrap); });
+    return wrap;
+  }
+  /* One person's pay page, laid out to feel like MY PAY (Devin, 2026-10-15):
+     their photo with PROJECTED and PAID up top, the tour's months with a
+     green dot where payments landed, then Total projection (Save total kept
+     as it was), Payments and Logged transactions as rows, and a bar at the
+     bottom filling from zero to the projection. Name & role and Back to crew
+     are gone from here: the name sits on a swipe of the crew list's row, and
+     the sheet's own close is the way back. The money is the same as ever
+     (G.crewPay, crewPaidTo): this is a layout change, not a money change. */
   function openCrewPayEdit(id, pid) {
     openSheet(function () {
       var t = getTour(id);
@@ -13080,10 +13233,30 @@
           toast('Total saved'); render(true); openCrewPayEdit(id, pid);
         }
       };
+      var pay = G.crewPay(t, p), got = crewPaidTo(t, p), paidN = crewPayments(t, p).length;
+      var head = h('div', { class: 'pay-top cwp-top' },
+        h('div', { class: 'pay-photo' }, personPhoto({ name: p.name || 'Crew', avatar: crewFaceOf(id, p) }, 'sm')),
+        h('div', { class: 'pay-sum-tabs' },
+          h('div', { class: 'pay-sum-tab on cwp-sum' }, h('span', { class: 'pay-sum-k' }, 'PROJECTED'), h('strong', { class: 'pay-sum-v num' }, money(pay))),
+          h('div', { class: 'pay-sum-tab on cwp-sum' }, h('span', { class: 'pay-sum-k' }, 'PAID'), h('strong', { class: 'pay-sum-v num' }, money(got)))));
+      // The bar: zero to the projection, filling as payments land, never past
+      // full. Paid past the projection is said in words beside it instead.
+      var pct = pay > 0 ? Math.min(100, Math.floor(got / pay * 100)) : (got > 0 ? 100 : 0);
+      var over = pay > 0 && got > pay + 0.004;
+      var bar = h('div', { class: 'prog cwp-prog' },
+        h('div', { class: 'prog-track', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct),
+          'aria-label': money(got) + ' paid of ' + money(pay) + ' projected' },
+          h('div', { class: 'prog-fill', style: 'width:' + (got > 0 ? Math.max(2, pct) : 0) + '%; background: var(--pos)' })),
+        h('div', { class: 'prog-cap' },
+          h('span', null, over ? 'Paid ' + money(got - pay) + ' over the projection'
+            : pay > 0 ? (pct >= 100 ? 'Paid in full' : money(Math.max(0, pay - got)) + ' left to pay') : 'No projection set yet'),
+          h('span', { class: 'num' }, pay > 0 ? money(got) + ' of ' + money(pay) : money(got) + ' paid')));
       return [
         h('h2', { class: 'sh-title' }, p.name || 'Crew'),
         h('p', { class: 'sh-sub' }, p.title || 'No title'),
-        crewReadout(t, p),
+        head,
+        crewPayChartNode(t, p),
+        h('h3', { class: 'sh-h3' }, 'Total projection'),
         h('form', { class: 'sh-form', novalidate: true, onsubmit: save },
           field('Total projection', moneyInput({ id: 'cw-total', value: f.pay, label: 'Total projection for the tour', last: true,
             onValue: function (v) { f.pay = v; } }),
@@ -13095,15 +13268,18 @@
               var patch = {}; patch[pid] = { payTyped: false };
               if (await api.update(id, { crew: patch })) { toast('Back to the worked-out total'); render(true); openCrewPayEdit(id, pid); }
             } }, 'Use the worked-out total (' + money(worked) + ')') : null)),
-        h('div', { class: 'stack cw-more' },
-          h('button', { class: 'btn quiet block', type: 'button', onclick: function () { openCrewPayments(id, pid); } },
-            icon('cash', 18), 'Payments'),
+        h('div', { class: 'ledger cwp-rows' },
+          h('button', { class: 'row rowbtn ex-row', type: 'button', onclick: function () { openCrewPayments(id, pid); } },
+            h('div', { class: 'row-label' }, 'Payments',
+              h('span', { class: 'hint' }, paidN ? plural(paidN, 'payment') + ' logged' : 'How they\u2019re paid, and each payment')),
+            icon('chevron', 18)),
           // Everything logged to this person: card charges sorted to them, and payments logged by hand.
-          h('button', { class: 'btn quiet block', type: 'button',
+          h('button', { class: 'row rowbtn ex-row', type: 'button',
             onclick: function () { openLoggedSheet(id, 'crew', function () { openCrewPayEdit(id, pid); }, { crewId: pid }); } },
-            icon('card', 18), 'Logged transactions' + (crewPayments(t, p).length ? ' (' + crewPayments(t, p).length + ')' : '')),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewPerson(id, p); } }, 'Name & role'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } }, 'Back to crew'))
+            h('div', { class: 'row-label' }, 'Logged transactions',
+              h('span', { class: 'hint' }, paidN ? plural(paidN, 'entry').replace('entrys', 'entries') : 'Nothing logged yet')),
+            icon('chevron', 18))),
+        bar
       ];
     }, { label: 'Edit crew', cls: 'cat-sheet' });
   }
@@ -13701,13 +13877,16 @@
           h('span', { class: 'amt num' + (l.total > 0 ? ' glow' : '') }, l.total > 0 ? money(l.total) : '\u2014'), icon('chevron', 18));
       });
       return [head, chart, netLine,
-        h('div', { class: 'ledger' }, myPayCardsRow(id), myPayBackRow(id)),
+        myPayBackRow(id),
         st.onCrew ? h('p', { class: 'note pay-note' }, 'Pay plan: ' + money(st.total) + ' for the tour \u00b7 ' + money(st.paid) + ' logged as paid \u00b7 ' + money(st.owed) + ' still owed')
           : h('p', { class: 'note pay-note' }, 'You\u2019re not on this tour\u2019s crew list yet, so there is no pay plan here. The tour manager adds you under Crew with your email.'),
         h('h3', { class: 'mn-h mn-over' }, 'My income'),
         h('div', { class: 'ledger' }, incRows),
-        h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'button', onclick: function () { openMyPayIncome(id, null); } },
-          icon('plus', 18), 'Log income'))];
+        // Log income and Your cards share the bottom of the screen, side by side (Devin, 2026-10-15).
+        h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
+        h('div', { class: 'pt-two pinned' },
+          h('button', { class: 'pf-btn go', type: 'button', onclick: function () { openMyPayIncome(id, null); } }, icon('plus', 16), 'Log income'),
+          myPayCardsBtn(id))];
     }
     var colHead = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
       h('span', null, ''), h('span', { class: 'ex-proj' }, 'Projected'), h('span', { class: 'ex-paid' }, 'Credit'),
@@ -13724,11 +13903,14 @@
         icon('chevron', 18));
     });
     return [head, climb, netLine,
-      h('div', { class: 'ledger' }, myPayCardsRow(id), myPayBackRow(id)),
+      myPayBackRow(id),
       h('h3', { class: 'mn-h mn-over' }, 'My expenses'),
       h('div', { class: 'ledger' }, colHead, lines),
-      h('div', { class: 'stack' }, h('button', { class: 'btn primary block', type: 'button', onclick: function () { openMyPayCat(id, null); } },
-        icon('plus', 18), 'Add expense'))];
+      // Add expense and Your cards share the bottom of the screen, side by side (Devin, 2026-10-15).
+      h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
+      h('div', { class: 'pt-two pinned' },
+        h('button', { class: 'pf-btn go', type: 'button', onclick: function () { openMyPayCat(id, null); } }, icon('plus', 16), 'Add expense'),
+        myPayCardsBtn(id))];
   }
   // Logging what came in: weekly pay, per diems, buyouts, a bonus.
   function openMyPayIncome(id, key, keep) {
@@ -13848,13 +14030,18 @@
     var c = S.myPayCards;
     return !!(c && c.accounts.some(function (a) { return a.account_id === accountId; }));
   }
-  function myPayCardsRow(id) {
+  /* "Your cards" sits at the bottom of MY PAY now (Devin, 2026-10-15): a
+     half-width button beside Log income / Add expense, pinned above the bar.
+     The count of new items rides on it as a dot, so nothing the old row said
+     is lost. */
+  function myPayCardsBtn(id) {
     var c = myPayCardsInfo();
     if (c.none) return null;
     var n = c.inbox.length, k = c.accounts.length;
-    return h('button', { class: 'row rowbtn ex-row pay-row', type: 'button', onclick: function () { openMyPayCards(id); } },
-      h('div', { class: 'row-label' }, 'Your cards', h('span', { class: 'hint' }, k ? plural(k, 'account') + ' connected' : 'Connect your own card')),
-      n ? h('span', { class: 'amt num glow' }, n + ' new') : null, icon('chevron', 18));
+    return h('button', { class: 'pf-btn', type: 'button',
+      'aria-label': 'Your cards' + (k ? ', ' + plural(k, 'account') + ' connected' : '') + (n ? ', ' + n + ' new' : ''),
+      onclick: function () { openMyPayCards(id); } },
+      icon('card', 16), 'Your cards', n ? h('span', { class: 'dm-dot' }, n) : null);
   }
   function openMyPayCards(id, justLinked, title) {
     var B = window.GR_BACKEND;
@@ -14120,18 +14307,21 @@
     try { reimbLive(); } catch (e) { /* it draws again on its next tap */ }
   }
 
-  // MY PAY: the way in, under "Your cards" on both sub-tabs.
+  // MY PAY: the way in, on both sub-tabs. One green button, centered, in
+  // Devin's words (2026-10-15: the old "Paid for the tour?" name was
+  // confusing). What's waiting still shows, as a quiet line under it.
   function myPayBackRow(id) {
     var t = getTour(id);
     if (!reimbOn() || !t || isOffTour(t)) return null;
     var mine = reimbRows(id).filter(function (r) { return r.mine; });
     var waiting = mine.filter(rbOpen), paid = mine.filter(rbPaid), owed = rbSum(waiting);
     var hint = waiting.length || paid.length
-      ? [waiting.length ? waiting.length + ' waiting' : null, paid.length ? paid.length + ' paid back' : null].filter(Boolean).join(' · ')
-      : 'Ask to be paid back';
-    return h('button', { class: 'row rowbtn ex-row pay-row', type: 'button', onclick: function () { openMyPayBack(id); } },
-      h('div', { class: 'row-label' }, 'Paid for the tour?', h('span', { class: 'hint' }, hint)),
-      owed > 0 ? h('span', { class: 'amt num glow' }, G.moneyCents(owed)) : null, icon('chevron', 18));
+      ? [waiting.length ? waiting.length + ' waiting' + (owed > 0 ? ' for ' + G.moneyCents(owed) : '') : null,
+         paid.length ? paid.length + ' paid back' : null].filter(Boolean).join(' · ')
+      : '';
+    return h('div', { class: 'rb-need' },
+      h('button', { class: 'btn primary rb-need-btn', type: 'button', onclick: function () { openMyPayBack(id); } }, 'Need a Reimbursement?'),
+      hint ? h('p', { class: 'note rb-need-hint' }, hint) : null);
   }
   // How an ask stands, to the person who made it.
   function reimbStateText(r) {
@@ -14152,7 +14342,7 @@
     try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* older phones */ }
     return 'rb' + newId() + Math.random().toString(36).slice(2, 10);
   }
-  /* "Paid for the tour?": log what you paid out of your own pocket, and see
+  /* "Need a Reimbursement?": log what you paid out of your own pocket, and see
      where each of your asks stands. The list under the form draws in place
      (what is being typed is never wiped), and again when a Manager marks one.
      A try that fails must not become a second ask on the next tap: the save
@@ -14231,7 +14421,7 @@
     draw();
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, 'Paid for the tour?'),
+        h('h2', { class: 'sh-title' }, 'Need a Reimbursement?'),
         h('p', { class: 'sh-sub' }, 'Log what you paid out of your own pocket. The tour’s Managers see it and pay you back.'),
         h('form', { class: 'stack', novalidate: true, onsubmit: add },
           h('div', { class: 'pt-two' }, amountEl, dateEl),
@@ -14241,7 +14431,7 @@
         list,
         h('button', { class: 'btn ghost block rb-done', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
       ];
-    }, { label: 'Paid for the tour?', cls: 'rb-sheet', onClose: function () { if (reimbLive === draw) reimbLive = null; } });
+    }, { label: 'Need a Reimbursement?', cls: 'rb-sheet', onClose: function () { if (reimbLive === draw) reimbLive = null; } });
     reimbLive = draw;
   }
 
@@ -14456,10 +14646,20 @@
     var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
     tabs.splice(1, 0, BUDGET_TAB);
     var framed = !!(o && o.off);
+    // away: the same bar worn by a page outside the tour (the profile, the
+    // menu, Search). A tap opens that page of the tour exactly as the old
+    // Overview button did: through openTour, with the way back, and off tour
+    // through the frame, never the setup wizard.
+    var away = !!(o && o.away);
     var buttons = tabs.map(function (t) {
       // Budget is lit on Expenses and Income (their own two tabs sit above the chart).
       var on = t.book ? BOOK_TABS.indexOf(current) >= 0 : t.view === current;
       return tabButton(on, t.label, t.icon, function () {
+        if (away && id) {
+          if (t.book) { go(budgetLanding(id)); return; }
+          openTour(id, t.view, S.route, 'Back', offNow() ? 'frame' : null);
+          return;
+        }
         // (Inside a tour's own Budget the lit tab goes back to that tour's Expenses, as it always did.)
         var fromList = !!id && S.route.name === 'tour' && S.route.id === id && !!S.route.list;
         var to = t.book ? ((on && !framed && id) || fromList ? { name: 'tour', id: id, view: 'costs' } : budgetLanding(id))
@@ -14469,9 +14669,13 @@
         if (!on || !there) go(to);
       });
     });
+    // Search rides every bar, far left (Devin, 2026-10-15: "You add the search magnify glass tab here").
+    var find = searchTab(o && o.cur);
+    if (find) buttons.unshift(find);
     var half = Math.ceil(buttons.length / 2);
-    return dock(buttons.slice(0, half), buttons.slice(half), '',
-      (framed ? 'off:' : '') + (id || '') + '|' + current + '|' + tabs.map(function (t) { return t.label; }).join(','), { label: 'Tour sections' });
+    return dock(buttons.slice(0, half), buttons.slice(half), (o && o.cur) || '',
+      (framed ? 'off:' : '') + (away ? 'away:' : '') + (find ? 'find:' : '') + (id || '') + '|' + current + '|' + tabs.map(function (t) { return t.label; }).join(','),
+      { label: away ? 'Greenroom' : 'Tour sections', cls: find ? 'all-dock' : null });
   }
   /* Where the Budget tab lands. A tour's: its own Budget (Expenses; MY PAY
      for Crew). Off tour, on the next tour's bar or the bar with no tour:
@@ -15167,10 +15371,77 @@
       h('div', { class: 'cal-open' },
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
-          icon('calendar', 16), 'View calendar')),
+          icon('calendar', 16), 'View calendar'),
+        h('button', { class: 'btn quiet sm glow', type: 'button',
+          onclick: function () { openSetlist(id); } },
+          icon('music', 16), 'View Setlist')),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
+  }
+
+  /* One set list for the whole run, opened from the Overview beside the
+     calendar. Whoever can edit the tour (Managers, and the artist's Members)
+     changes it any time; Crew read it. Saves send only the setlist key. */
+  function tourSetlist(t) {
+    return (Array.isArray(t && t.setlist) ? t.setlist : []).map(function (x) {
+      return String(x == null ? '' : x).trim().slice(0, 80);
+    }).filter(Boolean).slice(0, 60);
+  }
+  function openSetlist(tourId) {
+    var editing = false;
+    function build() {
+      var t = getTour(tourId);
+      var songs = tourSetlist(t);
+      var canEd = canEditTour(tourId);
+      openSheet(function () {
+        if (editing && canEd) {
+          var ta = h('textarea', { class: 'input', rows: Math.max(8, Math.min(16, songs.length + 2)),
+            'aria-label': 'The set list, one song per line',
+            placeholder: 'One song per line', value: songs.join('\n') });
+          return [
+            h('h2', { class: 'sh-title' }, 'Set list'),
+            h('p', { class: 'sh-sub' }, 'One song per line, in the order they are played. Up to 60 songs.'),
+            h('form', { class: 'sh-form', novalidate: true, onsubmit: async function (e) {
+              e.preventDefault();
+              blurActive();
+              var next = String(ta.value || '').split(/\r?\n/)
+                .map(function (x) { return x.trim().slice(0, 80); })
+                .filter(Boolean).slice(0, 60);
+              // Only the set list rides the save; the rest of the tour stays put.
+              if (await api.update(tourId, { setlist: next })) {
+                editing = false;
+                toast(next.length ? 'Set list saved' : 'Set list cleared');
+                render(true);
+                build();
+              }
+            } },
+              ta,
+              h('div', { class: 'stack', style: 'margin-top:12px' },
+                h('button', { class: 'btn primary block', type: 'submit' }, 'Save set list'),
+                h('button', { class: 'btn ghost block', type: 'button',
+                  onclick: function () { editing = false; build(); } }, 'Cancel')))
+          ];
+        }
+        return [
+          h('h2', { class: 'sh-title' }, 'Set list'),
+          songs.length ? h('p', { class: 'sh-sub' }, 'One list for the whole tour.') : null,
+          songs.length
+            ? h('div', { class: 'ledger' }, songs.map(function (sg, i) {
+                return h('div', { class: 'row ds-row' },
+                  h('span', { class: 'row-label' },
+                    h('span', { class: 'num', style: 'display:inline-block;min-width:26px;opacity:.65' }, String(i + 1) + '.'),
+                    sg));
+              }))
+            : h('p', { class: 'note' }, 'No set list yet'),
+          canEd ? h('div', { class: 'stack', style: 'margin-top:12px' },
+            h('button', { class: 'btn primary block', type: 'button',
+              onclick: function () { editing = true; build(); } },
+              songs.length ? 'Edit set list' : 'Add the set list')) : null
+        ];
+      }, { label: 'Set list' });
+    }
+    build();
   }
 
   /* The tour's phone book: who is on the run and how to reach them. */
@@ -16276,7 +16547,8 @@
   }
 
   /* Guest list tab: tonight's list up front, any other night one tap away. */
-  // A night's guests as rows, by last name; yours (or anyone's, for the tour manager) come off with a tap.
+  // A night's guests as rows, by last name; yours (or anyone's, for the tour
+  // manager) open with a tap to be changed or taken off.
   function guestRowsFor(id, s, list, backend, myUid, refresh) {
     return list.slice().sort(function (a, b) {
       return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
@@ -16284,6 +16556,7 @@
     }).map(function (g) {
       var mine = !backend || (g.addedBy && g.addedBy === myUid);
       return guestRow(g, { canManage: canEditTour(id) || mine,
+        onSave: async function (ch) { await saveGuest(id, s.id, Object.assign({}, g, ch)); refresh(); },
         onRemove: async function () { await removeGuest(id, s.id, g.id); refresh(); } });
     });
   }
@@ -16376,7 +16649,8 @@
   }
 
   /* A guest, laid out like the Overview crew: the name on the left, the pass
-     lit up in the middle, then mail and phone. Tap the name to take them off. */
+     lit up in the middle, then mail and phone. Tap the name to change the
+     entry or take them off (whoever added them, and the tour's Managers). */
   function guestRow(g, o) {
     var name = [g.firstName, g.lastName].map(function (x) { return String(x || '').trim(); })
       .filter(Boolean).join(' ') || 'Guest';
@@ -16386,18 +16660,8 @@
     var aff = String(g.affiliation || '').trim();
     var inner = [name, aff ? h('span', { class: 'hint crew-sub' }, aff) : null];
     var label = o.canManage
-      ? h('button', { class: 'row-label gl-name', type: 'button', 'aria-label': name + ', ' + pass + '. Tap to remove',
-          onclick: function () {
-            confirmSheet({
-              title: 'Take ' + name + ' off the list?',
-              body: pass + (aff ? ' \u00b7 ' + aff : ''),
-              action: 'Remove', danger: true,
-              onConfirm: async function () {
-                try { await o.onRemove(); toast('Off the list'); return true; }
-                catch (e) { toast('Only the tour manager can remove someone else\u2019s guest.'); return false; }
-              }
-            });
-          } }, inner)
+      ? h('button', { class: 'row-label gl-name', type: 'button', 'aria-label': name + ', ' + pass + '. Tap to edit',
+          onclick: function () { openGuestEdit(g, { name: name, pass: pass, aff: aff }, o); } }, inner)
       : h('div', { class: 'row-label' }, inner);
     return h('div', { class: 'row crew-row' }, label,
       h('div', { class: 'crew-side' },
@@ -17349,20 +17613,21 @@
         v = String(v || '').trim();
         return v ? dsRow(label, h('span', { class: 'ds-val' }, v)) : null;
       };
-      var clockRow = function (label, v) {
-        v = G.cleanTime(v);
+      // A time with an end reads as the sheet printed it: "1:00PM - 1:45PM".
+      var clockRow = function (label, v, end) {
+        v = G.timeSpan(v, end);
         return v ? dsRow(label, h('span', { class: 'ds-time num' }, v)) : null;
       };
       // Soundchecks and set times: a small heading, then one row per band.
       var bandRows = function (title, list) {
         var got = (Array.isArray(list) ? list : []).filter(function (r) {
-          return r && (String(r.band || '').trim() || String(r.time || '').trim());
+          return r && (String(r.band || '').trim() || String(r.time || '').trim() || String(r.end || '').trim());
         });
         if (!got.length) return [];
         return [h('div', { class: 'row ds-sub' }, title)].concat(got.map(function (r) {
           return h('div', { class: 'row ds-row ds-band-row' },
             h('span', { class: 'row-label' }, String(r.band || '').trim() || 'TBA'),
-            h('span', { class: 'ds-time num' }, G.cleanTime(r.time) || 'TBA'));
+            h('span', { class: 'ds-time num' }, G.timeSpan(r.time, r.end) || 'TBA'));
         }));
       };
       var section = function (title, rows) {
@@ -17388,9 +17653,9 @@
           textRow('Wifi password', d.wifiPass),
           textRow('Parking', d.parking)]),
         blocks('Schedule', [
-          [clockRow('Lobby call', d.lobbyCall), clockRow('Load in', d.loadIn)],
+          [clockRow('Lobby call', d.lobbyCall), clockRow('Load in', d.loadIn, d.loadInEnd)],
           [bandRows('Soundcheck', d.soundchecks)],
-          [textRow('VIP', d.vip), clockRow('Doors', d.doors)],
+          [textRow('VIP', d.vip), clockRow('Last call for guest list', d.lastCall), clockRow('Doors', d.doors)],
           [bandRows('Set times', d.setTimes)],
           [clockRow('Load out', d.loadOut), clockRow('Bus call', d.busCall), textRow('Drive to next venue', d.driveNext)]]),
         // Every amenity listed, a plain yes or no beside it.
@@ -17398,6 +17663,11 @@
           if (o && o.onlySet && d[a[0]] !== 'yes' && d[a[0]] !== 'no') return null;
           return dsRow(a[1], h('span', { class: 'ds-val' },
             d[a[0]] === 'yes' ? 'Yes' : (d[a[0]] === 'no' ? 'No' : '\u2014')));
+        })),
+        // What the sheet said that fit no named field, in its own words.
+        section('More from the sheet', G.dsExtras(d.extras).map(function (r) {
+          return dsRow(r.label || r.value,
+            r.label && r.value ? h('span', { class: 'ds-val' }, r.value) : null);
         })),
         String(d.notes || '').trim() ? h('section', { class: 'ds-sec' },
           h('h3', { class: 'ds-sec-h' }, 'Notes'), h('p', { class: 'ds-notes' }, String(d.notes).trim())) : null
@@ -17629,7 +17899,7 @@
           others.forEach(function (x) {
             var d = G.isObj(x.daySheet) ? x.daySheet : {};
             patch[x.id] = { daySheet: Object.assign({}, d, {
-              setTimes: setTimes.map(function (r) { return { band: r.band, time: r.time }; }) }) };
+              setTimes: setTimes.map(function (r) { return { band: r.band, time: r.time, end: r.end || '' }; }) }) };
           });
           if (await api.update(tourId, { shows: patch })) {
             toast('Set times on ' + plural(others.length, 'night'));
@@ -17906,11 +18176,16 @@
     }
     var patch = { guests: {} };
     patch.guests[showId] = {};
-    patch.guests[showId][guest.id] = {
+    // Who put the name on: an edit keeps the original adder and the original
+    // time; a new entry is yours (on the real backend the database does this).
+    var me = window.GR_BACKEND && window.GR_BACKEND.uid ? window.GR_BACKEND.uid() : null;
+    var row = {
       firstName: guest.firstName, lastName: guest.lastName, affiliation: guest.affiliation,
       email: guest.email, phone: guest.phone, qty: guest.qty, passType: guest.passType,
-      createdAt: Date.now()
+      createdAt: guest.createdAt || guest.at || Date.now()
     };
+    if (guest.addedBy || me) row.addedBy = guest.addedBy || me;
+    patch.guests[showId][guest.id] = row;
     return api.update(tourId, patch);
   }
   /* One night's comments: read them, add one, take your own back. */
@@ -18099,6 +18374,10 @@
       }).map(function (g) {
         var mine = !backend || (g.addedBy && g.addedBy === myUid);
         return guestRow(g, { canManage: canEditTour(tourId) || mine,
+          onSave: async function (ch) {
+            await saveGuest(tourId, showId, Object.assign({}, g, ch));
+            setTimeout(function () { openGuestList(tourId, showId); }, backend ? 500 : 150);
+          },
           onRemove: async function () {
             await removeGuest(tourId, showId, g.id);
             setTimeout(function () { openGuestList(tourId, showId); }, backend ? 500 : 150);
@@ -18195,6 +18474,73 @@
               onclick: function () { done(); } }, 'Back to the list')))
       ];
     }, { label: 'Add a guest' });
+  }
+
+  /* A name already on the list, opened from its row: change it or take it
+     off. Whoever put the name on, and the tour's Managers, get here (the
+     database holds the same line). Saves ride the same write the add uses,
+     only this night's list; nobody's phone is told about an edit or a
+     removal, sendNotify('guest') stays with the add alone. */
+  function openGuestEdit(g, meta, o) {
+    var f = { firstName: String(g.firstName || ''), lastName: String(g.lastName || ''),
+      affiliation: String(g.affiliation || ''), qty: Math.max(1, Math.min(20, G.num(g.qty) || 1)) };
+    function textIn(key, ph) {
+      return h('input', { class: 'input', type: 'text', value: f[key], maxlength: 80,
+        autocomplete: 'off', placeholder: ph,
+        oninput: function (e) { f[key] = e.target.value; } });
+    }
+    var qtySel = h('select', { class: 'input', 'aria-label': 'How many they bring',
+      onchange: function (e) { f.qty = G.num(e.target.value) || 1; } });
+    qtySel.append(h('option', { value: '1' }, 'Just them'));
+    for (var i = 1; i <= 10; i++) qtySel.append(h('option', { value: String(i + 1) }, '+' + i));
+    // An imported batch can bring more than the picker offers: keep that count choosable.
+    if (f.qty > 11) qtySel.append(h('option', { value: String(f.qty) }, '+' + (f.qty - 1)));
+    qtySel.value = String(f.qty);
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Edit guest'),
+        h('p', { class: 'sh-sub' }, meta.name + ' · ' + meta.pass),
+        h('form', { class: 'sh-form', novalidate: true,
+          onsubmit: async function (e) {
+            e.preventDefault();
+            if (!f.firstName.trim() && !f.lastName.trim()) {
+              toast('Give the guest at least a name'); return;
+            }
+            blurActive();
+            try {
+              await o.onSave({ firstName: f.firstName.trim(), lastName: f.lastName.trim(),
+                affiliation: f.affiliation.trim(), qty: Math.max(1, Math.min(20, f.qty)) });
+              closeSheet();
+              toast('Saved: ' + (f.firstName + ' ' + f.lastName).trim());
+            } catch (e2) {
+              toast(e2 && e2.code === 'permission'
+                ? 'Only the tour manager can change someone else’s guest.'
+                : 'Couldn’t save it. Try again.');
+            }
+          } },
+          h('div', { class: 'field-row' },
+            field('First name', textIn('firstName', 'Devin')),
+            field('Last name', textIn('lastName', 'Oliver'))),
+          field('Affiliation', textIn('affiliation', 'Label, press, family…')),
+          field('Brings', qtySel),
+          h('div', { class: 'stack' },
+            h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
+            h('button', { class: 'btn danger block', type: 'button',
+              onclick: function () {
+                confirmSheet({
+                  title: 'Take ' + meta.name + ' off the list?',
+                  body: meta.pass + (meta.aff ? ' · ' + meta.aff : ''),
+                  action: 'Remove', danger: true,
+                  onConfirm: async function () {
+                    try { await o.onRemove(); toast('Off the list'); return true; }
+                    catch (e3) { toast('Only the tour manager can remove someone else’s guest.'); return false; }
+                  }
+                });
+              } }, 'Remove from the list'),
+            h('button', { class: 'btn ghost block', type: 'button',
+              onclick: function () { closeSheet(); } }, 'Cancel')))
+      ];
+    }, { label: 'Edit guest' });
   }
 
   /* Someone sends a pile of names: paste it, Claude (or a plain parser) sorts
@@ -18344,24 +18690,27 @@
     var posted = false;
     var f = {
       venueAddress: d0.venueAddress || '', venuePhone: d0.venuePhone || '',
-      loadIn: d0.loadIn || '', vip: d0.vip || '', doors: d0.doors || '',
+      loadIn: d0.loadIn || '', loadInEnd: d0.loadInEnd || '', vip: d0.vip || '', doors: d0.doors || '',
+      lastCall: d0.lastCall || '',
       loadOut: d0.loadOut || '', lobbyCall: d0.lobbyCall || '', busCall: d0.busCall || '',
       wifi: d0.wifi || '', wifiPass: d0.wifiPass || '', parking: d0.parking || '',
       driveNext: d0.driveNext || '', notes: d0.notes || '',
       soundchecks: (Array.isArray(d0.soundchecks) ? d0.soundchecks : []).map(function (r) {
-        return { band: r.band || '', time: r.time || '' }; }),
+        return { band: r.band || '', time: r.time || '', end: r.end || '' }; }),
       setTimes: (Array.isArray(d0.setTimes) ? d0.setTimes : []).map(function (r) {
-        return { band: r.band || '', time: r.time || '' }; })
+        return { band: r.band || '', time: r.time || '', end: r.end || '' }; }),
+      // The sheet's leftover lines, each a label and the sheet's own words.
+      extras: G.dsExtras(d0.extras)
     };
     // A blank day starts with the tour's lineup already in the rows —
     // one soundcheck and one set time per band, times waiting to be typed.
     var lineup = tourBands(t);
     if (lineup.length) {
       if (!f.soundchecks.length) {
-        f.soundchecks = lineup.map(function (b) { return { band: b, time: '' }; });
+        f.soundchecks = lineup.map(function (b) { return { band: b, time: '', end: '' }; });
       }
       if (!f.setTimes.length) {
-        f.setTimes = lineup.map(function (b) { return { band: b, time: '' }; });
+        f.setTimes = lineup.map(function (b) { return { band: b, time: '', end: '' }; });
       }
     }
     G.DS_AMENITIES.forEach(function (a) { f[a[0]] = d0[a[0]] || ''; });
@@ -18420,16 +18769,23 @@
         var host = h('div', { class: 'ds-bands' });
         function build() {
           var kids = f[key].map(function (r, i) {
-            return h('div', { class: 'af-row ds-band' },
-              h('input', { class: 'input', type: 'text', value: r.band, maxlength: 60,
-                placeholder: 'Band', autocomplete: 'off',
-                oninput: function (e) { r.band = e.target.value; } }),
-              clockIn(function () { return r.time; }, function (v) { r.time = v; }, 'Time'),
-              h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove',
-                onclick: function () { f[key].splice(i, 1); build(); } }, icon('trash', 16)));
+            // Two lines so a printed range fits a phone: the band and its
+            // start, then "until" with the end. A blank end means no range.
+            return h('div', { class: 'ds-band' },
+              h('div', { class: 'af-row', style: 'margin-bottom:6px' },
+                h('input', { class: 'input', type: 'text', value: r.band, maxlength: 60,
+                  placeholder: 'Band', autocomplete: 'off',
+                  oninput: function (e) { r.band = e.target.value; } }),
+                clockIn(function () { return r.time; }, function (v) { r.time = v; }, 'Time'),
+                h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove',
+                  onclick: function () { f[key].splice(i, 1); build(); } }, icon('trash', 16))),
+              h('div', { class: 'af-row' },
+                h('span', { class: 'hint', style: 'flex:1;align-self:center;text-align:right' }, 'until'),
+                clockIn(function () { return r.end; }, function (v) { r.end = v; }, 'End'),
+                h('span', { style: 'flex:0 0 40px' }, '')));
           });
           kids.push(h('button', { class: 'btn quiet block', type: 'button', style: 'min-height:42px',
-            onclick: function () { f[key].push({ band: '', time: '' }); build(); } }, addLabel));
+            onclick: function () { f[key].push({ band: '', time: '', end: '' }); build(); } }, addLabel));
           host.replaceChildren.apply(host, kids);
         }
         build();
@@ -18454,20 +18810,46 @@
             f[key] = i === 1 ? 'yes' : i === 2 ? 'no' : '';
           }, label));
       }
+      // The sheet's leftover lines: line checks, early entry, the hotel \u2014
+      // whatever fit no named box, kept in the sheet's own words.
+      var extrasHost = h('div', null);
+      function buildExtras() {
+        var kids = f.extras.map(function (r, i) {
+          return h('div', { class: 'af-row', style: 'margin-bottom:8px' },
+            h('input', { class: 'input', type: 'text', value: r.label, maxlength: 40,
+              placeholder: 'Hotel', autocomplete: 'off', style: 'flex:0 0 110px',
+              'aria-label': 'What the line is',
+              oninput: function (e) { r.label = e.target.value; } }),
+            h('input', { class: 'input', type: 'text', value: r.value, maxlength: 80,
+              placeholder: 'Name and address', autocomplete: 'off',
+              'aria-label': 'What the sheet says',
+              oninput: function (e) { r.value = e.target.value; } }),
+            h('button', { class: 'iconbtn sm', type: 'button', 'aria-label': 'Remove this line',
+              onclick: function () { f.extras.splice(i, 1); buildExtras(); } }, icon('trash', 16)));
+        });
+        if (f.extras.length < 12) {
+          kids.push(h('button', { class: 'btn quiet block', type: 'button', style: 'min-height:42px',
+            onclick: function () { f.extras.push({ label: '', value: '' }); buildExtras(); } }, '+ Add a line'));
+        }
+        extrasHost.replaceChildren.apply(extrasHost, kids);
+      }
+      buildExtras();
       var submit = async function (e) {
         e.preventDefault();
         blurActive();
         var clean = function (list) {
-          return list.filter(function (r) { return r.band.trim() || r.time.trim(); })
-            .map(function (r) { return { band: r.band.trim(), time: r.time.trim() }; });
+          return list.filter(function (r) { return r.band.trim() || r.time.trim() || r.end.trim(); })
+            .map(function (r) { return { band: r.band.trim(), time: r.time.trim(), end: r.end.trim() }; });
         };
         var sheet = {
           venueAddress: f.venueAddress.trim(), venuePhone: f.venuePhone.trim(),
-          loadIn: f.loadIn.trim(), vip: f.vip.trim(), doors: f.doors.trim(),
+          loadIn: f.loadIn.trim(), loadInEnd: f.loadInEnd.trim(), vip: f.vip.trim(), doors: f.doors.trim(),
+          lastCall: f.lastCall.trim(),
           loadOut: f.loadOut.trim(), lobbyCall: f.lobbyCall.trim(), busCall: f.busCall.trim(),
           wifi: f.wifi.trim(), wifiPass: f.wifiPass.trim(), parking: f.parking.trim(),
           driveNext: f.driveNext.trim(), notes: f.notes.trim(),
-          soundchecks: clean(f.soundchecks), setTimes: clean(f.setTimes)
+          soundchecks: clean(f.soundchecks), setTimes: clean(f.setTimes),
+          extras: G.dsExtras(f.extras)
         };
         G.DS_AMENITIES.forEach(function (a) { sheet[a[0]] = f[a[0]] || ''; });
         // When it went up (Ari's DAY SHEET AVAILABLE waits for show day) and the
@@ -18509,12 +18891,16 @@
           // The schedule, in the order the day happens.
           h('h3', { class: 'ds-sec-h' }, 'Schedule'),
           h('div', { class: 'field-row' },
-            field('Lobby call', timeIn('lobbyCall', '11', 'AM')),
-            field('Load in', timeIn('loadIn', '2'))),
+            field('Lobby call', timeIn('lobbyCall', '11', 'AM')), h('div', null)),
+          // The end beside the start, the way imported sheets print a range.
+          h('div', { class: 'field-row' },
+            field('Load in', timeIn('loadIn', '2')),
+            field('Load in ends', timeIn('loadInEnd', '4'))),
           group('Soundchecks', bandList('soundchecks', '+ Add a band\u2019s soundcheck')),
           field('VIP', textIn('vip', '6:00 PM meet & greet')),
           h('div', { class: 'field-row' },
-            field('Doors', timeIn('doors', '7')), h('div', null)),
+            field('Last call for guest list', timeIn('lastCall', '6')),
+            field('Doors', timeIn('doors', '7'))),
           group('Set times', bandList('setTimes', '+ Add a band\u2019s set time')),
           h('div', { class: 'field-row' },
             field('Load out', timeIn('loadOut', '11:30')),
@@ -18522,6 +18908,9 @@
           field('Drive time to next venue', textIn('driveNext', '4h 20m \u2014 285 mi')),
           h('h3', { class: 'ds-sec-h' }, 'Amenities'),
           h('div', { class: 'ds-yns' }, G.DS_AMENITIES.map(function (a) { return yesNo(a[0], a[1]); })),
+          h('h3', { class: 'ds-sec-h' }, 'More from the sheet'),
+          // Lines of the sheet the boxes above don't cover, in its own words.
+          h('div', { class: 'field' }, extrasHost),
           field('Anything else', textIn('notes', 'Optional')),
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Post day sheet'),
@@ -20993,14 +21382,16 @@
 
   // The card settings live here (the creator's): the feed's choices once a
   // card is in, or adding one before that.
-  function cardMenuItem(id) {
+  function cardMenuItem(id, asRow) {
     var B = window.GR_BACKEND;
     if (S.mode !== 'db' || !createdTour(id) || !S.feed || !B || !B.feedCall) return null;
     // (The cards could not be read: the settings sheet asks the server itself, so nothing here offers to connect on a guess.)
     var unsure = !!S.feed.failed;
     var ready = unsure || (!S.feed.connectOnly && !!(S.feed.row && S.feed.row.switched_on));
-    return h('button', { class: 'btn ghost block', type: 'button',
-      onclick: function () { if (S.feed.connectOnly && !unsure) connectCards(id); else openFeedSheet(id); } },
+    var tap = function () { if (S.feed.connectOnly && !unsure) connectCards(id); else openFeedSheet(id); };
+    // asRow: dressed as a Settings row; elsewhere it stays the plain button it was.
+    if (asRow) return stRow(ready ? 'gear' : 'card', ready ? 'Card settings' : 'Add card info', tap);
+    return h('button', { class: 'btn ghost block', type: 'button', onclick: tap },
       icon(ready ? 'gear' : 'card', 18), ready ? 'Card settings' : 'Add card info');
   }
   function openTourMenu(id) {
@@ -21111,9 +21502,12 @@
       'Read it and reply with ONLY a JSON object with these fields (use "" for anything not on the sheet, never guess):',
       '"venueAddress" (street address), "venuePhone", "wifi" (network name), "wifiPass", "parking" (where the bus and trailer go, load-in notes),',
       '"lobbyCall", "loadIn", "doors", "loadOut", "busCall" (each a time like "6:30PM" or "11:00AM"; "TBA" if the sheet says so),',
+      '"loadInEnd" (when load in prints a range like "1 PM - 1:45 PM", the end of it; "" when no range),',
+      '"lastCall" (the "last call for guest list" time, however the sheet words it),',
       '"vip" (meet & greet / VIP time and note), "driveNext" (drive time or miles to the next city),',
-      '"soundchecks": [{"band": "...", "time": "4:30PM"}] and "setTimes": [{"band": "...", "time": "9:15PM"}] in running order, using the sheet\u2019s band names,',
+      '"soundchecks": [{"band": "...", "time": "4:30PM", "end": "5:00PM"}] and "setTimes": [{"band": "...", "time": "9:15PM", "end": "10:00PM"}] in running order, using the sheet\u2019s band names ("end" only where the sheet prints a range, else ""),',
       '"greenrooms", "showers", "productionOffice", "laundry" (each "yes", "no" or ""), and "notes" (anything else the crew should know, one or two lines).',
+      '"extras": [{"label": "...", "value": "..."}] \u2014 one row for EVERY schedule or info line that fits none of the fields above (line checks per band, early VIP entry, the hotel\u2019s name and address, runner times, and the like). Keep the sheet\u2019s own words; do not drop any line.',
       'Times are in the venue\u2019s local time as printed.'
     ].filter(Boolean).join('\n');
   }
@@ -21137,14 +21531,20 @@
     // What the photo had goes over the form; what it didn't have stays.
     var merged = Object.assign({}, cur || {});
     var str = function (v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 120); };
-    ['venueAddress', 'venuePhone', 'wifi', 'wifiPass', 'parking', 'lobbyCall', 'loadIn', 'doors', 'loadOut', 'busCall', 'vip', 'driveNext', 'notes'].forEach(function (k) {
+    ['venueAddress', 'venuePhone', 'wifi', 'wifiPass', 'parking', 'lobbyCall', 'loadIn', 'loadInEnd', 'lastCall', 'doors', 'loadOut', 'busCall', 'vip', 'driveNext', 'notes'].forEach(function (k) {
       if (str(out[k])) merged[k] = k === 'notes' ? String(out[k]).trim().slice(0, 600) : str(out[k]);
     });
     ['soundchecks', 'setTimes'].forEach(function (k) {
-      var rows = Array.isArray(out[k]) ? out[k].map(function (r) { return G.isObj(r) ? { band: str(r.band), time: str(r.time) } : null; })
-        .filter(function (r) { return r && (r.band || r.time); }) : [];
+      var rows = Array.isArray(out[k]) ? out[k].map(function (r) { return G.isObj(r) ? { band: str(r.band), time: str(r.time), end: str(r.end) } : null; })
+        .filter(function (r) { return r && (r.band || r.time || r.end); }) : [];
       if (rows.length) merged[k] = rows.slice(0, 12);
     });
+    // Every line the reader saw but could not place lands here, in the
+    // sheet's own words — never silently dropped.
+    var exRows = Array.isArray(out.extras) ? out.extras.map(function (r) {
+      return G.isObj(r) ? { label: str(r.label).slice(0, 40), value: str(r.value).slice(0, 80) } : null;
+    }).filter(function (r) { return r && (r.label || r.value); }) : [];
+    if (exRows.length) merged.extras = exRows.slice(0, 12);
     G.DS_AMENITIES.forEach(function (a) { var v = str(out[a[0]]).toLowerCase(); if (v === 'yes' || v === 'no') merged[a[0]] = v; });
     var got = Object.keys(merged).filter(function (k) { return merged[k] && (!cur || JSON.stringify(cur[k]) !== JSON.stringify(merged[k])); }).length;
     openDaySheetEditor(tourId, showId, merged);

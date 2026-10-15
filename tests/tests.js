@@ -1180,6 +1180,38 @@
     eq(t[6], 'Doors: 7:00PM', 'schedule line');
   });
 
+  test('a printed range keeps both ends, and leftovers land under More from the sheet', function () {
+    eq(G.timeSpan('1 PM', '1:45 PM'), '1:00PM - 1:45PM', 'start and end, a plain hyphen');
+    eq(G.timeSpan('7 pm', ''), '7:00PM', 'no end reads as it always did');
+    eq(G.timeSpan('', ''), '', 'nothing stays nothing');
+    var lines = G.daySheetLines({ daySheet: {
+      loadIn: '1 PM', loadInEnd: '1:45 PM', lastCall: '5:30 PM',
+      soundchecks: [{ band: 'I See Stars', time: '4 PM', end: '4:45 PM' }],
+      setTimes: [{ band: 'I See Stars', time: '9:15 PM' }],
+      extras: [{ label: 'Hotel', value: 'Hilton, 450 Main St' }, { label: ' ', value: '' }]
+    } });
+    eq(lines[0], 'Load in: 1:00PM - 1:45PM', 'load in as the sheet printed it');
+    eq(lines[1], 'Soundcheck — I See Stars: 4:00PM - 4:45PM', 'a band’s range');
+    eq(lines[2], 'Last call for guest list: 5:30PM', 'last call rides the schedule');
+    eq(lines[3], 'I See Stars: 9:15PM', 'a set time with no end, unchanged');
+    eq(lines[4], 'Hotel: Hilton, 450 Main St', 'the leftover line, in its own words');
+    eq(lines.length, 5, 'the blank extra row is gone');
+    var secs = G.daySheetSections({ daySheet: { extras: [{ label: 'Early VIP entry', value: '5 PM' }] } });
+    eq(secs.length, 1, 'extras alone still make a sheet');
+    eq(secs[0].title, 'More from the sheet', 'under their own heading');
+  });
+
+  test('the leftover rows are capped and clipped wherever they come from', function () {
+    var many = [];
+    for (var i = 0; i < 15; i++) many.push({ label: 'L' + i, value: 'v' });
+    eq(G.dsExtras(many).length, 12, 'at most 12 rows');
+    var r = G.dsExtras([{ label: new Array(60).join('x'), value: new Array(120).join('y') }])[0];
+    eq(r.label.length, 40, 'labels clip at 40');
+    eq(r.value.length, 80, 'values clip at 80');
+    eq(G.dsExtras('nope').length, 0, 'not a list reads as none');
+    eq(G.dsExtras([null, 'x', { label: '', value: '  ' }]).length, 0, 'junk rows are dropped');
+  });
+
   /* ============ Master Tour import ============ */
 
   test('a tour-software export becomes one clean entry per real date', function () {
@@ -1365,6 +1397,19 @@
   test('a bad date is rejected rather than guessed', function () {
     eq(G.parseDay('2026-02-30'), null, 'february 30th');
     eq(G.parseDay('not a date'), null, 'nonsense');
+  });
+
+  test('days left on tour: home is its own day after the last date, off days included', function () {
+    var t = { shows: keyed([{ date: '2026-03-01' }, { date: '2026-03-03' }, { date: '2026-03-10' }]) };
+    eq(G.daysLeftOnTour(t, '2026-03-03'), 8, 'mid-tour: the 3rd through the 10th, then home on the 11th');
+    eq(G.daysLeftOnTour(t, '2026-03-05'), 6, 'an off day mid-tour still counts down');
+    eq(G.daysLeftOnTour(t, '2026-03-10'), 1, 'the last show day reads 1 day left');
+    eq(G.daysLeftOnTour(t, '2026-03-11'), null, 'home: hidden');
+    eq(G.daysLeftOnTour(t, '2026-02-20'), null, 'not on the road yet: hidden');
+    eq(G.daysLeftOnTour({ shows: {} }, '2026-03-03'), null, 'no dates: hidden');
+    // Travel days stretch the run the way tourEnd reads them.
+    var t2 = { spanEnd: '2026-03-12', shows: keyed([{ date: '2026-03-10' }]) };
+    eq(G.daysLeftOnTour(t2, '2026-03-10'), 3, 'travel days after the last show count');
   });
 
   /* ============ Formatting ============ */

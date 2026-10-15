@@ -372,7 +372,7 @@ shim = r"""<script>
   /* ---- THE OFF TOUR FRAME: the Off Tour book, and an account with no tour on the road ----
      As the page opens, the harness tour ("Harness run") is on the road today and its artist has an Off Tour
      book (off1 above: five charges and two income entries, Royalties and an "Other" called Sync licence).
-     TO SEE OFF TOUR INSIDE A TOUR: Overview (bottom right of the profile), Budget, then the OFF TOUR tab: the
+     TO SEE OFF TOUR INSIDE A TOUR: Budget (on the bottom bar, from anywhere), then the OFF TOUR tab: the
      same top tabs with OFF TOUR lit, Expenses | Cards/Links | Income for the book, the tour's bottom bar; the
      left tab (the tour's name) goes back to the tour's Budget.
      SWITCHES:
@@ -497,6 +497,21 @@ shim = r"""<script>
     }
     emit();
   };
+  /* ---- THE SET LIST: Overview, View Setlist (beside View calendar) ----
+     One list for the whole tour, on the tour doc's setlist key. The sheet opens empty ("No set list yet";
+     the lead, who owns the harness tour, sees "Add the set list"). Edits go through the fake backend's
+     update, so Save, close and reopen shows the saved list; a Crew phone (?crew) reads it with no Edit.
+     SWITCHES:
+       __harness.setlist(true)   puts a ten-song list on the harness tour, so the read-only and numbered
+                                 looks can be seen without typing; (false) clears it. Or open the page
+                                 with ?setlist (add &crew for the viewer look). */
+  window.__harness.setlist = function (on) {
+    if (on === false) delete tours.t1.setlist;
+    else tours.t1.setlist = ['Ten Thousand Feet', 'Murder Mitten', 'New Demons', 'Everyone’s Safe in the Treehouse',
+      'Running with Scissors', 'Mobbin’ Out', 'What This Means to Me', 'Calm Snow', 'Portals', 'Full Circle'];
+    emit();
+  };
+  try { if (/[?&]setlist\b/.test(String(location.search || ''))) window.__harness.setlist(true); } catch (e) { /* no address to read */ }
   /* ---- LIVE WITHOUT A RESTART (0144): a seat, an artist's yes, a new request, tours confirmed ----
      On the real thing the database touches the account's own row in "pokes" and the phone hears it: the
      backend links any waiting seat, reads the tours again and calls the one function the app handed to
@@ -541,6 +556,12 @@ shim = r"""<script>
                                    the shows and tours..." only while nothing is confirmed or waiting; then
                                    "Waiting on I See Stars to approve your tours"; then the count, as a fact,
                                    which opens "Your tours with I See Stars".
+                                   THE PROFILE'S TOUR DROPDOWN: after confirmTours(), tap a confirmed tour on
+                                   the profile's Tours tab and its dates drop down right there, the artist
+                                   page's own dropdown (the pretend tourNights answers three nights for any
+                                   tour; no "I was on this tour" line ever shows on a profile). The same on a
+                                   viewer profile: approve Brent's waiting claim on the artist page (Manage,
+                                   the "... to approve" card), then open his profile's Tours tab and tap one.
        __harness.artistSide()      the same page seen from the artist's side: the page is handed to the test
                                    person (they run it, as a Member, Vocals), so what they sent as crew waits
                                    on their own yes. Open the page (Manage): the card "... to approve" opens
@@ -698,6 +719,20 @@ shim = r"""<script>
     emit();
   };
   try { if (/[?&]newcrew\b/.test(String(location.search || ''))) window.__harness.newCrew(); } catch (e) { /* no address to read */ }
+  /* ---- A FAN'S PHONE: the bottom bar with no tour pages on it ----
+     A strictly-fan account (runs no artist, Member of none, Crew on no tour,
+     not a promoter) has no tour pages, so its bottom bar is Search and the
+     photo alone. __harness.fan() turns the test account into one before the
+     app starts: the tours go away, the artist list empties, and the account
+     said only "fan" at sign-up. Or open the page with ?fan. */
+  window.__harness.fan = function () {
+    var H = window.__harness;
+    H.asCrew = false; H.asManager = false;
+    ['t1', 'off1'].forEach(function (id) { if (tours[id]) { held[id] = tours[id]; delete tours[id]; } });
+    H.devinActs = []; H.kinds = ['fan'];
+    emit();
+  };
+  try { if (/[?&]fan\b/.test(String(location.search || ''))) window.__harness.fan(); } catch (e) { /* no address to read */ }
   try {
     var offAsk = /[?&]offtour=(next|none|travel)\b/.exec(String(location.search || ''));
     if (offAsk) window.__harness.offTour(offAsk[1]);
@@ -726,6 +761,19 @@ shim = r"""<script>
     return Promise.resolve(out);
   }
   window.__harness.members = []; window.__harness.invited = []; window.__harness.notified = []; window.__harness.notes = [];
+  /* ---- THE GUEST LIST: rows beside the tour, as on the real backend ----
+     Tonight's Austin show (s1) starts with three names in __harness.guests: one this phone put on
+     (added_by u-devin), one Brent put on, and one old row with no added_by at all. Tap a name to
+     edit or remove it. The fake saveGuest/removeGuest keep the database's line: a Manager phone
+     (plain, or ?manager) may touch all three; with ?crew only your own row saves or comes off,
+     the others answer { code: 'permission' } the way RLS does, and their rows don't open at all. */
+  window.__harness.guests = [
+    { id: 'g1', tour_id: 't1', show_id: 's1', first_name: 'Robin', last_name: 'Alvarez', affiliation: 'Label',
+      email: '', phone: '', qty: 2, pass_type: 'VIP', added_by: 'u-devin', created_at: 1 },
+    { id: 'g2', tour_id: 't1', show_id: 's1', first_name: 'Sam', last_name: 'Fields', affiliation: 'Press',
+      email: 'sam@example.com', phone: '', qty: 1, pass_type: 'GA', added_by: 'u-brent', created_at: 2 },
+    { id: 'g3', tour_id: 't1', show_id: 's1', first_name: 'Kim', last_name: 'Nolan', affiliation: '',
+      email: '', phone: '555-0199', qty: 1, pass_type: 'All Access', added_by: null, created_at: 3 }];
   window.__harness.past = [{ email: 'brent@example.com', name: 'Brent Allen', phone: '555-0142', role: 'editor', tourRole: 'Tour manager' },
     { email: 'tasha@example.com', name: 'Tasha Lane', phone: '', role: 'viewer', tourRole: 'Production manager' },
     { email: 'ana@example.com', name: 'Ana Reyes', phone: '', role: 'viewer', tourRole: 'FOH engineer' }];
@@ -2827,6 +2875,35 @@ shim = r"""<script>
     },
     saveNote: function (tourId, day, note) { window.__harness.notes.push(note); return Promise.resolve(); },
     notesFor: function () { return window.__harness.notes; },
+    // The guest list, in memory (see THE GUEST LIST near the top): the same
+    // shapes and the same who-may-touch-it line the real table enforces.
+    guestsFor: function (tourId, showId) {
+      return (window.__harness.guests || []).filter(function (g) { return g.tour_id === tourId && g.show_id === showId; })
+        .map(function (g) {
+          return { id: g.id, firstName: g.first_name, lastName: g.last_name, affiliation: g.affiliation,
+            email: g.email, phone: g.phone, qty: g.qty, passType: g.pass_type, addedBy: g.added_by, at: g.created_at };
+        });
+    },
+    saveGuest: function (tourId, showId, guest) {
+      var H = window.__harness, list = H.guests = H.guests || [];
+      var row = list.filter(function (g) { return g.id === guest.id; })[0];
+      if (row && H.asCrew && row.added_by !== 'u-devin') {
+        return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      }
+      if (!row) { row = { id: guest.id, tour_id: tourId, show_id: showId, added_by: 'u-devin', created_at: Date.now() }; list.push(row); }
+      row.first_name = guest.firstName; row.last_name = guest.lastName; row.affiliation = guest.affiliation;
+      row.email = guest.email; row.phone = guest.phone; row.qty = guest.qty; row.pass_type = guest.passType;
+      return Promise.resolve();
+    },
+    removeGuest: function (guestId) {
+      var H = window.__harness, list = H.guests = H.guests || [];
+      var row = list.filter(function (g) { return g.id === guestId; })[0];
+      if (!row || (H.asCrew && row.added_by !== 'u-devin')) {
+        return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      }
+      H.guests = list.filter(function (g) { return g.id !== guestId; });
+      return Promise.resolve();
+    },
     // A fake card feed: the pile, the switch and the account choices, all in memory.
     feedWatch: function (fn) { window.__harness.feedFns.push(fn); setTimeout(function () { fn(window.__harness.feedState()); }, 0); },
     // The app's one function for "something of yours changed" (0144): called by __harness.poke and the hooks built on it.

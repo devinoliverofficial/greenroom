@@ -375,6 +375,14 @@ a.btn { text-decoration: none; }
 .dock .sb-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .dock .tabbar-b .sb-face.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--pos); }
 .dock .dock-me { position: relative; }
+/* All the tabs, all the time (Devin, 2026-10-15): Search plus the tour's six
+   around your photo, eight slots in all. They must fit a phone, so every slot
+   shares the width evenly (four left of the photo, three right), the photo's
+   column narrows, the labels shrink and the icons come down a size. */
+.tabbar.dock.all-dock { grid-template-columns: 4fr 52px 3fr; }
+.dock.all-dock .dock-half .tabbar-b span { font-size: 8.2px; letter-spacing: -.03em; }
+.dock.all-dock .dock-half .tabbar-b .ic svg { width: 20px; height: 20px; }
+.dock.all-dock .tabbar-b .sb-face { width: 30px; height: 30px; font-size: 13px; }
 .tabbar-b .ic { opacity: .85; }
 .tabbar-b.on { color: var(--pos); }
 .tabbar-b.on .ic { opacity: 1; }
@@ -2481,6 +2489,12 @@ button.acct-row:active { background: var(--surface-2); }
 .acct-on .ic svg { stroke-width: 3; }
 .acct-plus { flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--ink); }
 .acct-list .note { margin: 0; padding: 14px; }
+/* Settings, grouped: the same rows, a small heading over each group, rows a
+   touch tighter than the profiles list, the destructive one in the danger red. */
+.st-head { margin: 18px 4px 0; font-size: 13px; font-weight: 700; letter-spacing: .02em; color: var(--ink-3); }
+.st-sheet .acct-row { min-height: 56px; }
+.st-sheet .acct-plus { width: 36px; height: 36px; }
+.st-sheet .acct-row.danger .acct-plus, .st-sheet .acct-row.danger .lr-title { color: var(--neg); }
 /* Create a Greenroom Artist: a big title, boxed fields, one wide button. */
 .ca-title { font-size: 26px; letter-spacing: -.02em; }
 .ca-form { margin-top: 16px; }
@@ -2788,6 +2802,9 @@ button.acct-row:active { background: var(--surface-2); }
 .pt-off { display: grid; justify-items: end; margin: 0; font-size: 12px; font-weight: 500; line-height: 1.2; color: var(--ink-2); }
 .pt-off b { color: var(--ink); font-size: 14px; font-weight: 800; }
 .pt-off b.num { color: var(--pos); font-size: 28px; line-height: 1; letter-spacing: -.02em; margin-bottom: 2px; }
+/* The corner stacks its two counts: days until a day off over days left on tour. */
+.pt-corner { display: grid; justify-items: end; gap: 6px; }
+.pt-left b.num { color: var(--ink); font-size: 18px; }
 /* A day in two columns: tag, date and city left; venue and address right. */
 .pt-dayrow { position: relative; z-index: 1; display: grid;
   /* Even corners keep the venue centred; a corner is never narrower than its longest word. */
@@ -2846,6 +2863,8 @@ button.acct-row:active { background: var(--surface-2); }
 .pt-two.pinned { position: fixed; left: 0; right: 0; bottom: calc(55px + env(safe-area-inset-bottom, 0px)); z-index: 39;
   max-width: 600px; margin: 0 auto; padding: 18px 18px 12px;
   background: linear-gradient(to bottom, color-mix(in oklab, var(--bg), transparent 100%), var(--bg) 40%); }
+/* On MY PAY the same row sits above a tour's bottom bar, which stands taller. */
+.page.tour .pt-two.pinned { bottom: calc(63px + env(safe-area-inset-bottom, 0px)); }
 .gl-room { height: 76px; }
 .pt-two .pf-btn { flex: 1 1 0; }
 .pt-body .gl-sendrow { margin-top: 8px; }
@@ -2915,6 +2934,24 @@ button.fl-row { cursor: pointer; }
 .cw-row .amt { flex: none; min-width: 64px; text-align: right; }
 .cw-more { margin-top: 14px; }
 .cat-sheet .sh-h3.cw-h { margin-top: 22px; }
+/* The crew pay list (Devin, 2026-10-15): photo, name and role on the left;
+   projected over paid on the right, each with its small word. The whole row
+   is the way into their pay page. */
+.cw-row.cwp-row { width: 100%; appearance: none; -webkit-appearance: none; border: 0; background: none; font: inherit; color: var(--ink); text-align: left; }
+.cwp-row .pf-photo.crew-face { flex: none; width: 36px; height: 36px; font-size: 14px; box-shadow: none; }
+.cwp-nums { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.cwp-n { display: inline-flex; align-items: baseline; gap: 6px; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.cwp-n.done { color: var(--pos); }
+.cwp-k { font-style: normal; font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); min-width: 62px; text-align: left; }
+/* One person's pay page, laid out like MY PAY. */
+.cwp-top { margin: 2px 0 6px; }
+.cwp-top .pay-sum-tab { cursor: default; }
+.pay-sum-tab.on.cwp-sum { border-bottom-color: transparent; }
+.cat-sheet .cwp-months { margin: 6px 0 14px; }
+.cwp-rows { margin-top: 18px; }
+.cwp-prog { margin: 22px 0 6px; }
+/* The pay page's chart key: no spent bars there, the dot alone. */
+.mc-key.pays .k-i { margin-left: 0; }
 .row.cp-row { gap: 10px; padding-right: 12px; }
 .cp-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: inherit;
   font: inherit; text-align: left; cursor: pointer; }
@@ -3321,6 +3358,11 @@ button.fl-row { cursor: pointer; }
 .linkbtn.rb-link.rb-arm { color: var(--neg); }
 .linkbtn.rb-link:disabled, .rb-row .pay-entry-x:disabled { opacity: .5; }
 .rb-off { color: var(--ink-3); text-decoration: line-through; }
+/* "Need a Reimbursement?" on MY PAY (Devin, 2026-10-15): one green button,
+   centered, with what's waiting in a quiet line under it. */
+.rb-need { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 4px 0 16px; }
+.rb-need-btn { min-height: 46px; padding: 0 26px; font-size: 15px; }
+.rb-need-hint { margin: 0; text-align: center; }
 /* Your own asks, under the form. */
 .rb-sheet .sh-h3 { margin-top: 20px; }
 .row.ex-row.rb-row { gap: 10px; }
@@ -3690,15 +3732,31 @@ button.input.role-pick.empty { color: var(--ink-3); font-weight: 500; }
 /* The opening drive-by plays on a fresh launch only. Coming back from the
    background never re-runs this page, so it can't play then; a fresh open
    (after the app was swiped closed) is a brand-new 'navigate' load; a reload
-   (sign-out, an update) is a 'reload' and goes straight to the app. */
+   (sign-out, an update) is a 'reload' and goes straight to the app.
+   And a fresh open within half an hour of last use skips it too (Devin,
+   2026-10-15): the phone remembers when the app was last open, so a hard
+   close and reopen goes straight to the profile unless a real break came
+   first. ?splash in the address plays it regardless, for testing. */
 (function () {
   var s = document.getElementById('gr-splash');
+  // When the app was last open, kept on the phone: written now, when the app
+  // goes to the background (visibilitychange / pagehide), and every minute
+  // while it stays open, since a crash or a swipe-close can skip pagehide.
+  var KEY = 'gr-last-open', last = 0;
+  try { last = Number(window.localStorage.getItem(KEY)) || 0; } catch (e) { last = 0; }
+  function stamp() { try { window.localStorage.setItem(KEY, String(Date.now())); } catch (e) { /* a phone that keeps nothing */ } }
+  stamp();
+  document.addEventListener('visibilitychange', stamp);
+  window.addEventListener('pagehide', stamp);
+  setInterval(stamp, 60 * 1000);
   var how = 'navigate';
   try {
     var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
     if (nav && nav.type) how = nav.type;
   } catch (e) { /* older browsers: treat as a fresh launch */ }
-  if (how !== 'navigate') { s.remove(); return; }
+  var rested = !(last && Date.now() - last < 30 * 60 * 1000); // half an hour away earns the drive-by again
+  var forced = /[?&](slow)?splash\b/.test(location.search);
+  if (!forced && (how !== 'navigate' || !rested)) { s.remove(); return; }
   var word = s.querySelector('.sp-word'), bus = s.querySelector('.sp-bus'), stage = s.querySelector('.sp-stage');
   var finished = false;
   function done(wait) {

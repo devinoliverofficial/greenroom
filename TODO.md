@@ -2,6 +2,27 @@
 
 Devin's list. Big rocks first. Each one gets built one step at a time, with mercy.
 
+## MODELXCREW Wave 1 (Devin's idea list, 2026-10-15): SHIPPED in one push
+All 25 ideas were collected and talked through first (his answers are the rule). Built by five builders and an adversarial reviewer, then checked by hand in a browser at phone width:
+- [x] 24 Every tab always visible: one bottom bar everywhere - Search, Overview, Budget, Day sheet, the profile photo in the centre (the default screen), Guest list, Crew Stats, Chat. Off tour the tabs keep the off-tour behaviors; a pure fan sees Search and their profile alone. The artist page's own TOUR | OFF TOUR bar stays (taking it away would close those doors; ask Devin)
+- [x] 4 The intro only after a real break: used within 30 minutes means no bus, straight to the profile (?splash forces it; ?slowsplash still works)
+- [x] 3 "N days left on tour" beside the day-off count, ending on the home day after the last date (hidden with no dates; off days count)
+- [x] 9 The green check for anyone Bronze or better holding an endorsement, same rule beside the photo and in the page title
+- [x] 6 A profile's confirmed tours drop their dates down in place, like the artist page; never an "I was on this tour" button there; rows with no artist id stay still
+- [x] 14 MY PAY: Add expense / Log income and Your cards side by side at the bottom; "Need a Reimbursement?" is one centred green button
+- [x] 15 Crew pay: picture, name and role left, PROJECTED and PAID right, no Edit buttons (the row opens the person), past-crew list only inside Add someone; the person's page reads like MY PAY with the month chart (green dots = payments) and a bar filling toward the projection
+- [x] 22 Guest list rows open an Edit guest sheet: name, affiliation, brings, Save, Remove; new rows remember who added them (old rows: Managers)
+- [x] 13 Settings in the three-line menu's own style
+- [x] Day sheet: end times for load in, soundchecks and sets ("1 PM - 1:45 PM"), a "Last call for guest list" time for the Tour Manager, and a "More from the sheet" group so the reader never drops a line it cannot place; the photo reader asks for all of it
+- [x] 16 "View Setlist" beside View calendar: one numbered list for the whole tour, Managers and Members edit, everyone views
+- [ ] Not tried on a real phone yet; the artist-page bar question above is open
+
+## MODELXCREW Wave 2 (database, staged): WAITS ON HIS WORD, one by one
+- [ ] 0149 claims follow the fold (fixes the claim picker not matching the artist page, and whole-tour claims missing alternate spellings): rehearsed, two adversarial reviews, every finding fixed and re-proven (nothing shrinks, 96 picker rows = the page's claimable rows, stale phones safe, seats recomputed). App follow-up after apply: tag festival rows in the picker
+- [ ] 0150 bus check-ins, 0151 buyout tracking, 0152 To Do List, 0153 Favorite Local Spots, 0154 venues + ratings (feeds the EXISTING venues table; backfill makes ~30 pages), 0155 tour supplies: written, loaded clean rolled back; functional rehearsals + app screens next
+- [ ] Research done (MODELXCREW/research/): genre sources, Ticketmaster for shows-in-the-city, pictures via MusicBrainz->Wikidata->Commons, Dreambeach (10 sourced shows)
+- [ ] Held: lock screen (App Store approval), notifications list (needs notify/ari pastes), fan beta beyond the bar rule
+
 ## 1. Reading costs — make it sustainable before the App Store
 Today every flyer, statement, venue lookup and tour search spends from one prepaid Anthropic
 meter. Capped now ($50/month on the Anthropic side, ~$60/month of searching on the app side,

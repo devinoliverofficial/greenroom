@@ -1468,6 +1468,19 @@
     var last = d[d.length - 1];
     return parseDay(tour.spanEnd) && tour.spanEnd > last ? tour.spanEnd : last;
   }
+  /* How many days until the band is home: today through the run's last
+     calendar day, plus the travel day home after it, off days included
+     (Devin's rule: home is its own day after the last tour date). Only
+     while the run is on; null before it starts, once the home day has
+     come, or with no dated shows at all. `today` can be given for tests. */
+  function daysLeftOnTour(tour, today) {
+    var start = tourStart(tour), end = tourEnd(tour);
+    if (!start || !end) return null;
+    var day = parseDay(today) ? today : tourToday();
+    if (day < start) return null;
+    var n = daysBetween(day, addDays(end, 1));
+    return n >= 1 ? n : null;
+  }
   /* The days a tour takes card charges for, as the tour manager chose them:
      from the start of the tour, the start of rehearsals or a date, to the end
      of the tour or a date. Named choices follow the tour when its dates move.
@@ -1952,6 +1965,25 @@
   }
   function cleanTime(v) { var p = splitTime(v); return joinTime(p.main, p.ampm); }
 
+  /* A printed range ("1 PM - 1:45 PM") keeps both ends, a plain hyphen
+     between them; with no end it reads exactly as it always did. */
+  function timeSpan(start, end) {
+    var a = cleanTime(start), b = cleanTime(end);
+    return a && b ? a + ' - ' + b : (a || b);
+  }
+
+  /* The sheet's leftover lines ({label, value}), tidied: blank rows go, and
+     the caps (12 rows, labels of 40, values of 80) hold wherever they come
+     from — the editor, the photo reader, or an old save. */
+  function dsExtras(v) {
+    return (Array.isArray(v) ? v : []).map(function (r) {
+      return isObj(r) ? {
+        label: String(r.label == null ? '' : r.label).trim().slice(0, 40),
+        value: String(r.value == null ? '' : r.value).trim().slice(0, 80)
+      } : null;
+    }).filter(function (r) { return r && (r.label || r.value); }).slice(0, 12);
+  }
+
   /* The day sheet in the order the day happens, in sections: where you are
      (address, phone, wifi, parking), the schedule from lobby call to bus
      call, then the amenities and any notes. Only what the tour manager
@@ -1972,14 +2004,15 @@
     put(venue, 'Parking', d.parking);
     var day = sec('schedule', 'Schedule');
     put(day, 'Lobby call', cleanTime(d.lobbyCall));
-    put(day, 'Load in', cleanTime(d.loadIn));
+    put(day, 'Load in', timeSpan(d.loadIn, d.loadInEnd));
     dsList(d.soundchecks).forEach(function (r) {
-      day.lines.push('Soundcheck — ' + (String(r.band || '').trim() || 'TBA') + ': ' + (cleanTime(r.time) || 'TBA'));
+      day.lines.push('Soundcheck — ' + (String(r.band || '').trim() || 'TBA') + ': ' + (timeSpan(r.time, r.end) || 'TBA'));
     });
     put(day, 'VIP', d.vip);
+    put(day, 'Last call for guest list', cleanTime(d.lastCall));
     put(day, 'Doors', cleanTime(d.doors));
     dsList(d.setTimes).forEach(function (r) {
-      day.lines.push((String(r.band || '').trim() || 'TBA') + ': ' + (cleanTime(r.time) || 'TBA'));
+      day.lines.push((String(r.band || '').trim() || 'TBA') + ': ' + (timeSpan(r.time, r.end) || 'TBA'));
     });
     put(day, 'Load out', cleanTime(d.loadOut));
     put(day, 'Bus call', cleanTime(d.busCall));
@@ -1992,6 +2025,11 @@
     });
     var am = sec('amenities', 'Amenities');
     if (amen.length) am.lines.push(amen.join(' · '));
+    // Whatever fit no named field, kept in the sheet's own words.
+    var more = sec('extras', 'More from the sheet');
+    dsExtras(d.extras).forEach(function (r) {
+      more.lines.push(r.label && r.value ? r.label + ': ' + r.value : (r.label || r.value));
+    });
     put(sec('notes', 'Notes'), 'Notes', d.notes);
     return out.filter(function (x) { return x.lines.length; });
   }
@@ -2459,7 +2497,7 @@
     guaranteeGap: guaranteeGap, guaranteeOwed: guaranteeOwed, guaranteeKept: guaranteeKept, guaranteeLost: guaranteeLost,
     CASH_MOVES: CASH_MOVES, cashSummary: cashSummary, cashByShow: cashByShow,
     cardPaidDetail: cardPaidDetail, preTourCutoff: preTourCutoff,
-    tourStart: tourStart, tourEnd: tourEnd, cardWindow: cardWindow, cardMoved: cardMoved, cardPaidOff: cardPaidOff,
+    tourStart: tourStart, tourEnd: tourEnd, daysLeftOnTour: daysLeftOnTour, cardWindow: cardWindow, cardMoved: cardMoved, cardPaidOff: cardPaidOff,
 
     calc: calc, stateOf: stateOf, caption: caption,
     // Set by the app: a function (tour) -> the asks to be paid back on it (see reimbursementRows).
@@ -2468,7 +2506,7 @@
     yearByMonth: yearByMonth, monthSeries: monthSeries,
     normalizeSettlement: normalizeSettlement, pickBandNumber: pickBandNumber,
     DS_AMENITIES: DS_AMENITIES, daySheetSections: daySheetSections, daySheetLines: daySheetLines, daySheetText: daySheetText,
-    splitTime: splitTime, joinTime: joinTime, cleanTime: cleanTime,
+    splitTime: splitTime, joinTime: joinTime, cleanTime: cleanTime, timeSpan: timeSpan, dsExtras: dsExtras,
     toCSV: toCSV, closeoutCSVs: closeoutCSVs,
     offDayLines: offDayLines, offDayText: offDayText,
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,
