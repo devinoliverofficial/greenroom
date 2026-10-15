@@ -15425,9 +15425,10 @@
     }
     return moneyLead(tourId);
   }
-  /* The card feed (undo a charge, the pile, Refresh) and the alert siren are
-     still checked by the server the old way: a Manager there also needs the
-     tour role "Tour Manager". Shown only when the server will say yes. */
+  /* The card feed (undo a charge, the pile, Refresh) is still checked by the
+     server the old way: a Manager there also needs the tour role "Tour
+     Manager". Shown only when the server will say yes. (The alert siren asks
+     the server's own list of Managers since the notify function of Oct 15.) */
   function serverLead(tourId) {
     var B = window.GR_BACKEND;
     if (S.mode !== 'db' || (B && B.ownsTour && B.ownsTour(tourId))) return true;
@@ -19088,9 +19089,10 @@
         closeSheet();
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft, flags: flagsNow } }).net;
         var r = G.round(after);
-        // (The "in the green" push went to every phone on ALL, crew included, with the tour's
-        // net in it. Crew do not see the band's money (Devin, 2026-10-10), so it is not sent
-        // until the server sends it only to the people who can see the money: TODO.md.)
+        // Crossing into the green: a push to the tour's Managers. The server sends it to them
+        // only, whatever group their phone is on (crew never get the band's money; Devin,
+        // 2026-10-10), and only a Manager may send it, so nobody else tries.
+        if (G.round(before) < 0 && r >= 0 && moneyLead(id)) sendNotify(id, 'green', { net: money(r, true) });
         if (G.round(before) < 0 && r >= 0) toast('Income saved. You’re in the green.');
         else if (r < 0) toast('Income saved. ' + money(-r) + ' to break even.');
         else toast('Income saved. ' + money(r) + ' in the green.');
@@ -20714,7 +20716,7 @@
       return [
         h('h2', { class: 'sh-title' }, 'Tour alerts'),
         h('div', { class: 'stack' },
-          (createdTour(tourId) || (moneyLead(tourId) && serverLead(tourId))) ? h('button', { class: 'btn primary block', type: 'button',
+          (createdTour(tourId) || moneyLead(tourId)) ? h('button', { class: 'btn primary block', type: 'button',
             onclick: function () { openAlertSheet(tourId); } }, icon('bell', 18), 'Send Tour Alert') : null,
           phone)
       ];

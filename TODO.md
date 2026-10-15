@@ -226,7 +226,10 @@ Devin: "is it possible when sorting through deposits and charges to add kinda di
 - [ ] A listed Member who does not run the artist's page is not switched to it by Create a tour (they cannot switch at all yet), and their tour does not show on the artist's page
 - [ ] Budget History: this year's Off Tour opens the live book, which is the whole book, not only this year (from next January last year's money shows in both). A tour that crosses New Year is filed under the year it started. Old tours open live and editable. A year's summary leaves out the plan, card balances and loans carried in; a total typed in with no date counts in the book's first year
 - [ ] A charge filed under a category the Off Tour book does not have (or "Day by day") is on no line and missing from the totals, on the live page too
-- [ ] After Devin pastes the notify and ari functions: turn "in the green" back on in the app (openIncome), drop the database stopgap (push_subs_guard, members_push_recheck), let the siren go by Manager instead of the "Tour Manager" title (serverLead), and make one test call
+- [x] Devin pasted the notify and ari functions on Oct 15 (both still check sign-ins at the gate; ari answers every minute). "In the green" is sent again, to the tour's Managers only; Send Tour Alert is there for every Manager, not only one titled Tour Manager (serverLead is now only for the card feed)
+- [ ] Migration 0148 (written and rehearsed, waits on his "apply it"): drop the MERCH NUMBERS stopgap (push_subs_guard, members_push_recheck, push_merch_ok). Then the app's "MERCH NUMBERS stays off" toast in openNotifications can go
+- [ ] ari's merch push still says "MERCH NUMBERS!" (notify's says "MERCH NUMBERS."): change it at ari's next paste
+- [ ] Not tried with a real phone: one in-the-green push and one Tour Alert from a Manager who did not make the tour
 - [ ] The big number's celebration when a tour crosses into the green now plays on the Expenses tab (the graph moved there), not on Income where the night is logged
 
 ## Fans, venues, promoters (Devin, 2026-10-10): later builds, see ROLES.md
@@ -274,7 +277,7 @@ Devin: "By default if no one has "claimed" an artist page the request by crew sh
 ## Passwords of 8, and the notification functions ready to paste (2026-10-15)
 - [x] A new password is 8 characters or more in the app (`PASS_MIN` in site/backend.js: sign-up with a code, the invited person's first password, the gate's sign-up, a reset). Signing in with an older, shorter password still works. A password the server turns down as weak or leaked says "That password is too easy to guess" (sgPassSay)
 - [x] Devin's Supabase step (Oct 15): minimum password length 8 is set. Leaked-password protection could not be switched on (it needs the Pro plan): turn it on if the plan changes
-- [ ] Still waiting on his paste, whenever he wants it: the notify and ari functions below; until then "in the green" notifications stay off
+- [x] He pasted both functions on Oct 15 (see "Tour setup, Budget History, notifications")
 - [x] notify and ari (not yet pasted): the sender is checked by the server (`admin.auth.getUser`), not read out of the token; what a phone sends is cut to size (names 60, ticket count 1 to 99, amounts 24); "in the green" reaches every Manager whatever group their phone is on; both files are plain ASCII for the paste
 
 ## The status ladder, as he set it (Devin, 2026-10-12)
