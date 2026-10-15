@@ -227,7 +227,8 @@ Devin: "is it possible when sorting through deposits and charges to add kinda di
 - [ ] Budget History: this year's Off Tour opens the live book, which is the whole book, not only this year (from next January last year's money shows in both). A tour that crosses New Year is filed under the year it started. Old tours open live and editable. A year's summary leaves out the plan, card balances and loans carried in; a total typed in with no date counts in the book's first year
 - [ ] A charge filed under a category the Off Tour book does not have (or "Day by day") is on no line and missing from the totals, on the live page too
 - [x] Devin pasted the notify and ari functions on Oct 15 (both still check sign-ins at the gate; ari answers every minute). "In the green" is sent again, to the tour's Managers only; Send Tour Alert is there for every Manager, not only one titled Tour Manager (serverLead is now only for the card feed)
-- [ ] Migration 0148 (written and rehearsed, waits on his "apply it"): drop the MERCH NUMBERS stopgap (push_subs_guard, members_push_recheck, push_merch_ok). Then the app's "MERCH NUMBERS stays off" toast in openNotifications can go
+- [x] Migration 0148 applied Oct 15 on his "apply it": the MERCH NUMBERS stopgap is gone (push_subs_guard, members_push_recheck, push_merch_ok); every phone's settings identical before and after
+- [ ] The app's "MERCH NUMBERS stays off" toast in openNotifications can no longer happen: take it out at the next app change there
 - [ ] ari's merch push still says "MERCH NUMBERS!" (notify's says "MERCH NUMBERS."): change it at ari's next paste
 - [ ] Not tried with a real phone: one in-the-green push and one Tour Alert from a Manager who did not make the tour
 - [ ] The big number's celebration when a tour crosses into the green now plays on the Expenses tab (the graph moved there), not on Income where the night is logged
