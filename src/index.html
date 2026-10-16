@@ -3150,6 +3150,9 @@ button.fl-row { cursor: pointer; }
 .chat-tools { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin: -4px -6px 2px 0; }
 .chat-tools > :last-child { justify-self: end; }
 .ct-side { display: block; }
+/* Bus Check in in the Chat, left of Ari: Ari's size, its own colours. */
+.chat-tools .ci-wrap.ct-bus { margin: 0; justify-content: flex-start; }
+.chat-tools .ct-bus .ci-btn { padding: 7px 14px; font-size: 12px; letter-spacing: .06em; white-space: nowrap; }
 /* New charges: the search at the top. */
 .rv-find { position: relative; margin: 0 0 8px; }
 .rv-find > .ic { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--ink-3); pointer-events: none; display: inline-flex; }

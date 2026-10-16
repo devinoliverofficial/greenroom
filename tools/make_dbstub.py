@@ -1124,6 +1124,41 @@ shim = r"""<script>
     return 'Your first time at Mohawk';
   };
   try { if (/[?&]venuehistory\b/.test(String(location.search || ''))) window.__harness.venueHistory(); } catch (e) { /* no address to read */ }
+  /* ---- THE GREEN CHECK EVERYWHERE (0161): the check by the rule in every list that names a person ----
+     The database's person_checks (verified, or Bronze plus an endorsement
+     that stands) is played by __harness.checks here: { userId: true | false }.
+     Out of the box Devin (checked by Greenroom), Brent (Bronze with an
+     endorsement), Ana Reyes (found by @ana) and the second of the seeded Top
+     Fans (u-fan2) wear it; anyone not in the map answers false. The probe
+     answers true here. A list draws the check at once for someone already
+     answered for, and an empty place for the rest, then asks once for the
+     whole list and fills the places in where they stand. Where to look: an
+     artist page's Members and Crew tabs, the Overview's crew list, Search
+     (results, Recent, Following, People you tour with), the profile's
+     followers and following, Messages, the tour's Chat, the Add members and
+     To Do invite pickers, Top Fans (__harness.topfans()), a claim or a
+     listing request being answered, and the people who joined a page before
+     it was claimed.
+     HOOKS:
+       __harness.checks       the answers, by account id. Change one, then
+                            __harness.checksReset() so the phone forgets what it
+                            was told and the open page draws again.
+       __harness.checksReset()   forgets every answer held (as ten minutes going by).
+       __harness.checkAsks    every ask the app made, one list of ids per ask: a list
+                            drawn once is one ask, and nobody already answered for
+                            is asked about again.
+       __harness.checksLate = 1500   answers after that many milliseconds, so the
+                            checks can be seen filling in where they stand (no
+                            redraw, nothing moves but the check).
+       __harness.checksOff = true   the probe answers false, as before migration
+                            0161: every list draws the check for a verified
+                            account only, exactly as before, and nothing is asked. */
+  window.__harness.checksReset = function () {
+    var H = window.__harness;
+    H.checksHeld = {};
+    emit();   // (open pages draw again)
+    return 'answers forgotten';
+  };
   /* ---- ARTIST PICTURES (0158): a bare page's picture from Wikimedia Commons ----
      The worker that walks MusicBrainz to Wikidata to Commons never runs
      here; what it leaves behind does: an unclaimed page whose avatar came
@@ -2331,6 +2366,38 @@ shim = r"""<script>
       H.venueHistoryLast = { tourId: tourId, showId: showId, sig: String(sig || '') };
       var r = (H.venueHistoryRows || {})[showId];
       return r ? JSON.parse(JSON.stringify(r)) : null;
+    },
+    /* The green check for a list of people (0161), in memory: see THE GREEN
+       CHECK EVERYWHERE near VENUE HISTORY. Answers are held in
+       __harness.checksHeld the way the real backend holds them; an id
+       another list is still waiting on is waited on, not asked twice; at
+       most 200 ids go in one ask; each ask is kept in __harness.checkAsks. */
+    personChecksOn: function () { return !window.__harness.checksOff; },
+    personChecked: function (uid) {
+      var H = window.__harness, held = H.checksHeld || {};
+      return !H.checksOff && uid && Object.prototype.hasOwnProperty.call(held, uid) ? held[uid] : undefined;
+    },
+    personChecks: function (uids) {
+      var H = window.__harness;
+      if (H.checksOff) return Promise.resolve(false);
+      if (!H.checks) H.checks = { 'u-devin': true, 'u-brent': true, 'u-ana': true, 'u-fan2': true };
+      H.checksHeld = H.checksHeld || {}; H.checksAsking = H.checksAsking || {};
+      var need = [], waits = [];
+      (Array.isArray(uids) ? uids : []).forEach(function (u) {
+        if (!u || need.indexOf(u) >= 0 || Object.prototype.hasOwnProperty.call(H.checksHeld, u)) return;
+        if (H.checksAsking[u]) { if (waits.indexOf(H.checksAsking[u]) < 0) waits.push(H.checksAsking[u]); return; }
+        need.push(u);
+      });
+      for (var i = 0; i < need.length; i += 200) (function (ids) {
+        H.checkAsks = (H.checkAsks || []).concat([ids]);
+        var late = Number(H.checksLate) || 0;
+        var p = new Promise(function (res) { setTimeout(res, late); }).then(function () {
+          ids.forEach(function (u) { H.checksHeld[u] = !!H.checks[u]; if (H.checksAsking[u] === p) delete H.checksAsking[u]; });
+        });
+        ids.forEach(function (u) { H.checksAsking[u] = p; });
+        waits.push(p);
+      })(need.slice(i, i + 200));
+      return waits.length ? Promise.all(waits).then(function () { return true; }) : Promise.resolve(false);
     },
     /* Supplies (0155), in memory: see SUPPLIES near LIVE WITHOUT A RESTART.
        The rows live in __harness.supplyRows; anyone ticks, but the words and

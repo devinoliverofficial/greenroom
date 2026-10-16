@@ -81,6 +81,13 @@
   // there at all (null until the first ask answers; the answer is the session's).
   var vhCache = {}, vhAsk = {}, vhKnown = null, vhProbing = false;
   var VH_FRESH = 600e3, VH_RETRY = 60e3; // a room's past moves slowly: ten minutes between asks; a missed ask, one
+  // The green check for a list of people (0161): each account id's answer
+  // ({ on, at }), the asks out now (by id), and whether the function is
+  // there at all (null until the probe answers; the answer is the session's).
+  // A check changes slowly: an answer is held ten minutes; after an ask that
+  // failed (no signal), lists wait a minute before asking again.
+  var pcCache = {}, pcAsk = {}, pcKnown = null, pcProbing = null, pcFailAt = 0;
+  var PC_FRESH = 600e3, PC_RETRY = 60e3, PC_MAX = 200;
   var FLOWERS_FRESH = 60e3; // asked again after a minute anyway: people join, phones sleep through changes
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
@@ -2153,6 +2160,32 @@
       if (!same || fresh || Date.now() - c.at > VH_FRESH) loadVenueHistory(tourId, showId, sig);
       return same ? c.data : null;
     },
+    /* The green check for a list of people (0161). personChecksOn: is the
+       function there (asked once per session; false until it answers, so a
+       build ahead of its migration leaves every list drawing the check for
+       an account Greenroom checked, exactly as before). personChecked(uid):
+       true or false from what this phone holds, undefined when it holds no
+       answer (never asked, or asked over ten minutes ago). personChecks(uids):
+       one ask for the people in a list this phone holds no fresh answer for
+       (at most 200 at a time), and a promise that settles once every one of
+       them has been answered or given up on, including people another list
+       already asked about and is still waiting on, so a list drawn while an
+       ask is out still fills in. It never throws, and an answer draws
+       nothing by itself: the list fills in its own checks when the promise
+       settles (only the probe's first yes draws the open page again, so
+       its lists can start asking). Someone the server had no time to count
+       is left unanswered and asked again the next time a list holds them. */
+    personChecksOn: function () {
+      if (pcKnown === null) pcProbe();
+      return pcKnown === true;
+    },
+    personChecked: function (uid) {
+      var c = uid ? pcCache[String(uid).toLowerCase()] : null;
+      return c && Date.now() - c.at <= PC_FRESH ? c.on : undefined;
+    },
+    personChecks: function (uids) {
+      return pcFor(uids);
+    },
     /* Tour flyers (0156). flyersOn: is the table there (asked once per
        session; false until it answers, so a build ahead of its migration
        simply shows nothing). tourFlyers: one artist page's flyers, keyed by
@@ -3115,6 +3148,66 @@
       if (q.error && fnMissing(q.error)) vhKnown = false;
       else { vhKnown = true; emit('tours'); }
     }, function () { vhProbing = false; });
+  }
+  /* ---- The green check for a list of people (0161) ---- */
+  // Is the function there? One ask per session, with no ids: a database that
+  // has it answers an empty list (and the open page draws again, now with
+  // its lists asking); one that does not says the function is missing, and
+  // every list keeps drawing the check for an account Greenroom checked, as
+  // before. No signal: unanswered, asked again the next time a list draws.
+  // (Answers the promise of the ask, so a caller can wait on it.)
+  function pcProbe() {
+    if (pcProbing) return pcProbing;
+    if (!session) return Promise.resolve();
+    pcProbing = sb.rpc('person_checks', { uids: [] }).then(function (q) {
+      pcProbing = null;
+      if (q.error && fnMissing(q.error)) pcKnown = false;
+      else if (!q.error) { pcKnown = true; emit('tours'); }
+    }, function () { pcProbing = null; });
+    return pcProbing;
+  }
+  var PC_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  /* The ask behind personChecks. The ids are cleaned first (only account
+     ids; one that is not would make the whole ask fail). Those with a fresh
+     answer are skipped; those another list is already asking about are
+     waited on, not asked twice; the rest go in one call (more than 200, in
+     more than one). An ask that fails keeps nothing, and lists wait a
+     minute before asking again; an ask that finds the function missing
+     turns the feature off for the session. */
+  function pcFor(uids) {
+    if (pcKnown === false || !session) return Promise.resolve(false);
+    if (pcKnown === null) return pcProbe().then(function () { return pcKnown === true ? pcFor(uids) : false; });
+    var now = Date.now(), seen = {}, need = [], waits = [];
+    (Array.isArray(uids) ? uids : []).forEach(function (u) {
+      u = String(u || '').toLowerCase();
+      if (!PC_ID.test(u) || seen[u]) return;
+      seen[u] = true;
+      var c = pcCache[u];
+      if (c && now - c.at <= PC_FRESH) return;
+      if (pcAsk[u]) { if (waits.indexOf(pcAsk[u]) < 0) waits.push(pcAsk[u]); return; }
+      need.push(u);
+    });
+    if (need.length && now - pcFailAt < PC_RETRY) need = [];
+    for (var i = 0; i < need.length; i += PC_MAX) waits.push(pcCall(need.slice(i, i + PC_MAX)));
+    return waits.length ? Promise.all(waits).then(function () { return true; }) : Promise.resolve(false);
+  }
+  function pcCall(ids) {
+    var p = sb.rpc('person_checks', { uids: ids }).then(function (q) {
+      if (q.error) {
+        if (fnMissing(q.error)) pcKnown = false;
+        else pcFailAt = Date.now();
+        return;
+      }
+      var a = isObj(q.data) ? q.data : {}, at = Date.now();
+      ids.forEach(function (u) {
+        // (Someone the server had no time to count is not in the answer: nothing is held, and they are asked again.)
+        if (typeof a[u] === 'boolean') pcCache[u] = { on: a[u], at: at };
+      });
+    }, function () { pcFailAt = Date.now(); }).then(function () {
+      ids.forEach(function (u) { if (pcAsk[u] === p) delete pcAsk[u]; });
+    });
+    ids.forEach(function (u) { pcAsk[u] = p; });
+    return p;
   }
   /* One show's answer from venue_history: the server reads the show's room
      and date out of the tour's own document, so the phone only says which

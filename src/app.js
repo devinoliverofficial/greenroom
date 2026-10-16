@@ -2520,6 +2520,68 @@
     var tier = G.isObj(rs) ? G.historyTier(rs) : null;
     return !!(tier && tier.key !== 'green' && G.num(endorsements) >= 1);
   }
+  /* The same check in every list that names a person (Devin, 2026-10-16: "If
+     someone has a checkmark it should apply everywhere"). A list rarely holds
+     the road numbers and the endorsements personChecked needs, so the server
+     answers for the whole list in one ask (B.personChecks, 0161: the same
+     rule, worked out there). Someone it has answered for wears the check at
+     once. Until the answer lands, and on a database without that function,
+     a list draws the check for an account Greenroom itself checked, exactly
+     as before; the rest fill in where they stand when the answer comes, so
+     nothing redraws and nothing jumps. Each list: var marks = checkList(cls);
+     marks.mark(uid, verified) beside each name; marks.ask() once per drawing
+     (before or after the rows are made: it waits for the drawing to end). */
+  function checkHeld(uid) {
+    var B = window.GR_BACKEND;
+    return !!(uid && B && typeof B.personChecked === 'function' && B.personChecked(uid) === true);
+  }
+  function checkList(cls) {
+    var waiting = [], ids = [];
+    return {
+      // The check beside one name: the badge now, or an empty place that takes it when the answer lands.
+      mark: function (uid, verified) {
+        if (verified || checkHeld(uid)) return verifiedBadge(cls);
+        var B = window.GR_BACKEND;
+        // (Before the server can answer, or on a database without 0161, nothing is drawn here at all:
+        // the page is exactly what it was. The first answer that it can draws open pages again.)
+        if (!uid || !socialOn() || typeof B.personChecks !== 'function' || typeof B.personChecksOn !== 'function' || !B.personChecksOn()) return null;
+        var spot = h('span', { style: 'display:contents' });
+        waiting.push({ el: spot, uid: uid });
+        if (ids.indexOf(uid) < 0) ids.push(uid);
+        return spot;
+      },
+      // One ask for the whole list. It waits for the drawing in hand to finish (a list's rows are often
+      // made in the same breath as the call), so every name marked in that drawing is in the one ask.
+      // after: called once checks have filled in, for a list that lays itself out by its names' widths.
+      ask: function (after) {
+        setTimeout(function () {
+          var B = window.GR_BACKEND;
+          if (!waiting.length || !B || typeof B.personChecks !== 'function') return;
+          var mine = waiting.splice(0), want = ids.splice(0);
+          Promise.resolve().then(function () { return B.personChecks(want); }).then(function () {
+            var filled = 0;
+            mine.forEach(function (s) {
+              if (s.el.isConnected && checkHeld(s.uid)) { s.el.replaceWith(verifiedBadge(cls)); filled += 1; }
+            });
+            if (filled && typeof after === 'function') after();
+          }, function () { /* no answer: the list stays as it was drawn */ });
+        }, 0);
+      }
+    };
+  }
+  /* A name with its check, for a line that is not already laid out for one:
+     fl-name sets the two side by side, kept inline so the name takes the
+     room it took before (the Overview crew measures its names' widths) and
+     the check sits just after it. Where no check can come (signed out, or
+     no account behind the name) it is the plain words, as before. */
+  function nameWith(text, mark) {
+    return mark ? h('span', { class: 'fl-name', style: 'display:inline-flex;max-width:100%' }, text, mark) : text;
+  }
+  function checkedName(text, uid, verified, cls) {
+    var marks = checkList(cls), line = nameWith(text, marks.mark(uid, verified));
+    marks.ask();
+    return line;
+  }
   function artistMarks(card, cls) {
     if (!card) return null;
     var check = card.checkmark != null ? !!card.checkmark : !!card.verified;
@@ -3377,6 +3439,9 @@
     var d = loadThreads(true);
     openSheet(function () {
       var rows = d.threads;
+      // (The check by the rule, for everyone in the list in one ask: see checkList.)
+      var marks = checkList();
+      marks.ask();
       return [
         h('h2', { class: 'sh-title' }, 'Messages'),
         !rows ? h('p', { class: 'note' }, 'Loading\u2026')
@@ -3387,7 +3452,7 @@
                 onclick: function () { openDm(t.userId, { name: t.name, handle: t.handle, avatar: t.avatar, verified: t.verified }); } },
                 personPhoto(t, 'xs'),
                 h('span', { class: 'lr-text' },
-                  h('span', { class: 'lr-title fl-name' }, t.name || 'Someone', t.verified ? verifiedBadge() : null),
+                  h('span', { class: 'lr-title fl-name' }, t.name || 'Someone', marks.mark(t.userId, t.verified)),
                   h('span', { class: 'lr-sub' }, (t.fromMe ? 'You: ' : '') + (t.last || ''))),
                 h('span', { class: 'dm-meta' }, h('span', { class: 'dm-at' }, dmWhen(t.at)),
                   unread ? h('span', { class: 'dm-dot num', 'aria-label': unread + ' unread' }, String(unread)) : null));
@@ -3446,6 +3511,9 @@
     var draw = function () {
       openSheet(function () {
         var rows = state.rows;
+        // (The check by the rule, for everyone in the list in one ask: see checkList.)
+        var marks = checkList();
+        marks.ask();
         return [
           h('h2', { class: 'sh-title' }, title),
           !mine && whose ? h('p', { class: 'sh-sub' }, whose) : null,
@@ -3457,7 +3525,7 @@
                 var roles = personRoles(p);
                 var inner = [personPhoto(p, 'xs'),
                   h('span', { class: 'lr-text' },
-                    h('span', { class: 'lr-title fl-name' }, p.name || 'Someone', p.verified ? verifiedBadge() : null),
+                    h('span', { class: 'lr-title fl-name' }, p.name || 'Someone', marks.mark(p.userId, p.verified)),
                     (p.handle || roles.length) ? h('span', { class: 'lr-sub' },
                       [p.handle ? '@' + p.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')) : null)];
                 return p.canOpen
@@ -3857,6 +3925,8 @@
     };
     var results = h('div', { class: 'am-results' });
     var timer = 0, seq = 0, last = [];
+    // (The check by the rule, for everyone found in one ask: see checkList.)
+    var marks = checkList();
     var row = function (p) {
       var roles = personRoles(p);
       var has = on[p.userId];
@@ -3889,13 +3959,14 @@
       };
       return h('div', { class: 'fl-row am-row' }, personPhoto(p, 'xs'),
         h('span', { class: 'lr-text' },
-          h('span', { class: 'lr-title fl-name' }, p.name || 'Someone', p.verified ? verifiedBadge() : null),
+          h('span', { class: 'lr-title fl-name' }, p.name || 'Someone', marks.mark(p.userId, p.verified)),
           (p.handle || roles.length) ? h('span', { class: 'lr-sub' },
             [p.handle ? '@' + p.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')) : null),
         btn);
     };
     var paint = function (note) {
       results.replaceChildren.apply(results, note ? [h('p', { class: 'note' }, note)] : last.map(row));
+      marks.ask();
     };
     var search = function (v) {
       clearTimeout(timer);
@@ -3992,13 +4063,17 @@
         });
       }
     }) : personPhoto(card);
+    // The green check by the rule on every Member and Crew row (Devin, 2026-10-16: "people don't have
+    // the check mark in the members section of the artist profile"), both lists in one ask: see checkList.
+    var marks = checkList();
+    marks.ask();
     var memberRow = function (m) {
       // The title this artist gave them leads; without one, their own roles.
       // (Several roles in a line that cannot wrap: the first two, then how many more.)
       var roles = m.role ? [rolesShort(m.role)] : personRoles(m);
       var inner = [personPhoto(m, 'xs'),
         h('span', { class: 'lr-text' },
-          h('span', { class: 'lr-title fl-name' }, m.name || 'Someone', m.verified ? verifiedBadge() : null),
+          h('span', { class: 'lr-title fl-name' }, m.name || 'Someone', marks.mark(m.userId, m.verified)),
           (m.handle || roles.length) ? h('span', { class: 'lr-sub' },
             [m.handle ? '@' + m.handle : '', roles.join(' \u00b7 ')].filter(Boolean).join(' \u00b7 ')) : null)];
       // The trophy: the artist's word that this person really worked for them. For good.
@@ -4408,12 +4483,15 @@
       };
       return h('div', { class: 'fl-row am-row' }, personPhoto(p, 'xs'),
         h('span', { class: 'lr-text' },
-          h('span', { class: 'lr-title fl-name' }, p.name || 'Someone', p.verified ? verifiedBadge() : null),
+          h('span', { class: 'lr-title fl-name' }, p.name || 'Someone', marks.mark(p.userId, p.verified)),
           p.handle ? h('span', { class: 'lr-sub' }, '@' + p.handle) : null),
         btn);
     };
+    // (The check by the rule, for everyone found in one ask: see checkList.)
+    var marks = checkList();
     var paint = function (note) {
       results.replaceChildren.apply(results, note ? [h('p', { class: 'note' }, note)] : last.map(row));
+      marks.ask();
     };
     var paintInvited = function () {
       var inv = invited();
@@ -4426,9 +4504,10 @@
           paintInvited(); paint();
         };
         return h('div', { class: 'fl-row am-row' }, personPhoto({ name: v.name || '?' }, 'xs'),
-          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title fl-name' }, v.name || 'Someone')),
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title fl-name' }, v.name || 'Someone', marks.mark(v.userId, false))),
           x);
       }));
+      marks.ask();
     };
     var search = function (v) {
       clearTimeout(timer);
@@ -5287,7 +5366,8 @@
         h('h2', { class: 'sh-title ca-title' }, 'Claim: ' + x.artist),
         h('p', { class: 'sh-sub' }, [x.about, regionName(x.country)].filter(Boolean).join(' \u00b7 ') || 'Artist page nobody runs yet'),
         h('div', { class: 'ledger cq-card' },
-          h('div', { class: 'row' }, h('div', { class: 'row-label' }, x.name || 'Someone',
+          // (The claimant's green check by the rule, as their own page shows it.)
+          h('div', { class: 'row' }, h('div', { class: 'row-label' }, checkedName(x.name || 'Someone', x.userId, false),
             h('span', { class: 'hint' }, [x.handle ? '@' + x.handle : ''].concat([x.tourRole].concat(x.roles || []).filter(function (v, i, all) { return v && all.indexOf(v) === i; })).filter(Boolean).join(' \u00b7 ')),
             x.email ? h('span', { class: 'hint' }, x.email) : null),
             h('button', { class: 'btn sm quiet', type: 'button', onclick: function () { closeSheet(true); openProfile(x.userId); } }, 'Profile')),
@@ -5469,15 +5549,18 @@
       var pg = joinedPages(artistId)[0];
       return (pg ? pg.people : []).filter(function (x) { return !done[x.userId]; });
     }
+    // (Each person's green check by the rule, everyone here in one ask: see checkList.)
+    var marks = checkList();
     function draw() {
       var list = people();
       if (!list.length) { fillEl(host, h('p', { class: 'note' }, joinedAsks().at ? 'Everyone here has been answered.' : 'Loading…')); return; }
+      marks.ask();
       fillEl(host, list.map(function (x) {
         var name = x.name || 'Someone', tours = Array.isArray(x.list) ? x.list : [];
         var roles = String(x.role || '').trim();
         return h('div', { class: 'ledger cq-card' },
           h('div', { class: 'row' }, personPhoto({ name: x.name, avatar: x.avatar }, 'xs'),
-            h('div', { class: 'row-label' }, name,
+            h('div', { class: 'row-label' }, nameWith(name, marks.mark(x.userId, false)),
               h('span', { class: 'hint' }, [x.handle ? '@' + x.handle : '', 'Crew'].filter(Boolean).join(' · ')))),
           h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'Their roles with ' + artist,
             h('span', { class: 'hint cq-said', style: 'overflow-wrap:anywhere' }, roles || 'None given'))),
@@ -5551,7 +5634,8 @@
         h('p', { class: 'sh-sub' }, 'On ' + artist + '’s page, as ' + (member ? 'a Member.' : 'crew.')),
         h('div', { class: 'ledger cq-card' },
           h('div', { class: 'row' }, personPhoto({ name: x.name, avatar: x.avatar }, 'xs'),
-            h('div', { class: 'row-label' }, name,
+            // (Their green check by the rule, as their own page shows it.)
+            h('div', { class: 'row-label' }, checkedName(name, x.userId, false),
               h('span', { class: 'hint' }, [x.handle ? '@' + x.handle : ''].concat(roles).filter(Boolean).join(' · ') || 'No username yet'))),
           h('div', { class: 'row cq-note' }, h('div', { class: 'row-label' }, 'The role they gave',
             h('span', { class: 'hint cq-said' }, x.role || 'None given'))),
@@ -6274,15 +6358,19 @@
   function openTopFans(artistId, artistName) {
     var B = window.GR_BACKEND;
     var host = h('div', { class: 'att-host' });
+    // (The check by the rule, for the whole list in one ask: see checkList.)
+    var marks = checkList();
     var draw = function () {
       var list = B.topFans ? B.topFans(artistId) : null;
+      marks.ask();
       fillEl(host, !Array.isArray(list) ? h('p', { class: 'note' }, 'Loading…')
         : !list.length ? h('p', { class: 'note' }, 'Nobody has marked a show attended yet.')
         : h('div', { class: 'acct-list' }, list.slice(0, 100).map(function (f, i) {
-            var name = String(f.name || '').trim() || 'Someone';
+            var name = String(f.name || '').trim() || 'Someone', mk = marks.mark(f.userId, false);
             return h('div', { class: 'acct-row' }, personPhoto({ name: name, avatar: f.avatar }, 'xs'),
               h('span', { class: 'lr-text' },
-                h('span', { class: 'lr-title' }, (i + 1) + '. ' + name),
+                // (Laid out as the other lists lay a name and its check; without one, as it was.)
+                h('span', { class: 'lr-title' + (mk ? ' fl-name' : '') }, (i + 1) + '. ' + name, mk),
                 h('span', { class: 'lr-sub' }, plural(G.num(f.shows), 'show') + ' attended')));
           })));
     };
@@ -8571,7 +8659,9 @@
       return h('div', { class: 'sr-row' },
         h('button', { class: 'sr-main', type: 'button', onclick: function () { open(it); } }, face,
           h('span', { class: 'lr-text' },
-            h('span', { class: 'sr-title' }, h('span', { class: 'sr-title-t' }, it.title), it.verified ? verifiedBadge() : null, it.verified && it.claimed ? claimedTag('sm') : null),
+            h('span', { class: 'sr-title' }, h('span', { class: 'sr-title-t' }, it.title),
+              // (A person's check by the rule, for everyone in the results in one ask: see checkList.)
+              it.kind === 'person' ? pMarks.mark(it.id, it.verified) : it.verified ? verifiedBadge() : null, it.verified && it.claimed ? claimedTag('sm') : null),
             (it.kind === 'mb' && st.opening === it.id) || ((it.kind === 'venue' || it.kind === 'festival') && st.opening === it.kind + ':' + it.id)
               ? h('span', { class: 'sr-sub' }, 'Opening\u2026')
               : it.sub ? h('span', { class: 'sr-sub' }, it.sub) : null)),
@@ -8646,8 +8736,10 @@
         });
       }
     }
+    var pMarks = checkList();
     var paint = function () {
       var q = st.q.trim();
+      pMarks.ask();
       if (q.replace(/^@/, '').length < 2) {
         results.replaceChildren.apply(results, flatten(suggested()).filter(Boolean));
         return;
@@ -10326,9 +10418,9 @@
   var PF_TABS = [
     { key: 'today', label: 'Today', icon: 'tabmap' },
     { key: 'artists', label: 'Artists', icon: 'music' },
-    { key: 'tours', label: 'Tours', icon: 'calendar' },
-    { key: 'guests', label: 'Guest list', icon: 'tabguest' },
-    { key: 'stats', label: 'Stats', icon: 'tabstats' }
+    { key: 'tours', label: 'Tours', icon: 'calendar' }
+    // (Guest list and Stats left this row, Devin 2026-10-16: the guest list
+    // is a tab on the bottom bar, and the stats already sit on the page.)
   ];
   var PF_HOME = { name: 'home' };
   // On the road first, then the newest; a tour with no dates yet sorts by the day it was made.
@@ -10424,7 +10516,8 @@
     // On a day off, the next show is one quiet line under it.
     var next = !s ? shows.filter(function (x) { return x.date > entry.date; })[0] : null;
     var sheet = daySheetNodes(s, off, { onlySet: true });
-    var checkIn = isToday ? busCheckInBtn(id, d.busCall, true) : null;
+    // Bus Check in lives in the Chat now, left of Ari (Devin, 2026-10-16).
+    var checkIn = null;
     // Tonight, the day and the city on the left; the venue and its address in
     // the middle; how many days until a day off in the right corner.
     // Days left on the LEFT, the tour's name in the CENTER, the day off on
@@ -10761,6 +10854,8 @@
     // back to where the profile opens.
     var todoTab = pfTodoTab();
     if (tab === 'todos' && !todoTab) tab = t ? 'today' : 'artists';
+    // A phone that last had Guest list or Stats open lands where the profile opens.
+    if (tab === 'guests' || tab === 'stats') tab = t ? 'today' : 'artists';
     var tabs = todoTab ? PF_TABS.slice(0, 3).concat([{ key: 'todos', label: 'To Do List', icon: 'check' }], PF_TABS.slice(3)) : PF_TABS;
     // "Favorite Local Spots" (0153) sits beside the others once its table is
     // live; before the migration there is no tab at all. Spots on the bar,
@@ -15834,6 +15929,9 @@
     var list = notesFor(t, id, 'chat').filter(function (n) { return !isAriNote(n); }).slice()
       .sort(function (a, b) { return noteTime(a) - noteTime(b); });
     var refresh = function () { setTimeout(function () { render(true); }, backend ? 500 : 150); };
+    // Each writer's green check by the rule, the size the tour's other lists wear it (one ask: see checkList).
+    var marks = checkList('sm');
+    marks.ask();
 
     var msgs = list.map(function (n) {
       var mine = !backend || !myUid || (n.addedBy && n.addedBy === myUid);
@@ -15842,7 +15940,7 @@
         ? dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : dayMD(G.ymd(dt));
       return h('div', { class: 'chat-msg' },
         h('div', { class: 'chat-top' },
-          h('span', { class: 'chat-a' }, n.author || 'Someone'),
+          h('span', { class: 'chat-a' }, nameWith(n.author || 'Someone', backend && n.addedBy ? marks.mark(n.addedBy, false) : null)),
           h('span', { class: 'chat-t' }, when),
           (canWrite() || mine) ? h('button', { class: 'iconbtn sm chat-x', type: 'button',
             'aria-label': 'Delete this message',
@@ -15885,7 +15983,7 @@
       dbBanner(),
       // The bus, barely there behind the conversation.
       h('div', { class: 'chat-bus', 'aria-hidden': 'true' }),
-      h('div', { class: 'chat-tools' }, h('span', { class: 'ct-side' }), ariButton(id), alertsBell(id) || h('span', { class: 'ct-side' })),
+      h('div', { class: 'chat-tools' }, chatBusBtn(id, t) || h('span', { class: 'ct-side' }), ariButton(id), alertsBell(id) || h('span', { class: 'ct-side' })),
       msgs.length ? h('div', { class: 'chat-list' }, msgs) : null,
       h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
         h('div', { class: 'chat-field' }, input, sendBtn)),
@@ -15915,6 +16013,17 @@
     if (S.mode === 'db' && store.db) {
       Promise.resolve(store.db.doc('labels/' + key).set({ kind: 'seen', at: rec.at })).catch(function () { /* this phone remembers */ });
     }
+  }
+  /* Bus Check in, in the Chat to the left of Ari (Devin, 2026-10-16), while
+     the run is on: today's bus call (from today's day sheet) lights it. */
+  function chatBusBtn(id, t) {
+    if (!t || !tourIsLive(t)) return null;
+    var today = G.tourToday();
+    var s = G.rows(t.shows).filter(function (x) { return x.date === today; })[0];
+    var busCall = s && G.isObj(s.daySheet) ? s.daySheet.busCall : '';
+    var b = busCheckInBtn(id, busCall, false);
+    if (b) b.classList.add('ct-bus');
+    return b;
   }
   function ariButton(tourId) {
     if (!leadsTour(tourId)) return h('span', { class: 'ct-side' });
@@ -16896,6 +17005,15 @@
     // width, so the role sits dead centre (under "Crew" and "Invite crew")
     // and just as far from the names as from the mail icon.
     function sizeColumns() { sizeCrewSides(list); }
+    // Each person's green check (crewRow); when the answer fills some in, the names' column is measured
+    // again from scratch (measured as it stands, a name can never come out wider than its column).
+    var marks = checkList('sm');
+    function resizeColumns() {
+      if (!list.isConnected) return;
+      list.classList.remove('sized');
+      list.style.removeProperty('--crew-side');
+      sizeColumns();
+    }
 
     function draw(rows) {
       if (!rows.length) {
@@ -16903,6 +17021,7 @@
           h('span', { class: 'hint' }, 'Nobody else on the run yet.')));
         return;
       }
+      marks.ask(resizeColumns);
       list.replaceChildren.apply(list, rows.map(function (m) {
         var row = crewRow(m);
         // The tour manager and Managers, never on the Creator's row: swipe
@@ -16930,13 +17049,15 @@
       var canOpen = !pending && m.userId && socialOn();
       // Their profile photo beside the name (the first letter until they add one).
       var face = personPhoto({ name: title, avatar: (m.userId && faces[m.userId]) || '' }, 'xs crew-face');
+      // The green check by the rule, the size Crew Stats wears it (the whole list in one ask: see checkList).
+      var named = nameWith(title, pending ? null : marks.mark(m.userId, false));
       return h('div', { class: 'row crew-row' },
         h('div', { class: 'row-label crew-label' },
           canOpen ? h('button', { class: 'crew-face-btn', type: 'button', tabindex: '-1', 'aria-hidden': 'true',
             onclick: function () { openProfile(m.userId); } }, face) : face,
           h('div', { class: 'crew-who' },
             canOpen ? h('button', { class: 'crew-name', type: 'button', 'aria-label': 'Open ' + title + '\u2019s profile',
-              onclick: function () { openProfile(m.userId); } }, title) : h('span', { class: 'crew-name' }, title),
+              onclick: function () { openProfile(m.userId); } }, named) : h('span', { class: 'crew-name' }, named),
             h('span', { class: 'hint crew-sub' }, access,
               pending ? h('span', { class: 'pending' }, ' \u00b7 Pending') : null))),
         h('div', { class: 'crew-side' },
