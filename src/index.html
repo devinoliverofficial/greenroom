@@ -2241,16 +2241,23 @@ button.ivc-row:active { background: var(--surface-2); }
   background: var(--brand); color: var(--on-brand); cursor: pointer; animation: bopulse 1.4s ease-in-out infinite;
   box-shadow: 0 0 16px color-mix(in oklab, var(--brand), transparent 40%); }
 .ci-btn.done { animation: none; background: var(--surface-2); color: var(--ink-2); box-shadow: none; cursor: default; }
-/* Bus Check in: the same button, green only at bus call (while a seat on the
-   bus still isn't on) or when someone stepped off at a stop; this quiet look
-   the rest of the day. */
+/* Bus Check in: the quiet pill all day; from the day's bus call until this
+   account's own On Bus it wears the glow View calendar wears, green ink
+   under the .glow halo. */
 .ci-btn.quiet { animation: none; background: var(--surface-2); color: var(--ink); box-shadow: none; }
+.ci-btn.quiet.glow { color: var(--pos); }
 @media (prefers-reduced-motion: reduce) { .ci-btn { animation: none; } }
-/* The Bus Check in sheet: On Bus / Off Bus side by side, the count, then
-   everyone's word. And the invite form's small "Riding on the bus?" ask. */
-.bus-two { display: flex; gap: 8px; margin: 4px 0 12px; }
-.bus-two .bus-big { flex: 1 1 0; min-height: 56px; font-size: 16px; font-weight: 700; }
-.bus-count { margin: 2px 0 10px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+/* The Bus Check in sheet, restyled like the Overview (Devin, 2026-10-16):
+   the head centred with the bus call time glowing like a day sheet's venue,
+   On Bus / Off Bus in View calendar's own dress (the chosen word solid),
+   the count, then everyone's word on the Overview's crew rows. And the
+   invite form's small "Riding on the bus?" ask. */
+.bus-head.sh-title { margin: 2px 0 4px; text-align: center; }
+.ds-venue.bus-call { margin: 0 0 4px; }
+.bus-sub { text-align: center; }
+.bus-two { margin: 2px 0 12px; }
+.bus-two .bus-big { width: 108px; }
+.bus-count { margin: 2px 0 10px; font-size: 13px; font-weight: 600; color: var(--ink-2); text-align: center; }
 .bus-word { flex: none; font-size: 13px; font-weight: 700; color: var(--ink-3); }
 .bus-word.on { color: var(--pos); }
 .bus-word.off { color: var(--neg); }

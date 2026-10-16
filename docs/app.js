@@ -18916,7 +18916,13 @@
      everyone on the bus." It replaces the old once-a-day Check In in the
      same spot on Today, pinned above the bar. Everyone on the crew list
      rides unless the invite said otherwise, and the list and every change go
-     to everyone on the bus (a 'bus' poke), "so everyone can be accountable". */
+     to everyone on the bus (a 'bus' poke), "so everyone can be accountable".
+     Tightened (Devin, 2026-10-16): the button wears the house glow from the
+     day's bus call until this account's own On Bus (the gas-stop green is
+     gone), each tour day opens on "No word yet", and the sheet reads like
+     the Overview: crew rows with pictures, On Bus / Off Bus in View
+     calendar's dress, the bus call time glowing like the city, and one line
+     that says "Don't get left behind". */
   function busOn() {
     var B = window.GR_BACKEND;
     return S.mode === 'db' && !!(B && B.busOn && B.busList && B.busSet && B.busOn());
@@ -18935,6 +18941,19 @@
     var now = new Date();
     return now.getHours() * 60 + now.getMinutes() >= mins - 60;
   }
+  /* A word said before this tour day began reads as no word yet. The
+     database keys a check-in by the phone's calendar date, so the small
+     hours after a show (before the 5 AM day line the whole app keys by,
+     tourToday) land under the next date; reading each word by when it was
+     said opens every tour day on "No word yet" for everyone (Devin,
+     2026-10-16: "Every day at load in this section should reset"). */
+  function busWordToday(p) {
+    if (!p || !p.state) return '';
+    var d0 = G.parseDay(G.tourToday());
+    if (!d0) return p.state;
+    var at = Date.parse(p.at || '');
+    return at >= d0.getTime() + G.ROLLOVER_HOURS * 3600e3 ? p.state : '';
+  }
   // A bus sheet that is up draws its list again when fresh rows land (a poke,
   // or this phone's own word answered).
   var busLive = null;
@@ -18944,10 +18963,12 @@
     if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(busRedraw, 400); return; }
     try { busLive(); } catch (e) { /* it draws again on its next tap */ }
   }
-  /* The button on Today. Green (the bright .ci-btn it always was) while it's
-     bus call and a seat on the bus still isn't on, or when someone stepped
-     off today (a stop); the quiet style the rest of the day, and always
-     quiet for someone who isn't on the bus list themselves. */
+  /* The button in the Chat. The quiet pill all day; from the day's bus call
+     until this account's own On Bus it wears the glow View calendar wears
+     (green ink, the .glow halo). No bus call set, before bus call, already
+     marked on, or not on the bus list yourself (no On Bus to tap): the
+     plain button (Devin, 2026-10-16: "light up green after at bus call
+     until someone clicks on bus"). */
   function busCheckInBtn(id, busCall, pinned) {
     var B = window.GR_BACKEND;
     // No button at all until the bus table is live: the old once-a-day
@@ -18958,12 +18979,10 @@
     var me = B.uid ? B.uid() : null;
     var riders = (data && data.people) || [];
     var mine = riders.filter(function (p) { return p.userId === me; })[0] || null;
-    var on = riders.filter(function (p) { return p.state === 'on'; }).length;
-    var allOn = riders.length > 0 && on === riders.length;
-    var stopped = riders.some(function (p) { return p.state === 'off'; });
-    var green = !!mine && (stopped || (busCallDue(busCall) && !allOn));
+    var on = riders.filter(function (p) { return busWordToday(p) === 'on'; }).length;
+    var green = !!mine && busCallDue(busCall) && busWordToday(mine) !== 'on';
     return h('div', { class: 'ci-wrap' + (pinned ? ' pinned' : '') },
-      h('button', { class: 'ci-btn' + (green ? '' : ' quiet'), type: 'button',
+      h('button', { class: 'ci-btn quiet' + (green ? ' glow' : ''), type: 'button',
         'aria-label': 'Bus Check in' + (data ? ': ' + on + ' of ' + riders.length + ' on the bus' : ''),
         onclick: function () { openBusSheet(id, busCall); } }, 'Bus Check in'));
   }
@@ -18982,10 +19001,12 @@
       var me = B.uid ? B.uid() : null;
       var riders = data.people || [];
       var mine = riders.filter(function (p) { return p.userId === me; })[0] || null;
-      var on = riders.filter(function (p) { return p.state === 'on'; }).length;
+      var on = riders.filter(function (p) { return busWordToday(p) === 'on'; }).length;
+      // Their profile photos, the way the Overview's crew list shows them.
+      var faces = (B.facesFor && B.facesFor(id)) || {};
       var big = function (state, label) {
-        var cur = !!mine && mine.state === state;
-        return h('button', { class: 'btn block bus-big' + (cur ? ' primary' : ' quiet'), type: 'button',
+        var cur = !!mine && busWordToday(mine) === state;
+        return h('button', { class: 'btn sm bus-big' + (cur ? ' primary' : ' quiet glow'), type: 'button',
           'aria-pressed': cur ? 'true' : 'false', disabled: busy || null,
           onclick: async function () {
             if (busy || cur) return;
@@ -18996,27 +19017,45 @@
           } }, label);
       };
       box.replaceChildren.apply(box, [
-        mine ? h('div', { class: 'bus-two' }, big('on', 'On Bus'), big('off', 'Off Bus')) : null,
+        mine ? h('div', { class: 'cal-open bus-two' }, big('on', 'On Bus'), big('off', 'Off Bus')) : null,
         h('p', { class: 'bus-count' }, riders.length ? on + ' of ' + riders.length + ' on the bus' : 'Nobody is on the bus list yet.'),
+        // Everyone's word, on the Overview crew list's own rows: the profile
+        // picture and the name's font, the quiet state word on the right.
         riders.length ? h('div', { class: 'ledger bus-list' }, riders.map(function (p) {
-          return h('div', { class: 'row' },
-            h('span', { class: 'row-label' }, p.name || 'Someone'),
-            h('span', { class: 'bus-word' + (p.state === 'on' ? ' on' : p.state === 'off' ? ' off' : '') },
-              p.state === 'on' ? 'On' : p.state === 'off' ? 'Off' : 'No word yet'));
+          var name = p.name || 'Someone', word = busWordToday(p);
+          return h('div', { class: 'row crew-row' },
+            h('div', { class: 'row-label crew-label' },
+              personPhoto({ name: name, avatar: (p.userId && faces[p.userId]) || '' }, 'xs crew-face'),
+              h('div', { class: 'crew-who' }, h('span', { class: 'crew-name' }, name))),
+            h('span', { class: 'bus-word' + (word === 'on' ? ' on' : word === 'off' ? ' off' : '') },
+              word === 'on' ? 'On bus' : word === 'off' ? 'Off bus' : 'No word yet'));
         })) : null].filter(Boolean));
     }
     draw();
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, 'Bus Check in'),
-        h('p', { class: 'sh-sub' }, (busCall ? 'Bus call is ' + G.cleanTime(busCall) + '. ' : '') +
-          'Everyone on the bus list sees who\u2019s on.'),
+        // The head reads like the Overview's: the title centred, the bus
+        // call time glowing the way the city and a day sheet's venue do.
+        h('h2', { class: 'sh-title bus-head' }, 'Bus Check In'),
+        busCall ? h('div', { class: 'ds-venue glow bus-call' },
+          h('span', { class: 'ds-venue-name' }, 'Bus call ' + G.cleanTime(busCall))) : null,
+        h('p', { class: 'sh-sub bus-sub' }, 'Don\u2019t get left behind'),
         box,
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
       ];
-    }, { label: 'Bus Check in', onClose: function () { if (busLive === draw) busLive = null; } });
+    }, { label: 'Bus Check In', onClose: function () { if (busLive === draw) busLive = null; } });
     busLive = draw;
   }
+  /* Dev harness only: its ?bus hook opens the sheet itself once the fake
+     backend is up, so the restyled look shows without walking to the Chat.
+     The live app has no __harness, so this line never runs there. */
+  if (window.__harness) window.__harness.openBusSheet = function (id, busCall, tries) {
+    if (!busOn() || !S.loaded) {
+      if ((tries || 0) < 40) setTimeout(function () { window.__harness.openBusSheet(id, busCall, (tries || 0) + 1); }, 250);
+      return;
+    }
+    openBusSheet(id, busCall);
+  };
   // Flowers given to you that you'd rather not keep (and their note) come off.
   function removeGotFlowers(g) {
     var B = window.GR_BACKEND;

@@ -858,28 +858,40 @@ shim = r"""<script>
     return a.id;
   };
   try { if (/[?&]topfans\b/.test(String(location.search || ''))) window.__harness.topfans(); } catch (e) { /* no address to read */ }
-  /* ---- BUS CHECK IN (0150): the button on Today, its sheet, the bus list ----
+  /* ---- BUS CHECK IN (0150, tightened 2026-10-16): the Chat's button, its sheet, the bus list ----
      Everyone joined on the crew list rides unless their row says ridesBus:
      false; each person's word for today sits in __harness.busStates
      ({ userId: { state: 'on' | 'off', at } }). This phone's account is
      u-devin: its On Bus / Off Bus taps land there and poke 'bus', the way
      the database pokes every phone on the tour, so open pages draw again by
-     themselves.
+     themselves. Since 2026-10-16 the button (in the Chat, left of Ari)
+     wears the green glow from the day's bus call until this phone's own On
+     Bus, a word said before the 5 AM day line reads as "No word yet", and
+     the sheet carries the Overview look: crew rows with pictures, On Bus /
+     Off Bus in View calendar's dress, the bus call time glowing, and the
+     line "Don't get left behind".
        __harness.bus()      tonight's Austin show gets a bus call half an hour
-                            from now, four ride the bus (Jeff Mora and Dana
+                            from now (within the hour, so it counts as due),
+                            four ride the bus (Jeff Mora and Dana
                             Cole join the seeded crew; Tasha hasn't signed up,
-                            so she isn't counted), and two of the four are on:
-                            the button on Today goes green (bus call near, not
-                            everyone on). Or open the page with ?bus. Tap On
-                            Bus on all four... there is only your own tap, so
-                            set the others by hand: __harness.busStates['u-jeff']
+                            so she isn't counted), and Brent and Jeff are on:
+                            the tour Chat's Bus Check in button glows green
+                            (bus call due, your own word not said). Tap On
+                            Bus and the glow stops for you, with Dana still
+                            showing "No word yet". Set another word by hand:
+                            __harness.busStates['u-jeff']
                             = { state: 'off', at: new Date().toISOString() };
-                            __harness.poke('bus') and the button goes green
-                            again (someone stepped off at a stop).
+                            __harness.poke('bus') and Jeff's row reads "Off
+                            bus" (the button stays quiet once you are on).
+       ?bus                 the same seed, and the sheet itself opens over the
+                            start screen as soon as the app is up (the app
+                            lends the harness openBusSheet), so the restyled
+                            head, buttons, rows and line show at 375px
+                            without walking to the Chat.
        __harness.busStates  every word said today; empty it ({}) then poke
                             'bus' for "no word yet" all round.
        __harness.busOff = true   the probe answers as with no table (a build
-                            ahead of its migration): no button on Today and no
+                            ahead of its migration): no button in the Chat and no
                             "Riding on the bus?" on the invite form.
      An invite's "Riding on the bus?" answer lands on its __harness.crew row
      as ridesBus (false keeps them off the list) and rides in
@@ -900,7 +912,15 @@ shim = r"""<script>
     H.poke('bus');
     return 'bus call ' + tours.t1.shows.s1.daySheet.busCall;
   };
-  try { if (/[?&]bus\b/.test(String(location.search || ''))) window.__harness.bus(); } catch (e) { /* no address to read */ }
+  try { if (/[?&]bus\b/.test(String(location.search || ''))) {
+    window.__harness.bus();
+    // And the sheet itself, as soon as the app lends its opener (see the
+    // BUS CHECK IN notes above): the restyled look with no walking.
+    (function openIt(n) {
+      if (window.__harness.openBusSheet) { window.__harness.openBusSheet('t1', tours.t1.shows.s1.daySheet.busCall); return; }
+      if (n < 40) setTimeout(function () { openIt(n + 1); }, 250);
+    })(0);
+  } } catch (e) { /* no address to read */ }
   /* ---- BUYOUTS (0151): the Overview's BUYOUT ALERT ticks, and MY PAY's BUYOUTS tab ----
      The database table buyout_tracks is __harness.buyoutTicks here
      ([{ tourId, showId, userId, at }]): one row = this person received the

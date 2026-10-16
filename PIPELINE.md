@@ -17,10 +17,16 @@ In order. Nothing here waits on the artist.
    the tour label a fan typed. Re-read daily for a claimed page with its own key, weekly on
    view for the rest. A pass that reads fewer setlists than setlist.fm reports prunes
    nothing and says so.
-3. **The press.** ThePRP, Lambgoat and fourteen more sites with open search (Alternative
+3. **The press.** ThePRP, Lambgoat and nineteen more sites with open search (Alternative
    Press, BrooklynVegan, New Noise, idobi, Rock Sound, Distorted Sound, Ghost Cult, Bring
-   the Noise, Already Heard, The Aquarian, Highlight, Revolver, Music Feeds, Substream) are
-   searched for the band's tag; every article is kept and read once.
+   the Noise, Already Heard, The Aquarian, Highlight, Revolver, Music Feeds, Substream,
+   and since 0163 the genre press: Dancing Astronaut, HipHopDX, Saving Country Music,
+   Country Now, Whiskey Riff) are searched for the band's tag; every article is kept and
+   read once. Checked 2026-10-16 and left out the way Kerrang and Metal Injection were:
+   Mixmag, DJ Mag, Complex, XXL and Taste of Country refuse or lack the open search.
+   For a DJ's page, MixesDB (CC BY-SA, a MediaWiki) is searched by title the same run;
+   its titles are dated sets, read under the one-show-per-club-per-night rule, and every
+   accepted night keeps its MixesDB source link.
 4. **Wikipedia.** The band's article, tour articles that name it (date tables read from the
    source text), and festival articles that name it.
 5. **The band's own pages** *(new 2026-10-09)*. MusicBrainz says where the band lived
