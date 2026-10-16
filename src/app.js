@@ -163,6 +163,7 @@
     history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>',
     check: '<path d="M4.5 12.5l5 5 10-11"/>',
     heart: '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
+    star: '<path d="M12 2.8l2.8 5.9 6.4.9-4.7 4.4 1.2 6.4L12 17.3l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.9z"/>',
     clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     deck: '<rect x="6.5" y="4" width="11" height="15" rx="2.2"/><path d="M4 7.5v10A2.5 2.5 0 0 0 6.5 20h8"/><path d="M9.5 9.5l1.6 1.6 3.2-3.4"/>',
     music: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
@@ -4326,8 +4327,14 @@
     if (card.mine) return true;
     return !!me && (card.members || []).some(function (m) { return m.userId === me && m.kind === 'band' && !m.pending; });
   }
-  // One task: the tick circle, the words, who it's for and when it's due
-  // (red once that day is gone). The row opens the edit sheet.
+  /* One task, dressed like the Overview's crew list (Devin, 2026-10-16:
+     "it should like the crew list in the overview page aesthetic wise"):
+     the tick circle first on the left, then whoever the task is for - their
+     profile picture and name, the way a crew row reads them - and the task
+     itself as the right-hand column, its due date (red once that day is
+     gone) in the quiet line under the words, with the artist's name there
+     too on the profile's Assigned to you rows. A task with nobody assigned
+     wears a quiet empty face and 'Anyone'. The row opens the edit sheet. */
   function todoRow(artistId, artistName, item, o) {
     o = o || {};
     var B = window.GR_BACKEND, done = !!item.doneAt;
@@ -4346,13 +4353,20 @@
     var late = !done && item.due && item.due < G.ymd(new Date());
     var sub = [];
     if (o.artist) sub.push(h('span', { class: 'td-aname' }, o.artist));
-    if (item.assignedName) sub.push(h('span', null, item.assignedName));
     if (item.due) sub.push(h('span', { class: 'td-due' + (late ? ' late' : '') }, 'Due ' + dayMD(item.due)));
     var line = [];
     sub.forEach(function (s, i) { if (i) line.push(' · '); line.push(s); });
+    // Their picture from the artist's own people when the card is in hand;
+    // someone invited (or a card still loading) wears their letter.
+    var card = S.actCards && S.actCards[artistId] ? S.actCards[artistId].card : null;
+    var m = item.assignedTo ? ((card && card.members) || []).filter(function (x) { return x.userId === item.assignedTo; })[0] : null;
+    var who = item.assignedTo ? { name: item.assignedName || (m && m.name) || 'Someone', avatar: (m && m.avatar) || '' } : null;
     return h('li', { class: 'am-li td-li' }, tick,
       h('button', { class: 'fl-row td-open', type: 'button', onclick: function () { openTodoEdit(artistId, artistName, item); } },
-        h('span', { class: 'lr-text' },
+        h('span', { class: 'crew-label td-doer' },
+          who ? personPhoto(who, 'xs crew-face') : h('span', { class: 'pf-photo xs crew-face td-noone', 'aria-hidden': 'true' }),
+          h('span', { class: 'crew-who' }, h('span', { class: 'crew-name' + (who ? '' : ' td-any') }, who ? who.name : 'Anyone'))),
+        h('span', { class: 'lr-text td-task' },
           h('span', { class: 'lr-title td-body' + (done ? ' done' : '') }, item.body),
           line.length ? h('span', { class: 'lr-sub' }, line) : null)));
   }
@@ -4387,13 +4401,28 @@
     var who = [], seen = {};
     (card.members || []).forEach(function (m) {
       var k = m.userId || m.name;
-      if (m.kind === 'band' && !m.pending && m.name && !seen[k]) { seen[k] = true; who.push(m.name); }
+      if (m.kind === 'band' && !m.pending && m.name && !seen[k]) {
+        seen[k] = true;
+        who.push({ name: m.name, avatar: m.avatar || '', kind: 'Member' });
+      }
     });
     (B.todoInvites(artistId) || []).forEach(function (v) {
-      if (!seen[v.userId]) { seen[v.userId] = true; who.push(v.name || 'Someone'); }
+      if (!seen[v.userId]) { seen[v.userId] = true; who.push({ name: v.name || 'Someone', avatar: '', kind: 'Invited' }); }
     });
     return h('section', { class: 'tf-block td-block', 'aria-label': card.name + ' To Do List' },
-      who.length ? h('p', { class: 'note td-who' }, 'On this list: ' + who.join(', ')) : null,
+      // Everyone the list reaches, behind one door (Devin, 2026-10-16:
+      // "hidden under a tab that says 'Collaborators' and when you click it
+      // it has a dropdown menu like the crew list"): the fold drops down the
+      // members and the invited as crew rows, pictures and names.
+      who.length ? h('details', { class: 'tf-more td-collab' },
+        h('summary', null, 'Collaborators · ' + who.length),
+        h('div', { class: 'ledger crew-list td-collab-list' }, who.map(function (p) {
+          return h('div', { class: 'row crew-row' },
+            h('div', { class: 'row-label crew-label' },
+              personPhoto(p, 'xs crew-face'),
+              h('div', { class: 'crew-who' }, h('span', { class: 'crew-name' }, p.name),
+                h('span', { class: 'hint crew-sub' }, p.kind))));
+        }))) : null,
       items.length ? null : h('p', { class: 'note td-none' }, 'Nothing on the list yet. Everyone on it can add tasks, hand them out and tick them off.'),
       todoGroups(artistId, card.name, items),
       h('div', { class: 'am-more td-add' },
@@ -4581,8 +4610,10 @@
   }
   /* The list itself, as its own full-height sheet (Devin, 2026-10-16: "when
      you click it from your personal user profile 'to do' tab it should take
-     you to a 'to do list' not the artists page"): the artist's name up top,
-     then exactly what the page's tab shows - the On this list line, the
+     you to a 'to do list' not the artists page"): the artist's name centred
+     up top (Devin, later that day: "Let's center the band name on top"; the
+     artist page's tab needs no second name, the page already wears it),
+     then exactly what the page's tab shows - the Collaborators fold, the
      tasks under their categories, Add a task and Invite someone (todoBlock,
      reused whole). The card rides the app's own cache (actOf), so a cold
      open says Loading until it lands; ticks redraw through afterRender. */
@@ -4826,10 +4857,38 @@
           }
           nameIn.focus();                     // typing on simply searches again
         };
+        // What the list last showed, so typing on filters it at once while
+        // the fresh answer is on its way (Devin, 2026-10-16: "it should
+        // load faster") - the map-app feel: never a blank beat when the
+        // next letter only narrows what is already there.
+        var lastQ = '', lastRows = null;
+        var renderRows = function (rows) {
+          if (!rows.length) { closeDrop(); return; }
+          drop.replaceChildren.apply(drop, rows.map(function (p) {
+            var name = String(p.name || '').trim(), where = spotPlaceCity(p);
+            // The muted line under the name reads like his photo: the
+            // street when the map knows one, the town always.
+            var sub = [String(p.street || '').trim(), String(p.city || '').trim()]
+              .filter(Boolean).join(' · ');
+            return h('button', { class: 'sp-opt', type: 'button',
+              'aria-label': 'Use ' + name + (where ? ' in ' + where : ''),
+              onclick: function () { pick(p); } },
+              h('span', { class: 'sp-opt-name' }, name),
+              sub ? h('span', { class: 'sp-opt-sub' }, sub) : null);
+          }).concat([h('p', { class: 'hint sp-credit' }, 'Places from OpenStreetMap')]));
+          drop.hidden = false;
+        };
         nameIn.oninput = function () {
           clearTimeout(findTimer);
           var q = nameIn.value.trim(), n = ++findSeq;
           if (q.length < 3) { closeDrop(); return; }
+          // Typing on from the last answer: the rows already up filter down
+          // at once; the fresh answer replaces them when it lands.
+          if (lastRows && lastQ && q.toLowerCase().indexOf(lastQ.toLowerCase()) === 0) {
+            renderRows(lastRows.filter(function (p) {
+              return String(p.name || '').toLowerCase().indexOf(q.toLowerCase()) >= 0;
+            }));
+          }
           // Where the search leans (0166): the sheet's City words, else
           // tonight's city on a live tour, else nowhere in particular.
           var near = cityIn.value.trim();
@@ -4840,22 +4899,17 @@
               rows = (Array.isArray(rows) ? rows : []).filter(function (p) {
                 return G.isObj(p) && String(p.name || '').trim();
               }).slice(0, 8);
-              if (!rows.length) { closeDrop(); return; }
-              drop.replaceChildren.apply(drop, rows.map(function (p) {
-                var name = String(p.name || '').trim(), where = spotPlaceCity(p);
-                // The muted line under the name reads like his photo: the
-                // street when the map knows one, the town always.
-                var sub = [String(p.street || '').trim(), String(p.city || '').trim()]
-                  .filter(Boolean).join(' · ');
-                return h('button', { class: 'sp-opt', type: 'button',
-                  'aria-label': 'Use ' + name + (where ? ' in ' + where : ''),
-                  onclick: function () { pick(p); } },
-                  h('span', { class: 'sp-opt-name' }, name),
-                  sub ? h('span', { class: 'sp-opt-sub' }, sub) : null);
-              }).concat([h('p', { class: 'hint sp-credit' }, 'Places from OpenStreetMap')]));
-              drop.hidden = false;
+              // The road fell over mid-session (the probe knew it, the
+              // phone should too): say so quietly instead of silence.
+              if (!rows.length && window.GR_BACKEND.placeSearchOn && !window.GR_BACKEND.placeSearchOn()) {
+                drop.replaceChildren(h('p', { class: 'hint sp-credit' }, 'Place search is not reachable right now'));
+                drop.hidden = false;
+                return;
+              }
+              lastQ = q; lastRows = rows;
+              renderRows(rows);
             });
-          }, 450);
+          }, 280);
         };
         nameIn.onblur = function () {
           clearTimeout(dropAway);
@@ -6407,13 +6461,15 @@
      many shows they've attended they are ranked on bands profile pages. We
      can make a Top Fans page that shows the top 100 fans of that artist
      based on attendance."
-     The Top 10 is a strip pinned above the profile's tabs, on your own page
-     and on the one others see, each spot opening its artist's page; your own
-     page carries the door to pick and reorder it. Top Fans is a quiet word
-     beside an artist page's fan count, for visitors, opening the ranked
-     list. Nothing here renders before migration 0159 is live: favsOn()
-     stays false until the backend finds the table, and the Top Fans line
-     waits for the server's answer on top of that. ---- */
+     On your own profile the Top 10 lives on its own tab since 2026-10-16
+     (Devin: "Let's move the 'top 10' artists into its own tab on the user
+     profile so it's not just randomly hovering over the tabs"), with the
+     door to pick and reorder it; on the page others see it stays pinned
+     above the tabs, each spot opening its artist's page. Top Fans is a
+     quiet word beside an artist page's fan count, for visitors, opening the
+     ranked list. Nothing here renders before migration 0159 is live:
+     favsOn() stays false until the backend finds the table, and the Top
+     Fans line waits for the server's answer on top of that. ---- */
   function favsOn() {
     var B = window.GR_BACKEND;
     return S.mode === 'db' && socialOn() && !!(B && B.favoritesOn && B.favoritesOf && B.favoritesOn());
@@ -6448,6 +6504,12 @@
       own ? h('div', { class: 'am-more' },
         h('button', { class: 'add-pill', type: 'button', onclick: function () { openTopTen(); } },
           icon('edit', 16), 'Edit your Top 10')) : null);
+  }
+  // The profile's Top 10 tab: the same picking and arranging the strip
+  // carried, whole, on a tab of its own (Devin, 2026-10-16).
+  function pfTopTen() {
+    var uid = socialOn() ? window.GR_BACKEND.uid() : null;
+    return topTenStrip(uid, true) || h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading…');
   }
   /* The sheet where a Top 10 is made and kept: the spots in order, each with
      its arrows and its off button; under them the same artist search the
@@ -6679,6 +6741,14 @@
         rated ? h('p', { class: 'plc-count plc-rating' }, G.num(card.ratings) > 0
           ? G.num(card.rating).toFixed(1) + ' from ' + plural(G.num(card.ratings), 'rating')
           : 'No ratings yet') : null,
+        // The 0168 road: once a venue's card answers score and scoreCount
+        // (the average venue score of every show review it ever received,
+        // out of five stars), the page says so under the rating line. A
+        // card without those keys, or with no reviews yet, says nothing.
+        kind === 'venue' && card.score != null && G.num(card.scoreCount) > 0
+          ? h('p', { class: 'plc-count plc-rating' },
+              G.num(card.score).toFixed(1) + ' from ' + plural(G.num(card.scoreCount), 'review'))
+          : null,
         kind === 'venue' && card.address ? h('a', { class: 'plc-addr', href: mapsHref(card.address), target: '_blank', rel: 'noopener' }, card.address) : null,
         unclaimed ? h('p', { class: 'hist-note act-note' }, 'Nobody runs this page yet.') : null,
         workBtn || rateBtn ? h('div', { class: 'pf-actions' }, workBtn, rateBtn) : null),
@@ -10716,9 +10786,10 @@
      then where the tour is today (the show, or the day off and its hotel),
      or the next show when the run hasn't started; how many days until a day
      off; then that day's sheet. A day with nothing filled in shows nothing
-     under it at all. Bus Check in sits at the bottom of the screen. */
+     under it at all. (Bus Check in sits on the tour Overview's button grid.) */
   function pfToday(id, t, count) {
     maybeCountdownSplash(id, t);
+    maybeRateAsk(id, t);
     var got = overviewDays(t);
     if (!got) return [pfTourBar(id, t, count, 'details'), emptyState('No dates yet', 'Once shows are on the run, today shows up here.')];
     var today = G.tourToday();
@@ -10743,7 +10814,7 @@
     // On a day off, the next show is one quiet line under it.
     var next = !s ? shows.filter(function (x) { return x.date > entry.date; })[0] : null;
     var sheet = daySheetNodes(s, off, { onlySet: true });
-    // Bus Check in lives in the Chat now, left of Ari (Devin, 2026-10-16).
+    // Bus Check in lives on the Overview's button grid now (Devin, 2026-10-16).
     var checkIn = null;
     // Tonight, the day and the city on the left; the venue and its address in
     // the middle; how many days until a day off in the right corner.
@@ -11106,15 +11177,24 @@
     var spotsTab = spotsOn();
     if (tab === 'spots' && !spotsTab) tab = t ? 'today' : 'artists';
     if (spotsTab) tabs = tabs.concat([{ key: 'spots', label: 'Spots', icon: 'heart' }]);
+    // Your Top 10 (0159), its own tab since 2026-10-16 (Devin: "so it's not
+    // just randomly hovering over the tabs"): last on the row, after Spots,
+    // where the newest tab reads naturally and Today keeps the lead at 375px.
+    var topTab = favsOn();
+    if (tab === 'top10' && !topTab) tab = t ? 'today' : 'artists';
+    if (topTab) tabs = tabs.concat([{ key: 'top10', label: 'Top 10', icon: 'star' }]);
     var body = tab === 'today' ? (t ? pfToday(id, t, entries.length) : none())
       : tab === 'stats' ? pfStats(id, t, entries.length)
       : tab === 'guests' ? (t ? pfGuests(id, t, entries.length) : none())
       : tab === 'tours' ? pfTours()
       : tab === 'todos' ? pfTodos()
       : tab === 'spots' ? pfSpots()
+      : tab === 'top10' ? pfTopTen()
       : pfArtists(byArtist, declared, loose);
     return [
-      h('div', { class: 'vp-tabs pt-tabs', role: 'tablist' }, tabs.map(function (x) {
+      // Six tabs fit a 375 wide phone the way the artist page's four do:
+      // the row gets its 'six' dress and the labels come down a size.
+      h('div', { class: 'vp-tabs pt-tabs' + (tabs.length > 5 ? ' six' : ''), role: 'tablist' }, tabs.map(function (x) {
         var on = x.key === tab;
         return h('button', { class: 'vp-tab pt-tab' + (on ? ' on' : ''), type: 'button', role: 'tab',
           'aria-selected': on ? 'true' : 'false', onclick: function () { pick(x.key); } },
@@ -11168,8 +11248,7 @@
               h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }))),
       dbBanner(),
       profileHead(entries.length),
-      // Your Top 10 (0159): the strip others see, with its door to pick and reorder it.
-      topTenStrip(socialOn() ? window.GR_BACKEND.uid() : null, true),
+      // (Your Top 10 left this spot for its own tab, Devin, 2026-10-16.)
       profileTabs(entries, byArtist, loose, declared),
       // Your numbers count nights from an artist's synced history once it
       // confirms them: that data's source gets its line, on every tab.
@@ -16549,7 +16628,7 @@
       dbBanner(),
       // The bus, barely there behind the conversation.
       h('div', { class: 'chat-bus', 'aria-hidden': 'true' }),
-      h('div', { class: 'chat-tools' }, chatBusBtn(id, t) || h('span', { class: 'ct-side' }), ariButton(id), alertsBell(id) || h('span', { class: 'ct-side' })),
+      h('div', { class: 'chat-tools' }, h('span', { class: 'ct-side' }), ariButton(id), alertsBell(id) || h('span', { class: 'ct-side' })),
       msgs.length ? h('div', { class: 'chat-list' }, msgs) : null,
       h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
         h('div', { class: 'chat-field' }, input, sendBtn)),
@@ -16580,17 +16659,8 @@
       Promise.resolve(store.db.doc('labels/' + key).set({ kind: 'seen', at: rec.at })).catch(function () { /* this phone remembers */ });
     }
   }
-  /* Bus Check in, in the Chat to the left of Ari (Devin, 2026-10-16), while
-     the run is on: today's bus call (from today's day sheet) lights it. */
-  function chatBusBtn(id, t) {
-    if (!t || !tourIsLive(t)) return null;
-    var today = G.tourToday();
-    var s = G.rows(t.shows).filter(function (x) { return x.date === today; })[0];
-    var busCall = s && G.isObj(s.daySheet) ? s.daySheet.busCall : '';
-    var b = busCheckInBtn(id, busCall, false);
-    if (b) b.classList.add('ct-bus');
-    return b;
-  }
+  // (Bus Check in left the Chat for the Overview's button grid, Devin,
+  // 2026-10-16: "Move 'bus check in' button to the overview". See ovBusBtn.)
   function ariButton(tourId) {
     if (!leadsTour(tourId)) return h('span', { class: 'ct-side' });
     var n = ariUnread(tourId);
@@ -17168,6 +17238,76 @@
     if (B && B.showReviewOn && B.showReviewOn()) openRateWizard(tourId, showId);
     else openRateShowSliders(tourId, showId);
   }
+  /* The ask on opening the app (Devin, 2026-10-16: "the moment bus call
+     hits the next time someone opens the app they are prompted on opening
+     the app to rate the most recent show"). For the band on the live tour
+     alone: when the most recent played show's day sheet carries a bus call
+     that has hit (busCallDue's own reading - no bus call on that sheet, no
+     ask, his rule anchors on bus call) and this account hasn't rated that
+     show, a small sheet offers the wizard. The phone remembers it asked,
+     per tour and show, the moment the sheet opens: answered, Not now or
+     swiped away, it never nags twice. It waits out the intro and the day's
+     countdown splash, and steps aside if some other sheet is already up
+     (the next open asks instead). */
+  var rateAskLive = false;
+  function maybeRateAsk(id, t) {
+    if (rateAskLive || !t || !tourIsLive(t) || !bandOnTour(id, t)) return;
+    var today = G.tourToday();
+    var shows = G.rows(t.shows).filter(function (x) { return x.id && G.parseDay(x.date) && x.date <= today; }).sort(G.byDate);
+    var s = shows[shows.length - 1];
+    if (!s || !rateBusCallPassed(s, today)) return;
+    var key = 'gr-rateask:' + id + ':' + s.id;
+    try { if (localStorage.getItem(key)) return; } catch (e) { return; }
+    var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
+    if (B.showReviewOn) B.showReviewOn(); // warm the probe, as the Rate button does
+    rateAskLive = true;
+    var tries = 0, clear = 0;
+    var show = function () {
+      if (tries++ > 40) { rateAskLive = false; return; }
+      // The intro overlay and the countdown splash go first; two clear looks
+      // in a row, so a splash a beat from landing isn't walked over.
+      if (document.getElementById('gr-splash') || document.querySelector('.splash-note')) { clear = 0; setTimeout(show, 600); return; }
+      if (clear++ < 1) { setTimeout(show, 600); return; }
+      if (sheet) { rateAskLive = false; return; } // something else is up: the next open asks
+      var rows = B.showRatings(id); // null while the band's rows are on their way
+      if (rows == null) { setTimeout(show, 600); return; }
+      rateAskLive = false;
+      if (rows.some(function (r) { return r.showId === s.id && r.userId === uid; })) return; // already rated
+      try { localStorage.setItem(key, '1'); } catch (e) { return; }
+      openRateAsk(id, s);
+    };
+    setTimeout(show, 450);
+  }
+  /* Has a show's bus call hit? Tonight reads busCallDue exactly as the bus
+     button does; yesterday's show carries the same clock one day back (its
+     3 AM bus call is this morning's); any older show's has long passed. A
+     sheet without a readable time ("TBA", blank) never hits. */
+  function rateBusCallPassed(s, today) {
+    var d = G.isObj(s.daySheet) ? s.daySheet : {};
+    var p = G.splitTime(d.busCall || '');
+    if (!p.ampm || !/^\d{1,2}:\d{2}$/.test(p.main)) return false;
+    if (s.date === today) return busCallDue(d.busCall);
+    if (s.date !== G.addDays(today, -1)) return true;
+    var hm = p.main.split(':');
+    var mins = ((+hm[0]) % 12 + (p.ampm === 'PM' ? 12 : 0)) * 60 + (+hm[1]);
+    if (mins < 12 * 60) mins += 24 * 60; // the small hours belong to the night after
+    var now = new Date();
+    return now.getHours() * 60 + now.getMinutes() + 24 * 60 >= mins - 60;
+  }
+  // The ask itself: where the night was, and the two ways out. Rate the
+  // show opens the same wizard the calendar's button does, on that show.
+  function openRateAsk(tourId, s) {
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'How was the show?'),
+        h('p', { class: 'sh-sub' }, [s.city, s.venue].filter(Boolean).join(' · ') || 'The most recent show'),
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary block', type: 'button',
+            onclick: function () { openRateShow(tourId, s.id); } }, 'Rate the show'),
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
+      ];
+    }, { label: 'Rate the show' });
+  }
   // The 0154 sheet, word for word: what a build ahead of 0165 still opens.
   function openRateShowSliders(tourId, showId) {
     var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
@@ -17357,8 +17497,13 @@
       var review = buildReview();
       if (!Object.keys(review).length) { toast('Pick at least one answer first.'); return; }
       busy = true; draw();
-      var f = { crowd: review.crowd ? Math.round(review.crowd.stars * 2) : null,
-        venue: review.venue ? Math.round(review.venue.stars * 2) : null, city: null, review: review };
+      // The old 1-10 ints mirror the three scores a review gives (venue is
+      // the mean of the venue-based questions, city the area's stars, crowd
+      // the crowd's; see showReviewScores), stars times two - so the 0154
+      // averages stay alive, and city fills in when the area was answered.
+      var sc = G.showReviewScores(review);
+      var two = function (v) { return v == null ? null : Math.round(v * 2); };
+      var f = { crowd: two(sc.crowd), venue: two(sc.venue), city: two(sc.city), review: review };
       try { await B.showRate(tourId, showId, f); }
       catch (x) {
         busy = false;
@@ -17490,16 +17635,25 @@
         h('span', { class: 'ov-msg-k' }, 'Pre-sale'),
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       // (Rate the show left this spot for the calendar's tonight row, Devin, 2026-10-16.)
-      // Three across, the same size, centred: View calendar, BUYOUT ALERT in
-      // the middle (Managers only), View Setlist (Devin, 2026-10-16).
-      h('div', { class: 'cal-open cal-trio' },
-        h('button', { class: 'btn quiet sm glow', type: 'button',
-          onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
-          icon('calendar', 14), 'View calendar'),
-        buyoutAlertBtn(id, t),
-        h('button', { class: 'btn quiet sm glow', type: 'button',
-          onclick: function () { openSetlist(id); } },
-          icon('music', 14), 'View Setlist')),
+      // Two columns of equal buttons (Devin, 2026-10-16: "Stack the buttons
+      // so it's like this"): View calendar over BUYOUT ALERT on the left,
+      // View Setlist over Bus Check in on the right. The bus button moved
+      // here from the Chat and keeps its ways: green from the day's bus call
+      // until this account taps On Bus, opening the same sheet. A column one
+      // button short (BUYOUT ALERT is Managers-only; the bus waits on its
+      // table and a live run) centres what it has beside the other's pair,
+      // so nothing sits against a hole.
+      h('div', { class: 'cal-open cal-grid' },
+        h('div', { class: 'cal-col' },
+          h('button', { class: 'btn quiet sm glow', type: 'button',
+            onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
+            icon('calendar', 14), 'View calendar'),
+          buyoutAlertBtn(id, t)),
+        h('div', { class: 'cal-col' },
+          h('button', { class: 'btn quiet sm glow', type: 'button',
+            onclick: function () { openSetlist(id); } },
+            icon('music', 14), 'View Setlist'),
+          ovBusBtn(id, t))),
       // The tour's shared shopping list (0155), on a line of its own under
       // them; everyone on the tour sees it, Crew included.
       (function () { var sb = suppliesBtn(id); return sb ? h('div', { class: 'cal-open cal-under' }, sb) : null; })(),
@@ -18809,6 +18963,7 @@
     }
     if (view === 'details') {
       maybeCountdownSplash(id, t);
+      maybeRateAsk(id, t);
       return h('div', { class: 'page tour has-tabs' },
         tourBand(t, id, view),
         h('div', { class: 'title-row' },
@@ -19395,12 +19550,13 @@
     if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(busRedraw, 400); return; }
     try { busLive(); } catch (e) { /* it draws again on its next tap */ }
   }
-  /* The button in the Chat. The quiet pill all day; from the day's bus call
-     until this account's own On Bus it wears the glow View calendar wears
-     (green ink, the .glow halo). No bus call set, before bus call, already
-     marked on, or not on the bus list yourself (no On Bus to tap): the
-     plain button (Devin, 2026-10-16: "light up green after at bus call
-     until someone clicks on bus"). */
+  /* The button itself (on the Overview's grid since 2026-10-16, under View
+     Setlist; it was the Chat's before). The quiet pill all day; from the
+     day's bus call until this account's own On Bus it wears the glow View
+     calendar wears (green ink, the .glow halo). No bus call set, before bus
+     call, already marked on, or not on the bus list yourself (no On Bus to
+     tap): the plain button (Devin, 2026-10-16: "light up green after at bus
+     call until someone clicks on bus"). */
   function busCheckInBtn(id, busCall, pinned) {
     var B = window.GR_BACKEND;
     // No button at all until the bus table is live: the old once-a-day
@@ -19417,6 +19573,17 @@
       h('button', { class: 'ci-btn quiet' + (green ? ' glow' : ''), type: 'button',
         'aria-label': 'Bus Check in' + (data ? ': ' + on + ' of ' + riders.length + ' on the bus' : ''),
         onclick: function () { openBusSheet(id, busCall); } }, 'Bus Check in'));
+  }
+  /* The button's seat on the Overview, under View Setlist (Devin,
+     2026-10-16: "Move 'bus check in' button to the overview"; it came off
+     the Chat's tools row). Today's bus call, from today's day sheet, lights
+     it while the run is on. */
+  function ovBusBtn(id, t) {
+    if (!t || !tourIsLive(t)) return null;
+    var today = G.tourToday();
+    var s = G.rows(t.shows).filter(function (x) { return x.date === today; })[0];
+    var busCall = s && G.isObj(s.daySheet) ? s.daySheet.busCall : '';
+    return busCheckInBtn(id, busCall, false);
   }
   /* The sheet: On Bus / Off Bus for your own seat (your word is the only one
      a phone may say), then the driver's count and everyone's word. Pokes
@@ -19675,15 +19842,19 @@
     var open = reqs.filter(function (r) { return r.status === 'pending'; }).length;
     // 'Requests' on the button so the row isn't crowded (Devin, 2026-10-16);
     // the aria keeps the full words. Every played show, and tonight's once
-    // doors pass, stacks Rate above it in the same column, for the band alone.
+    // doors pass, reads its buttons in one row for the band alone: Day
+    // sheet, then Rate centred between them, then Requests (Devin,
+    // 2026-10-16: "The 'rate' button should be centered between day sheets
+    // and requests"). A row without Rate keeps Day sheet and Requests side
+    // by side, no hole.
     var reqBtn = !asks ? h('span', { 'aria-hidden': 'true' }) : h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
       'aria-label': 'Special requests for ' + (s.city || 'this show') + (open ? ', ' + open + ' waiting for an answer' : ''),
       onclick: function () { openRequests(id, s); } },
       'Requests');
     var rateBtn = rateCalBtn(id, s);
-    var line = h('div', { class: 'show-row cal-row' + (s.date === today ? ' is-today' : '') },
+    var line = h('div', { class: 'show-row cal-row' + (rateBtn ? ' cal-three' : '') + (s.date === today ? ' is-today' : '') },
       dateBlock(s.date), whereBlock(s), daySheetBtn(id, s.date, from, fromLabel),
-      rateBtn ? h('span', { class: 'cal-pair' }, rateBtn, reqBtn) : reqBtn);
+      rateBtn, reqBtn);
     // Devin: "slide left on a date and edit/delete show". It's the tour's own
     // show that changes, so every tab that reads the tour follows.
     if (!(canEditTour(id) && s.id)) return h('li', null, line);
@@ -21751,8 +21922,9 @@
     }, { label: 'Buyout alert', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
     buyoutLive = draw;
   }
-  /* BUYOUT ALERT, top-left of the Overview: it glows and pulses while someone
-     from an earlier show still hasn't had their buyout. */
+  /* BUYOUT ALERT, under View calendar in the Overview's button grid: it
+     glows and pulses while someone from an earlier show still hasn't had
+     their buyout. */
   function buyoutAlertBtn(id, t) {
     if (buyoutsOn() && moneyLead(id)) return buyoutTickBtn(id, t);
     if (!canEditTour(id)) return null;

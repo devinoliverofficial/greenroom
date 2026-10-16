@@ -728,6 +728,29 @@
     if (!nights.length) return 0;
     return nights.reduce(function (n, s) { return n + num(s.income.merch); }, 0) / nights.length;
   }
+  /* The three scores one structured show review gives (Devin, 2026-10-16:
+     "all the questions/ratings will be giving an overall score for venue
+     score, (the venue based questions) city score, crowd score"). Crowd is
+     the crowd question's own stars, city the area question's, and venue the
+     mean of whichever venue-based questions were answered (venue, greenroom,
+     staff, catering, sound, stage) - one decimal each, null where that
+     score's questions went unanswered. The Yes/No questions (shower,
+     laundry, accommodated) never join an average. */
+  function showReviewScores(review) {
+    var r = isObj(review) ? review : {};
+    var stars = function (k) {
+      var n = isObj(r[k]) ? num(r[k].stars) : 0;
+      return n >= 0.5 ? n : null;
+    };
+    var one = function (v) { return v == null ? null : Math.round(v * 10) / 10; };
+    var parts = ['venue', 'greenroom', 'staff', 'catering', 'sound', 'stage']
+      .map(stars).filter(function (v) { return v != null; });
+    return {
+      venue: parts.length ? one(parts.reduce(function (a, b) { return a + b; }, 0) / parts.length) : null,
+      city: one(stars('area')),
+      crowd: one(stars('crowd'))
+    };
+  }
   // Whether each half of a night's money is in. Devin's rule, exactly: a
   // half with money logged is in only when its Received box is ticked (and,
   // for a guarantee, nothing is still owed) — no exceptions for an agency
@@ -2536,6 +2559,7 @@
 
     cardDebts: cardDebts, otherDebts: otherDebts, cardSummary: cardSummary,
     guaranteeIn: guaranteeIn, merchDue: merchDue, merchTen: merchTen, merchNightlyAvg: merchNightlyAvg,
+    showReviewScores: showReviewScores,
     showMoneyState: showMoneyState, showReceived: showReceived,
     GUARANTEE_REASONS: GUARANTEE_REASONS, guaranteeWhy: guaranteeWhy, guaranteeTotal: guaranteeTotal,
     guaranteeGap: guaranteeGap, guaranteeOwed: guaranteeOwed, guaranteeKept: guaranteeKept, guaranteeLost: guaranteeLost,

@@ -1288,13 +1288,18 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
   50% { text-shadow: 0 0 14px color-mix(in oklab, var(--pos), transparent 45%); }
 }
 .cal-open.cal-under { margin-top: 8px; }
-/* View calendar, BUYOUT ALERT, View Setlist: three equal buttons, centred,
-   one line at phone width (Devin, 2026-10-16). */
-.cal-open.cal-trio { display: grid; grid-auto-flow: column; grid-auto-columns: 108px; justify-content: center; gap: 8px; }
-.cal-trio > .btn, .cal-trio > .bo-wrap { min-width: 0; }
-.cal-trio .btn { width: 100%; justify-content: center; min-height: 34px; padding: 0 6px; gap: 4px; font-size: 11.5px; white-space: nowrap; }
-.cal-trio .bo-wrap { position: static; display: flex; }
-.cal-trio .bo-alert.btn.sm { width: 100%; min-height: 34px; padding: 0 6px; font-size: 10.5px; border-radius: 10px; }
+/* The Overview's button grid (Devin, 2026-10-16): two centred columns of
+   equal buttons, View calendar over BUYOUT ALERT on the left, View Setlist
+   over Bus Check in on the right. A column one button short centres the one
+   it has beside the other's pair. */
+.cal-open.cal-grid { display: grid; grid-template-columns: 158px 158px; justify-content: center; gap: 8px; }
+.cal-grid .cal-col { display: flex; flex-direction: column; justify-content: center; gap: 8px; min-width: 0; }
+.cal-grid .btn, .cal-grid .bo-wrap, .cal-grid .ci-wrap { min-width: 0; }
+.cal-grid .btn { width: 100%; justify-content: center; min-height: 34px; padding: 0 6px; gap: 4px; font-size: 11.5px; white-space: nowrap; }
+.cal-grid .bo-wrap { position: static; display: flex; }
+.cal-grid .bo-alert.btn.sm { width: 100%; min-height: 34px; padding: 0 6px; font-size: 10.5px; border-radius: 10px; }
+.cal-grid .ci-wrap { margin: 0; display: flex; }
+.cal-grid .ci-btn { width: 100%; min-height: 34px; padding: 0 6px; font-size: 11.5px; font-weight: 700; letter-spacing: .02em; border-radius: 11px; white-space: nowrap; }
 .vh-addr { display: block; margin-top: 1px; font-size: 12.5px; color: var(--ink-2); text-decoration: underline; }
 .pt-cnt { display: flex; flex-direction: column; align-items: center; gap: 1px; margin: 0; min-width: 86px; }
 .pt-cnt.empty { min-width: 86px; }
@@ -2193,6 +2198,9 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
    full-height sheet, the tab's own block inside it. */
 .td-sheet { min-height: calc(100% - 28px - env(safe-area-inset-top, 0px)); }
 .td-sheet .td-block { margin-top: 4px; }
+/* The artist's name centred on top of the list's sheet (Devin, 2026-10-16),
+   even margins so the centre is true; the close button floats clear above. */
+.td-sheet .sh-title { text-align: center; margin: 2px 36px 8px; }
 .rw-back { position: absolute; top: 10px; left: 8px; }
 .rw-where { margin: 30px 44px 0; text-align: center; font-size: 12.5px; }
 .rw-dots { display: flex; gap: 6px; justify-content: center; margin: 16px 0 0; }
@@ -2214,8 +2222,11 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .rw-count { margin: 6px 2px 0; font-size: 12px; color: var(--ink-3); text-align: right; }
 .rw-foot { margin-top: 22px; }
 .rw-keep { margin: 2px 0 0; text-align: center; font-size: 12px; color: var(--ink-3); }
-/* Tonight's calendar row: Rate stacked over Requests in the same column. */
-.cal-pair { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; justify-self: end; }
+/* A show row the band may rate reads its buttons in one row, Rate centred
+   between Day sheet and Requests (Devin, 2026-10-16); rows without Rate
+   keep the plain four columns, no hole. */
+.show-row.cal-row.cal-three { grid-template-columns: 42px minmax(0, 1fr) auto auto auto; gap: 6px; }
+.cal-three .cal-btn { white-space: nowrap; }
 /* Today's History section, and the band's stars under its line (0165). */
 .pt-hist { margin: 26px 2px 8px; }
 /* Dressed like the day sheet's Notes (2026-10-16): the ds-sec heading and
@@ -2934,6 +2945,10 @@ button.acct-row:active { background: var(--surface-2); }
 .vp-tabs.pt-tabs { margin-top: -6px; }
 .page.profile .vp-tab.pt-tab { flex-direction: column; gap: 3px; height: 54px; font-size: 11px; font-weight: 600; letter-spacing: 0; padding: 0 2px; }
 .pt-tab span:not(.ic) { white-space: nowrap; }
+/* Six tabs on the row (To Do List and Top 10 both in): a size down, the
+   way the artist page's four tabs come down, so 375 still fits. */
+.vp-tabs.pt-tabs.six .pt-tab { font-size: 10px; padding: 0 1px; }
+.vp-tabs.pt-tabs.six .pt-tab .ic svg { width: 18px; height: 18px; }
 /* As tall as what's in it, and no taller: a forced screen-high body made the
    profile scroll with nothing to scroll to (Devin, 2026-10-09). Keeping the
    page from jumping when a shorter tab is picked while scrolled down is done
@@ -3212,9 +3227,7 @@ button.fl-row { cursor: pointer; }
 .chat-tools { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; margin: -4px -6px 2px 0; }
 .chat-tools > :last-child { justify-self: end; }
 .ct-side { display: block; }
-/* Bus Check in in the Chat, left of Ari: Ari's size, its own colours. */
-.chat-tools .ci-wrap.ct-bus { margin: 0; justify-content: flex-start; }
-.chat-tools .ct-bus .ci-btn { padding: 7px 14px; font-size: 12px; letter-spacing: .06em; white-space: nowrap; }
+/* (Bus Check in left the Chat for the Overview's button grid, 2026-10-16.) */
 /* New charges: the search at the top. */
 .rv-find { position: relative; margin: 0 0 8px; }
 .rv-find > .ic { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--ink-3); pointer-events: none; display: inline-flex; }
@@ -3611,13 +3624,25 @@ button.fl-row { cursor: pointer; }
 .tf-paste { width: 100%; min-height: 140px; resize: vertical; margin-top: 10px; }
 /* To Do Lists (0152): a tab on an artist's page and the profile's tab. */
 .td-block { margin-top: 6px; }
-.td-who { margin: 2px 0 0; }
+/* Collaborators (Devin, 2026-10-16): everyone on the list behind one fold,
+   dropping down as crew rows. */
+.td-collab { margin: 2px 0 0; }
+.td-collab summary { font-weight: 600; }
+.td-collab-list { margin: 8px 0 2px; }
+.td-collab-list .row.crew-row { min-height: 48px; padding: 6px 12px; }
 .td-arts { margin-top: 12px; }
 .td-cat { margin: 14px 0 0; font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); }
 .td-ah { margin-top: 20px; }
 .td-list { list-style: none; margin: 0; padding: 0; }
 .td-li { border-bottom: 1px solid var(--line-2); }
 .td-li .fl-row { min-height: 50px; padding: 7px 2px; gap: 12px; }
+/* Each task in the crew list's dress (Devin, 2026-10-16): the tick, then
+   the face and name on the left, the task words on the right of the row. */
+.td-doer { flex: 0 1 38%; min-width: 0; }
+.td-doer .crew-name { overflow-wrap: anywhere; }
+.td-noone { background: none; box-shadow: inset 0 0 0 1.5px var(--line); }
+.crew-name.td-any { color: var(--ink-3); font-weight: 500; }
+.td-task { align-items: flex-end; text-align: right; }
 .td-tick { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--ink-3); background: none; color: var(--on-brand); padding: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .td-tick.on { background: var(--brand); border-color: var(--brand); }
 .td-body { white-space: normal; font-size: 15px; }

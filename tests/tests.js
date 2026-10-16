@@ -2654,5 +2654,41 @@
     });
   })();
 
+  /* ===== The three scores a show review gives (showReviewScores, 2026-10-16) ===== */
+
+  (function () {
+    test('review scores: nothing answered, no scores', function () {
+      var s = G.showReviewScores({});
+      eq(s.venue, null, 'venue'); eq(s.city, null, 'city'); eq(s.crowd, null, 'crowd');
+      eq(G.showReviewScores(null).venue, null, 'venue of no review at all');
+      // Yes/No answers alone make no score: they never join an average.
+      var yn = G.showReviewScores({ shower: { yn: true }, laundry: { yn: false }, accommodated: { yn: true } });
+      eq(yn.venue, null, 'venue from yes/no alone'); eq(yn.city, null, 'city from yes/no alone'); eq(yn.crowd, null, 'crowd from yes/no alone');
+    });
+    test('review scores: venue questions alone make the venue score only', function () {
+      var s = G.showReviewScores({ venue: { stars: 4 }, sound: { stars: 3 } });
+      eq(s.venue, 3.5, 'mean of venue and sound');
+      eq(s.city, null, 'no area answer, no city score');
+      eq(s.crowd, null, 'no crowd answer, no crowd score');
+      eq(G.showReviewScores({ greenroom: { stars: 2 } }).venue, 2, 'one venue question stands alone');
+    });
+    test('review scores: a full review scores all three', function () {
+      var s = G.showReviewScores({ crowd: { stars: 4.5 }, venue: { stars: 4 }, greenroom: { stars: 2 },
+        staff: { stars: 5 }, area: { stars: 3.5 }, catering: { stars: 1 }, sound: { stars: 4 },
+        stage: { stars: 5 }, shower: { yn: true }, laundry: { yn: false }, accommodated: { yn: true } });
+      eq(s.crowd, 4.5, 'crowd is the crowd stars');
+      eq(s.city, 3.5, 'city is the area stars');
+      eq(s.venue, 3.5, 'venue: (4+2+5+1+4+5) over 6, yes/no answers never counted');
+    });
+    test('review scores: half stars, one decimal', function () {
+      eq(G.showReviewScores({ venue: { stars: 4.5 }, greenroom: { stars: 3.5 }, sound: { stars: 2.5 } }).venue,
+        3.5, 'halves average clean');
+      eq(G.showReviewScores({ venue: { stars: 4.5 }, sound: { stars: 4 } }).venue, 4.3, '4.25 reads 4.3');
+      eq(G.showReviewScores({ venue: { stars: 0.5 }, staff: { stars: 0.5 } }).venue, 0.5, 'half-star answers count');
+      eq(G.showReviewScores({ area: { stars: 2.5 } }).city, 2.5, 'city keeps its half');
+      eq(G.showReviewScores({ crowd: { stars: 0.5 } }).crowd, 0.5, 'crowd keeps its half');
+    });
+  })();
+
   globalThis.GR_TESTS = { run: function () { return results; }, results: results };
 })();

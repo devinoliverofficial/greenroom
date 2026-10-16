@@ -2606,9 +2606,10 @@
        placeSearch(q, near, cb): the places for some typed words, leaning to
        a town when `near` carries one (the sheet's City words, or tonight's
        city), by ask-then-take: the ask answers the server's week-long cache
-       at once, or hands back a wait ticket the take is polled for (every
-       700 milliseconds, up to six looks), or says busy once (the house pace
-       gate), and the ask is then asked once more after a beat. After a city
+       at once, or hands back a wait ticket the take is polled for (the
+       first two looks after 350 milliseconds, then every 700, up to eight
+       looks), or says busy once (the house pace gate), and the ask is then
+       asked once more after a beat. After a city
        hop the take itself hands back a FRESH wait ticket, and the poll
        simply carries on with that one. cb gets up to eight
        { name, kind, street, city, state, country } rows (kind is
@@ -2643,7 +2644,10 @@
         if (Array.isArray(a.places)) { keep(a.places); return; }
         // a.wait is whatever ticket the last answer handed over: the ask's,
         // or the fresh one the take sends back after a city hop (0166).
-        if (a.wait != null && tries < 6) {
+        if (a.wait != null && tries < 8) {
+          // The first look comes quick (the usual answer is already there),
+          // the later ones ease off (Devin, 2026-10-16: "it should load
+          // faster").
           placeTimer = setTimeout(function () {
             if (gen !== placeGen) return;
             sb.rpc('place_search_take', { req_id: a.wait, q: qk, near: nv }).then(function (r) {
@@ -2651,7 +2655,7 @@
               if (r.error) { if (fnMissing(r.error)) placeKnown = false; land([]); return; }
               took(r.data, tries + 1);
             }, function () { land([]); });
-          }, 700);
+          }, tries < 2 ? 350 : 700);
           return;
         }
         land([]);

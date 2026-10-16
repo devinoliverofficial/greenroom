@@ -821,15 +821,23 @@ shim = r"""<script>
     emit();
   };
   try { if (/[?&]fan\b/.test(String(location.search || ''))) window.__harness.fan(); } catch (e) { /* no address to read */ }
-  /* ---- THE FAN ROUND (0159): the Top 10 strip, and an artist page's Top Fans ----
-     The probe answers true here, so the pick card sits on your own profile
-     from the start and the strip draws as soon as a list has spots.
+  /* ---- THE FAN ROUND (0159): the Top 10, and an artist page's Top Fans ----
+     The probe answers true here, so your own profile carries its Top 10 tab
+     from the start (last on the row, after Spots; Devin, 2026-10-16: "its
+     own tab on the user profile so it's not just randomly hovering over the
+     tabs" - the floating strip above your own tabs is gone), and the page
+     others see still pins the strip above its tabs once a list has spots.
      HOOKS:
        __harness.topten()   puts up to five artists on the test account's Top 10 and answers
-                            how many. Open your profile: the strip sits above the tabs with
-                            Edit your Top 10 under it; the sheet has the arrows, the off
-                            buttons and the artist search. View profile shows the strip as
-                            others get it, without the door. Or open the page with ?topten.
+                            how many. Open your profile's Top 10 tab: the full
+                            list sits there with Edit your Top 10 under it; the
+                            sheet has the arrows, the off buttons and the
+                            artist search (empty, the tab holds the pick
+                            card instead). With To Do List and Spots both
+                            live the row holds six tabs - check it at 375px.
+                            View profile shows the strip as others get it,
+                            above their tabs, without the door. Or open the
+                            page with ?topten.
        __harness.topTens    every list: { userId: [{ artistId, rank, name, avatar }] }. Change
                             one by hand, then render follows the next save or reopen.
        __harness.favCalls   every save the app made: [{ fn: 'favAdd' | 'favRemove' | 'favSwap', args }].
@@ -864,13 +872,18 @@ shim = r"""<script>
     return a.id;
   };
   try { if (/[?&]topfans\b/.test(String(location.search || ''))) window.__harness.topfans(); } catch (e) { /* no address to read */ }
-  /* ---- BUS CHECK IN (0150, tightened 2026-10-16): the Chat's button, its sheet, the bus list ----
+  /* ---- BUS CHECK IN (0150, tightened 2026-10-16): the Overview's button, its sheet, the bus list ----
      Everyone joined on the crew list rides unless their row says ridesBus:
      false; each person's word for today sits in __harness.busStates
      ({ userId: { state: 'on' | 'off', at } }). This phone's account is
      u-devin: its On Bus / Off Bus taps land there and poke 'bus', the way
      the database pokes every phone on the tour, so open pages draw again by
-     themselves. Since 2026-10-16 the button (in the Chat, left of Ari)
+     themselves. The button sits on the OVERVIEW's two-column button grid,
+     under View Setlist (Devin, 2026-10-16: "Move 'bus check in' button to
+     the overview" - it left the Chat's tools row that same day; View
+     calendar sits over BUYOUT ALERT in the left column, and a column one
+     button short, the alert being Managers-only and the bus waiting on its
+     table, centres what it has). The button
      wears the green glow from the day's bus call until this phone's own On
      Bus, a word said before the 5 AM day line reads as "No word yet", and
      the sheet carries the Overview look: crew rows with pictures, On Bus /
@@ -886,7 +899,7 @@ shim = r"""<script>
                             four ride the bus (Jeff Mora and Dana
                             Cole join the seeded crew; Tasha hasn't signed up,
                             so she isn't counted), and Brent and Jeff are on:
-                            the tour Chat's Bus Check in button glows green
+                            the Overview's Bus Check in button glows green
                             (bus call due, your own word not said). Tap On
                             Bus and the glow stops for you, with Dana still
                             showing "No word yet". Set another word by hand:
@@ -898,15 +911,16 @@ shim = r"""<script>
                             start screen as soon as the app is up (the app
                             lends the harness openBusSheet), so the restyled
                             head, buttons, rows and line show at 375px
-                            without walking to the Chat. Two of four riders
-                            are on, so the head reads MISSING CREW in red.
+                            without walking to the Overview. Two of four
+                            riders are on, so the head reads MISSING CREW in red.
        __harness.busAllOn() every rider says On bus now and a 'bus' poke
                             lands: an open sheet's head turns to WE ARE A
                             BUS in the house green by itself.
        __harness.busStates  every word said today; empty it ({}) then poke
                             'bus' for "no word yet" all round (MISSING CREW).
        __harness.busOff = true   the probe answers as with no table (a build
-                            ahead of its migration): no button in the Chat and no
+                            ahead of its migration): no button on the Overview
+                            (View Setlist stands centred in its column) and no
                             "Riding on the bus?" on the invite form.
      An invite's "Riding on the bus?" answer lands on its __harness.crew row
      as ridesBus (false keeps them off the list) and rides in
@@ -1038,12 +1052,22 @@ shim = r"""<script>
                             its To Do List tab, one tappable row per artist
                             (I See Stars and Opener Band). Since 2026-10-16
                             a profile row opens the LIST ITSELF: a
-                            full-height sheet titled with the artist's name,
-                            holding exactly what the page's tab holds (the
-                            On this list line, the tasks, Add a task, Invite
-                            someone), never the artist's page; a tick inside
-                            it draws at once. The page's own tab stays for
-                            whoever browses the page with a list to see.
+                            full-height sheet with the artist's name CENTRED
+                            on top, holding exactly what the page's tab
+                            holds (the Collaborators fold, the tasks, Add a
+                            task, Invite someone), never the artist's page;
+                            a tick inside it draws at once. The page's own
+                            tab stays for whoever browses the page with a
+                            list to see. Each task wears the crew list's
+                            dress (Devin, 2026-10-16): the tick circle on
+                            the left, then the assignee's picture and name
+                            as a crew row reads them ('Anyone' on a quiet
+                            empty face when nobody has it), then the task
+                            words on the right with the due date in the
+                            quiet line under them. 'On this list' is gone:
+                            the Collaborators fold up top says how many and
+                            drops down everyone the list reaches - members
+                            and invited - as crew rows with pictures.
                             Or open the page with ?todos.
        __harness.todoItems / __harness.todoInvites   every row; change them
                             by hand, then __harness.poke('todo') and every
@@ -1378,35 +1402,71 @@ shim = r"""<script>
      current tour" - the database lets the band write or change a rating on
      any show of the tour, no date rule, so the context line says "You can
      change it any time"), for the tour's owner (this phone, u-devin) and
-     the artist's Members, stacked above Requests; sent, that row's button
-     goes quiet. TO SEE THE PLAYED ROWS: Calendar > View previous dates -
-     Dallas and Houston each carry Rate (plain, no switch needed); send one
-     and only that row's button goes quiet, each opening the wizard on its
-     own city and venue. A tap
+     the artist's Members. Since 2026-10-16 a rate-able row reads its
+     buttons in ONE row, Day sheet then Rate then Requests (Devin: "The
+     'rate' button should be centered between day sheets and requests");
+     rows without Rate keep Day sheet and Requests with no hole. Sent, a
+     row's Rate goes quiet. TO SEE THE PLAYED ROWS: Calendar > View previous
+     dates - Dallas and Houston each carry Rate (plain, no switch needed);
+     send one and only that row's button goes quiet, each opening the wizard
+     on its own city and venue. A tap
      opens the one-question wizard (0165): eleven screens at 375px, five
      stars with halves (LEFT half of a star is the half step, RIGHT the
      whole), word chips by star side, a 100-character note each, Yes/No for
      shower, laundry and accommodated, Next through to Done. Done writes one
      row: the review rides __harness.showStars (its review key) and
-     __harness.rateCalls, crowd and venue mirrored into the old 1-10 ints.
+     __harness.rateCalls, with the THREE SCORES the review gives (crowd =
+     the crowd stars, city = the area stars, venue = the mean of the
+     venue-based questions; core's showReviewScores) mirrored into the old
+     1-10 ints, stars times two - city fills now when the area was answered.
+     THE ASK ON OPENING THE APP (Devin, 2026-10-16: "the moment bus call
+     hits the next time someone opens the app they are prompted... to rate
+     the most recent show"): once the most recent played show's day sheet
+     bus call has hit and this account hasn't rated that show, opening the
+     profile's Today tab or the tour's Overview brings up a small sheet -
+     the city and venue, "How was the show?", Rate the show (the wizard) and
+     Not now. The phone remembers it asked (localStorage, per tour and
+     show), so it never nags twice; __harness.ratePrompt() clears that mark.
        __harness.venue()    opens the way to a rated venue page: Mohawk
                             (Austin) becomes a page with three people's stars
-                            on it, 9, 8 and 8 (8.3 from 3 ratings). Find it in
+                            on it, 9, 8 and 8 (8.3 from 3 ratings), and the
+                            0168 review line under it ('4.2 from 12 reviews',
+                            seeded in __harness.venueScores). Find it in
                             Search ("Mohawk"), under Venues; your own stars
                             land in __harness.venueStars['v-mohawk'] and move
                             the average on the page. Or open with ?venue.
+                            delete __harness.venueScores['v-mohawk'] and
+                            reopen: the card loses the 0168 keys and the page
+                            must show NO review line (a build ahead of that
+                            staged migration).
        __harness.rate()     tonight's Austin show reads as after doors (its
                             day sheet's doors time moves to half an hour ago),
                             merch is logged on it, two band rows land in
-                            __harness.showStars, and the venue history is
+                            __harness.showStars, the venue history is
                             seeded with the band's stars (venueHistory()
-                            below), so one address shows everything: the
-                            Calendar's tonight row has Rate over Requests
-                            (the wizard, every screen), and the profile's
+                            below), and ratePrompt() below runs too, so one
+                            address shows everything: the Calendar's tonight
+                            row reads Day sheet / Rate / Requests in one row
+                            (the wizard, every screen), the profile's
                             Today tab ends in the History section - dressed
                             like the day sheet's Notes since 2026-10-16, the
                             centred heading over the one card - with the
-                            small stars line. Or open with ?rate.
+                            small stars line, and the Today tab or Overview
+                            opens under the rate-the-show ask. Or open with
+                            ?rate.
+       __harness.ratePrompt()   the ask on opening the app, alone: tonight's
+                            bus call moves to one that reads as hit (half an
+                            hour ago in the afternoon and evening; noon
+                            otherwise - before 11 AM the small-hours rule
+                            reads every bus call as the night after's, so
+                            no value can read as hit), this phone's
+                            asked-mark for tonight is cleared and its own
+                            rating taken off. Then open the profile's Today
+                            tab or the tour's Overview: the sheet rises
+                            after the intro (and the countdown splash, when
+                            one fires). Rate the show or Not now both mark
+                            the phone asked; run ratePrompt() again to see
+                            it again.
        __harness.venueStars every venue's stars ({ venueId: { userId: stars } });
        __harness.showStars  every night's band rows, each with its review;
                             __harness.rateCalls what this phone wrote.
@@ -1425,7 +1485,30 @@ shim = r"""<script>
     }
     H.venueStars = H.venueStars || {};
     H.venueStars['v-mohawk'] = { 'u-amy': 9, 'u-ben': 8, 'u-cal': 8 };
+    // The 0168 review keys, seeded so the quiet 'x.x from n reviews' line
+    // shows under the rating line; delete this entry and reopen the page to
+    // see the keys absent (the staged migration not applied: no line).
+    H.venueScores = H.venueScores || {};
+    H.venueScores['v-mohawk'] = { score: 4.2, count: 12 };
     return 'v-mohawk (Search for Mohawk, open it under Venues)';
+  };
+  /* The ask on opening the app (2026-10-16): tonight's bus call moves to a
+     value busCallDue reads as hit right now (half an hour ago when the
+     clock can say so; noon otherwise - before 11 AM the small-hours rule
+     reads every bus call as the night after's and the ask cannot rise),
+     this phone's own rating on tonight comes off, and the asked-mark this
+     phone keeps (localStorage, per tour and show) is cleared, so the ask
+     rises again on the profile's Today tab or the tour's Overview. */
+  window.__harness.ratePrompt = function () {
+    var H = window.__harness;
+    var at = new Date(Date.now() - 30 * 60e3);
+    tours.t1.shows.s1.daySheet.busCall = at.getHours() >= 13
+      ? ((at.getHours() % 12 || 12) + ':' + ('0' + at.getMinutes()).slice(-2) + 'PM') : '12:00PM';
+    H.showStars = (H.showStars || []).filter(function (r) { return !(r.tourId === 't1' && r.showId === 's1' && r.userId === 'u-devin'); });
+    try { localStorage.removeItem('gr-rateask:t1:s1'); } catch (e) { /* the phone forgets on its own */ }
+    emit();
+    return 'bus call ' + tours.t1.shows.s1.daySheet.busCall +
+      ' - open the profile Today tab or the tour Overview (before 11 AM no bus call can read as hit)';
   };
   window.__harness.rate = function () {
     var H = window.__harness;
@@ -1439,10 +1522,14 @@ shim = r"""<script>
     H.showStars.push({ tourId: 't1', showId: 's1', userId: 'u-amy', crowd: 8, venue: 7, city: 9, at: now },
       { tourId: 't1', showId: 's1', userId: 'u-ben', crowd: 6, venue: 7, city: null, at: now });
     // Tonight's room in the band's history too, stars and all, so one
-    // address shows the wizard and the Today History section together.
+    // address shows the wizard and the Today History section together; and
+    // the ask on opening the app rides along (a hit bus call, the
+    // asked-mark cleared), so Today and the Overview open under it.
     H.venueHistory();
+    H.ratePrompt();
     emit();
-    return 'doors ' + tours.t1.shows.s1.daySheet.doors + ', merch 1400 logged, two band rows and the rated history on tonight';
+    return 'doors ' + tours.t1.shows.s1.daySheet.doors + ', bus call ' + tours.t1.shows.s1.daySheet.busCall +
+      ', merch 1400 logged, two band rows, the rated history and the open-ask on tonight';
   };
   try { if (/[?&]venue\b/.test(String(location.search || ''))) window.__harness.venue(); } catch (e) { /* no address to read */ }
   try { if (/[?&]rate\b/.test(String(location.search || ''))) window.__harness.rate(); } catch (e) { /* no address to read */ }
@@ -3679,6 +3766,12 @@ shim = r"""<script>
         out.rating = vals.length ? Math.round(vals.reduce(function (n, v) { return n + v; }, 0) / vals.length * 10) / 10 : null;
         out.ratings = vals.length;
       }
+      // The 0168 keys (the venue's average review score out of five, and
+      // how many reviews), only when __harness.venueScores seeds them: a
+      // card without them reads as a build ahead of that staged migration,
+      // and the page must show no review line for it.
+      var sc = (H.venueScores || {})[id];
+      if (sc) { out.score = sc.score; out.scoreCount = sc.count; }
       return Promise.resolve(out);
     },
     festivalCard: function (id) {
