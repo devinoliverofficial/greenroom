@@ -120,17 +120,20 @@ begin
                 from jsonb_each(t.doc -> 'shows') e
                where jsonb_typeof(e.value -> 'buyoutTrack' -> 'paid') = 'object'
     loop
+      -- a null is a tombstone (someone UNTICKED by the old tracker): skip it
       for pk in select p.key as who from jsonb_each(sh.show -> 'buyoutTrack' -> 'paid') p
+                 where jsonb_typeof(p.value) = 'object'
       loop
         v_uid := null;
         if pk.who like 'n:%' then
           -- the old tracker's own key: 'n:' + the lowercased name; the seat
           -- whose typed name says the same person (the MY PAY match rule)
           v_name := substr(pk.who, 3);
-          select m.user_id into v_uid from members m
+          -- two seats wearing one name would be a guess: then nobody is marked
+          select case when count(*) = 1 then max(m.user_id::text)::uuid end into v_uid
+            from members m
            where m.tour_id = t.id and m.user_id is not null
-             and lower(btrim(coalesce(m.display_name, ''))) = v_name
-           limit 1;
+             and lower(btrim(coalesce(m.display_name, ''))) = v_name;
         else
           -- a crew map key: that entry's email names the seat
           v_ent := case when jsonb_typeof(t.doc -> 'crew') = 'object'

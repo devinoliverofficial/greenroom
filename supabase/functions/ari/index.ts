@@ -407,7 +407,9 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
     if (atWin(scAt)) await announce(showId, "soundcheck", "Sound check. It's time.", "soundcheck", NOBODY);
 
     // VIP: 30 minutes out, and at the time.
-    const vipAt = onShowDay(minutesOf(ds.vip));
+    // VIP is free text ("6:00 PM meet & greet"): the first time inside it counts.
+    const vipTime = (String(ds.vip ?? "").match(/\b\d{1,2}(:\d{2})?\s*(AM|PM|am|pm)?\b/) ?? [""])[0];
+    const vipAt = onShowDay(minutesOf(vipTime));
     if (due(vipAt, 30)) await announce(showId, "vip-pre", "VIP in 30 minutes.", "vip", NOBODY);
     if (atWin(vipAt)) await announce(showId, "vip", "VIP is starting.", "vip", NOBODY);
 

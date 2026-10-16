@@ -20478,10 +20478,11 @@
     var nk = 'n:' + String((row && row.name) || '').trim().toLowerCase();
     var key = ent ? ent.id : nk;
     var paid = Object.assign({}, G.isObj(tr.paid) ? tr.paid : {});
-    var had = !!(paid[key] || (nk !== 'n:' && paid[nk]));
+    var had = !!(G.isObj(paid[key]) || (nk !== 'n:' && G.isObj(paid[nk])));
     if (want === had) return;
     if (want) paid[key] = { name: (ent && ent.name) || (row && row.name) || 'Someone', artist: !!(ent && G.isMember(ent)) };
-    else { delete paid[key]; if (nk !== 'n:') delete paid[nk]; }
+    // The deep merge keeps what a patch leaves out: only a null removes.
+    else { paid[key] = null; if (nk !== 'n:') paid[nk] = null; }
     var patch = {}; patch[showId] = { buyoutTrack: Object.assign({}, tr, { paid: paid }) };
     api.update(id, { shows: patch }).then(function () { render(true); });
   }
@@ -20514,11 +20515,12 @@
     var a = G.isObj(prev) && G.isObj(prev.paid) ? prev.paid : {};
     var b = G.isObj(next) && G.isObj(next.paid) ? next.paid : {};
     Object.keys(b).forEach(function (k) {
-      if (a[k]) return; var u = uidOf(k);
+      // A null is a tombstone - someone UNTICKED. Only a real mark ticks.
+      if (!G.isObj(b[k]) || G.isObj(a[k])) return; var u = uidOf(k);
       if (u) B.buyoutTrack(id, showId, u).catch(function () { /* the backfill or the next tick catches it */ });
     });
     Object.keys(a).forEach(function (k) {
-      if (b[k]) return; var u = uidOf(k);
+      if (!G.isObj(a[k]) || G.isObj(b[k])) return; var u = uidOf(k);
       if (u) B.buyoutUntrack(id, showId, u).catch(function () { /* same */ });
     });
   }
@@ -21645,7 +21647,7 @@
               buyoutHint),
             h('button', { class: 'btn sm quiet bo-track', type: 'button', onclick: function () {
               if (!(draft.buyouts > 0)) { toast('Log the buyout total first'); return; }
-              openBuyoutTracker(id, s, draft.buyouts, track, function (next) { track = next; updateBuyouts(); refresh(); });
+              openBuyoutTracker(id, s, draft.buyouts, track, function (next) { buyoutDbMirror(id, s.id, track, next); track = next; updateBuyouts(); refresh(); });
             } }, 'Track'),
             mkInput));
         } else if (f.key === 'guarantee') {
@@ -22843,7 +22845,6 @@
     // Money news: only for people who can see the tour's money.
     ['Money', [
       ['green', 'In the green', 'The tour\u2019s net turns positive', 'on'],
-      ['received', 'Merch or guarantee income logged received', 'A night\u2019s money is logged received', 'off'],
       ['merchnums', 'MERCH NUMBERS', 'A night\u2019s merch numbers come in', 'stored']]]
   ];
   // What a key starts as on this phone: the saved choice, else what the old

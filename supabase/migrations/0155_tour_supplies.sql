@@ -16,13 +16,17 @@ create index if not exists tour_supplies_tour on public.tour_supplies (tour_id, 
 
 alter table public.tour_supplies enable row level security;
 
--- Who is on a tour: the on_tour(t_id, u) test that already lives in the
--- database. It has only ever been called from inside other definer functions,
--- so phones were never granted it; these policies run it AS the phone's role,
--- which needs the grant (it answers only yes or no about the caller's own
--- membership). Who is a Manager: the creator, or a seat with role 'editor'
--- and manager true (the same test the rest of the app uses since 0133).
-grant execute on function public.on_tour(text, uuid) to authenticated;
+-- Who is on a tour: a one-arg door over the on_tour(t_id, u) test that
+-- already lives in the database. The two-arg one takes ANY user id, so
+-- granting it to phones would let anyone ask about anyone; this wrapper
+-- answers only for the caller, and it alone is granted. Who is a Manager:
+-- the creator, or a seat with role 'editor' and manager true (0133's test).
+create or replace function public.on_tour_me(t_id text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select public.on_tour(t_id, auth.uid())
+$$;
+revoke all on function public.on_tour_me(text) from public, anon;
+grant execute on function public.on_tour_me(text) to authenticated;
 create or replace function public.manages_tour(t_id text)
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (select 1 from tours t where t.id = t_id and t.owner_id = auth.uid())
@@ -34,15 +38,15 @@ grant execute on function public.manages_tour(text) to authenticated;
 
 drop policy if exists tour_supplies_read on public.tour_supplies;
 create policy tour_supplies_read on public.tour_supplies
-  for select to authenticated using (public.on_tour(tour_id, auth.uid()));
+  for select to authenticated using (public.on_tour_me(tour_id));
 
 drop policy if exists tour_supplies_add on public.tour_supplies;
 create policy tour_supplies_add on public.tour_supplies
-  for insert to authenticated with check (public.on_tour(tour_id, auth.uid()) and added_by = auth.uid());
+  for insert to authenticated with check (public.on_tour_me(tour_id) and added_by = auth.uid());
 
 drop policy if exists tour_supplies_change on public.tour_supplies;
 create policy tour_supplies_change on public.tour_supplies
-  for update to authenticated using (public.on_tour(tour_id, auth.uid())) with check (public.on_tour(tour_id, auth.uid()));
+  for update to authenticated using (public.on_tour_me(tour_id)) with check (public.on_tour_me(tour_id));
 
 drop policy if exists tour_supplies_drop on public.tour_supplies;
 create policy tour_supplies_drop on public.tour_supplies
@@ -63,6 +67,9 @@ begin
   end if;
   if new.done_at is distinct from old.done_at then
     new.done_by := case when new.done_at is null then null else auth.uid() end;
+  elsif new.done_by is distinct from old.done_by then
+    -- the tick says who ticked; nobody re-pins it on someone else
+    new.done_by := old.done_by;
   end if;
   return new;
 end $$;
