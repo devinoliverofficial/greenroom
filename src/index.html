@@ -3211,15 +3211,20 @@ button.fl-row { cursor: pointer; }
 .inc-tot { display: grid; justify-items: end; gap: 1px; }
 .inc-tot .inc-k { font-size: 10.5px; font-weight: 500; color: var(--ink-3); }
 /* Crew Stats, scaled down a step: more air, same tap targets. */
-.fw-card { padding: 10px 2px; }
-.fw-main { gap: 12px; }
-.fw-drop { margin-left: 54px; }
-.pf-photo.fw-photo { width: 36px; height: 36px; font-size: 15px; }
-.fw-name { font-size: 13.5px; gap: 5px; }
-.fw-role { font-size: 11.5px; }
-.fw-stats { max-width: 230px; }
-.fw-n { font-size: 13.5px; }
-.fw-l { font-size: 11px; }
+/* (Devin, 2026-10-16, the one place Crew Stats is sized: bigger photos,
+   names in their own case and smaller, the status under the name, the
+   numbers small, the cards airy. Earlier sizes up the file lose to these.) */
+.fw-card { padding: 16px 2px; }
+.fw-main { gap: 14px; }
+.fw-drop { margin-left: 66px; }
+.pf-photo.fw-photo { width: 52px; height: 52px; font-size: 20px; }
+.fw-name { font-size: 12.5px; gap: 5px; text-transform: none; letter-spacing: 0; font-weight: 650; }
+.fw-tier { display: flex; margin: -2px 0 0; }
+.fw-tier .hist-tier.sm { font-size: 7.5px; padding: 1px 5px; opacity: .85; letter-spacing: .04em; }
+.fw-role { font-size: 10.5px; }
+.fw-stats { max-width: 220px; }
+.fw-n { font-size: 12px; }
+.fw-l { font-size: 10px; }
 .fw-give { height: 26px; font-size: 13px; padding: 0 10px; }
 .fw-h { margin: 22px 2px 6px; font-size: 15px; }
 .fw-gift { padding: 9px 2px; gap: 10px; }

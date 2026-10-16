@@ -17,6 +17,14 @@ All 25 ideas were collected and talked through first (his answers are the rule).
 - [x] 16 "View Setlist" beside View calendar: one numbered list for the whole tour, Managers and Members edit, everyone views
 - [ ] Not tried on a real phone yet; the artist-page bar question above is open
 
+## The build-and-ship night (2026-10-15, late): five more live builds
+- [x] All of Devin's three refinement passes live (bar order photo-first without Crew Stats + its new Overview door, centred titles, three-part Today head, Check In retired, venue glow with the address under it, guest share pill + crew-style rows + green pass far right, smaller Crew Stats, ON TOUR chip once, expenses by amount, alphabetical categories, smaller MY PAY buttons)
+- [x] Supplies + the full notifications list live (gated); notify/ari FILES extended, WAITING ON HIS PASTE
+- [x] City events (0157), artist pictures (0158), flyers (0156), fan round (0159) live in the app, dark behind probes until applied
+- [x] dream beach page created live with three sourced nights
+- [ ] EVERY migration 0149-0159 waits on his literal "apply it" per change; 0157 also needs a Vault secret 'ticketmaster_key'
+- [ ] After 0151 applies: nothing extra (backfill inside); after pastes: ari's LOAD IN wording question, the 'received' money kind sender (his word needed)
+
 ## MODELXCREW Wave 2 app: SHIPPED 9927404 (build 20261015-201747)
 All evening fixes live (day-count rows, hard-close intro, Crew Stats checks and trims, menu-style Settings, guest share sheet and pass parity, ON TOUR glow, amount-ordered expenses, alphabetical categories, smaller MY PAY buttons, Create Account, one-word search). The five gated features ride in it and wake per apply below. Before 0151 is applied: add the doc buyoutTrack reconciliation (backfill + tick UI counts doc marks).
 

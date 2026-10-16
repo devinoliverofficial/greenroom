@@ -18309,10 +18309,12 @@
         h('div', { class: 'fw-side' },
           h('button', { class: 'fw-name fw-name-btn', type: 'button', 'aria-expanded': open ? 'true' : 'false',
             'aria-label': (open ? 'Hide' : 'Show') + ' the flowers ' + (mine ? 'you were' : fwName(p) + ' was') + ' given', onclick: toggle },
-            h('span', { class: 'fw-name-t' }, fwName(p)), roadPill(id, p.userId),
+            h('span', { class: 'fw-name-t' }, fwName(p)),
             personChecked(p.verified, (roadTiers(id).by || {})[p.userId], p.counts && p.counts.endorsements) ? verifiedBadge('sm') : null,
             mine ? h('span', { class: 'fw-you' }, 'You') : null,
             h('span', { class: 'fw-chev', 'aria-hidden': 'true' }, icon('chevron', 14))),
+          // The status sits under the name (Devin, 2026-10-16).
+          roadPill(id, p.userId) ? h('div', { class: 'fw-tier' }, roadPill(id, p.userId)) : null,
           p.tourRole ? h('p', { class: 'fw-role' }, p.tourRole) : null,
           fwStats(p.here, p.counts)),
         // Small, at the right edge of the stats (Devin, 2026-10-07). Your own
