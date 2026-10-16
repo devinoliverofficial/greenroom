@@ -34,6 +34,31 @@
   // shows them and kept until something changes.
   var flowerCache = {}, flowerAsk = {}, flowerGen = {}, myFlowerCache = null, myFlowerAsk = null, myFlowerGen = 0, flowerTimer = 0;
   var faceCache = {}, faceAsk = {};
+  // Bus Check in (0150): today's bus list per tour, and whether the table is
+  // there at all (null until the first ask answers; the answer is the session's).
+  var busCache = {}, busAsk = {}, busGen = {}, busKnown = null, busProbing = false;
+  // Buyout ticks (0151): each tour's rows from buyout_tracks, and whether the
+  // table is there at all (null until the first ask answers; the answer is the session's).
+  var buyoutCache = {}, buyoutAsk = {}, buyoutGen = {}, buyoutKnown = null, buyoutProbing = false;
+  // To Do Lists (0152): each artist's tasks and invited people, and whether
+  // the tables are there at all (null until the first ask answers; the
+  // answer is the session's). myTodoCache is the profile tab's own read.
+  var todoCache = {}, todoAsk = {}, todoGen = {}, todoKnown = null, todoProbing = false;
+  var myTodoCache = null, myTodoAsk = null, myTodoGen = 0;
+  var TODO_COLS = 'id, artist_id, cat, body, assigned_to, due, done_at, created_by, created_at';
+  // Favorite Local Spots (0153): the places this account saved, each tour's
+  // read for one city, and whether the table is there at all (null until the
+  // first ask answers; the answer is the session's). mySpotCache is the
+  // profile tab's own read; tourSpotCache holds one answer per tour and city.
+  var mySpotCache = null, mySpotAsk = null, mySpotGen = 0;
+  var tourSpotCache = {}, tourSpotAsk = {}, tourSpotGen = {}, spotKnown = null, spotProbing = false;
+  var SPOT_COLS = 'id, tour_id, city, city_key, name, kind, note, created_at';
+  var SPOT_KINDS = ['food', 'coffee', 'bar', 'club', 'to do', 'other'];
+  // Ratings (0154): everyone's stars on a venue (read back through
+  // venue_card), the band's word on each night of a tour, and whether the
+  // tables are there at all (null until the first ask answers; the answer is
+  // the session's). showRateCache holds one answer per tour.
+  var showRateCache = {}, showRateAsk = {}, showRateGen = {}, rateKnown = null, rateProbing = false;
   var FLOWERS_FRESH = 60e3; // asked again after a minute anyway: people join, phones sleep through changes
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
@@ -268,6 +293,16 @@
   function fnMissing(e) {
     return !!e && (e.code === 'PGRST202' || e.code === '42883' ||
       /could not find the function|function .* does not exist/i.test(String(e.message || '')));
+  }
+  // The same for a table or a column (a build ahead of its migration): the
+  // feature that needs it simply stays out of sight, never an error anyone sees.
+  function tableMissing(e) {
+    return !!e && (e.code === 'PGRST205' || e.code === '42P01' ||
+      /could not find the table|relation .* does not exist/i.test(String(e.message || '')));
+  }
+  function columnMissing(e) {
+    return !!e && (e.code === 'PGRST204' || e.code === '42703' ||
+      /could not find the .* column|column .* does not exist/i.test(String(e.message || '')));
   }
   /* The four reimbursement writes (reimburse_ask, reimburse_withdraw,
      reimburse_mark, reimburse_restore). Each answers { ok: true } or
@@ -1303,6 +1338,65 @@
       if (q.error) throw mapError(q.error);
       return Array.isArray(q.data) ? q.data : [];
     },
+    /* Ratings (0154). ratingsOn: are the tables there (asked once per
+       session; false until it answers, so a build ahead of its migration
+       simply shows nothing). venueRate: this account's own stars on a venue,
+       1 to 10, one row a person (the page's average and count ride on
+       venue_card as 'rating' and 'ratings'). myVenueRating: the stars this
+       account gave a venue, null when it hasn't. showRate: the band's word
+       on one night, crowd / venue / city each 1 to 10 or left out; sent
+       again, it replaces what this account said. showRatings: every row of
+       a tour this account may read (the database hands them to the band
+       alone), at once from what this phone holds (null while it's first
+       being fetched). All of it quiet when the tables aren't there. */
+    ratingsOn: function () {
+      if (rateKnown === null) rateProbe();
+      return rateKnown === true;
+    },
+    venueRate: async function (venueId, stars) {
+      if (!session) throw err('unavailable');
+      var n = Math.max(1, Math.min(10, Math.round(Number(stars) || 0)));
+      var q = await sb.from('venue_ratings').upsert({ venue_id: venueId, user_id: session.user.id, stars: n },
+        { onConflict: 'venue_id,user_id' });
+      if (q.error) {
+        if (tableMissing(q.error)) { rateKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+    },
+    myVenueRating: async function (venueId) {
+      if (!session || rateKnown === false) return null;
+      var q = await sb.from('venue_ratings').select('stars').eq('venue_id', venueId).eq('user_id', session.user.id).maybeSingle();
+      if (q.error) {
+        if (tableMissing(q.error)) { rateKnown = false; emit('tours'); }
+        return null;
+      }
+      return q.data && Number(q.data.stars) >= 1 ? Number(q.data.stars) : null;
+    },
+    showRate: async function (tourId, showId, o) {
+      if (!session) throw err('unavailable');
+      var p = isObj(o) ? o : {};
+      var one = function (v) { var n = Math.round(Number(v)); return n >= 1 && n <= 10 ? n : null; };
+      var row = { tour_id: tourId, show_id: showId, user_id: session.user.id,
+        crowd: one(p.crowd), venue: one(p.venue), city: one(p.city) };
+      var q = await sb.from('show_ratings').upsert(row, { onConflict: 'tour_id,show_id,user_id' });
+      if (q.error) {
+        if (tableMissing(q.error)) { rateKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      // What's shown moves at once; the next read carries the database's clock.
+      var c = showRateCache[tourId];
+      if (c && c.data) {
+        c.data = c.data.filter(function (r) { return !(r.showId === showId && r.userId === session.user.id); })
+          .concat([{ showId: showId, userId: session.user.id, crowd: row.crowd, venue: row.venue, city: row.city, at: new Date().toISOString() }]);
+      }
+      emit('tours');
+    },
+    showRatings: function (tourId, fresh) {
+      if (rateKnown !== true) return null;
+      var c = showRateCache[tourId];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadShowRatings(tourId);
+      return c ? c.data : null;
+    },
     /* ---- Invite codes: what gets someone through the door with no tour
        invite. A Greenroom admin makes them; null for everyone else (so the
        app knows not to show the door, like claimQueue). ---- */
@@ -1527,10 +1621,30 @@
       if (q.error) throw mapError(q.error);
       return Array.isArray(q.data) ? q.data : [];
     },
+    /* Finding an artist's page: the words as typed, and, when they carry
+       spaces or punctuation, the same words spelled solid ("dream beach"
+       also asks for "dreambeach"), because pages' handles are written solid
+       and one-word names ("Dreambeach") match the solid form. Only this
+       Greenroom-side comparison is widened: what goes to MusicBrainz
+       (mbSearch) never changes. */
     findArtists: async function (text) {
-      var q = await sb.rpc('find_artists', { q: String(text || '') });
-      if (q.error) throw mapError(q.error);
-      return Array.isArray(q.data) ? q.data : [];
+      var t = String(text || '');
+      var low = t.trim().replace(/^@+/, '').toLowerCase();
+      var solid = low.replace(/[^a-z0-9]+/g, '');
+      var asks = [sb.rpc('find_artists', { q: t })];
+      if (solid.length >= 2 && solid !== low) {
+        // (A miss here never fails the search: the typed words' answer stands.)
+        asks.push(sb.rpc('find_artists', { q: solid }).then(function (q2) { return q2; }, function () { return null; }));
+      }
+      var out = await Promise.all(asks);
+      if (out[0].error) throw mapError(out[0].error);
+      var rows = Array.isArray(out[0].data) ? out[0].data : [];
+      var seen = {};
+      rows.forEach(function (a) { if (a && a.id) seen[a.id] = true; });
+      (out[1] && !out[1].error && Array.isArray(out[1].data) ? out[1].data : []).forEach(function (a) {
+        if (a && a.id && !seen[a.id]) { seen[a.id] = true; rows.push(a); }
+      });
+      return rows;
     },
     findTours: async function (text) {
       var q = await sb.rpc('find_tours', { q: String(text || '') });
@@ -1708,6 +1822,11 @@
         tour_role: tourRole
       };
       if (mgr) row.manager = true;
+      // "Riding on the bus?" (0150). Only a no is sent: riding is the rule
+      // (the column's own default), so a database without the column yet
+      // still takes the invite, and the tour doc's crew entry keeps the
+      // answer either way (see addToCrewExpenses in the app).
+      if (x.ridesBus === false) row.rides_bus = false;
       // The door first: the database only makes an account for an address that was let in (24 hours,
       // spent by the sign-up; a day's invites are capped). Refused here, nothing is left half done.
       // Two of its refusals the app has words for: an account that came in on a Greenroom code cannot
@@ -1716,6 +1835,11 @@
       var al = await sb.rpc('allow_signup', { addr: addr, note: tourRole });
       if (al.error) throw /page first/i.test(String(al.error.message || '')) ? err('page-first') : knownError(al.error);
       var q = await sb.from('members').upsert(row);
+      // The bus column isn't there yet: the invite goes through without it.
+      if (q.error && row.rides_bus === false && columnMissing(q.error)) {
+        delete row.rides_bus;
+        q = await sb.from('members').upsert(row);
+      }
       if (q.error) throw mapError(q.error);
       // Remembered for the next tour's invites. A nicety: never blocks the invite.
       try {
@@ -1860,6 +1984,250 @@
       if (q.error) throw mapError(q.error);
       if (!cache.checkins.some(function (x) { return x.tour_id === tourId && x.day === date; })) cache.checkins.push({ tour_id: tourId, day: date });
       emit('tours');
+    },
+    /* Bus Check in (0150). busOn: is the table there (asked once per
+       session; false until it answers, so a build ahead of its migration
+       simply shows nothing). busList: today's bus list for a tour, at once
+       from what this phone holds (null while it's first being fetched).
+       busSet: this account's own word for today, 'on' or 'off'. The row is
+       updated first and only inserted when there is none (the column grants
+       allow no one-step upsert); what's shown moves at once, and the poke
+       the write sets off reads it back with the database's clock. */
+    busOn: function () {
+      if (busKnown === null) busProbe();
+      return busKnown === true;
+    },
+    busList: function (tourId, fresh) {
+      if (busKnown !== true) return null;
+      var c = busCache[tourId], day = localDay();
+      if (!c || c.stale || fresh || c.day !== day || Date.now() - c.at > FLOWERS_FRESH) loadBus(tourId);
+      return c && c.day === day ? c.data : null;
+    },
+    busSet: async function (tourId, state) {
+      if (!session) throw err('unavailable');
+      var st = state === 'on' ? 'on' : 'off', day = localDay(), uid = session.user.id;
+      var up = await sb.from('bus_checkins').update({ state: st })
+        .eq('tour_id', tourId).eq('user_id', uid).eq('day', day).select('user_id');
+      if (up.error) {
+        if (tableMissing(up.error)) { busKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(up.error);
+      }
+      if (!up.data || !up.data.length) {
+        var ins = await sb.from('bus_checkins').insert({ tour_id: tourId, user_id: uid, day: day, state: st });
+        if (ins.error && ins.error.code === '23505') {
+          // The row landed between the two calls (another tab): say the word again.
+          var again = await sb.from('bus_checkins').update({ state: st })
+            .eq('tour_id', tourId).eq('user_id', uid).eq('day', day).select('user_id');
+          if (again.error) throw mapError(again.error);
+        } else if (ins.error) {
+          if (tableMissing(ins.error)) { busKnown = false; emit('tours'); throw err('unavailable'); }
+          throw mapError(ins.error);
+        }
+      }
+      var c = busCache[tourId];
+      if (c && c.day === day && c.data) (c.data.people || []).forEach(function (p) {
+        if (p.userId === uid) { p.state = st; p.at = new Date().toISOString(); }
+      });
+      emit('tours');
+    },
+    /* Buyout ticks (0151). buyoutsOn: is the table there (asked once per
+       session; false until it answers, so a build ahead of its migration
+       simply shows nothing). buyoutTracks: every tick this account may read
+       on a tour (a Manager reads them all, everyone else their own), at once
+       from what this phone holds (null while it's first being fetched). A
+       row says one thing: this person received the buyout the tour logged
+       for this show. buyoutTrack and buyoutUntrack are the Manager's tick
+       and its undo; the database fills in the time and who said so, and
+       pokes the person with 'buyout' either way. */
+    buyoutsOn: function () {
+      if (buyoutKnown === null) buyoutProbe();
+      return buyoutKnown === true;
+    },
+    buyoutTracks: function (tourId, fresh) {
+      if (buyoutKnown !== true) return null;
+      var c = buyoutCache[tourId];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadBuyouts(tourId);
+      return c ? c.data : null;
+    },
+    buyoutTrack: async function (tourId, showId, userId) {
+      if (!session) throw err('unavailable');
+      var q = await sb.from('buyout_tracks').insert({ tour_id: tourId, show_id: showId, user_id: userId });
+      if (q.error && q.error.code !== '23505') {
+        // (23505: the tick is already there, another tab or a double tap. It stands.)
+        if (tableMissing(q.error)) { buyoutKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      var c = buyoutCache[tourId];
+      if (c && c.data && !c.data.some(function (r) { return r.showId === showId && r.userId === userId; })) {
+        c.data.push({ showId: showId, userId: userId, at: new Date().toISOString() });
+      }
+      emit('tours');
+    },
+    buyoutUntrack: async function (tourId, showId, userId) {
+      if (!session) throw err('unavailable');
+      var q = await sb.from('buyout_tracks').delete()
+        .eq('tour_id', tourId).eq('show_id', showId).eq('user_id', userId);
+      if (q.error) {
+        if (tableMissing(q.error)) { buyoutKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      var c = buyoutCache[tourId];
+      if (c && c.data) c.data = c.data.filter(function (r) { return !(r.showId === showId && r.userId === userId); });
+      emit('tours');
+    },
+    /* To Do Lists (0152). todosOn: are the tables there (asked once per
+       session; false until it answers, so a build ahead of its migration
+       simply shows nothing). todoList: an artist's tasks, at once from what
+       this phone holds; null while they're first being fetched AND null for
+       an account the database says may not see the list, so a page that gets
+       null draws no section at all. todoInvites: who was invited onto that
+       list, from the same answer (an invited person is handed their own row
+       only, which is all they need). todoAdd / todoSave / todoDrop write a
+       task; a save that puts somebody's name on a task makes the database
+       poke their phone with 'todo'. myTodos: every task this account may
+       read across every artist - the lists it can see, plus any task
+       assigned to it on a list it is not on (exactly what the policy hands
+       out, and both are shown). */
+    todosOn: function () {
+      if (todoKnown === null) todoProbe();
+      return todoKnown === true;
+    },
+    todoList: function (artistId, fresh) {
+      if (todoKnown !== true) return null;
+      var c = todoCache[artistId];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadTodos(artistId);
+      return c && c.data && c.data.can ? c.data.items : null;
+    },
+    todoInvites: function (artistId) {
+      if (todoKnown !== true) return null;
+      var c = todoCache[artistId];
+      return c && c.data && c.data.can ? c.data.invites : null;
+    },
+    todoAdd: async function (artistId, cat, body, more) {
+      if (!session) throw err('unavailable');
+      var m = isObj(more) ? more : {};
+      // Cut by whole characters, so an emoji at the end is never split in half.
+      var row = { artist_id: artistId, cat: String(cat || 'other'),
+        body: Array.from(String(body || '').trim()).slice(0, 300).join(''),
+        assigned_to: m.assignedTo || null, due: m.due || null, created_by: session.user.id };
+      var q = await sb.from('todo_items').insert(row).select(TODO_COLS).single();
+      if (q.error) throw todoError(q.error);
+      var c = todoCache[artistId];
+      if (c && c.data && c.data.can) c.data.items.push(todoShape(q.data, c.data.names));
+      todoStale(); emit('tours');
+      return q.data.id;
+    },
+    todoSave: async function (id, patch) {
+      if (!session) throw err('unavailable');
+      var p = isObj(patch) ? patch : {}, row = {};
+      if ('done' in p) row.done_at = p.done ? new Date().toISOString() : null;
+      if ('body' in p) row.body = Array.from(String(p.body || '').trim()).slice(0, 300).join('');
+      if ('cat' in p) row.cat = String(p.cat || 'other');
+      if ('assignedTo' in p) row.assigned_to = p.assignedTo || null;
+      if ('due' in p) row.due = p.due || null;
+      var q = await sb.from('todo_items').update(row).eq('id', id).select(TODO_COLS);
+      if (q.error) throw todoError(q.error);
+      if (!q.data || !q.data.length) throw err('permission'); // RLS said no
+      todoPutBack(q.data[0]);
+      todoStale(); emit('tours');
+    },
+    todoDrop: async function (id) {
+      if (!session) throw err('unavailable');
+      var q = await sb.from('todo_items').delete().eq('id', id).select('id');
+      if (q.error) throw todoError(q.error);
+      if (!q.data || !q.data.length) throw err('permission');
+      Object.keys(todoCache).forEach(function (k) {
+        var c = todoCache[k];
+        if (c && c.data && c.data.items) c.data.items = c.data.items.filter(function (x) { return x.id !== id; });
+      });
+      if (myTodoCache && myTodoCache.data) myTodoCache.data = myTodoCache.data.filter(function (x) { return x.id !== id; });
+      todoStale(); emit('tours');
+    },
+    // name rides along so what's shown is right before the list is read back.
+    todoInvite: async function (artistId, userId, name) {
+      if (!session) throw err('unavailable');
+      var q = await sb.from('todo_invites').insert({ artist_id: artistId, user_id: userId, invited_by: session.user.id });
+      // (23505: already invited, another tab or a double tap. It stands.)
+      if (q.error && q.error.code !== '23505') throw todoError(q.error);
+      var c = todoCache[artistId];
+      if (c && c.data && c.data.can && !c.data.invites.some(function (v) { return v.userId === userId; })) {
+        c.data.invites.push({ userId: userId, name: String(name || ''), invitedBy: session.user.id, at: new Date().toISOString() });
+      }
+      todoStale(); emit('tours');
+    },
+    todoUninvite: async function (artistId, userId) {
+      if (!session) throw err('unavailable');
+      var q = await sb.from('todo_invites').delete().eq('artist_id', artistId).eq('user_id', userId);
+      if (q.error) throw todoError(q.error);
+      var c = todoCache[artistId];
+      if (c && c.data && c.data.invites) c.data.invites = c.data.invites.filter(function (v) { return v.userId !== userId; });
+      todoStale(); emit('tours');
+    },
+    myTodos: function (fresh) {
+      if (todoKnown !== true) return null;
+      var c = myTodoCache;
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadMyTodos();
+      return c ? c.data : null;
+    },
+    /* Favorite Local Spots (0153). spotsOn: is the table there (asked once
+       per session; false until it answers, so a build ahead of its migration
+       simply shows nothing). mySpots: every place this account saved, at
+       once from what this phone holds (null while it's first being fetched).
+       spotAdd / spotSave / spotDrop write one place, the saver's alone; a
+       place with a tourId on it is read by everyone on that tour. tourSpots:
+       the places pinned to a tour in one city (the day sheet's read), each
+       with its saver's first name; null while it's first being fetched. The
+       city's key is the counting rules' own spelling (GR.roadCityKey); the
+       database's trigger recomputes it on every write, so the two agree. */
+    spotsOn: function () {
+      if (spotKnown === null) spotProbe();
+      return spotKnown === true;
+    },
+    mySpots: function (fresh) {
+      if (spotKnown !== true) return null;
+      var c = mySpotCache;
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadMySpots();
+      return c ? c.data : null;
+    },
+    spotAdd: async function (p) {
+      if (!session) throw err('unavailable');
+      var row = spotRow(isObj(p) ? p : {});
+      row.user_id = session.user.id;
+      var q = await sb.from('local_spots').insert(row).select(SPOT_COLS).single();
+      if (q.error) throw spotError(q.error);
+      if (mySpotCache && mySpotCache.data) mySpotCache.data.push(spotShape(q.data));
+      spotsStale(); emit('tours');
+      return q.data.id;
+    },
+    spotSave: async function (id, patch) {
+      if (!session) throw err('unavailable');
+      var row = spotRow(isObj(patch) ? patch : {});
+      var q = await sb.from('local_spots').update(row).eq('id', id).select(SPOT_COLS);
+      if (q.error) throw spotError(q.error);
+      if (!q.data || !q.data.length) throw err('permission'); // RLS said no
+      if (mySpotCache && mySpotCache.data) {
+        mySpotCache.data = mySpotCache.data.map(function (x) { return x.id === id ? spotShape(q.data[0]) : x; });
+      }
+      spotsStale(); emit('tours');
+    },
+    spotDrop: async function (id) {
+      if (!session) throw err('unavailable');
+      var q = await sb.from('local_spots').delete().eq('id', id).select('id');
+      if (q.error) throw spotError(q.error);
+      if (!q.data || !q.data.length) throw err('permission');
+      if (mySpotCache && mySpotCache.data) mySpotCache.data = mySpotCache.data.filter(function (x) { return x.id !== id; });
+      Object.keys(tourSpotCache).forEach(function (k) {
+        var c = tourSpotCache[k];
+        if (c && c.data) c.data = c.data.filter(function (x) { return x.id !== id; });
+      });
+      spotsStale(); emit('tours');
+    },
+    tourSpots: function (tourId, cityKey, fresh) {
+      if (spotKnown !== true) return null;
+      var k = tourId + '|' + String(cityKey || '');
+      var c = tourSpotCache[k];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadTourSpots(tourId, cityKey);
+      return c ? c.data : null;
     },
     /* Flowers. Everyone on a tour has 10 to give to the others on it. The
        getters answer at once from what this phone has (null while it's
@@ -2345,6 +2713,397 @@
     myFlowerAsk = p;
     return p;
   }
+  /* ---- Bus Check in (0150): the driver's headcount ---- */
+  // Is the table there? One ask per session. A build ahead of its migration
+  // finds none, and the whole feature stays out of sight (busOn answers
+  // false, so the app draws nothing). No signal: unanswered, asked again the
+  // next time something draws.
+  function busProbe() {
+    if (busProbing || !session) return;
+    busProbing = true;
+    sb.from('bus_checkins').select('tour_id').limit(1).then(function (q) {
+      busProbing = false;
+      if (!q.error) { busKnown = true; emit('tours'); }
+      else if (tableMissing(q.error)) busKnown = false;
+    }, function () { busProbing = false; });
+  }
+  /* Today's bus list, one answer per tour: who rides (every seat whose row
+     doesn't say rides_bus false, and the tour's owner always), and each
+     rider's own word for the day ('on', 'off', or none yet). A seat that
+     hasn't signed up yet has no phone to say a word with, so it isn't
+     counted. Held a minute, asked again on a 'bus' poke and on a new day. */
+  function busStale() {
+    Object.keys(busCache).forEach(function (k) { busGen[k] = (busGen[k] || 0) + 1; if (busCache[k]) busCache[k].stale = true; });
+  }
+  function loadBus(tourId) {
+    var gen = busGen[tourId] || 0, ask = busAsk[tourId];
+    if (ask && ask.gen === gen) return ask;
+    var day = localDay();
+    var p = Promise.all([
+      sb.from('bus_checkins').select('user_id, state, at').eq('tour_id', tourId).eq('day', day),
+      sb.from('members').select('user_id, display_name, rides_bus').eq('tour_id', tourId).order('created_at')
+    ]).then(function (qs) {
+      if (qs[0].error || qs[1].error) {
+        // Not there yet: the feature goes quiet. Anything else (no signal):
+        // what was held stands, and the next draw asks again.
+        if (tableMissing(qs[0].error) || tableMissing(qs[1].error) || columnMissing(qs[1].error)) {
+          busKnown = false; delete busCache[tourId]; emit('tours');
+        }
+        return null;
+      }
+      var doc = cache.tours.get(tourId);
+      var riders = (qs[1].data || []).filter(function (m) { return m.user_id && m.rides_bus !== false; });
+      if (doc && doc._ownerId && !riders.some(function (m) { return m.user_id === doc._ownerId; })) {
+        riders.unshift({ user_id: doc._ownerId, display_name: '' });
+      }
+      var ids = riders.map(function (m) { return m.user_id; });
+      // Their names, the way the crew list says them; the invite's name until they have one.
+      return (ids.length ? sb.from('profiles').select('user_id, full_name, username').in('user_id', ids)
+        : Promise.resolve({ data: [] })).then(function (pq) {
+        var names = {};
+        (pq.data || []).forEach(function (x) { names[x.user_id] = x.full_name || x.username || ''; });
+        var word = {};
+        (qs[0].data || []).forEach(function (r) { word[r.user_id] = r; });
+        return { day: day, people: riders.map(function (m) {
+          var w = word[m.user_id];
+          return { userId: m.user_id, name: names[m.user_id] || m.display_name || 'Someone',
+            state: w ? w.state : '', at: w ? w.at : null };
+        }) };
+      });
+    }).then(function (data) {
+      if (data) busCache[tourId] = { data: data, day: data.day, at: Date.now(), stale: gen !== (busGen[tourId] || 0) };
+      if (busAsk[tourId] === p) delete busAsk[tourId];
+      if (data) emit('tours');
+    }, function () { if (busAsk[tourId] === p) delete busAsk[tourId]; });
+    p.gen = gen;
+    busAsk[tourId] = p;
+    return p;
+  }
+  /* ---- Buyout ticks (0151): who has been handed their buyout ---- */
+  // Is the table there? One ask per session. A build ahead of its migration
+  // finds none, and the whole feature stays out of sight (buyoutsOn answers
+  // false, so the app draws nothing new). No signal: unanswered, asked again
+  // the next time something draws.
+  function buyoutProbe() {
+    if (buyoutProbing || !session) return;
+    buyoutProbing = true;
+    sb.from('buyout_tracks').select('tour_id').limit(1).then(function (q) {
+      buyoutProbing = false;
+      if (!q.error) { buyoutKnown = true; emit('tours'); }
+      else if (tableMissing(q.error)) buyoutKnown = false;
+    }, function () { buyoutProbing = false; });
+  }
+  function buyoutStale() {
+    Object.keys(buyoutCache).forEach(function (k) { buyoutGen[k] = (buyoutGen[k] || 0) + 1; if (buyoutCache[k]) buyoutCache[k].stale = true; });
+  }
+  // A tour's ticks, every row this account may read (the policy cuts them:
+  // a Manager sees them all, everyone else their own). Held a minute, asked
+  // again on a 'buyout' poke.
+  function loadBuyouts(tourId) {
+    var gen = buyoutGen[tourId] || 0, ask = buyoutAsk[tourId];
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.from('buyout_tracks').select('show_id, user_id, tracked_at').eq('tour_id', tourId)
+      .then(function (q) {
+        if (q.error) {
+          // Not there yet: the feature goes quiet. Anything else (no signal):
+          // what was held stands, and the next draw asks again.
+          if (tableMissing(q.error)) { buyoutKnown = false; delete buyoutCache[tourId]; emit('tours'); }
+          return null;
+        }
+        return (q.data || []).map(function (r) {
+          return { showId: r.show_id, userId: r.user_id, at: r.tracked_at };
+        });
+      }).then(function (data) {
+        if (data) buyoutCache[tourId] = { data: data, at: Date.now(), stale: gen !== (buyoutGen[tourId] || 0) };
+        if (buyoutAsk[tourId] === p) delete buyoutAsk[tourId];
+        if (data) emit('tours');
+      }, function () { if (buyoutAsk[tourId] === p) delete buyoutAsk[tourId]; });
+    p.gen = gen;
+    buyoutAsk[tourId] = p;
+    return p;
+  }
+  /* ---- To Do Lists (0152): each artist's tasks, and your own tab ---- */
+  // Is the table there? One ask per session. A build ahead of its migration
+  // finds none, and the whole feature stays out of sight (todosOn answers
+  // false, so the app draws nothing). No signal: unanswered, asked again the
+  // next time something draws.
+  function todoProbe() {
+    if (todoProbing || !session) return;
+    todoProbing = true;
+    sb.from('todo_items').select('id').limit(1).then(function (q) {
+      todoProbing = false;
+      if (!q.error) { todoKnown = true; emit('tours'); }
+      else if (tableMissing(q.error)) todoKnown = false;
+    }, function () { todoProbing = false; });
+  }
+  function todoStale() {
+    Object.keys(todoCache).forEach(function (k) { todoGen[k] = (todoGen[k] || 0) + 1; if (todoCache[k]) todoCache[k].stale = true; });
+    myTodoGen += 1;
+    if (myTodoCache) myTodoCache.stale = true;
+  }
+  // A write refused: a missing table quiets the feature, a full list (the
+  // database's cap of 500 not done) keeps the server's own plain words, and
+  // the rest is said the usual way.
+  function todoError(e) {
+    if (tableMissing(e)) { todoKnown = false; emit('tours'); return err('unavailable'); }
+    if (/500 tasks/.test(String(e && e.message || ''))) {
+      var full = new Error(String(e.message)); full.code = 'full';
+      return full;
+    }
+    return mapError(e);
+  }
+  function todoShape(r, names) {
+    return { id: r.id, artistId: r.artist_id, cat: r.cat || 'other', body: r.body || '',
+      assignedTo: r.assigned_to || null, assignedName: r.assigned_to ? ((names || {})[r.assigned_to] || '') : '',
+      due: r.due || null, doneAt: r.done_at || null, createdBy: r.created_by, createdAt: r.created_at };
+  }
+  // A saved row back into every list this phone holds, so the change shows at once.
+  function todoPutBack(r) {
+    var c = todoCache[r.artist_id];
+    if (c && c.data && c.data.can) {
+      var it = todoShape(r, c.data.names), had = false;
+      c.data.items = c.data.items.map(function (x) { if (x.id !== it.id) return x; had = true; return it; });
+      if (!had) c.data.items.push(it);
+    }
+    if (myTodoCache && myTodoCache.data) myTodoCache.data.forEach(function (x) {
+      if (x.id !== r.id) return;
+      x.cat = r.cat || 'other'; x.body = r.body || ''; x.due = r.due || null; x.doneAt = r.done_at || null;
+      if (x.assignedTo !== (r.assigned_to || null)) { x.assignedTo = r.assigned_to || null; x.assignedName = ''; }
+    });
+  }
+  /* One artist's list: first whether this account may see it at all (the
+     database's own rule, todo_can_see, so an empty list and a list that is
+     none of the viewer's business never look alike), then the tasks, who is
+     invited, and the names behind the ids. Held a minute, asked again on a
+     'todo' poke. */
+  function loadTodos(artistId) {
+    var gen = todoGen[artistId] || 0, ask = todoAsk[artistId];
+    if (ask && ask.gen === gen) return ask;
+    if (!session) return;
+    var p = sb.rpc('todo_can_see', { a_id: artistId, u: session.user.id }).then(function (q) {
+      if (q.error) {
+        // Not there yet: the feature goes quiet. Anything else (no signal):
+        // what was held stands, and the next draw asks again.
+        if (tableMissing(q.error) || fnMissing(q.error)) { todoKnown = false; delete todoCache[artistId]; emit('tours'); }
+        return null;
+      }
+      if (q.data !== true) return { can: false };
+      return Promise.all([
+        sb.from('todo_items').select(TODO_COLS).eq('artist_id', artistId).order('created_at'),
+        sb.from('todo_invites').select('user_id, invited_by, at').eq('artist_id', artistId).order('at')
+      ]).then(function (qs) {
+        if (qs[0].error || qs[1].error) {
+          if (tableMissing(qs[0].error) || tableMissing(qs[1].error)) { todoKnown = false; delete todoCache[artistId]; emit('tours'); }
+          return null;
+        }
+        var ids = [];
+        (qs[0].data || []).forEach(function (r) { if (r.assigned_to && ids.indexOf(r.assigned_to) < 0) ids.push(r.assigned_to); });
+        (qs[1].data || []).forEach(function (r) { if (r.user_id && ids.indexOf(r.user_id) < 0) ids.push(r.user_id); });
+        // Their names, the way the crew list says them.
+        return (ids.length ? sb.from('profiles').select('user_id, full_name, username').in('user_id', ids)
+          : Promise.resolve({ data: [] })).then(function (pq) {
+          var names = {};
+          (pq.data || []).forEach(function (x) { names[x.user_id] = x.full_name || x.username || ''; });
+          return { can: true, names: names,
+            items: (qs[0].data || []).map(function (r) { return todoShape(r, names); }),
+            invites: (qs[1].data || []).map(function (r) { return { userId: r.user_id, name: names[r.user_id] || '', invitedBy: r.invited_by, at: r.at }; }) };
+        });
+      });
+    }).then(function (data) {
+      if (data) todoCache[artistId] = { data: data, at: Date.now(), stale: gen !== (todoGen[artistId] || 0) };
+      if (todoAsk[artistId] === p) delete todoAsk[artistId];
+      if (data) emit('tours');
+    }, function () { if (todoAsk[artistId] === p) delete todoAsk[artistId]; });
+    p.gen = gen;
+    todoAsk[artistId] = p;
+    return p;
+  }
+  // Every task this account may read, with each artist's name for the
+  // grouping: the profile tab's one read.
+  function loadMyTodos() {
+    var gen = myTodoGen, ask = myTodoAsk;
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.from('todo_items').select(TODO_COLS).order('created_at').then(function (q) {
+      if (q.error) {
+        if (tableMissing(q.error)) { todoKnown = false; myTodoCache = null; emit('tours'); }
+        return null;
+      }
+      var rows = q.data || [], aIds = [], uIds = [];
+      rows.forEach(function (r) {
+        if (r.artist_id && aIds.indexOf(r.artist_id) < 0) aIds.push(r.artist_id);
+        if (r.assigned_to && uIds.indexOf(r.assigned_to) < 0) uIds.push(r.assigned_to);
+      });
+      return Promise.all([
+        aIds.length ? sb.from('artists').select('id, name').in('id', aIds) : Promise.resolve({ data: [] }),
+        uIds.length ? sb.from('profiles').select('user_id, full_name, username').in('user_id', uIds) : Promise.resolve({ data: [] })
+      ]).then(function (qs) {
+        var an = {}, names = {};
+        (qs[0].data || []).forEach(function (x) { an[x.id] = x.name || ''; });
+        (qs[1].data || []).forEach(function (x) { names[x.user_id] = x.full_name || x.username || ''; });
+        return rows.map(function (r) {
+          var it = todoShape(r, names);
+          it.artistName = an[r.artist_id] || 'Artist';
+          return it;
+        });
+      });
+    }).then(function (data) {
+      if (data) myTodoCache = { data: data, at: Date.now(), stale: gen !== myTodoGen };
+      if (myTodoAsk === p) myTodoAsk = null;
+      if (data) emit('tours');
+    }, function () { if (myTodoAsk === p) myTodoAsk = null; });
+    p.gen = gen;
+    myTodoAsk = p;
+    return p;
+  }
+  /* ---- Favorite Local Spots (0153): the places people love in each city ---- */
+  // Is the table there? One ask per session. A build ahead of its migration
+  // finds none, and the whole feature stays out of sight (spotsOn answers
+  // false, so the app draws nothing). No signal: unanswered, asked again the
+  // next time something draws.
+  function spotProbe() {
+    if (spotProbing || !session) return;
+    spotProbing = true;
+    sb.from('local_spots').select('id').limit(1).then(function (q) {
+      spotProbing = false;
+      if (!q.error) { spotKnown = true; emit('tours'); }
+      else if (tableMissing(q.error)) spotKnown = false;
+    }, function () { spotProbing = false; });
+  }
+  function spotsStale() {
+    Object.keys(tourSpotCache).forEach(function (k) { tourSpotGen[k] = (tourSpotGen[k] || 0) + 1; if (tourSpotCache[k]) tourSpotCache[k].stale = true; });
+    mySpotGen += 1;
+    if (mySpotCache) mySpotCache.stale = true;
+  }
+  // A write refused: a missing table quiets the feature, the rest is said the usual way.
+  function spotError(e) {
+    if (tableMissing(e)) { spotKnown = false; emit('tours'); return err('unavailable'); }
+    return mapError(e);
+  }
+  // One place as the table takes it; only the keys handed over ride a save.
+  function spotRow(p) {
+    var row = {};
+    if ('city' in p) {
+      row.city = String(p.city || '').trim().slice(0, 60);
+      // The server's trigger recomputes this from the city on every write;
+      // the same spelling is sent so the row never waits on it.
+      var G = window.GR;
+      if (G && G.roadCityKey) row.city_key = String(G.roadCityKey(row.city)).slice(0, 80);
+    }
+    if ('name' in p) row.name = String(p.name || '').trim().slice(0, 80);
+    if ('kind' in p) row.kind = SPOT_KINDS.indexOf(String(p.kind || '')) >= 0 ? String(p.kind) : 'other';
+    if ('note' in p) row.note = String(p.note || '').trim().slice(0, 240) || null;
+    if ('tourId' in p) row.tour_id = p.tourId || null;
+    return row;
+  }
+  function spotShape(r) {
+    return { id: r.id, tourId: r.tour_id || null, city: r.city || '', cityKey: r.city_key || '',
+      name: r.name || '', kind: r.kind || 'other', note: r.note || '', createdAt: r.created_at };
+  }
+  // Your own places, oldest first (the app groups them by city itself).
+  function loadMySpots() {
+    if (!session) return;
+    var gen = mySpotGen, ask = mySpotAsk;
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.from('local_spots').select(SPOT_COLS).eq('user_id', session.user.id).order('created_at')
+      .then(function (q) {
+        if (q.error) {
+          // Not there yet: the feature goes quiet. Anything else (no signal):
+          // what was held stands, and the next draw asks again.
+          if (tableMissing(q.error)) { spotKnown = false; mySpotCache = null; emit('tours'); }
+          return null;
+        }
+        return (q.data || []).map(spotShape);
+      }).then(function (data) {
+        if (data) mySpotCache = { data: data, at: Date.now(), stale: gen !== mySpotGen };
+        if (mySpotAsk === p) mySpotAsk = null;
+        if (data) emit('tours');
+      }, function () { if (mySpotAsk === p) mySpotAsk = null; });
+    p.gen = gen;
+    mySpotAsk = p;
+    return p;
+  }
+  /* The day sheet's read: this tour, this city, each place with its saver's
+     first name ("who recommends it"). The names come the way the crew list
+     says them. Held a minute, asked again when something draws. */
+  function loadTourSpots(tourId, cityKey) {
+    var k = tourId + '|' + String(cityKey || '');
+    var gen = tourSpotGen[k] || 0, ask = tourSpotAsk[k];
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.from('local_spots').select(SPOT_COLS + ', user_id')
+      .eq('tour_id', tourId).eq('city_key', String(cityKey || '')).order('created_at')
+      .then(function (q) {
+        if (q.error) {
+          // Not there yet: the feature goes quiet. Anything else (no signal):
+          // what was held stands, and the next draw asks again.
+          if (tableMissing(q.error)) { spotKnown = false; delete tourSpotCache[k]; emit('tours'); }
+          return null;
+        }
+        var rows = q.data || [], ids = [];
+        rows.forEach(function (r) { if (r.user_id && ids.indexOf(r.user_id) < 0) ids.push(r.user_id); });
+        return (ids.length ? sb.from('profiles').select('user_id, full_name, username').in('user_id', ids)
+          : Promise.resolve({ data: [] })).then(function (pq) {
+          var names = {};
+          (pq.data || []).forEach(function (x) { names[x.user_id] = x.full_name || x.username || ''; });
+          return rows.map(function (r) {
+            var it = spotShape(r);
+            it.userId = r.user_id;
+            it.who = String(names[r.user_id] || '').trim().split(/\s+/)[0] || 'Someone';
+            return it;
+          });
+        });
+      }).then(function (data) {
+        if (data) tourSpotCache[k] = { data: data, at: Date.now(), stale: gen !== (tourSpotGen[k] || 0) };
+        if (tourSpotAsk[k] === p) delete tourSpotAsk[k];
+        if (data) emit('tours');
+      }, function () { if (tourSpotAsk[k] === p) delete tourSpotAsk[k]; });
+    p.gen = gen;
+    tourSpotAsk[k] = p;
+    return p;
+  }
+  /* ---- Ratings (0154): stars on venues, and the band's word on a night ---- */
+  // Are the tables there? One ask per session. A build ahead of its migration
+  // finds none, and the whole feature stays out of sight (ratingsOn answers
+  // false, so the app draws nothing). No signal: unanswered, asked again the
+  // next time something draws.
+  function rateProbe() {
+    if (rateProbing || !session) return;
+    rateProbing = true;
+    sb.from('venue_ratings').select('venue_id').limit(1).then(function (q) {
+      rateProbing = false;
+      if (!q.error) { rateKnown = true; emit('tours'); }
+      else if (tableMissing(q.error)) rateKnown = false;
+    }, function () { rateProbing = false; });
+  }
+  function showRateStale() {
+    Object.keys(showRateCache).forEach(function (k) { showRateGen[k] = (showRateGen[k] || 0) + 1; if (showRateCache[k]) showRateCache[k].stale = true; });
+  }
+  // A tour's show ratings, every row this account may read (the policy hands
+  // them to the band alone: the tour's owner and the artist's Members; crew
+  // and fans get nothing, so for them the list is simply empty). Held a
+  // minute, asked again when the phone comes back.
+  function loadShowRatings(tourId) {
+    var gen = showRateGen[tourId] || 0, ask = showRateAsk[tourId];
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.from('show_ratings').select('show_id, user_id, crowd, venue, city, at').eq('tour_id', tourId)
+      .then(function (q) {
+        if (q.error) {
+          // Not there yet: the feature goes quiet. Anything else (no signal):
+          // what was held stands, and the next draw asks again.
+          if (tableMissing(q.error)) { rateKnown = false; delete showRateCache[tourId]; emit('tours'); }
+          return null;
+        }
+        return (q.data || []).map(function (r) {
+          return { showId: r.show_id, userId: r.user_id, crowd: r.crowd, venue: r.venue, city: r.city, at: r.at };
+        });
+      }).then(function (data) {
+        if (data) showRateCache[tourId] = { data: data, at: Date.now(), stale: gen !== (showRateGen[tourId] || 0) };
+        if (showRateAsk[tourId] === p) delete showRateAsk[tourId];
+        if (data) emit('tours');
+      }, function () { if (showRateAsk[tourId] === p) delete showRateAsk[tourId]; });
+    p.gen = gen;
+    showRateAsk[tourId] = p;
+    return p;
+  }
   // Every count shown is out of date: each tour's, and your own.
   function flowersStale() {
     Object.keys(flowerCache).forEach(function (k) { flowerGen[k] = (flowerGen[k] || 0) + 1; flowerCache[k].stale = true; });
@@ -2386,6 +3145,16 @@
     if (session && legalStarted) {
       refetchTries = 0; scheduleRefetch();
       flowersChanged();
+      // A 'bus' poke (0150): someone stepped on or off, so today's bus list
+      // is out of date. A poke with no word says one may have been missed,
+      // which covers the bus too.
+      if (!what || /(^|,)bus(,|$)/.test(what)) busStale();
+      // A 'buyout' poke (0151): a Manager ticked this account's buyout, or
+      // took a tick away, so the ticks held here are out of date.
+      if (!what || /(^|,)buyout(,|$)/.test(what)) buyoutStale();
+      // A 'todo' poke (0152): a task was handed to this account, so the
+      // lists held here are out of date.
+      if (!what || /(^|,)todo(,|$)/.test(what)) todoStale();
       socialTell(what);
     }
     if (pokeOwed) { pokeOwed = false; poked(''); }
@@ -2398,6 +3167,10 @@
   function socialMissed() {
     if (!session || !legalStarted || Date.now() - missedAt < 2000) return;
     missedAt = Date.now();
+    busStale();
+    buyoutStale();
+    todoStale();
+    showRateStale();
     socialTell('');
     if (!pokeBusy) sgLimit(sb.rpc('claim_invites'), 10000).then(function () {}, function () { /* the next start links it */ });
   }

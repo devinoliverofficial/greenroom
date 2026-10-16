@@ -162,6 +162,7 @@
     moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4"/><path d="M12 8v4.5l3 1.8"/>',
     check: '<path d="M4.5 12.5l5 5 10-11"/>',
+    heart: '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>',
     clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     deck: '<rect x="6.5" y="4" width="11" height="15" rx="2.2"/><path d="M4 7.5v10A2.5 2.5 0 0 0 6.5 20h8"/><path d="M9.5 9.5l1.6 1.6 3.2-3.4"/>',
     music: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
@@ -682,6 +683,10 @@
     render(first);
     // (A reimbursements sheet that is up draws its list again: a new ask, one just marked paid.)
     reimbRedraw();
+    // (And a bus sheet that is up: someone just stepped on or off.)
+    busRedraw();
+    // (And a buyout tick list that is up: fresh ticks just landed.)
+    buyoutTicksRedraw();
   }
   function loadLocal() {
     var data = null;
@@ -2499,6 +2504,15 @@
      one artist endorsement wears the green check too. One endorsement from
      any artist is enough, and the check goes with it if it is taken away.
      An account Greenroom itself checked keeps its check either way. */
+  /* The small glowing mark beside a name while its person is out on the
+     road right now (Devin, 2026-10-15: "currently on tour... glowing...
+     maybe next to the check mark"). */
+  function onTourChip(on) {
+    return on ? h('span', { class: 'vp-ontour', title: 'Currently on tour' }, 'On tour') : null;
+  }
+  function myTourNowOn() {
+    try { return allTourEntries().some(function (e) { return tourIsLive(e[1]); }); } catch (e) { return false; }
+  }
   function personChecked(verified, rs, endorsements) {
     if (verified) return true;
     var tier = G.isObj(rs) ? G.historyTier(rs) : null;
@@ -2650,7 +2664,8 @@
         return roadHead({
           name: (card.handle && profileName()) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, profileName()),
             // Bronze plus an endorsement earns the check too (see personChecked).
-            personChecked(checked, rs, mine && !mine.error && mine.counts ? mine.counts.endorsements : null) ? verifiedBadge() : null) : null,
+            personChecked(checked, rs, mine && !mine.error && mine.counts ? mine.counts.endorsements : null) ? verifiedBadge() : null,
+            onTourChip(myTourNowOn())) : null,
           photo: h('div', { class: 'pf-photo-wrap' }, profilePhoto(),
             card.photo ? null : h('span', { class: 'pf-plus', 'aria-hidden': 'true' }, icon('plus', 14))),
           left: rs ? [stat(G.num(rs.tours), G.num(rs.tours) === 1 ? 'tour' : 'tours'), stat(G.num(rs.shows), G.num(rs.shows) === 1 ? 'show' : 'shows')]
@@ -3094,7 +3109,8 @@
     // Every tour they've done: the ones on Greenroom, and the ones an artist
     // confirmed for them. The one they're out on right now leads, glowing.
     var creditList = Array.isArray(card.creditTours) ? card.creditTours : [];
-    var tourRows = G.tourTimeline(tours, creditList, G.tourToday()).map(function (r) {
+    var vTimeline = G.tourTimeline(tours, creditList, G.tourToday());
+    var tourRows = vTimeline.map(function (r) {
       var t = r.tour;
       // A tour they have a seat on is listed once, in place of the same tour confirmed by its artist
       // (G.tourTimeline): the role said for the confirmed one is printed on it.
@@ -3126,7 +3142,8 @@
           var rs = G.isObj(card.roadStats) ? card.roadStats : null;
           return roadHead({
             name: (card.handle && card.name) ? h('strong', { class: 'vp-name' }, h('span', { class: 'vp-name-t' }, card.name),
-              pChecked ? verifiedBadge() : null) : null,
+              pChecked ? verifiedBadge() : null,
+              onTourChip(vTimeline.some(function (r) { return r.now; }))) : null,
             photo: h('div', { class: 'pf-photo-wrap' }, personPhoto(card)),
             left: rs ? [pfStat(G.num(rs.tours), G.num(rs.tours) === 1 ? 'tour' : 'tours', function () { pickTab('tours'); }),
                         pfStat(G.num(rs.shows), G.num(rs.shows) === 1 ? 'show' : 'shows')]
@@ -3159,8 +3176,9 @@
         : tab === 'stats' ? personFlowers(card)
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', first + ' hasn\u2019t been on a tour in Greenroom yet.')),
-      // Confirmed credits count nights from an artist's synced history: its source gets its line.
-      Array.isArray(card.credits) && card.credits.length ? setlistCredit() : null,
+      // Confirmed credits count nights from an artist's synced history: its
+      // source gets its line, under the Tours list alone (Devin, 2026-10-15).
+      tab !== 'stats' && tab !== 'artists' && Array.isArray(card.credits) && card.credits.length ? setlistCredit() : null,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
   }
@@ -3540,6 +3558,7 @@
       myRoad(uid), mine && !mine.error && mine.counts ? mine.counts.endorsements : null));
     var can = !!(uid && window.GR_BACKEND.myArtists);
     var inner = [h('span', { class: 'vp-user-t' }, card.handle || who), checked ? verifiedBadge() : null,
+      onTourChip(myTourNowOn()),
       can ? h('span', { class: 'acct-arrow', 'aria-hidden': 'true' }, icon('chevron', 16)) : null];
     return can
       ? h('h1', { class: 'band-name vp-user mid' }, h('button', { class: 'acct-btn', type: 'button',
@@ -3680,9 +3699,11 @@
             h('span', { class: 'lr-title' }, 'Page claims'),
             h('span', { class: 'lr-sub' }, waiting.length ? plural(waiting.length, 'claim') + ' waiting on you' : 'None waiting')),
           icon('chevron', 16)) : null,
+        // Devin (2026-10-15): "Instead of it saying Create Greenroom Artist it
+        // should say Create Account where you can make another page." Same maker.
         h('button', { class: 'acct-row add', type: 'button', onclick: function () { openCreateArtist(); } },
           h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon('plus', 18)),
-          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, 'Create Greenroom Artist'))),
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, 'Create Account'))),
         can.length ? h('button', { class: 'acct-row add', type: 'button', onclick: function () { openClaim(); } },
           h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon('check', 18)),
           h('span', { class: 'lr-text' },
@@ -4156,9 +4177,467 @@
            // Under the tours, for whoever runs the page: a rescan any time, and the search's own status.
            manage && card.verified && hc0.row ? rescanButton(id) : null,
            tourFinderBlock(id, card, manage, unclaimed)],
+      // The artist's To Do List (0152): only for its Members, the account
+      // that runs the page, and the people a Member invited. Everyone else
+      // gets the page exactly as before, with no sign a list exists.
+      todoBlock(id, card),
       historyCredit(id),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(manage && id === actingAs() ? 'me' : ''));
+  }
+  /* ---- To Do Lists (0152). One list per artist, on its page, for the
+     people who run it: its Members, the account behind the page, and anyone
+     a Member invited onto the list (they see this list and nothing else of
+     the artist - the database's rule, which also keeps the section off
+     everyone else's screen). Everyone on a list can add a task, change its
+     words or category, tick it done, hand it to anyone on the list and give
+     it a due date. The categories are Devin's five, in his order, and a task
+     sits under its category by itself. "Your To Do List" on the profile is
+     the same rows read the other way: everything assigned to you first, then
+     each artist's list you can see. Nothing here renders before migration
+     0152 is live: todosOn() stays false until the backend finds the table. ---- */
+  var TODO_CATS = [['studio', 'Studio'], ['business management', 'Business management'],
+    ['tour', 'Tour'], ['merch', 'Merch'], ['other', 'Other']];
+  function todosOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && socialOn() && !!(B && B.todosOn && B.todoList && B.todoSave && B.todosOn());
+  }
+  // Runs the list: the page's owner or one of its current Members. They invite people on.
+  function todoCanRun(card) {
+    var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
+    if (!card) return false;
+    if (card.mine) return true;
+    return !!me && (card.members || []).some(function (m) { return m.userId === me && m.kind === 'band' && !m.pending; });
+  }
+  // One task: the tick circle, the words, who it's for and when it's due
+  // (red once that day is gone). The row opens the edit sheet.
+  function todoRow(artistId, artistName, item, o) {
+    o = o || {};
+    var B = window.GR_BACKEND, done = !!item.doneAt;
+    var tick = h('button', { class: 'td-tick' + (done ? ' on' : ''), type: 'button',
+      'aria-label': (done ? 'Mark not done: ' : 'Mark done: ') + item.body }, done ? icon('check', 14) : null);
+    tick.onclick = async function () {
+      if (tick.disabled) return;
+      tick.disabled = true;
+      var was = item.doneAt;
+      item.doneAt = done ? null : new Date().toISOString(); // shown at once
+      render(true);
+      try { await B.todoSave(item.id, { done: !done }); }
+      catch (x) { item.doneAt = was; saveFailed('task', x); }
+      render(true);
+    };
+    var late = !done && item.due && item.due < G.ymd(new Date());
+    var sub = [];
+    if (o.artist) sub.push(h('span', { class: 'td-aname' }, o.artist));
+    if (item.assignedName) sub.push(h('span', null, item.assignedName));
+    if (item.due) sub.push(h('span', { class: 'td-due' + (late ? ' late' : '') }, 'Due ' + dayMD(item.due)));
+    var line = [];
+    sub.forEach(function (s, i) { if (i) line.push(' · '); line.push(s); });
+    return h('li', { class: 'am-li td-li' }, tick,
+      h('button', { class: 'fl-row td-open', type: 'button', onclick: function () { openTodoEdit(artistId, artistName, item); } },
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title td-body' + (done ? ' done' : '') }, item.body),
+          line.length ? h('span', { class: 'lr-sub' }, line) : null)));
+  }
+  // The open tasks under their categories, in Devin's order, then the done
+  // ones out of the way under one quiet drop-down.
+  function todoGroups(artistId, artistName, items) {
+    var open = items.filter(function (x) { return !x.doneAt; });
+    var done = items.filter(function (x) { return !!x.doneAt; });
+    var out = [];
+    TODO_CATS.forEach(function (c) {
+      var list = open.filter(function (x) { return x.cat === c[0]; });
+      if (!list.length) return;
+      out.push(h('h4', { class: 'td-cat' }, c[1]));
+      out.push(h('ul', { class: 'rows td-list' }, list.map(function (x) { return todoRow(artistId, artistName, x); })));
+    });
+    if (done.length) out.push(h('details', { class: 'tf-more td-done' },
+      h('summary', null, 'Done · ' + done.length),
+      h('ul', { class: 'rows td-list' }, done.map(function (x) { return todoRow(artistId, artistName, x); }))));
+    return out;
+  }
+  /* The section on the artist's page. todoList answers null for anyone the
+     database keeps out (and while it's still being fetched, and before the
+     migration is live), and then there is no section at all: no heading, no
+     empty state, nothing to wonder about. */
+  function todoBlock(artistId, card) {
+    if (!card || !todosOn()) return null;
+    var B = window.GR_BACKEND;
+    var items = B.todoList(artistId);
+    if (!items) return null;
+    var canRun = todoCanRun(card);
+    return h('section', { class: 'tf-block td-block', 'aria-label': card.name + ' To Do List' },
+      h('h3', { class: 'mn-h mn-over' }, 'To Do List'),
+      items.length ? null : h('p', { class: 'note td-none' }, 'Nothing on the list yet. Everyone on it can add tasks, hand them out and tick them off.'),
+      todoGroups(artistId, card.name, items),
+      h('div', { class: 'am-more td-add' },
+        h('button', { class: 'add-pill', type: 'button', onclick: function () { openTodoEdit(artistId, card.name, null); } },
+          icon('plus', 16), 'Add a task'),
+        canRun && B.todoInvite ? h('button', { class: 'add-pill', type: 'button', onclick: function () { openTodoInvite(artistId, card); } },
+          icon('people', 16), 'Invite someone') : null));
+  }
+  /* One task's sheet: the words, the category, who it's for (the artist's
+     people and whoever is invited onto the list), the day it's due, and
+     Delete. The same sheet adds a new task. Only what changed rides a save. */
+  function openTodoEdit(artistId, artistName, item) {
+    var B = window.GR_BACKEND;
+    actOf(artistId); // the people to assign to (already held when opened from the page)
+    var card = S.actCards && S.actCards[artistId] ? S.actCards[artistId].card : null;
+    var people = [];
+    ((card && card.members) || []).forEach(function (m) {
+      if (m.userId && !m.pending && !people.some(function (p) { return p.id === m.userId; })) people.push({ id: m.userId, name: m.name || 'Someone' });
+    });
+    (B.todoInvites(artistId) || []).forEach(function (v) {
+      if (!people.some(function (p) { return p.id === v.userId; })) people.push({ id: v.userId, name: v.name || 'Someone' });
+    });
+    if (item && item.assignedTo && !people.some(function (p) { return p.id === item.assignedTo; })) {
+      people.push({ id: item.assignedTo, name: item.assignedName || 'Someone' });
+    }
+    var f = { body: item ? item.body : '', cat: item ? item.cat : 'other',
+      assignedTo: item && item.assignedTo ? item.assignedTo : '', due: item && item.due ? item.due : '' };
+    var busy = false;
+    openSheet(function () {
+      var bodyIn = h('textarea', { class: 'input td-in', rows: 2, maxlength: 300, value: f.body,
+        placeholder: 'What needs doing?', 'aria-label': 'The task' });
+      var catWrap = h('div', { class: 'chips', role: 'group', 'aria-label': 'Category' }, TODO_CATS.map(function (c) {
+        return h('button', { class: 'chip', type: 'button', 'aria-pressed': String(f.cat === c[0]),
+          onclick: function () {
+            f.cat = c[0];
+            Array.prototype.forEach.call(catWrap.children, function (b, i) { b.setAttribute('aria-pressed', String(TODO_CATS[i][0] === f.cat)); });
+          } }, c[1]);
+      }));
+      var assignSel = h('select', { class: 'input', 'aria-label': 'Who it’s for',
+        onchange: function (e) { f.assignedTo = e.target.value; } },
+        [{ id: '', name: 'Nobody yet' }].concat(people).map(function (p) {
+          return h('option', { value: p.id, selected: f.assignedTo === p.id ? 'selected' : undefined }, p.name);
+        }));
+      var dueIn = h('input', { class: 'input', type: 'date', value: f.due, 'aria-label': 'Day it’s due',
+        oninput: function (e) { f.due = e.target.value; } });
+      async function save(btn) {
+        var words = bodyIn.value.trim();
+        if (!words) { toast('Write the task first.'); return; }
+        if (busy) return;
+        busy = true; btn.disabled = true;
+        try {
+          if (item) {
+            var patch = {}; // only what changed rides the save
+            if (words !== item.body) patch.body = words;
+            if (f.cat !== item.cat) patch.cat = f.cat;
+            if ((f.assignedTo || null) !== (item.assignedTo || null)) patch.assignedTo = f.assignedTo || null;
+            if ((f.due || '') !== (item.due || '')) patch.due = f.due || null;
+            if (Object.keys(patch).length) await B.todoSave(item.id, patch);
+          } else {
+            await B.todoAdd(artistId, f.cat, words, { assignedTo: f.assignedTo || null, due: f.due || null });
+          }
+        } catch (x) {
+          busy = false; btn.disabled = false;
+          // The database's cap, in its own plain words: tick some off first.
+          if (x && x.code === 'full') toast(x.message || 'This list already holds 500 tasks not done. Tick some off or delete some first.', 6000);
+          else saveFailed('task', x);
+          return;
+        }
+        closeSheet(); render(true);
+      }
+      return [
+        h('h2', { class: 'sh-title' }, item ? 'Edit task' : 'Add a task'),
+        h('p', { class: 'sh-sub' }, (artistName || 'The artist') + '’s To Do List.'),
+        field('The task', bodyIn),
+        h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Category'), catWrap),
+        field('Who it’s for', assignSel, 'It shows up on their own To Do List.'),
+        field('Due date (optional)', dueIn),
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: function (e) { save(e.currentTarget); } }, item ? 'Save' : 'Add task'),
+          item && B.todoDrop ? h('button', { class: 'linkbtn rv-aside td-del', type: 'button',
+            onclick: async function (e) {
+              var btn = e.currentTarget;
+              if (!btn.armed) { btn.armed = true; btn.textContent = 'Delete this task for good?'; return; }
+              if (busy) return;
+              busy = true; btn.disabled = true;
+              try { await B.todoDrop(item.id); }
+              catch (x) { busy = false; btn.disabled = false; saveFailed('task', x); return; }
+              closeSheet(); toast('Task deleted'); render(true);
+            } }, 'Delete task') : null,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+      ];
+    }, { label: item ? 'Edit task' : 'Add a task' });
+  }
+  /* Inviting someone onto the list (Members and the page's owner): search
+     accounts the way the page's own people-pickers do. An invited person
+     sees this one list, nothing else of the artist. */
+  function openTodoInvite(artistId, card) {
+    var B = window.GR_BACKEND;
+    var onPage = {};
+    ((card && card.members) || []).forEach(function (m) { if (m.userId && !m.pending) onPage[m.userId] = true; });
+    var invited = function () { return B.todoInvites(artistId) || []; };
+    var results = h('div', { class: 'am-results' });
+    var invitedWrap = h('div', { class: 'td-invited' });
+    var timer = 0, seq = 0, last = [];
+    var row = function (p) {
+      var isIn = invited().some(function (v) { return v.userId === p.userId; });
+      var member = !!onPage[p.userId];
+      var btn = h('button', { class: 'am-add' + (isIn || member ? ' on' : ''), type: 'button' },
+        member ? 'On the page' : isIn ? 'Invited' : 'Invite');
+      btn.onclick = async function () {
+        if (member) { toast('They’re on ' + card.name + '’s page, so they see the list already.'); return; }
+        btn.disabled = true;
+        try {
+          if (isIn) await B.todoUninvite(artistId, p.userId);
+          else await B.todoInvite(artistId, p.userId, p.name || '');
+        } catch (x) { btn.disabled = false; saveFailed('invite', x); return; }
+        paintInvited(); paint();
+      };
+      return h('div', { class: 'fl-row am-row' }, personPhoto(p, 'xs'),
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title fl-name' }, p.name || 'Someone', p.verified ? verifiedBadge() : null),
+          p.handle ? h('span', { class: 'lr-sub' }, '@' + p.handle) : null),
+        btn);
+    };
+    var paint = function (note) {
+      results.replaceChildren.apply(results, note ? [h('p', { class: 'note' }, note)] : last.map(row));
+    };
+    var paintInvited = function () {
+      var inv = invited();
+      invitedWrap.replaceChildren.apply(invitedWrap, inv.map(function (v) {
+        var x = h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Take ' + (v.name || 'them') + ' off the list' }, icon('close', 14));
+        x.onclick = async function () {
+          x.disabled = true;
+          try { await B.todoUninvite(artistId, v.userId); }
+          catch (e) { x.disabled = false; saveFailed('invite', e); return; }
+          paintInvited(); paint();
+        };
+        return h('div', { class: 'fl-row am-row' }, personPhoto({ name: v.name || '?' }, 'xs'),
+          h('span', { class: 'lr-text' }, h('span', { class: 'lr-title fl-name' }, v.name || 'Someone')),
+          x);
+      }));
+    };
+    var search = function (v) {
+      clearTimeout(timer);
+      v = String(v || '').trim();
+      if (v.replace(/^@/, '').length < 2) { last = []; paint('Type a name or an @username.'); return; }
+      var n = ++seq;
+      timer = setTimeout(function () {
+        B.findPeople(v).then(function (rows) {
+          if (n !== seq) return;
+          last = rows;
+          paint(rows.length ? null : 'Nobody found. They need a Greenroom account, and a username makes them easy to find.');
+        }).catch(function () { if (n === seq) paint('Couldn’t search. Check your signal and try again.'); });
+      }, 300);
+    };
+    openSheet(function () {
+      paint('Type a name or an @username.');
+      paintInvited();
+      return [
+        h('h2', { class: 'sh-title ca-title' }, 'Invite onto the list'),
+        h('p', { class: 'sh-sub' }, 'They see ' + card.name + '’s To Do List and nothing else of the page. ' + card.name + '’s own people see it already.'),
+        h('div', { class: 'rv-find am-find' }, icon('search', 17),
+          h('input', { class: 'input rv-search', type: 'search', placeholder: 'Search name or @username', autocomplete: 'off',
+            autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', 'aria-label': 'Search accounts',
+            oninput: function (e) { search(e.target.value); } })),
+        results,
+        invitedWrap,
+        h('button', { class: 'btn primary block', type: 'button', onclick: function () { closeSheet(); render(true); } }, 'Done')
+      ];
+    }, { label: 'Invite onto the list' });
+  }
+  /* The profile's tab: only for someone with a list to read (a Member of an
+     artist once the feature is live, or anyone a task was handed to). */
+  function pfTodoTab() {
+    if (!todosOn()) return false;
+    var B = window.GR_BACKEND;
+    var mine = B.myTodos ? B.myTodos() : null;
+    if (mine && mine.length) return true;
+    var a = myActs().list;
+    return !!(a && a.some(function (x) { return x.mine || x.kind === 'band'; }));
+  }
+  // "Your To Do List": everything handed to you leads, each task naming its
+  // artist; then each artist's list you can see, categories in his order.
+  function pfTodos() {
+    var B = window.GR_BACKEND;
+    var all = todosOn() && B.myTodos ? B.myTodos() : null;
+    if (!all) return h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading…');
+    var meId = B.uid ? B.uid() : null;
+    var mine = all.filter(function (x) { return x.assignedTo === meId && !x.doneAt; });
+    var byArtist = [], slot = {};
+    all.forEach(function (x) {
+      if (mine.indexOf(x) >= 0) return;
+      var g = slot[x.artistId];
+      if (!g) { g = slot[x.artistId] = { id: x.artistId, name: x.artistName || 'Artist', items: [] }; byArtist.push(g); }
+      g.items.push(x);
+    });
+    if (!mine.length && !byArtist.length) {
+      return emptyState('Nothing on your lists', 'Tasks on your artists’ To Do Lists, and any task handed to you, show up here.');
+    }
+    return [
+      h('h3', { class: 'mn-h mn-over td-h' }, 'Your To Do List'),
+      mine.length ? [
+        h('h4', { class: 'td-cat' }, 'Assigned to you'),
+        h('ul', { class: 'rows td-list' }, mine.map(function (x) {
+          return todoRow(x.artistId, x.artistName || '', x, { artist: x.artistName || '' });
+        }))] : null,
+      byArtist.map(function (g) {
+        return h('section', { class: 'td-group' },
+          h('h4', { class: 'mn-h mn-over td-ah' }, g.name),
+          todoGroups(g.id, g.name, g.items));
+      })
+    ];
+  }
+  /* ---- Favorite Local Spots (0153, Devin's name): the restaurants, coffee
+     shops, bars, clubs and things to do people love in each city. Saved and
+     kept on the profile's own tab; a place shared with a tour shows on that
+     tour's day sheet for its city under PLACES RECOMMENDED BY TOUR, read-only,
+     with who recommends it. Typed entries only in this first cut. Nothing
+     here renders before migration 0153 is live: spotsOn() stays false until
+     the backend finds the table. ---- */
+  var SPOT_KINDS = [['food', 'Food'], ['coffee', 'Coffee'], ['bar', 'Bar'],
+    ['club', 'Club'], ['to do', 'To do'], ['other', 'Other']];
+  function spotsOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.spotsOn && B.mySpots && B.spotAdd && B.spotsOn());
+  }
+  function spotKindLabel(k) {
+    var c = SPOT_KINDS.filter(function (x) { return x[0] === k; })[0];
+    return c ? c[1] : 'Other';
+  }
+  // The city the run is in today, to start the Add sheet on.
+  function spotCityStart(t) {
+    var got = t ? daySheetShowFor(t) : null;
+    return got ? String(got.shows[got.index].city || '').trim() : '';
+  }
+  // One place: the name, its kind as a small tag, the note under it. Tapping
+  // the row opens the edit sheet (your own rows are all this tab holds).
+  function spotRowEl(x) {
+    return h('li', { class: 'am-li td-li' },
+      h('button', { class: 'fl-row td-open', type: 'button', onclick: function () { openSpotEdit(x); } },
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title' }, x.name, h('span', { class: 'fw-cat' }, spotKindLabel(x.kind))),
+          x.note ? h('span', { class: 'lr-sub' }, x.note) : null)));
+  }
+  // The profile's Favorite Local Spots tab: your places, city by city, A to Z.
+  function pfSpots() {
+    var B = window.GR_BACKEND;
+    var all = spotsOn() ? B.mySpots() : null;
+    if (!all) return h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading…');
+    var addBtn = h('div', { class: 'am-more td-add' },
+      h('button', { class: 'add-pill', type: 'button', onclick: function () { openSpotEdit(null); } },
+        icon('plus', 16), 'Add a spot'));
+    if (!all.length) {
+      return [h('h3', { class: 'mn-h mn-over td-h' }, 'Favorite Local Spots'),
+        emptyState('No spots saved yet', 'Save the restaurants, coffee shops, bars, clubs and things you love in each city, and find them again next run.'),
+        addBtn];
+    }
+    // One group per place, however it was spelled (the counting rules' key,
+    // so Montréal and montreal land together).
+    var groups = [], slot = {};
+    all.forEach(function (x) {
+      var k = G.roadCityKey(x.city);
+      var g = slot[k];
+      if (!g) { g = slot[k] = { city: String(x.city || '').trim() || 'Somewhere', items: [] }; groups.push(g); }
+      g.items.push(x);
+    });
+    groups.sort(function (a, b) { return a.city.localeCompare(b.city); });
+    return [
+      h('h3', { class: 'mn-h mn-over td-h' }, 'Favorite Local Spots'),
+      groups.map(function (g) {
+        return h('section', { class: 'td-group' },
+          h('h4', { class: 'td-cat' }, g.city),
+          h('ul', { class: 'rows td-list' }, g.items.map(spotRowEl)));
+      }),
+      addBtn
+    ];
+  }
+  /* One place's sheet: the city, the name, what kind of place it is, a note,
+     and whether your tour sees it too. The same sheet adds a new one. Only
+     what changed rides a save. */
+  function openSpotEdit(item) {
+    var B = window.GR_BACKEND;
+    var tourId = profileTourId();
+    var tour = tourId ? getTour(tourId) : null;
+    // A saved place keeps the tour it was shared with; a new one shares with
+    // the tour the profile follows.
+    var shareTour = item && item.tourId ? item.tourId : tourId;
+    var f = { kind: item ? item.kind : 'food', share: item ? !!item.tourId : !!shareTour };
+    var busy = false;
+    openSheet(function () {
+      var cityIn = h('input', { class: 'input', type: 'text', maxlength: 60, value: item ? item.city : spotCityStart(tour),
+        autocapitalize: 'words', placeholder: 'Austin, TX', 'aria-label': 'City' });
+      var nameIn = h('input', { class: 'input', type: 'text', maxlength: 80, value: item ? item.name : '',
+        autocapitalize: 'words', placeholder: 'The place’s name', 'aria-label': 'The place’s name' });
+      var kindWrap = h('div', { class: 'chips', role: 'group', 'aria-label': 'What kind of place' }, SPOT_KINDS.map(function (c) {
+        return h('button', { class: 'chip', type: 'button', 'aria-pressed': String(f.kind === c[0]),
+          onclick: function () {
+            f.kind = c[0];
+            Array.prototype.forEach.call(kindWrap.children, function (b, i) { b.setAttribute('aria-pressed', String(SPOT_KINDS[i][0] === f.kind)); });
+          } }, c[1]);
+      }));
+      var noteIn = h('textarea', { class: 'input td-in', rows: 2, maxlength: 240, value: item ? item.note : '',
+        placeholder: 'Why it’s worth the walk (optional)', 'aria-label': 'A note' });
+      var shareRow = shareTour ? h('div', { class: 'bus-ask' },
+        h('span', { class: 'bus-ask-l' }, 'Share with my tour'),
+        segmented(['ON', 'OFF'], f.share ? 0 : 1, function (i) { f.share = i === 0; }, 'Share with my tour')) : null;
+      async function save(btn) {
+        var city = cityIn.value.trim(), name = nameIn.value.trim();
+        if (!city || !name) { toast('Name the city and the place first.'); return; }
+        if (busy) return;
+        busy = true; btn.disabled = true;
+        var wantTour = f.share && shareTour ? shareTour : null;
+        try {
+          if (item) {
+            var patch = {}; // only what changed rides the save
+            if (city !== item.city) patch.city = city;
+            if (name !== item.name) patch.name = name;
+            if (f.kind !== item.kind) patch.kind = f.kind;
+            if (noteIn.value.trim() !== (item.note || '')) patch.note = noteIn.value.trim();
+            if (wantTour !== (item.tourId || null)) patch.tourId = wantTour;
+            if (Object.keys(patch).length) await B.spotSave(item.id, patch);
+          } else {
+            await B.spotAdd({ city: city, name: name, kind: f.kind, note: noteIn.value.trim(), tourId: wantTour });
+          }
+        } catch (x) { busy = false; btn.disabled = false; saveFailed('spot', x); return; }
+        closeSheet(); render(true);
+      }
+      return [
+        h('h2', { class: 'sh-title' }, item ? 'Edit spot' : 'Add a spot'),
+        h('p', { class: 'sh-sub' }, 'A place worth coming back to next time the run is in town.'),
+        field('City', cityIn),
+        field('Name', nameIn),
+        h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Kind'), kindWrap),
+        field('Note (optional)', noteIn),
+        shareRow,
+        shareRow ? h('p', { class: 'note' }, 'On, everyone on ' + ((tour && tour.name) || 'your tour') +
+          ' sees it on the day sheet when the run is in that city. Off, it stays yours alone.') : null,
+        h('div', { class: 'stack', style: 'margin-top:14px' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: function (e) { save(e.currentTarget); } }, item ? 'Save' : 'Add spot'),
+          item && B.spotDrop ? h('button', { class: 'linkbtn rv-aside td-del', type: 'button',
+            onclick: async function (e) {
+              var btn = e.currentTarget;
+              if (!btn.armed) { btn.armed = true; btn.textContent = 'Delete this spot for good?'; return; }
+              if (busy) return;
+              busy = true; btn.disabled = true;
+              try { await B.spotDrop(item.id); }
+              catch (x) { busy = false; btn.disabled = false; saveFailed('spot', x); return; }
+              closeSheet(); toast('Spot deleted'); render(true);
+            } }, 'Delete spot') : null,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+      ];
+    }, { label: item ? 'Edit spot' : 'Add a spot' });
+  }
+  /* The day sheet's PLACES RECOMMENDED BY TOUR (Devin, 2026-10-15): the
+     places people on this tour shared for the day's city, each with its kind
+     and who recommends it, read-only, and only when there are any. */
+  function spotsRecommended(tourId, city) {
+    if (!spotsOn()) return null;
+    var B = window.GR_BACKEND;
+    city = String(city || '').trim();
+    if (!city || !B.tourSpots) return null;
+    var rows = B.tourSpots(tourId, G.roadCityKey(city));
+    if (!rows || !rows.length) return null;
+    return h('section', { class: 'ds-sec sp-rec' },
+      h('h3', { class: 'ds-sec-h' }, 'PLACES RECOMMENDED BY TOUR'),
+      h('div', { class: 'ledger' }, rows.map(function (x) {
+        return h('div', { class: 'row ds-row' },
+          h('div', { class: 'row-label' }, x.name,
+            h('span', { class: 'hint' }, spotKindLabel(x.kind) + ' · ' + (x.who || 'Someone') + ' recommends it')));
+      })));
   }
   /* ---- Endorsing, and the role that goes with it. The artist's page says
      what this person IS to it — the title the public sees there (Brent is
@@ -5515,14 +5994,24 @@
       : work && work.state === 'pending'
         ? h('button', { class: 'pf-btn on', type: 'button', onclick: function () { openPlaceWork(kind, card); } }, 'Worked here · Pending', icon('chevron', 14))
       : h('button', { class: 'pf-btn', type: 'button', onclick: function () { openPlaceWork(kind, card); } }, 'I worked here');
+    // Ratings (0154): a venue's card carries 'rating' (the average, one
+    // decimal) and 'ratings' (how many) once the migration is in; a card
+    // from before carries neither and the page reads as it always did.
+    var rated = kind === 'venue' && ('rating' in card);
+    var rateBtn = rated && ratingsOn() && B.venueRate
+      ? h('button', { class: 'pf-btn', type: 'button', onclick: function () { openVenueRate(card); } }, 'Rate this venue')
+      : null;
     return h('div', { class: 'page home menu-page has-tabs plc-page' },
       menuHead(name, { menu: true }),
       h('section', { class: 'plc-top', 'aria-label': name },
         h('p', { class: 'plc-kind' }, [where, word].filter(Boolean).join(' · '), unclaimed ? h('span', { class: 'act-tag' }, 'Unclaimed') : null),
         h('p', { class: 'plc-count' }, plural(G.num(card.shows), 'show') + ' on record' + (span ? ' · ' + span : '')),
+        rated ? h('p', { class: 'plc-count plc-rating' }, G.num(card.ratings) > 0
+          ? G.num(card.rating).toFixed(1) + ' from ' + plural(G.num(card.ratings), 'rating')
+          : 'No ratings yet') : null,
         kind === 'venue' && card.address ? h('a', { class: 'plc-addr', href: mapsHref(card.address), target: '_blank', rel: 'noopener' }, card.address) : null,
         unclaimed ? h('p', { class: 'hist-note act-note' }, 'Nobody runs this page yet.') : null,
-        workBtn ? h('div', { class: 'pf-actions' }, workBtn) : null),
+        workBtn || rateBtn ? h('div', { class: 'pf-actions' }, workBtn, rateBtn) : null),
       h('h2', { class: 'plc-h' }, kind === 'venue' ? 'Artists who played here' : 'Artists who played it'),
       artists.length ? h('ul', { class: 'tour-list rows plc-artists' }, artists.map(function (a) {
         var an = String(a.name || '').trim() || 'Artist', ys = yearsSpan(a.first, a.last);
@@ -5537,6 +6026,62 @@
       })) : emptyState('No artists on record yet', 'They show up here as artists’ road histories are read.'),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
+  }
+  /* ---- Ratings (0154). Two kinds, one migration: anyone signed in puts
+     1-10 stars on a venue (the page shows the average), and the band scores
+     a night of its own tour (crowd, venue, city; the database holds those
+     rows to the band alone). Until the migration is in, ratingsOn stays
+     false and none of it is drawn. ---- */
+  function ratingsOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.ratingsOn && B.ratingsOn());
+  }
+  // Ten buttons in a row, 1 to 10: the picker both rating sheets share.
+  function tenRow(value, onPick, label) {
+    return h('div', { class: 'rt-row', role: 'radiogroup', 'aria-label': label || '1 to 10' },
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (n) {
+        return h('button', { class: 'rt-b num' + (value === n ? ' on' : ''), type: 'button', role: 'radio',
+          'aria-checked': String(value === n), onclick: function () { onPick(n); } }, String(n));
+      }));
+  }
+  /* Rate this venue: one tap on the row of ten. The stars you gave before
+     come preselected and Save replaces them; the page's average rides back
+     on the venue's card. */
+  function openVenueRate(card) {
+    var B = window.GR_BACKEND;
+    var st = { pick: 0, had: 0, busy: false };
+    var host = h('div', { class: 'rt-host' });
+    var foot = h('div', { class: 'stack' });
+    function draw() {
+      fillEl(host, tenRow(st.pick, function (n) { if (st.busy) return; st.pick = n; draw(); }, 'Your rating, 1 to 10'));
+      fillEl(foot, [
+        h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || !st.pick || null, onclick: send },
+          st.busy ? 'Saving…' : st.had ? 'Save' : 'Save rating'),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now')]);
+    }
+    async function send() {
+      if (st.busy || !st.pick) return;
+      st.busy = true; draw();
+      try { await B.venueRate(card.id, st.pick); }
+      catch (x) { st.busy = false; draw(); toast(x && x.code === 'offline' ? NO_SIGNAL : 'Couldn’t save that. Try again.'); return; }
+      closeSheet();
+      toast('Saved');
+      placeOf('venue', card.id, true);   // the average on the page moves along
+    }
+    draw();
+    // What you gave before, preselected once it arrives (unless you've tapped already).
+    if (B.myVenueRating) {
+      Promise.resolve().then(function () { return B.myVenueRating(card.id); }).then(function (n) {
+        if (n >= 1 && n <= 10) { st.had = n; if (!st.pick && !st.busy) st.pick = n; draw(); }
+      }, function () { /* nothing preselected */ });
+    }
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Rate this venue'),
+        h('p', { class: 'sh-sub' }, (card.name || 'This venue') + '. 1 is rough, 10 is a room you want back.'),
+        host, foot
+      ];
+    }, { label: 'Rate this venue' });
   }
   /* "I worked here": the role is yours to give or leave out. Nobody runs a
      venue's or a festival's page yet, so nothing can confirm it: it is saved,
@@ -6002,14 +6547,18 @@
         if (st.sel.picks[g.key]) delete st.sel.picks[g.key]; else st.sel.picks[g.key] = { mode: 'all', shows: {} };
         draw();
       };
+      // After 0149 a row says what it is ('kind'); a festival wears the tag
+      // the page's rows wear, and its pill says festival, not tour. A row
+      // from before the migration carries no kind and reads as it always did.
+      var fest = g.kind === 'festival';
       var kids = [
         h('div', { class: 'rv-head tc-tap', onclick: flip },
-          h('span', { class: 'rv-name' }, G.creditGroupName(g)),
+          h('span', { class: 'rv-name' }, G.creditGroupName(g), fest ? h('span', { class: 'tn-tag tn-kind' }, 'festival') : null),
           h('span', { class: 'amt num' }, plural(G.num(g.n), 'show'))),
         h('div', { class: 'rv-sub tc-tap', onclick: flip }, g.year ? 'Nights outside a named tour' : tourSpan(g.first, g.last))];
       if (p && !st.sel.all) {
         kids.push(h('div', { class: 'rv-dest', role: 'group', 'aria-label': 'How much of ' + G.creditGroupName(g) },
-          [['all', g.year ? 'All of them' : 'Entire tour'], ['shows', 'Specific shows']].map(function (m) {
+          [['all', g.year ? 'All of them' : fest ? 'Entire festival' : 'Entire tour'], ['shows', 'Specific shows']].map(function (m) {
             return h('button', { class: 'rv-dpill' + (p.mode === m[0] ? ' on' : ''), type: 'button',
               onclick: function () {
                 if (st.busy) return;
@@ -7616,18 +8165,24 @@
         onDrop ? h('button', { class: 'sr-x', type: 'button', 'aria-label': 'Remove ' + it.title + ' from Recent', onclick: onDrop }, icon('close', 18)) : null);
     };
     // Your own tours and artist folders, matched on this phone.
+    // Names are also compared spelled solid (spaces and punctuation out,
+    // lowercase), so "Dreambeach" finds an artist written "dream beach" and
+    // the other way round. Two solid characters at least, or everything matches.
+    var fold = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); };
+    var foldHit = function (name, ft) { return ft.length >= 2 && fold(name).indexOf(ft) >= 0; };
     var local = function (q) {
-      var t = q.toLowerCase(), tours = [], folders = {};
+      var t = q.toLowerCase(), ft = fold(q), tours = [], folders = {};
       allTourEntries().forEach(function (e) {
         var d = e[1], name = String(d.name || ''), artist = artistOf(d) || '';
         var places = G.rows(d.shows).map(function (x) { return String(x.city || '') + ' ' + String(x.venue || ''); }).join(' ').toLowerCase();
-        if (name.toLowerCase().indexOf(t) >= 0 || artist.toLowerCase().indexOf(t) >= 0 || places.indexOf(t) >= 0) {
+        if (name.toLowerCase().indexOf(t) >= 0 || artist.toLowerCase().indexOf(t) >= 0 || places.indexOf(t) >= 0
+            || foldHit(name, ft) || foldHit(artist, ft)) {
           var dates = G.rows(d.shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
           tours.push({ id: e[0], name: name, artist: artist, first: dates[0], last: dates[dates.length - 1] });
         }
-        if (artist && artist.toLowerCase().indexOf(t) >= 0) folders[artist.toLowerCase()] = artist;
+        if (artist && (artist.toLowerCase().indexOf(t) >= 0 || foldHit(artist, ft))) folders[artist.toLowerCase()] = artist;
       });
-      registeredArtists().forEach(function (a) { if (a.toLowerCase().indexOf(t) >= 0) folders[a.toLowerCase()] = a; });
+      registeredArtists().forEach(function (a) { if (a.toLowerCase().indexOf(t) >= 0 || foldHit(a, ft)) folders[a.toLowerCase()] = a; });
       return { tours: tours, folders: Object.keys(folders).map(function (k) { return folders[k]; }) };
     };
     /* Before you type: who you're most likely after, no instructions. What
@@ -7687,9 +8242,10 @@
       var mine = local(q.replace(/^@/, ''));
       var r = st.res && st.res.q === q ? st.res : null;
       var items = (r ? r.people : []).map(asItem.person);
-      var actNames = (r ? r.artists : []).map(function (a) { return String(a.name).trim().toLowerCase(); });
+      // (Compared solid, so a folder called "dream beach" never doubles a page named "Dreambeach".)
+      var actNames = (r ? r.artists : []).map(function (a) { return fold(a.name); });
       items = items.concat((r ? r.artists : []).map(asItem.artist),
-        mine.folders.filter(function (a) { return actNames.indexOf(a.toLowerCase()) < 0; }).map(asItem.folder));
+        mine.folders.filter(function (a) { return actNames.indexOf(fold(a)) < 0; }).map(asItem.folder));
       var seen = {};
       mine.tours.forEach(function (t) { seen[t.id] = true; });
       items = items.concat(mine.tours.map(asItem.tour), (r ? r.tours : []).filter(function (t) { return !seen[t.id]; }).map(asItem.tour));
@@ -9352,7 +9908,7 @@
      then where the tour is today (the show, or the day off and its hotel),
      or the next show when the run hasn't started; how many days until a day
      off; then that day's sheet. A day with nothing filled in shows nothing
-     under it at all. Check In sits at the bottom of the screen. */
+     under it at all. Bus Check in sits at the bottom of the screen. */
   function pfToday(id, t, count) {
     var got = overviewDays(t);
     if (!got) return [pfTourBar(id, t, count, 'details'), emptyState('No dates yet', 'Once shows are on the run, today shows up here.')];
@@ -9378,44 +9934,40 @@
     // On a day off, the next show is one quiet line under it.
     var next = !s ? shows.filter(function (x) { return x.date > entry.date; })[0] : null;
     var sheet = daySheetNodes(s, off, { onlySet: true });
-    var checkIn = isToday ? checkInBtn(id, entry.date, true) : null;
+    var checkIn = isToday ? busCheckInBtn(id, d.busCall, true) : null;
     // Tonight, the day and the city on the left; the venue and its address in
     // the middle; how many days until a day off in the right corner.
     return [
       pfTourBar(id, t, count, 'details'),
+      pfCountsRow(t),
       dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, city, place, address,
-        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, pfCorner(t)),
+        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
         [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
       sheet ? h('div', { class: 'pt-sheet' }, sheet) : null,
-      // Room at the end, so the last of the day sheet scrolls clear of Check In.
+      // Room at the end, so the last of the day sheet scrolls clear of Bus Check in.
       checkIn ? [h('div', { class: 'ci-room', 'aria-hidden': 'true' }), checkIn] : null
     ];
   }
-  /* How many days until a day off, while the run is on and today's a show:
-     the same count as Overview's, in days, the number over the words. A day
-     off already says so. */
-  function pfOffCount(t) {
+  /* The two day counts, one row (Devin, 2026-10-15): days left on tour in
+     the top left, days until day off parallel on the right, the same size,
+     both numbers green and centred over words that fit on one line. */
+  function pfCountChip(n, words, said) {
+    if (n == null) return h('span', { class: 'pt-cnt empty', 'aria-hidden': 'true' });
+    return h('p', { class: 'pt-cnt', 'aria-label': said || (n + ' ' + words) },
+      h('b', { class: 'num' }, String(n)), h('span', { class: 'pt-cnt-l' }, words));
+  }
+  function pfCountsRow(t) {
+    var left = G.daysLeftOnTour(t);
     var c = daysUntilOff(t);
-    if (!c || c.off) return null;
-    if (c.n === 1) return h('p', { class: 'pt-off', 'aria-label': (c.last ? 'Last show' : 'Day off') + (c.last ? ' tonight' : ' tomorrow') },
-      h('b', null, c.last ? 'Last show' : 'Day off'), h('span', null, c.last ? 'tonight' : 'tomorrow'));
-    return h('p', { class: 'pt-off', 'aria-label': c.n + ' days until day off' },
-      h('b', { class: 'num' }, String(c.n)), h('span', null, 'days until'), h('span', null, 'day off'));
-  }
-  /* Beside it, how long until the band is home: every day to the end of the
-     run plus the travel day home after it, off days included (Devin's rule).
-     Gone when the tour has no dates, hasn't started, or is over. */
-  function pfLeftCount(t) {
-    var n = G.daysLeftOnTour(t);
-    if (!n) return null;
-    return h('p', { class: 'pt-off pt-left', 'aria-label': n + (n === 1 ? ' day' : ' days') + ' left on tour' },
-      h('b', { class: 'num' }, String(n)), h('span', null, n === 1 ? 'day left' : 'days left'), h('span', null, 'on tour'));
-  }
-  // Today's right corner holds both counts, the day off over the days left.
-  function pfCorner(t) {
-    var off = pfOffCount(t), left = pfLeftCount(t);
-    return off || left ? h('div', { class: 'pt-corner' }, off, left) : null;
+    var off = !c || c.off ? null
+      : c.n === 1 ? pfCountChip(1, c.last ? 'last show tonight' : 'day off tomorrow',
+          (c.last ? 'Last show' : 'Day off') + (c.last ? ' tonight' : ' tomorrow'))
+      : pfCountChip(c.n, 'days until day off');
+    if (left == null && !off) return null;
+    return h('div', { class: 'pt-counts' },
+      pfCountChip(left, left === 1 ? 'day left on tour' : 'days left on tour'),
+      off || h('span', { class: 'pt-cnt empty', 'aria-hidden': 'true' }));
   }
   /* A day in three columns: what and where in the left corner (the tag, the
      date, the city), the venue and its address in the middle, and corner
@@ -9443,7 +9995,6 @@
     if (!mine) return fwLoading('Picking your flowers…');
     if (mine.error) return fwFailed(function () { B.myFlowers(true); });
     var c = mine.counts || {};
-    var left = typeof mine.left === 'number' ? Math.max(0, mine.left) : null;
     var got = Array.isArray(mine.got) ? mine.got : [];
     return [
       h('section', { class: 'fw-me' }, fwStats(c.flowers, c)),
@@ -9461,13 +10012,8 @@
                 h('button', { class: 'fw-undo', type: 'button', onclick: function () { removeGotFlowers(g); } }, 'Remove'))));
         }))
       ] : null,
-      // Give flowers pinned at the bottom of the screen, with this year's count
-      // under it (room first, so the list scrolls clear of it).
-      t ? h('div', { class: 'fw-room', 'aria-hidden': 'true' }) : null,
-      t ? h('div', { class: 'fw-me-give pinned' },
-        h('button', { class: 'fw-give', type: 'button', onclick: function () { openTour(id, 'stats', PF_HOME, 'Profile'); } },
-          'Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)),
-        left == null ? null : h('p', { class: 'fw-me-left' }, left + ' left')) : null
+      // The pinned Give flowers button is gone (Devin, 2026-10-15): giving
+      // lives on Crew Stats, where your own card says how many are left.
     ];
   }
   /* GUEST LIST: tonight's (or the next show's), with Add guest and Import
@@ -9511,14 +10057,17 @@
         shows.length > 1 ? h('button', { class: 'gl-head-more', type: 'button',
           onclick: function () { openTour(id, 'guests', PF_HOME, 'Profile'); } }, 'Other nights') : null),
       rows.length ? h('div', { class: 'pt-sheet pt-gl' }, guestLedger(rows)) : null,
-      guestSendRow(id, t, s, list),
-      // Add guest and Import list stay at the bottom of the screen; room so the list scrolls clear of them.
+      // Add guest and Import list wear the Invite crew pill, the one round
+      // share button between them (Devin, 2026-10-15, from his screenshots).
       h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
-      h('div', { class: 'pt-two pinned' },
-        h('button', { class: 'pf-btn go', type: 'button',
-          onclick: function () { openGuestForm(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } }, icon('plus', 16), 'Add guest'),
-        h('button', { class: 'pf-btn', type: 'button',
-          onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } }, 'Import list'))
+      h('div', { class: 'gl-trio pinned' },
+        h('button', { class: 'crew-invite', type: 'button',
+          onclick: function () { openGuestForm(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
+        guestShareBtn(id, t, s, list),
+        h('button', { class: 'crew-invite', type: 'button',
+          onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
+          h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import list'))
     ];
   }
   /* The artists' Greenroom pages this account is near (its own, the ones it's
@@ -9710,13 +10259,27 @@
         ? 'Tap + to add an artist, then their first tour. Its day shows up here.'
         : 'Nothing has been shared with you yet.');
     };
+    // "Your To Do List" (0152) sits beside Today, Artists and Tours, only
+    // for someone with a list to read; with the tab gone, the pick falls
+    // back to where the profile opens.
+    var todoTab = pfTodoTab();
+    if (tab === 'todos' && !todoTab) tab = t ? 'today' : 'artists';
+    var tabs = todoTab ? PF_TABS.slice(0, 3).concat([{ key: 'todos', label: 'To Do List', icon: 'check' }], PF_TABS.slice(3)) : PF_TABS;
+    // "Favorite Local Spots" (0153) sits beside the others once its table is
+    // live; before the migration there is no tab at all. Spots on the bar,
+    // so the row still fits a 375 wide phone.
+    var spotsTab = spotsOn();
+    if (tab === 'spots' && !spotsTab) tab = t ? 'today' : 'artists';
+    if (spotsTab) tabs = tabs.concat([{ key: 'spots', label: 'Spots', icon: 'heart' }]);
     var body = tab === 'today' ? (t ? pfToday(id, t, entries.length) : none())
       : tab === 'stats' ? pfStats(id, t, entries.length)
       : tab === 'guests' ? (t ? pfGuests(id, t, entries.length) : none())
       : tab === 'tours' ? pfTours()
+      : tab === 'todos' ? pfTodos()
+      : tab === 'spots' ? pfSpots()
       : pfArtists(byArtist, declared, loose);
     return [
-      h('div', { class: 'vp-tabs pt-tabs', role: 'tablist' }, PF_TABS.map(function (x) {
+      h('div', { class: 'vp-tabs pt-tabs', role: 'tablist' }, tabs.map(function (x) {
         var on = x.key === tab;
         return h('button', { class: 'vp-tab pt-tab' + (on ? ' on' : ''), type: 'button', role: 'tab',
           'aria-selected': on ? 'true' : 'false', onclick: function () { pick(x.key); } },
@@ -9799,24 +10362,21 @@
   // "looks a bit lofi compared to the rest of the app"): the same rows the
   // Your profiles sheet wears, an icon in a circle, grouped under small
   // headings. Nothing behind the rows changed, only their clothes.
+  // The menu's own rows (Devin, 2026-10-15: "make it look like the menu
+  // when you hit the 3 horizontal line"): same markup, same classes.
   function stRow(ic, label, onTap, o) {
     o = o || {};
-    return h('button', { class: 'acct-row' + (o.danger ? ' danger' : ''), type: 'button',
-      hidden: o.hidden || null, onclick: onTap },
-      h('span', { class: 'acct-plus', 'aria-hidden': 'true' }, icon(ic, 18)),
-      h('span', { class: 'lr-text' },
-        h('span', { class: 'lr-title' }, label),
-        o.sub || null),
-      icon('chevron', 16));
+    var b = menuRow(ic, label, onTap, o.sub, { cls: o.danger ? 'mn-danger' : null, face: o.face });
+    if (o.hidden) b.hidden = true;
+    return b;
   }
+
   // A group with a small heading over it; a group with nothing in it isn't drawn.
   function stGroup(head, rows) {
     rows = (rows || []).filter(Boolean);
-    if (!rows.length) return null;
-    return h('div', { class: 'st-group' },
-      head ? h('p', { class: 'st-head' }, head) : null,
-      h('div', { class: 'acct-list' }, rows));
+    return rows.length ? h('section', { class: 'mn-group' }, rows) : null;
   }
+
   function openSettingsSheet() {
     var B = window.GR_BACKEND;
     var signedIn = S.mode === 'db' && B && B.signOut;
@@ -9850,9 +10410,8 @@
       // server has answered with a list (0139 answers null to anyone else, and then there is no row at all).
       var agreedRow = signedIn && typeof B.legalList === 'function' ? stRow('check', 'Who has agreed', function () { openLegalList(); }, { hidden: true }) : null;
       // Their group's heading hides with them: an admin's rows, nobody else's heading.
-      var adminGroup = codesRow || agreedRow ? h('div', { class: 'st-group', hidden: true },
-        h('p', { class: 'st-head' }, 'Admin'),
-        h('div', { class: 'acct-list' }, [codesRow, agreedRow].filter(Boolean))) : null;
+      var adminGroup = codesRow || agreedRow ? h('section', { class: 'mn-group', hidden: true },
+        [codesRow, agreedRow].filter(Boolean)) : null;
       var adminSeen = function () {
         if (adminGroup) adminGroup.hidden = (!codesRow || codesRow.hidden) && (!agreedRow || agreedRow.hidden);
       };
@@ -9868,9 +10427,8 @@
       // last in the list, so nothing under a finger moves when it appears.
       var legalSaid = h('span', { class: 'lr-sub' }, '');
       var legalGroup = signedIn && typeof B.legal === 'function' && typeof B.legalDocs === 'function'
-        ? h('div', { class: 'st-group', hidden: true },
-            h('div', { class: 'acct-list' },
-              stRow('tabsheet', 'Documents you agreed to', function () { openLegalDocs(); }, { sub: legalSaid }))) : null;
+        ? h('section', { class: 'mn-group', hidden: true },
+            stRow('tabsheet', 'Documents you agreed to', function () { openLegalDocs(); }, { sub: legalSaid })) : null;
       if (legalGroup) legalKnown(function (st) {
         var day = st && st.ready && st.acceptedAt ? legalDay(st.acceptedAt) : '';
         legalGroup.hidden = !day;
@@ -11775,8 +12333,10 @@
         }) });
       }
     });
-    entries.forEach(function (e) { e.owed = Math.round(owedOn(e.l) * 100) / 100; e.spent = G.num(e.l.paid); e.proj = G.num(e.l.projected); });
-    entries.sort(function (a, b) { return (b.owed - a.owed) || (b.spent - a.spent) || (b.proj - a.proj) || (a.i - b.i); });
+    entries.forEach(function (e) { e.owed = Math.round(owedOn(e.l) * 100) / 100; e.spent = G.num(e.l.paid); e.proj = G.num(e.l.projected); e.amt = Math.max(e.proj, e.spent); });
+    // Biggest line first, by the amount the line shows (the bigger of planned
+    // and spent); the linked cards keep the top (Devin, 2026-10-15).
+    entries.sort(function (a, b) { return (b.amt - a.amt) || (b.owed - a.owed) || (a.i - b.i); });
     var rows = [];
     feedCards.forEach(function (card) { rowKey = 'feed:' + card.id; rows.push(cardRow(id, t, card, paidCell, creditCell, cashCell)); });
     // Every other linked card (debit cards; a credit card whose balance isn't on the tour yet) has its line too.
@@ -13281,7 +13841,7 @@
             icon('chevron', 18))),
         bar
       ];
-    }, { label: 'Edit crew', cls: 'cat-sheet' });
+    }, { label: 'Edit crew', cls: 'cat-sheet', onClose: function () { openCrewSheet(id); } });
   }
 
   /* Payments: how they're paid (weekly, daily, monthly, or some other way:
@@ -13837,7 +14397,8 @@
     if (!c.info) return h('p', { class: 'note pay-note' }, 'Loading\u2026');
     var st = G.payStanding(c.info), book = G.payBook(c.book), inc = G.payIncome(c.book, c.info.payments);
     S.payTab = S.payTab || {};
-    var tab = S.payTab[id] === 'income' ? 'income' : 'expenses';
+    var boOn = buyoutsOn();
+    var tab = S.payTab[id] === 'income' ? 'income' : boOn && S.payTab[id] === 'buyouts' ? 'buyouts' : 'expenses';
     var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null, meCard = me ? cardOf(me).card : null;
     // Devin (2026-10-07): your photo up top with two summary tabs, INCOME and
     // EXPENSES, on both tabs, and the same graph the tour has underneath.
@@ -13847,9 +14408,36 @@
         onclick: function () { S.payTab[id] = key; render(true); } },
         h('span', { class: 'pay-sum-k' }, label), h('strong', { class: 'pay-sum-v num' }, money(amount)));
     };
+    /* BUYOUTS beside them (0151, Devin: everyone sees on MY PAY which days
+       they received a buyout and which they did not). No money on the tab:
+       the days are the news, and the amounts are the tour's own book. */
+    var bo = boOn ? myBuyoutDays(id, t) : null;
+    var boTab = null;
+    if (bo) {
+      var boSel = tab === 'buyouts';
+      boTab = h('button', { class: 'pay-sum-tab' + (boSel ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': boSel ? 'true' : 'false',
+        onclick: function () { S.payTab[id] = 'buyouts'; render(true); } },
+        h('span', { class: 'pay-sum-k' }, 'BUYOUTS'),
+        h('strong', { class: 'pay-sum-v num' }, !bo.shows.length ? '\u2014' : bo.loading ? '\u2026' : bo.got + ' of ' + bo.shows.length));
+    }
     var head = h('div', { class: 'pay-top' },
       h('div', { class: 'pay-photo' }, meCard ? personPhoto(meCard, 'sm') : null),
-      h('div', { class: 'pay-sum-tabs', role: 'tablist' }, sumTab('income', 'INCOME', inc.gross), sumTab('expenses', 'EXPENSES', book.spent)));
+      h('div', { class: 'pay-sum-tabs', role: 'tablist' }, sumTab('income', 'INCOME', inc.gross), sumTab('expenses', 'EXPENSES', book.spent), boTab));
+    if (tab === 'buyouts' && bo) {
+      var boBody = !bo.shows.length
+        ? h('p', { class: 'note pay-note' }, 'No buyouts logged on this tour yet. When a show logs one, the day shows up here.')
+        : bo.loading ? h('p', { class: 'note pay-note' }, 'Loading…')
+        : h('div', { class: 'ledger' }, bo.shows.map(function (sh) {
+            var got = !!bo.mine[sh.id];
+            return h('div', { class: 'row' },
+              h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date)),
+              h('span', { class: 'bus-word' + (got ? ' on' : '') }, got ? 'Received' : 'Not yet'));
+          }));
+      return [head,
+        h('p', { class: 'note pay-note' }, 'The days this tour logged a buyout, and whether yours reached you. The tour manager ticks them off as they’re handed out.'),
+        h('h3', { class: 'mn-h mn-over' }, 'My buyouts'),
+        boBody];
+    }
     var inCls = { tour: 'guar', weekly: 'merch', perdiem: 'inother', buyout: 'guar', bonus: 'merch', other: 'inother' };
     var exCls = { food: 'crew', lodging: 'bus', travel: 'lcard', gear: 'mbill', other: 'other' };
     var chart = expenseSummary({ income: inc.gross, incomeBy: {},
@@ -13884,7 +14472,7 @@
         h('div', { class: 'ledger' }, incRows),
         // Log income and Your cards share the bottom of the screen, side by side (Devin, 2026-10-15).
         h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
-        h('div', { class: 'pt-two pinned' },
+        h('div', { class: 'pt-two pinned mp' },
           h('button', { class: 'pf-btn go', type: 'button', onclick: function () { openMyPayIncome(id, null); } }, icon('plus', 16), 'Log income'),
           myPayCardsBtn(id))];
     }
@@ -13908,7 +14496,7 @@
       h('div', { class: 'ledger' }, colHead, lines),
       // Add expense and Your cards share the bottom of the screen, side by side (Devin, 2026-10-15).
       h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
-      h('div', { class: 'pt-two pinned' },
+      h('div', { class: 'pt-two pinned mp' },
         h('button', { class: 'pf-btn go', type: 'button', onclick: function () { openMyPayCat(id, null); } }, icon('plus', 16), 'Add expense'),
         myPayCardsBtn(id))];
   }
@@ -15325,6 +15913,127 @@
       tourTabs(id, 'money'));
   }
 
+  /* ---- "Rate the show" (0154): after doors on a show night, and through
+     the day after, the band says how the night was: Crowd, Venue and City,
+     each 1 to 10, sent once and changeable until midnight. Members of the
+     tour's artist and the tour's owner only; the database holds the rows to
+     the band, so the artist page and the tour show nothing public. Beside
+     the band's numbers sits the app's own merch score (Devin: "the app
+     itself can rate the merch 1-10 based on our average"): the night's
+     merch against the tour's nightly average, an average night a 5. ---- */
+  // The night that can be rated now: tonight once doors have passed, else
+  // yesterday's show (still changeable today), else nothing.
+  function rateShowOf(t) {
+    var today = G.tourToday();
+    var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); });
+    var s = shows.filter(function (x) { return x.date === today; })[0];
+    if (s && doorsPast(s)) return s;
+    var y = G.addDays(today, -1);
+    return shows.filter(function (x) { return x.date === y; })[0] || null;
+  }
+  // Have doors passed? By the day sheet's doors time; a sheet with no
+  // readable time (blank, "TBA") counts from 5 in the afternoon.
+  function doorsPast(s) {
+    var d = s && G.isObj(s.daySheet) ? s.daySheet : {};
+    var p = G.splitTime(d.doors), now = new Date();
+    var m = /^(\d{1,2}):(\d{2})$/.exec(p.main || '');
+    if (!m || !p.ampm) return now.getHours() >= 17;
+    var hr = (+m[1] % 12) + (p.ampm === 'PM' ? 12 : 0);
+    return now.getHours() * 60 + now.getMinutes() >= hr * 60 + (+m[2]);
+  }
+  // The band on this tour, as the database rules it: the tour's owner, or a
+  // Member of the artist the tour belongs to. Never crew, never a follower.
+  function bandOnTour(tourId, t) {
+    var B = window.GR_BACKEND;
+    if (!ratingsOn() || !B.showRate || !B.showRatings) return false;
+    if (B.ownsTour && B.ownsTour(tourId)) return true;
+    var name = artistOf(t).toLowerCase();
+    return (myActs().list || []).some(function (x) {
+      return x && x.kind === 'band' && (t.artistId ? x.id === t.artistId
+        : !!name && String(x.name || '').trim().toLowerCase() === name);
+    });
+  }
+  function rateShowRow(tourId, t) {
+    var s = rateShowOf(t);
+    if (!s || !bandOnTour(tourId, t)) return null;
+    var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
+    var mine = (B.showRatings(tourId) || []).filter(function (r) { return r.showId === s.id && r.userId === uid; })[0];
+    return h('div', { class: 'cal-open ov-rate' },
+      h('button', { class: 'btn quiet sm', type: 'button', onclick: function () { openRateShow(tourId, s.id); } },
+        mine ? 'Rate the show · sent' : 'Rate the show'));
+  }
+  function openRateShow(tourId, showId) {
+    var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
+    var CATS = [['crowd', 'Crowd'], ['venue', 'Venue'], ['city', 'City']];
+    var st = { busy: false, touched: false, seeded: false, waits: 0 };
+    var f = { crowd: 0, venue: 0, city: 0 };
+    var host = h('div', { class: 'rt-host' });
+    var foot = h('div', { class: 'stack' });
+    function showNow() {
+      var t = getTour(tourId);
+      return (t && G.isObj(t.shows) && t.shows[showId]) || null;
+    }
+    function rowsNow() {
+      var all = B.showRatings(tourId);
+      return all == null ? null : all.filter(function (r) { return r.showId === showId; });
+    }
+    function draw() {
+      var t = getTour(tourId) || {}, s = showNow() || {};
+      var rows = rowsNow();
+      var mine = (rows || []).filter(function (r) { return r.userId === uid; })[0];
+      // What you sent before, preselected once it arrives (unless you've tapped already).
+      if (mine && !st.seeded && !st.touched) {
+        st.seeded = true;
+        CATS.forEach(function (c) { if (G.num(mine[c[0]]) >= 1) f[c[0]] = G.num(mine[c[0]]); });
+      }
+      // The band's rows may still be on their way: drawn again when they land.
+      if (rows == null && st.waits < 20 && !st.busy) {
+        st.waits += 1;
+        setTimeout(function () { if (host.isConnected) draw(); }, 700);
+      }
+      var kids = CATS.map(function (c) {
+        return [h('p', { class: 'field-label' }, c[1]),
+          tenRow(f[c[0]], function (n) { if (st.busy) return; st.touched = true; f[c[0]] = n; draw(); }, c[1] + ', 1 to 10')];
+      });
+      var line = CATS.map(function (c) {
+        var vals = (rows || []).map(function (r) { return G.num(r[c[0]]); }).filter(function (v) { return v >= 1; });
+        if (!vals.length) return null;
+        return c[1] + ' ' + Math.round(vals.reduce(function (a, b) { return a + b; }, 0) / vals.length * 10) / 10;
+      }).filter(Boolean);
+      var m10 = G.merchTen(s.loggedAt ? G.num(s.income && s.income.merch) : null, G.merchNightlyAvg(t));
+      kids.push(h('div', { class: 'rt-band' },
+        rows == null ? h('p', { class: 'note' }, 'Reading the band’s ratings…')
+          : rows.length ? h('p', { class: 'note' }, 'The band so far: ' + line.join(' · ') + ' (' + plural(rows.length, 'rating') + ')')
+          : h('p', { class: 'note' }, 'Nobody in the band has rated this night yet.'),
+        m10 != null ? h('p', { class: 'note' }, 'Merch ' + m10 + ' of 10 · the app’s score, this night against the tour’s average.') : null));
+      fillEl(host, kids);
+      var any = f.crowd || f.venue || f.city;
+      fillEl(foot, [
+        h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || !any || null, onclick: send },
+          st.busy ? 'Sending…' : mine ? 'Save changes' : 'Send'),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now')]);
+    }
+    async function send() {
+      if (st.busy || !(f.crowd || f.venue || f.city)) return;
+      st.busy = true; draw();
+      try { await B.showRate(tourId, showId, f); }
+      catch (x) { st.busy = false; draw(); toast(x && x.code === 'offline' ? NO_SIGNAL : 'Couldn’t send that. Try again.'); return; }
+      closeSheet();
+      toast('Sent to the band');
+      render(true);
+    }
+    draw();
+    openSheet(function () {
+      var s = showNow() || {};
+      return [
+        h('h2', { class: 'sh-title' }, 'Rate the show'),
+        h('p', { class: 'sh-sub' }, [[s.city, s.venue].filter(Boolean).join(' · '),
+          'The band sees this, nobody else. You can change it until midnight.'].filter(Boolean).join('. ')),
+        host, foot
+      ];
+    }, { label: 'Rate the show' });
+  }
+
   /* Today, and only today: where you are, who you're playing to, and a line
      from the tour manager. */
   function overviewBody(id, t) {
@@ -15368,6 +16077,8 @@
       d.presale ? h('div', { class: 'ov-presale' },
         h('span', { class: 'ov-msg-k' }, 'Pre-sale'),
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
+      // "Rate the show" (0154): the band's own, after doors; nothing here for anyone else.
+      rateShowRow(id, t),
       h('div', { class: 'cal-open' },
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
@@ -16502,16 +17213,19 @@
     while (on[d] && n < 400) { n += 1; d = G.addDays(d, 1); }
     return { n: n, last: today === dates[dates.length - 1] };
   }
-  function offCounter(t) {
+  function ovCountsRow(t) {
+    var left = G.daysLeftOnTour(t);
     var c = daysUntilOff(t);
-    if (!c) return null;
-    // Tonight's the only show before a break: just "Day off tomorrow"
-    // (or, on the run's final night, "Last show tonight").
-    var pair = c.off ? ['Day off', 'today'] : c.n === 1 ? (c.last ? ['Last show', 'tonight'] : ['Day off', 'tomorrow']) : null;
-    return h('div', { class: 'off-count', 'aria-label': pair ? pair.join(' ') : c.n + ' shows until day off' },
-      pair ? [h('b', null, pair[0]), h('span', { class: 'oc-2' }, pair[1])]
-        : [h('b', { class: 'num' }, String(c.n)), h('span', { class: 'oc-2' }, 'shows until day off')]);
+    var off = !c || c.off ? null
+      : c.n === 1 ? pfCountChip(1, c.last ? 'last show tonight' : 'day off tomorrow',
+          (c.last ? 'Last show' : 'Day off') + (c.last ? ' tonight' : ' tomorrow'))
+      : pfCountChip(c.n, 'shows until day off');
+    if (left == null && !off) return null;
+    return h('div', { class: 'pt-counts ov' },
+      pfCountChip(left, left === 1 ? 'day left on tour' : 'days left on tour'),
+      off || h('span', { class: 'pt-cnt empty', 'aria-hidden': 'true' }));
   }
+
 
   function viewTourDay(id, t, view) {
     // A tour with a lineup but no "which band are you" yet asks once, so
@@ -16531,8 +17245,10 @@
       return h('div', { class: 'page tour has-tabs' },
         tourBand(t, id, view),
         h('div', { class: 'title-row' },
-          h('h1', { class: 'tour-title' }, t.name || 'Untitled tour'),
-          offCounter(t)),
+          h('h1', { class: 'tour-title' }, t.name || 'Untitled tour')),
+        // The same pair as Today (Devin, 2026-10-15): days left on the left,
+        // the Overview's own shows-until-a-day-off count on the right.
+        ovCountsRow(t),
         nextTourLine(id, t),
         dbBanner(),
         overviewBody(id, t),
@@ -16562,29 +17278,39 @@
   }
   // Send the night's list straight to the promoter: Messages or Mail opens
   // with the whole list already written; the manager picks who it goes to.
-  function guestSendRow(id, t, s, list) {
+  /* One round share button, the phone's own share sheet behind it (Devin,
+     2026-10-15, from his screenshots). A phone without one gets a small
+     sheet of ours with the same three doors as before: Text, Email, Copy. */
+  function guestShareBtn(id, t, s, list) {
     if (!list.length) return null;
-    var copyBtn = null;
     var listText = G.guestListText(s, list);
     var subject = 'Guest list \u00b7 ' + (t.artist || t.name || 'Greenroom') +
       (s.city ? ' \u00b7 ' + s.city : '') + (G.parseDay(s.date) ? ' \u00b7 ' + dayMD(s.date) : '');
-    var copyOne = h('button', { class: 'btn ghost gl-send', type: 'button',
+    var copyIt = async function () {
+      var ta = h('textarea', { class: 'sr', readonly: true, value: listText });
+      document.body.appendChild(ta);
+      var ok = await copyText(listText, ta);
+      ta.remove();
+      toast(ok ? 'Guest list copied for the box office' : 'Press and hold to copy');
+    };
+    return h('button', { class: 'gl-share', type: 'button', 'aria-label': 'Share the guest list',
       onclick: async function () {
-        var ta = h('textarea', { class: 'sr', readonly: true, value: listText });
-        document.body.appendChild(ta);
-        var ok = await copyText(listText, ta);
-        ta.remove();
-        toast(ok ? 'Guest list copied for the box office' : 'Press and hold to copy');
-      } }, icon('copy', 17), 'Copy');
-    copyBtn = h('div', { class: 'gl-sendrow' + (canEditTour(id) ? '' : ' solo') },
-      canEditTour(id) ? h('a', { class: 'btn ghost gl-send', href: 'sms:?&body=' + encodeURIComponent(listText) },
-        icon('tabchat', 17), 'Text') : null,
-      canEditTour(id) ? h('a', { class: 'btn ghost gl-send',
-        href: 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(listText) },
-        icon('mail', 17), 'Email') : null,
-      copyOne);
-    return copyBtn;
+        if (navigator.share) {
+          try { await navigator.share({ title: subject, text: listText }); return; }
+          catch (e) { if (e && e.name === 'AbortError') return; }
+        }
+        openSheet(function () {
+          return [
+            h('h2', { class: 'sh-title' }, 'Share the guest list'),
+            h('div', { class: 'stack' },
+              h('a', { class: 'btn ghost block', href: 'sms:?&body=' + encodeURIComponent(listText) }, icon('tabchat', 17), 'Text'),
+              h('a', { class: 'btn ghost block', href: 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(listText) }, icon('mail', 17), 'Email'),
+              h('button', { class: 'btn ghost block', type: 'button', onclick: function () { copyIt(); closeSheet(); } }, icon('copy', 17), 'Copy'))
+          ];
+        }, { label: 'Share the guest list' });
+      } }, icon('share', 20));
   }
+
 
   function guestsBody(id, t) {
     var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.guestsFor);
@@ -16606,7 +17332,7 @@
     var sum = G.guestSummary(list);
 
     var rowsOut = guestRowsFor(id, s, list, backend, myUid, refresh);
-    var copyBtn = guestSendRow(id, t, s, list);
+    var shareBtn = guestShareBtn(id, t, s, list);
 
     var rail = h('div', { class: 'ds-rail gl-rail' }, shows.map(function (x) {
       var dd = G.parseDay(x.date);
@@ -16634,17 +17360,17 @@
       rowsOut.length
         ? guestLedger(rowsOut)
         : h('div', { style: 'min-height:60px' }),
-      copyBtn,
       h('div', { class: 'gl-dock' },
         rail,
         h('div', { class: 'gl-dock-btns' },
           // The night on screen is the night the guest is for: no picker.
-          h('button', { class: 'add-mini', type: 'button',
+          h('button', { class: 'crew-invite', type: 'button',
             onclick: function () { openGuestForm(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
             h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Add guest'),
-          h('button', { class: 'add-mini', type: 'button',
+          shareBtn,
+          h('button', { class: 'crew-invite', type: 'button',
             onclick: function () { openGuestImport(id, s.id, s, backend, function () { closeSheet(); refresh(); }); } },
-            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import List')))
+            h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), 'Import list')))
     ];
   }
 
@@ -16996,13 +17722,19 @@
         h('div', { class: 'fw-side' },
           h('button', { class: 'fw-name fw-name-btn', type: 'button', 'aria-expanded': open ? 'true' : 'false',
             'aria-label': (open ? 'Hide' : 'Show') + ' the flowers ' + (mine ? 'you were' : fwName(p) + ' was') + ' given', onclick: toggle },
-            h('span', { class: 'fw-name-t' }, fwName(p)), roadPill(id, p.userId), p.verified ? verifiedBadge('sm') : null,
+            h('span', { class: 'fw-name-t' }, fwName(p)), roadPill(id, p.userId),
+            personChecked(p.verified, (roadTiers(id).by || {})[p.userId], p.counts && p.counts.endorsements) ? verifiedBadge('sm') : null,
             mine ? h('span', { class: 'fw-you' }, 'You') : null,
             h('span', { class: 'fw-chev', 'aria-hidden': 'true' }, icon('chevron', 14))),
           p.tourRole ? h('p', { class: 'fw-role' }, p.tourRole) : null,
           fwStats(p.here, p.counts)),
-        // Small, at the right edge of the stats (Devin, 2026-10-07).
-        mine || !data.canGive ? null : h('button', { class: 'fw-give sm', type: 'button', disabled: data.left <= 0,
+        // Small, at the right edge of the stats (Devin, 2026-10-07). Your own
+        // card shows how many of the year's flowers you still have to give,
+        // in the same spot (Devin, 2026-10-15: the pinned button is gone).
+        !data.canGive ? null : mine
+          ? h('span', { class: 'fw-left sm', 'aria-label': Math.max(0, data.left) + ' of ' + FLOWERS_EACH + ' flowers left to give this year' },
+              Math.max(0, data.left) + ' left ', h('span', { 'aria-hidden': 'true' }, FLOWER))
+          : h('button', { class: 'fw-give sm', type: 'button', disabled: data.left <= 0,
           'aria-label': data.left > 0 ? 'Give flowers to ' + fwName(p) : 'All ' + FLOWERS_EACH + ' flowers given',
           onclick: function () { openGiveFlowers(id, p, data.left); } },
           data.left > 0 ? ['Give ', h('span', { 'aria-hidden': 'true' }, FLOWER)] : 'All given')),
@@ -17029,33 +17761,23 @@
           h('p', { class: 'fw-when' }, dmWhen(g.at))));
     }));
   }
-  // Give flowers, pinned at the bottom of the screen on Crew Stats, with this year's count under it, the way your profile shows it.
-  function fwMine(id, data, me) {
-    if (!data.canGive) return null;
-    var left = Math.max(0, data.left);
-    var others = data.people.filter(function (p) { return p.userId !== me; });
-    return [h('div', { class: 'fw-room', 'aria-hidden': 'true' }), h('div', { class: 'fw-me-give pinned' },
-      h('button', { class: 'fw-give', type: 'button', disabled: left <= 0 || !others.length,
-        onclick: function () { pickFlowerPerson(id, others, left); } },
-        'Give flowers ', h('span', { 'aria-hidden': 'true' }, FLOWER)),
-      h('p', { class: 'fw-me-left' }, left + ' left'))];
+  /* ============================== Bus Check in ==============================
+     Devin (2026-10-15): "Change the check in button to On Bus/Off Bus... The
+     button can be called Bus Check in. When you click it, it should give you
+     two options On Bus or Off Bus. The button itself should only light up
+     green when it's bus call. Another scenario when it should light up green
+     is if someone after bus hits Off Bus, which probably means we are at a
+     stop like a gas station... a way for the driver to keep count of
+     everyone on the bus." It replaces the old once-a-day Check In in the
+     same spot on Today, pinned above the bar. Everyone on the crew list
+     rides unless the invite said otherwise, and the list and every change go
+     to everyone on the bus (a 'bus' poke), "so everyone can be accountable". */
+  function busOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.busOn && B.busList && B.busSet && B.busOn());
   }
-  // Who gets them: everyone else on the tour, then the same sheet as their card's button.
-  function pickFlowerPerson(id, people, left) {
-    var mine = null;
-    openSheet(function (panel) {
-      mine = panel;
-      return [
-        h('h2', { class: 'sh-title' }, 'Give flowers to\u2026'),
-        h('div', { class: 'fl-list' }, people.map(function (p) {
-          return h('button', { class: 'fl-row', type: 'button',
-            onclick: function () { if (sheet && sheet.panel === mine) closeSheet(true); openGiveFlowers(id, p, left); } },
-            personPhoto(p, 'xs'),
-            h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, fwName(p)), p.tourRole ? h('span', { class: 'lr-sub' }, p.tourRole) : null));
-        }))
-      ];
-    }, { label: 'Give flowers' });
-  }
+  // It's bus call: within the hour before the day sheet's time, or past it.
+  // (A bus call that isn't a time, "TBA" or "after load out", never is.)
   /* Check In, at the bottom of the screen on your profile's Today (pinned:
      it stays put above the bottom bar): your way of saying you've seen the
      day's info. Once a day, on a tour day. */
@@ -17068,9 +17790,101 @@
         var b = e.currentTarget;
         b.disabled = true;
         try { await B.checkIn(id, date); } catch (x) { b.disabled = false; toast('Couldn\u2019t check in. Try again.'); return; }
-        hornSplash('Checked in!', dayMD(date));
+        hornSplash('Checked in', dayMD(date));
         render(true);
       } }, done ? '\u2705 Checked in' : 'Check In'));
+  }
+  function busCallDue(v) {
+    var p = G.splitTime(v || '');
+    if (!p.ampm || !/^\d{1,2}:\d{2}$/.test(p.main)) return false;
+    var hm = p.main.split(':');
+    var mins = ((+hm[0]) % 12 + (p.ampm === 'PM' ? 12 : 0)) * 60 + (+hm[1]);
+    // A bus call in the small hours (3 AM) belongs to the night after the
+    // show, not the morning before it: it counts as next-day minutes.
+    if (mins < 12 * 60) mins += 24 * 60;
+    var now = new Date();
+    return now.getHours() * 60 + now.getMinutes() >= mins - 60;
+  }
+  // A bus sheet that is up draws its list again when fresh rows land (a poke,
+  // or this phone's own word answered).
+  var busLive = null;
+  function busRedraw() {
+    if (!busLive) return;
+    // (Never under a finger: a button swapped out mid-tap swallows the tap.)
+    if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(busRedraw, 400); return; }
+    try { busLive(); } catch (e) { /* it draws again on its next tap */ }
+  }
+  /* The button on Today. Green (the bright .ci-btn it always was) while it's
+     bus call and a seat on the bus still isn't on, or when someone stepped
+     off today (a stop); the quiet style the rest of the day, and always
+     quiet for someone who isn't on the bus list themselves. */
+  function busCheckInBtn(id, busCall, pinned) {
+    var B = window.GR_BACKEND;
+    // Until the bus table is live this falls back to the old once-a-day
+    // Check In, so Today never loses its button (the reviewer's catch).
+    if (!busOn()) return checkInBtn(id, G.tourToday(), pinned);
+    var data = B.busList(id);
+    var me = B.uid ? B.uid() : null;
+    var riders = (data && data.people) || [];
+    var mine = riders.filter(function (p) { return p.userId === me; })[0] || null;
+    var on = riders.filter(function (p) { return p.state === 'on'; }).length;
+    var allOn = riders.length > 0 && on === riders.length;
+    var stopped = riders.some(function (p) { return p.state === 'off'; });
+    var green = !!mine && (stopped || (busCallDue(busCall) && !allOn));
+    return h('div', { class: 'ci-wrap' + (pinned ? ' pinned' : '') },
+      h('button', { class: 'ci-btn' + (green ? '' : ' quiet'), type: 'button',
+        'aria-label': 'Bus Check in' + (data ? ': ' + on + ' of ' + riders.length + ' on the bus' : ''),
+        onclick: function () { openBusSheet(id, busCall); } }, 'Bus Check in'));
+  }
+  /* The sheet: On Bus / Off Bus for your own seat (your word is the only one
+     a phone may say), then the driver's count and everyone's word. Pokes
+     draw it again while it's open, so nobody pulls to refresh. */
+  function openBusSheet(id, busCall) {
+    var B = window.GR_BACKEND, busy = false;
+    var box = h('div', { class: 'bus-box' });
+    function draw() {
+      // The table went away under us (a migration rolled back): the sheet
+      // goes quietly, the way the button already has.
+      if (!busOn()) { if (busLive === draw) closeSheet(); return; }
+      var data = B.busList(id);
+      if (!data) { box.replaceChildren(h('p', { class: 'note' }, 'Loading\u2026')); return; }
+      var me = B.uid ? B.uid() : null;
+      var riders = data.people || [];
+      var mine = riders.filter(function (p) { return p.userId === me; })[0] || null;
+      var on = riders.filter(function (p) { return p.state === 'on'; }).length;
+      var big = function (state, label) {
+        var cur = !!mine && mine.state === state;
+        return h('button', { class: 'btn block bus-big' + (cur ? ' primary' : ' quiet'), type: 'button',
+          'aria-pressed': cur ? 'true' : 'false', disabled: busy || null,
+          onclick: async function () {
+            if (busy || cur) return;
+            busy = true; draw();
+            try { await B.busSet(id, state); }
+            catch (e) { busy = false; draw(); if (busOn()) toast('Couldn\u2019t save that. Try again.'); return; }
+            busy = false; draw(); render(true);
+          } }, label);
+      };
+      box.replaceChildren.apply(box, [
+        mine ? h('div', { class: 'bus-two' }, big('on', 'On Bus'), big('off', 'Off Bus')) : null,
+        h('p', { class: 'bus-count' }, riders.length ? on + ' of ' + riders.length + ' on the bus' : 'Nobody is on the bus list yet.'),
+        riders.length ? h('div', { class: 'ledger bus-list' }, riders.map(function (p) {
+          return h('div', { class: 'row' },
+            h('span', { class: 'row-label' }, p.name || 'Someone'),
+            h('span', { class: 'bus-word' + (p.state === 'on' ? ' on' : p.state === 'off' ? ' off' : '') },
+              p.state === 'on' ? 'On' : p.state === 'off' ? 'Off' : 'No word yet'));
+        })) : null].filter(Boolean));
+    }
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Bus Check in'),
+        h('p', { class: 'sh-sub' }, (busCall ? 'Bus call is ' + G.cleanTime(busCall) + '. ' : '') +
+          'Everyone on the bus list sees who\u2019s on.'),
+        box,
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+      ];
+    }, { label: 'Bus Check in', onClose: function () { if (busLive === draw) busLive = null; } });
+    busLive = draw;
   }
   // Flowers given to you that you'd rather not keep (and their note) come off.
   function removeGotFlowers(g) {
@@ -17175,8 +17989,7 @@
       : [h('ul', { class: 'fw-list' }, data.people.slice()
            // Whoever is signed in leads the list (Devin, 2026-10-07).
            .sort(function (a, b) { return (b.userId === me ? 1 : 0) - (a.userId === me ? 1 : 0); })
-           .map(function (p) { return flowerCard(id, p, me, data); })),
-         fwMine(id, data, me)];
+           .map(function (p) { return flowerCard(id, p, me, data); }))];
     return h('div', { class: 'page tour has-tabs fw-page' },
       tourBand(t, id, 'stats'),
       h('h1', { class: 'tour-title' }, 'Crew Stats'),
@@ -17843,12 +18656,17 @@
       if (inRun) pollRow = h('div', { class: 'ds-poll' }, pollBtn(id, entry.date));
     }
 
+    // PLACES RECOMMENDED BY TOUR, at the bottom of the day's sheet: the
+    // places shared with this tour for the day's city, only when there are
+    // any (and never before migration 0153 is live).
+    var spotsRec = spotsRecommended(id, s ? s.city : off.city);
+
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
     // Check In sits right under the venue's name.
-    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, copyBtn];
+    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, copyBtn, spotsRec];
 
-    return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn];
+    return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn, spotsRec];
   }
 
   function clearDaySheet(tourId, show, date, off) {
@@ -18483,7 +19301,8 @@
      removal, sendNotify('guest') stays with the add alone. */
   function openGuestEdit(g, meta, o) {
     var f = { firstName: String(g.firstName || ''), lastName: String(g.lastName || ''),
-      affiliation: String(g.affiliation || ''), qty: Math.max(1, Math.min(20, G.num(g.qty) || 1)) };
+      affiliation: String(g.affiliation || ''), qty: Math.max(1, Math.min(20, G.num(g.qty) || 1)),
+      passType: String(g.passType || 'GA') };
     function textIn(key, ph) {
       return h('input', { class: 'input', type: 'text', value: f[key], maxlength: 80,
         autocomplete: 'off', placeholder: ph,
@@ -18496,6 +19315,12 @@
     // An imported batch can bring more than the picker offers: keep that count choosable.
     if (f.qty > 11) qtySel.append(h('option', { value: String(f.qty) }, '+' + (f.qty - 1)));
     qtySel.value = String(f.qty);
+    // The same choices as adding a guest (Devin, 2026-10-15): the pass too.
+    var passSel = h('select', { class: 'input', 'aria-label': 'Pass type',
+      onchange: function (e) { f.passType = e.target.value; } });
+    G.GUEST_PASSES.forEach(function (ptype) { passSel.append(h('option', { value: ptype }, ptype)); });
+    if (G.GUEST_PASSES.indexOf(f.passType) < 0) passSel.append(h('option', { value: f.passType }, f.passType));
+    passSel.value = f.passType;
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'Edit guest'),
@@ -18509,7 +19334,8 @@
             blurActive();
             try {
               await o.onSave({ firstName: f.firstName.trim(), lastName: f.lastName.trim(),
-                affiliation: f.affiliation.trim(), qty: Math.max(1, Math.min(20, f.qty)) });
+                affiliation: f.affiliation.trim(), qty: Math.max(1, Math.min(20, f.qty)),
+                passType: f.passType });
               closeSheet();
               toast('Saved: ' + (f.firstName + ' ' + f.lastName).trim());
             } catch (e2) {
@@ -18522,7 +19348,9 @@
             field('First name', textIn('firstName', 'Devin')),
             field('Last name', textIn('lastName', 'Oliver'))),
           field('Affiliation', textIn('affiliation', 'Label, press, family…')),
-          field('Brings', qtySel),
+          h('div', { class: 'field-row' },
+            field('Brings', qtySel),
+            field('Pass', passSel)),
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Save'),
             h('button', { class: 'btn danger block', type: 'button',
@@ -19010,9 +19838,177 @@
     patch.shows[sh.id] = { buyoutTrack: next };
     api.update(id, patch).then(function (ok) { if (ok) { toast('Buyouts saved'); render(true); } });
   }
+  /* Buyout ticks (0151): once the table is there, the database remembers,
+     person by person, who has been handed the buyout a show logged. The
+     people owed one are everyone with a seat on the tour's crew list,
+     Managers and Crew alike: buyouts feed people. No amounts move here; the
+     totals stay in the tour's own document, logged the way all tour money
+     is. Until the migration lands, buyoutsOn answers false and nothing below
+     draws: the BUYOUT ALERT keeps exactly its old ways. */
+  function buyoutsOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.buyoutsOn && B.buyoutTracks && B.buyoutTrack && B.buyoutUntrack && B.buyoutsOn());
+  }
+  // The shows whose buyout money is logged, oldest first.
+  function buyoutShows(t) {
+    return G.rows(t && t.shows).filter(function (sh) {
+      return G.parseDay(sh.date) && G.num(G.isObj(sh.income) ? sh.income.buyouts : 0) > 0;
+    }).sort(G.byDate);
+  }
+  // Everyone with a seat: the crew list's signed-up rows, the owner among
+  // them. null while the list is still being fetched (the ask is made here
+  // too: the tour's creator never goes through moneyLead's own one).
+  function buyoutPeople(id) {
+    var B = window.GR_BACKEND;
+    var c = S.crewCache && S.crewCache[id];
+    if (!c) {
+      S.crewCache = S.crewCache || {};
+      S.crewAsk = S.crewAsk || {};
+      if (!S.crewAsk[id] && B && B.crew) {
+        S.crewAsk[id] = true;
+        B.crew(id).then(function (rows) { S.crewCache[id] = { rows: rows, at: Date.now() }; render(true); })
+          .catch(function () { delete S.crewAsk[id]; /* asked again next time */ });
+      }
+      return null;
+    }
+    var seen = {};
+    return c.rows.filter(function (m) {
+      if (!m.userId || seen[m.userId]) return false;
+      seen[m.userId] = true;
+      return true;
+    }).map(function (m) {
+      return { userId: m.userId, name: m.name || m.username || m.email || 'Someone',
+        role: m.tourRole || (m.owner || m.manager ? 'Manager' : 'Crew') };
+    });
+  }
+  // The ticks, as "showId|userId". null while they're first being fetched.
+  function buyoutTicked(id) {
+    var B = window.GR_BACKEND;
+    var rows = B.buyoutTracks(id);
+    if (!rows) return null;
+    var got = {};
+    rows.forEach(function (r) { got[r.showId + '|' + r.userId] = true; });
+    return got;
+  }
+  /* MY PAY's own view of them: the days this tour logged a buyout and
+     whether this account's tick is in. Only your own rows are read (the
+     database hands Crew nothing else), and no amounts ride along. */
+  function myBuyoutDays(id, t) {
+    var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
+    var shows = buyoutShows(t);
+    var rows = shows.length ? B.buyoutTracks(id) : [];
+    var mine = {};
+    (rows || []).forEach(function (r) { if (r.userId === me) mine[r.showId] = true; });
+    return { shows: shows, mine: mine, loading: !!shows.length && !rows,
+      got: shows.filter(function (sh) { return mine[sh.id]; }).length };
+  }
+  /* The same button once the ticks live in the database (Devin, 2026-10-15):
+     green the moment buyout money is logged on a date while anyone on the
+     crew list still hasn't been ticked, and until everyone has. Managers
+     only; a tap opens the tick list. */
+  function buyoutTickBtn(id, t) {
+    var shows = buyoutShows(t);
+    var people = buyoutPeople(id);
+    var got = buyoutTicked(id);
+    var lit = !!(shows.length && people && people.length && got) && shows.some(function (sh) {
+      return people.some(function (p) { return !got[sh.id + '|' + p.userId]; });
+    });
+    return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (lit ? ' on' : ''), type: 'button',
+      onclick: function () {
+        if (!buyoutShows(getTour(id) || {}).length) { toast('No buyouts logged on a date yet'); return; }
+        openBuyoutTicks(id);
+      } }, icon('bell', 15), 'BUYOUT ALERT'));
+  }
+  // A tick list that is up draws itself again when fresh ticks land (a poke,
+  // or this phone's own tick answered).
+  var buyoutLive = null;
+  function buyoutTicksRedraw() {
+    if (!buyoutLive) return;
+    // (Never under a finger: a row swapped out mid-tap swallows the tap.)
+    if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(buyoutTicksRedraw, 400); return; }
+    try { buyoutLive(); } catch (e) { /* it draws again on its next tap */ }
+  }
+  /* The tick list: every show with buyout money logged, each opening to the
+     people on the crew list. Tick someone as they get theirs; tap the tick
+     again to undo it. The database pokes the person either way, so their
+     MY PAY follows along live. */
+  function openBuyoutTicks(id) {
+    var B = window.GR_BACKEND;
+    var open = {}, pend = {};
+    var first = buyoutShows(getTour(id) || {});
+    if (first.length === 1) open[first[0].id] = true;
+    var box = h('div', { class: 'ledger bo-list' });
+    function draw() {
+      // The table went away under us (a migration rolled back), or the seat
+      // did: the sheet goes quietly, the way the button already has.
+      if (!buyoutsOn() || !moneyLead(id)) { if (buyoutLive === draw) closeSheet(); return; }
+      var shows = buyoutShows(getTour(id) || {});
+      if (!shows.length) { if (buyoutLive === draw) closeSheet(); return; }
+      var people = buyoutPeople(id);
+      var got = buyoutTicked(id);
+      if (!people || !got) {
+        box.replaceChildren(h('p', { class: 'note' }, 'Loading…'));
+        // (The crew list answers to the page, not to this sheet: look again in a moment.)
+        setTimeout(function () { if (buyoutLive === draw) draw(); }, 700);
+        return;
+      }
+      if (!people.length) {
+        box.replaceChildren(h('div', { class: 'row' },
+          h('span', { class: 'hint' }, 'Nobody on the crew list has signed up yet, so there is nobody to tick.')));
+        return;
+      }
+      var has = function (sh, p) { var k = sh.id + '|' + p.userId; return pend[k] != null ? pend[k] : !!got[k]; };
+      var kids = [];
+      shows.forEach(function (sh) {
+        var ticked = people.filter(function (p) { return has(sh, p); }).length;
+        kids.push(h('button', { class: 'row rowbtn', type: 'button',
+          'aria-expanded': open[sh.id] ? 'true' : 'false',
+          onclick: function () { open[sh.id] = !open[sh.id]; draw(); } },
+          h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date),
+            h('span', { class: 'hint' }, ticked === people.length ? 'Everyone has theirs' : ticked + ' of ' + people.length + ' tracked')),
+          h('span', { class: 'amt num' }, money(G.num(sh.income.buyouts))), icon('chevron', 18)));
+        if (open[sh.id]) people.forEach(function (p) {
+          var on = has(sh, p);
+          var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: on,
+            'aria-label': p.name + ' received their buyout · ' + (sh.city || 'Show'),
+            onchange: function (e) { tick(sh.id, p.userId, !!e.target.checked); } });
+          kids.push(h('label', { class: 'row bo-row' }, cb,
+            h('span', { class: 'row-label' }, p.name, h('span', { class: 'hint' }, p.role)),
+            h('span', { class: 'bus-word' + (on ? ' on' : '') }, on ? 'Received' : 'Not yet')));
+        });
+      });
+      box.replaceChildren.apply(box, kids);
+    }
+    async function tick(showId, userId, want) {
+      var key = showId + '|' + userId;
+      pend[key] = want;
+      draw();
+      try { if (want) await B.buyoutTrack(id, showId, userId); else await B.buyoutUntrack(id, showId, userId); }
+      catch (e) {
+        delete pend[key];
+        draw();
+        if (buyoutsOn()) toast('Couldn’t save that. Try again.');
+        return;
+      }
+      delete pend[key];
+      draw();
+      render(true);
+    }
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'BUYOUT ALERT'),
+        h('p', { class: 'sh-sub' }, 'Every show with buyout money logged. Tap a show, then tick each person as they get theirs. Everyone sees their own days on MY PAY.'),
+        box,
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+      ];
+    }, { label: 'Buyout alert', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
+    buyoutLive = draw;
+  }
   /* BUYOUT ALERT, top-left of the Overview: it glows and pulses while someone
      from an earlier show still hasn't had their buyout. */
   function buyoutAlertBtn(id, t) {
+    if (buyoutsOn() && moneyLead(id)) return buyoutTickBtn(id, t);
     if (!canEditTour(id)) return null;
     var owed = buyoutsOwed(t);
     return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (owed.length ? ' on' : ''), type: 'button',
@@ -20352,7 +21348,8 @@
         if (!deposit) {
           sel = h('select', { class: 'input', 'aria-label': 'Category', onchange: function (e) { f.category = e.target.value; drawWho(); } },
             h('option', { value: '' }, 'Pick a category'),
-            cashCats(t).map(function (c) { return h('option', { value: c.key }, c.label); }));
+            cashCats(t).slice().sort(function (a, b) { return String(a.label).localeCompare(String(b.label)); })
+              .map(function (c) { return h('option', { value: c.key }, c.label); }));
         }
         box.replaceChildren(h('form', { class: 'sh-form', novalidate: true,
           onsubmit: async function (e) {
@@ -20595,7 +21592,7 @@
      Budget, Crew writes, so their pay lands on the Members line or the Crew
      line from the start. Left out, nothing is written and the title decides,
      as before (G.isMember). */
-  async function addToCrewExpenses(tourId, name, tourRole, email, member) {
+  async function addToCrewExpenses(tourId, name, tourRole, email, member, ridesBus) {
     var t = getTour(tourId);
     var nm = String(name || '').trim();
     if (!t || !nm || NOT_CREW.test(String(tourRole || '')) || crewListed(t, nm, email)) return false;
@@ -20603,6 +21600,10 @@
     var row = { name: nm, title: String(tourRole || '').trim(), pay: 0,
       email: String(email || '').trim().toLowerCase(), createdAt: Date.now() };
     if (member === true || member === false) row.member = member;
+    // "Riding on the bus?" (0150): riding is the rule, so only a no is kept.
+    // The doc holds the answer too, so a database without the bus column yet
+    // (a build ahead of its migration) loses nothing.
+    if (ridesBus === false) row.ridesBus = false;
     patch.crew[newId()] = row;
     patch.crewSeen[crewSeenKey(nm, email)] = true;
     return api.update(tourId, patch);
@@ -20853,6 +21854,12 @@
       var lastI = inp('text', 'Last name', 30);
       var emailI = inp('email', 'Email', 120, { inputmode: 'email', 'aria-label': 'Email to invite' });
       var phoneI = inp('tel', 'Phone number', 30, { inputmode: 'tel', 'aria-label': 'Phone number' });
+      // "Are they riding on the bus?" (0150): yes is the rule. A no keeps
+      // them off the bus list: not counted, not listed, no green.
+      var ridesBus = true;
+      var busAsk = busOn() ? h('div', { class: 'bus-ask' },
+        h('span', { class: 'bus-ask-l' }, 'Riding on the bus?'),
+        segmented(['YES', 'NO'], 0, function (i) { ridesBus = i === 0; }, 'Riding on the bus?')) : null;
       // Crew, or (the tour's creator only) a Manager.
       var lvlBox = h('div', null);
       var drawLevel = function () {
@@ -20889,8 +21896,8 @@
           sendBtn.disabled = true;
           try {
             var status = await B.invite(tourId, email, owns ? role : 'viewer', name, String(phoneI.value || '').trim(),
-              { first: first, last: last, tourRole: tourRole });
-            await addToCrewExpenses(tourId, name, tourRole, email, asMember);
+              { first: first, last: last, tourRole: tourRole, ridesBus: ridesBus });
+            await addToCrewExpenses(tourId, name, tourRole, email, asMember, ridesBus);
             invited(name);
             // (True whether or not they have agreed to the documents yet: their seat on the tour waits for that.)
             if (status === 'existing') setTimeout(function () { toast(first + ' already has an account. The tour shows up the next time they open Greenroom.'); }, 1700);
@@ -20902,6 +21909,7 @@
         emailI,
         phoneI,
         roleBtn,
+        busAsk,
         owns
           ? h('div', { style: 'display:grid;gap:10px;margin-top:10px' }, lvlBox,
               h('button', { class: 'btn primary block', type: 'submit' }, 'Invite'))
@@ -22850,7 +23858,10 @@
           o.onPick(e.target.value || null);
         } });
       sel.append(h('option', { value: '' }, o.noneLabel || 'Pick a category'));
-      cats(fresh === true).forEach(function (c) {
+      // Alphabetical, wherever a category is picked (Devin, 2026-10-15).
+      cats(fresh === true).slice().sort(function (a, b) {
+        return String(a.label).localeCompare(String(b.label));
+      }).forEach(function (c) {
         sel.append(h('option', { value: c.key }, c.label));
       });
       sel.append(h('option', { value: '__new' }, '+ New category\u2026'));

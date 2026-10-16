@@ -733,6 +733,203 @@ shim = r"""<script>
     emit();
   };
   try { if (/[?&]fan\b/.test(String(location.search || ''))) window.__harness.fan(); } catch (e) { /* no address to read */ }
+  /* ---- BUS CHECK IN (0150): the button on Today, its sheet, the bus list ----
+     Everyone joined on the crew list rides unless their row says ridesBus:
+     false; each person's word for today sits in __harness.busStates
+     ({ userId: { state: 'on' | 'off', at } }). This phone's account is
+     u-devin: its On Bus / Off Bus taps land there and poke 'bus', the way
+     the database pokes every phone on the tour, so open pages draw again by
+     themselves.
+       __harness.bus()      tonight's Austin show gets a bus call half an hour
+                            from now, four ride the bus (Jeff Mora and Dana
+                            Cole join the seeded crew; Tasha hasn't signed up,
+                            so she isn't counted), and two of the four are on:
+                            the button on Today goes green (bus call near, not
+                            everyone on). Or open the page with ?bus. Tap On
+                            Bus on all four... there is only your own tap, so
+                            set the others by hand: __harness.busStates['u-jeff']
+                            = { state: 'off', at: new Date().toISOString() };
+                            __harness.poke('bus') and the button goes green
+                            again (someone stepped off at a stop).
+       __harness.busStates  every word said today; empty it ({}) then poke
+                            'bus' for "no word yet" all round.
+       __harness.busOff = true   the probe answers as with no table (a build
+                            ahead of its migration): no button on Today and no
+                            "Riding on the bus?" on the invite form.
+     An invite's "Riding on the bus?" answer lands on its __harness.crew row
+     as ridesBus (false keeps them off the list) and rides in
+     __harness.invited as each row's fifth entry. */
+  window.__harness.bus = function () {
+    var H = window.__harness;
+    var at = new Date(Date.now() + 30 * 60e3);
+    var hr = at.getHours() % 12 || 12, mm = ('0' + at.getMinutes()).slice(-2);
+    tours.t1.shows.s1.daySheet.busCall = hr + ':' + mm + (at.getHours() >= 12 ? 'PM' : 'AM');
+    [['u-jeff', 'Jeff Mora', 'FOH Engineer'], ['u-dana', 'Dana Cole', 'Merch']].forEach(function (x) {
+      if (!H.crew.some(function (m) { return m.userId === x[0]; })) {
+        H.crew.push({ owner: false, role: 'viewer', userId: x[0], name: x[1], email: x[0] + '@example.com',
+          invitedEmail: x[0] + '@example.com', phone: '', tourRole: x[2], joined: true });
+      }
+    });
+    var now = new Date().toISOString();
+    H.busStates = { 'u-brent': { state: 'on', at: now }, 'u-jeff': { state: 'on', at: now } };
+    H.poke('bus');
+    return 'bus call ' + tours.t1.shows.s1.daySheet.busCall;
+  };
+  try { if (/[?&]bus\b/.test(String(location.search || ''))) window.__harness.bus(); } catch (e) { /* no address to read */ }
+  /* ---- BUYOUTS (0151): the Overview's BUYOUT ALERT ticks, and MY PAY's BUYOUTS tab ----
+     The database table buyout_tracks is __harness.buyoutTicks here
+     ([{ tourId, showId, userId, at }]): one row = this person received the
+     buyout that show logged. The app's arithmetic (who is owed, the green
+     state) runs against the tour document and the crew list, as on the real
+     thing. This phone's account is u-devin; a tick or an undo pokes 'buyout',
+     the way the database pokes the ticked person's phone.
+       __harness.buyouts()  puts buyout money on the two played shows (Dallas
+                            $1,200 and Houston $900), ticks everyone joined on
+                            Dallas and nobody on Houston, and pokes. The
+                            BUYOUT ALERT on the Overview goes green (Houston
+                            still has people waiting); tapping it opens the
+                            tick list, each show opening to its people. MY PAY
+                            gains the BUYOUTS tab: Dallas "Received", Houston
+                            "Not yet". Or open the page with ?buyouts.
+                            With ?crew too, the button and the tick list stay
+                            away and only the tab shows, as for Crew.
+       __harness.buyoutTicks  every tick; empty it ([]) then poke 'buyout'
+                            and nobody has theirs.
+       __harness.buyoutsOff = true   the probe answers as with no table (a
+                            build ahead of its migration): the BUYOUT ALERT
+                            keeps its old document-only ways and MY PAY shows
+                            no third tab. */
+  window.__harness.buyouts = function () {
+    var H = window.__harness;
+    tours.t1.shows.s0.income = Object.assign({}, tours.t1.shows.s0.income, { buyouts: 1200 });
+    tours.t1.shows.s0.loggedAt = tours.t1.shows.s0.loggedAt || 1;
+    tours.t1.shows.s00.income = Object.assign({}, tours.t1.shows.s00.income, { buyouts: 900 });
+    tours.t1.shows.s00.loggedAt = tours.t1.shows.s00.loggedAt || 1;
+    var now = new Date().toISOString();
+    var joined = (H.crew || []).filter(function (m) { return m.joined && m.userId; });
+    H.buyoutTicks = joined.map(function (m) { return { tourId: 't1', showId: 's0', userId: m.userId, at: now }; });
+    H.poke('buyout');
+    return 'Dallas tracked for ' + joined.length + ', Houston for nobody';
+  };
+  try { if (/[?&]buyouts\b/.test(String(location.search || ''))) window.__harness.buyouts(); } catch (e) { /* no address to read */ }
+  /* ---- TO DO LISTS (0152): the artist page's section, and "Your To Do List" on the profile ----
+     The database tables todo_items and todo_invites are __harness.todoItems
+     ([{ id, artistId, cat, body, assignedTo, due, doneAt, createdBy, createdAt }])
+     and __harness.todoInvites ([{ artistId, userId, invitedBy, at }]) here.
+     Who sees a list follows the database's rule: the page's runner, its
+     Members, and the invited; a task also reaches the person it was handed
+     to, wherever they stand. This phone's account is u-devin.
+       __harness.todos()    two lists get tasks: I See Stars (the page the
+                            test person runs; studio, business management,
+                            tour and merch tasks, one of them Brent's and
+                            past due, one done, one handed to the test
+                            person) and Opener Band (a page somebody else
+                            runs, the test person invited onto its list with
+                            a task of their own there too), then a 'todo'
+                            poke lands, the way the database tells an
+                            assignee. The I See Stars page grows its To Do
+                            List section and the profile its To Do List tab.
+                            Or open the page with ?todos.
+       __harness.todoItems / __harness.todoInvites   every row; change them
+                            by hand, then __harness.poke('todo') and every
+                            open list draws again by itself.
+       __harness.todosOff = true   the probe answers as with no table (a
+                            build ahead of its migration): no section on any
+                            artist page and no tab on the profile. */
+  // Their name the way the real list reads it back (the profiles table here
+  // is the people map).
+  function todoName(uid) {
+    var P = (window.GR_BACKEND && window.GR_BACKEND.people) || {};
+    return (P[uid] && P[uid].name) || 'Someone';
+  }
+  // Who may see an artist's list, the database's own rule: the page's
+  // runner, its current Members, and the invited.
+  function todoCanSee(artistId) {
+    var H = window.__harness;
+    var a = (H.acts || []).filter(function (x) { return x.id === artistId; })[0];
+    if (a && !a.notMine) return true;
+    if (a && (a.members || []).some(function (m) { return m.userId === 'u-devin' && m.kind === 'band' && !m.leftAt; })) return true;
+    return (H.todoInvites || []).some(function (v) { return v.artistId === artistId && v.userId === 'u-devin'; });
+  }
+  function todoOut(r) {
+    return { id: r.id, artistId: r.artistId, cat: r.cat, body: r.body, assignedTo: r.assignedTo || null,
+      assignedName: r.assignedTo ? todoName(r.assignedTo) : '', due: r.due || null, doneAt: r.doneAt || null,
+      createdBy: r.createdBy, createdAt: r.createdAt };
+  }
+  window.__harness.todos = function () {
+    var H = window.__harness, iss = issPage(false);
+    // The second list: Opener Band's page, run by somebody else, with the
+    // test person invited onto its list and nothing else of the page.
+    var ob = (H.acts || []).filter(function (a) { return /opener band/i.test(a.name || ''); })[0];
+    if (!ob) {
+      H.acts = H.acts || [];
+      ob = { id: 'actOB', handle: 'openerband', name: 'Opener Band', avatar: '', bio: '', notMine: true,
+        members: [{ userId: 'u-jeff', kind: 'band', role: 'Vocals', endorsed: true }] };
+      H.acts.push(ob);
+    }
+    var day = function (n) { return ymd(new Date(Date.now() + n * 864e5)); };
+    var now = new Date().toISOString();
+    H.todoInvites = [{ artistId: ob.id, userId: 'u-devin', invitedBy: 'u-jeff', at: now },
+      { artistId: iss.id, userId: 'u-ana', invitedBy: 'u-devin', at: now }];
+    H.todoItems = [
+      { id: 1, artistId: iss.id, cat: 'studio', body: 'Book two days at the studio for vocal comps', assignedTo: null, due: day(6), doneAt: null, createdBy: 'u-devin', createdAt: now },
+      { id: 2, artistId: iss.id, cat: 'business management', body: 'Send the W-9 to the Austin promoter', assignedTo: 'u-brent', due: day(-2), doneAt: null, createdBy: 'u-devin', createdAt: now },
+      { id: 3, artistId: iss.id, cat: 'tour', body: 'Advance the Phoenix show: doors, curfew, parking', assignedTo: null, due: day(2), doneAt: null, createdBy: 'u-brent', createdAt: now },
+      { id: 4, artistId: iss.id, cat: 'merch', body: 'Reorder medium tees before San Antonio', assignedTo: 'u-devin', due: day(1), doneAt: null, createdBy: 'u-brent', createdAt: now },
+      { id: 5, artistId: iss.id, cat: 'other', body: 'Thank the Dallas street team', assignedTo: null, due: null, doneAt: now, createdBy: 'u-devin', createdAt: now },
+      { id: 6, artistId: ob.id, cat: 'tour', body: 'Share the trailer measurements with the openers', assignedTo: 'u-devin', due: day(3), doneAt: null, createdBy: 'u-jeff', createdAt: now },
+      { id: 7, artistId: ob.id, cat: 'other', body: 'Collect sizes for the crew hoodies', assignedTo: null, due: null, doneAt: null, createdBy: 'u-jeff', createdAt: now }
+    ];
+    H.todoNext = 8;
+    H.poke('todo');
+    return 'two lists seeded, one task assigned to the test person on each';
+  };
+  try { if (/[?&]todos\b/.test(String(location.search || ''))) window.__harness.todos(); } catch (e) { /* no address to read */ }
+  /* ---- FAVORITE LOCAL SPOTS (0153): the profile's Spots tab, and PLACES RECOMMENDED BY TOUR on the day sheet ----
+     The database table local_spots is __harness.spotRows here
+     ([{ id, userId, tourId, city, name, kind, note, createdAt }]). The
+     profile tab holds the test person's own rows (u-devin); the day sheet's
+     PLACES RECOMMENDED BY TOUR holds every row pinned to the open tour whose
+     city keys like the day's city (GR.roadCityKey, the counting rules' own
+     spelling), with each saver's first name.
+       __harness.spots()    seeds tonight's Austin with places from two
+                            people: two of the test person's (one shared with
+                            the tour, one kept to themselves) and two of
+                            Brent's (both shared), plus one of the test
+                            person's in Phoenix for the later night. The
+                            profile grows its Spots tab rows and tonight's
+                            day sheet its PLACES RECOMMENDED BY TOUR block
+                            (three places: Devin's tacos and Brent's two;
+                            the unshared coffee shop stays off it). Or open
+                            the page with ?spots.
+       __harness.spotRows   every row; change them by hand, then
+                            __harness.poke('spots') and every open page draws
+                            again by itself.
+       __harness.spotsOff = true   the probe answers as with no table (a
+                            build ahead of its migration): no Spots tab on
+                            the profile and no block on any day sheet. */
+  // A row the way the real backend hands one over (the key worked out from
+  // the city with the one rule, as the database's trigger keeps it).
+  function spotOut(r) {
+    return { id: r.id, tourId: r.tourId || null, city: r.city, cityKey: window.GR.roadCityKey(r.city),
+      name: r.name, kind: r.kind, note: r.note || '', createdAt: r.createdAt };
+  }
+  window.__harness.spots = function () {
+    var H = window.__harness;
+    var now = new Date().toISOString();
+    H.spotRows = [
+      { id: 1, userId: 'u-devin', tourId: 't1', city: 'Austin, TX', name: 'Veracruz All Natural', kind: 'food', note: 'Migas tacos, ten minutes from the venue', createdAt: now },
+      { id: 2, userId: 'u-devin', tourId: null, city: 'Austin, TX', name: 'Houndstooth Coffee', kind: 'coffee', note: 'Quiet in the morning', createdAt: now },
+      { id: 3, userId: 'u-brent', tourId: 't1', city: 'Austin, TX', name: 'Hotel Vegas', kind: 'bar', note: 'Patio after load out', createdAt: now },
+      { id: 4, userId: 'u-brent', tourId: 't1', city: 'Austin, TX', name: 'Barton Springs Pool', kind: 'to do', note: 'Cold water, best on a day off', createdAt: now },
+      { id: 5, userId: 'u-devin', tourId: 't1', city: 'Phoenix, AZ', name: 'The Churchill', kind: 'club', note: '', createdAt: now }
+    ];
+    H.spotNext = 6;
+    // (No word of its own on the real thing; here the nudge just redraws open pages.)
+    H.poke('spots');
+    return 'Austin seeded from two people, one Phoenix spot for the later night';
+  };
+  try { if (/[?&]spots\b/.test(String(location.search || ''))) window.__harness.spots(); } catch (e) { /* no address to read */ }
   try {
     var offAsk = /[?&]offtour=(next|none|travel)\b/.exec(String(location.search || ''));
     if (offAsk) window.__harness.offTour(offAsk[1]);
@@ -761,6 +958,61 @@ shim = r"""<script>
     return Promise.resolve(out);
   }
   window.__harness.members = []; window.__harness.invited = []; window.__harness.notified = []; window.__harness.notes = [];
+  /* ---- VENUE AND SHOW RATINGS (0154): stars on a venue's page, and the band's word on a night ----
+     A venue page shows its rating line ("8.3 from 3 ratings", or "No ratings
+     yet") and a Rate this venue button once the card carries rating keys,
+     which this fake backend always sends (see venueCard above). The band's
+     Rate the show row sits on the Overview after doors, for the tour's owner
+     (this phone, u-devin) and the artist's Members; its sheet holds Crowd,
+     Venue and City, the band's averages, and the app's own merch score (a
+     night against the tour's average; the seeded Dallas night has merch
+     logged, tonight's Austin show gains some below).
+       __harness.venue()    opens the way to a rated venue page: Mohawk
+                            (Austin) becomes a page with three people's stars
+                            on it, 9, 8 and 8 (8.3 from 3 ratings). Find it in
+                            Search ("Mohawk"), under Venues; your own stars
+                            land in __harness.venueStars['v-mohawk'] and move
+                            the average on the page. Or open with ?venue.
+       __harness.rate()     tonight's Austin show reads as after doors (its
+                            day sheet's doors time moves to half an hour ago),
+                            merch is logged on it ($1,400 on a tour whose
+                            nights average $1,150 with it: the app scores it
+                            6), and two band
+                            rows land in __harness.showStars, so the sheet
+                            shows "The band so far". The Overview then has the
+                            quiet Rate the show row. Or open with ?rate.
+       __harness.venueStars every venue's stars ({ venueId: { userId: stars } });
+       __harness.showStars  every night's band rows; __harness.rateCalls what
+                            this phone wrote.
+       __harness.ratingsOff = true   the probe answers as with no tables (a
+                            build ahead of its migration): no rating line, no
+                            buttons, no sheets, anywhere. */
+  window.__harness.venue = function () {
+    var H = window.__harness;
+    H.places = H.places || [];
+    if (!H.places.some(function (p) { return p.kind === 'venue' && p.id === 'v-mohawk'; })) {
+      H.places.push({ id: 'v-mohawk', kind: 'venue', name: 'Mohawk', city: 'Austin', cc: 'US' });
+    }
+    H.venueStars = H.venueStars || {};
+    H.venueStars['v-mohawk'] = { 'u-amy': 9, 'u-ben': 8, 'u-cal': 8 };
+    return 'v-mohawk (Search for Mohawk, open it under Venues)';
+  };
+  window.__harness.rate = function () {
+    var H = window.__harness;
+    var at = new Date(Date.now() - 30 * 60e3);
+    var hr = at.getHours() % 12 || 12, mm = ('0' + at.getMinutes()).slice(-2);
+    tours.t1.shows.s1.daySheet.doors = hr + ':' + mm + (at.getHours() >= 12 ? 'PM' : 'AM');
+    tours.t1.shows.s1.loggedAt = tours.t1.shows.s1.loggedAt || 1;
+    tours.t1.shows.s1.income = Object.assign({}, tours.t1.shows.s1.income, { merch: 1400 });
+    var now = new Date().toISOString();
+    H.showStars = (H.showStars || []).filter(function (r) { return !(r.tourId === 't1' && r.showId === 's1' && r.userId !== 'u-devin'); });
+    H.showStars.push({ tourId: 't1', showId: 's1', userId: 'u-amy', crowd: 8, venue: 7, city: 9, at: now },
+      { tourId: 't1', showId: 's1', userId: 'u-ben', crowd: 6, venue: 7, city: null, at: now });
+    emit();
+    return 'doors ' + tours.t1.shows.s1.daySheet.doors + ', merch 1400 logged, two band rows on tonight';
+  };
+  try { if (/[?&]venue\b/.test(String(location.search || ''))) window.__harness.venue(); } catch (e) { /* no address to read */ }
+  try { if (/[?&]rate\b/.test(String(location.search || ''))) window.__harness.rate(); } catch (e) { /* no address to read */ }
   /* ---- THE GUEST LIST: rows beside the tour, as on the real backend ----
      Tonight's Austin show (s1) starts with three names in __harness.guests: one this phone put on
      (added_by u-devin), one Brent put on, and one old row with no added_by at all. Tap a name to
@@ -1781,6 +2033,183 @@ shim = r"""<script>
     unfollowArtist: function (id) { var H = window.__harness; H.artistFollows = (H.artistFollows || []).filter(function (x) { return x !== id; }); return Promise.resolve(); },
     checkedIn: function (tourId, date) { return (window.__harness.checkins || []).indexOf(tourId + '|' + date) >= 0; },
     checkIn: function (tourId, date) { var H = window.__harness; H.checkins = (H.checkins || []).concat([tourId + '|' + date]); return Promise.resolve(); },
+    // Bus Check in (0150), in memory: see BUS CHECK IN near LIVE WITHOUT A
+    // RESTART. Riders are the joined crew whose row doesn't say ridesBus
+    // false; each person's word for today sits in __harness.busStates.
+    busOn: function () { return !window.__harness.busOff; },
+    busList: function () {
+      var H = window.__harness, st = H.busStates || (H.busStates = {});
+      var riders = (H.crew || []).filter(function (m) { return m.joined && m.userId && m.ridesBus !== false; });
+      return { day: ymd(new Date()), people: riders.map(function (m) {
+        var w = st[m.userId];
+        return { userId: m.userId, name: m.name, state: w ? w.state : '', at: w ? w.at : null };
+      }) };
+    },
+    busSet: function (tourId, state) {
+      var H = window.__harness, st = H.busStates || (H.busStates = {});
+      st['u-devin'] = { state: state === 'on' ? 'on' : 'off', at: new Date().toISOString() };
+      // As the database does it: everyone on the tour hears a 'bus' poke.
+      window.__harness.poke('bus');
+      return Promise.resolve();
+    },
+    // Buyout ticks (0151), in memory: see BUYOUTS near LIVE WITHOUT A
+    // RESTART. The rows live in __harness.buyoutTicks; a Crew phone (asCrew)
+    // only reads its own, the way the database's policy cuts them.
+    buyoutsOn: function () { return !window.__harness.buyoutsOff; },
+    buyoutTracks: function (tourId) {
+      var H = window.__harness;
+      return (H.buyoutTicks || []).filter(function (r) {
+        return r.tourId === tourId && (!H.asCrew || r.userId === 'u-devin');
+      }).map(function (r) { return { showId: r.showId, userId: r.userId, at: r.at }; });
+    },
+    buyoutTrack: function (tourId, showId, userId) {
+      var H = window.__harness, ticks = H.buyoutTicks || (H.buyoutTicks = []);
+      if (H.asCrew) return Promise.reject(new Error('permission'));
+      if (!ticks.some(function (r) { return r.tourId === tourId && r.showId === showId && r.userId === userId; })) {
+        ticks.push({ tourId: tourId, showId: showId, userId: userId, at: new Date().toISOString() });
+      }
+      // As the database does it: the ticked person hears a 'buyout' poke.
+      window.__harness.poke('buyout');
+      return Promise.resolve();
+    },
+    buyoutUntrack: function (tourId, showId, userId) {
+      var H = window.__harness;
+      if (H.asCrew) return Promise.reject(new Error('permission'));
+      H.buyoutTicks = (H.buyoutTicks || []).filter(function (r) {
+        return !(r.tourId === tourId && r.showId === showId && r.userId === userId);
+      });
+      window.__harness.poke('buyout');
+      return Promise.resolve();
+    },
+    /* To Do Lists (0152), in memory: see TO DO LISTS near LIVE WITHOUT A
+       RESTART. The rows live in __harness.todoItems and __harness.todoInvites;
+       who may see a list follows the database's rule (todoCanSee above), so
+       todoList answers null for a page none of the test person's business
+       and the app draws no section there. */
+    todosOn: function () { return !window.__harness.todosOff; },
+    todoList: function (artistId) {
+      var H = window.__harness;
+      if (H.todosOff || !todoCanSee(artistId)) return null;
+      return (H.todoItems || []).filter(function (r) { return r.artistId === artistId; }).map(todoOut);
+    },
+    todoInvites: function (artistId) {
+      var H = window.__harness;
+      if (H.todosOff || !todoCanSee(artistId)) return null;
+      // An invited person is handed their own row only, the way the policy cuts them.
+      var runs = (H.acts || []).some(function (a) { return a.id === artistId && (!a.notMine ||
+        (a.members || []).some(function (m) { return m.userId === 'u-devin' && m.kind === 'band' && !m.leftAt; })); });
+      return (H.todoInvites || []).filter(function (v) { return v.artistId === artistId && (runs || v.userId === 'u-devin'); })
+        .map(function (v) { return { userId: v.userId, name: todoName(v.userId), invitedBy: v.invitedBy, at: v.at }; });
+    },
+    todoAdd: function (artistId, cat, body, more) {
+      var H = window.__harness, m = more || {};
+      // The database's cap, word for word.
+      if ((H.todoItems || []).filter(function (r) { return r.artistId === artistId && !r.doneAt; }).length >= 500) {
+        return Promise.reject(Object.assign(new Error('This list already holds 500 tasks not done. Tick some off or delete some first.'), { code: 'full' }));
+      }
+      H.todoItems = H.todoItems || [];
+      var id = H.todoNext || 100;
+      H.todoNext = id + 1;
+      var row = { id: id, artistId: artistId, cat: cat || 'other', body: String(body || '').slice(0, 300),
+        assignedTo: m.assignedTo || null, due: m.due || null, doneAt: null, createdBy: 'u-devin', createdAt: new Date().toISOString() };
+      H.todoItems.push(row);
+      // As the database does it: a task handed to somebody pokes their phone
+      // with 'todo' (never the hand that wrote it).
+      if (row.assignedTo && row.assignedTo !== 'u-devin') window.__harness.poke('todo');
+      return Promise.resolve(id);
+    },
+    todoSave: function (id, patch) {
+      var H = window.__harness, p = patch || {};
+      var row = (H.todoItems || []).filter(function (r) { return r.id === id; })[0];
+      if (!row) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      var was = row.assignedTo;
+      if ('done' in p) row.doneAt = p.done ? new Date().toISOString() : null;
+      if ('body' in p) row.body = String(p.body || '').slice(0, 300);
+      if ('cat' in p) row.cat = p.cat || 'other';
+      if ('assignedTo' in p) row.assignedTo = p.assignedTo || null;
+      if ('due' in p) row.due = p.due || null;
+      if (row.assignedTo && row.assignedTo !== was && row.assignedTo !== 'u-devin') window.__harness.poke('todo');
+      return Promise.resolve();
+    },
+    todoDrop: function (id) {
+      var H = window.__harness;
+      H.todoItems = (H.todoItems || []).filter(function (r) { return r.id !== id; });
+      return Promise.resolve();
+    },
+    todoInvite: function (artistId, userId) {
+      var H = window.__harness;
+      H.todoInvites = H.todoInvites || [];
+      if (!H.todoInvites.some(function (v) { return v.artistId === artistId && v.userId === userId; })) {
+        H.todoInvites.push({ artistId: artistId, userId: userId, invitedBy: 'u-devin', at: new Date().toISOString() });
+      }
+      return Promise.resolve();
+    },
+    todoUninvite: function (artistId, userId) {
+      var H = window.__harness;
+      H.todoInvites = (H.todoInvites || []).filter(function (v) { return !(v.artistId === artistId && v.userId === userId); });
+      return Promise.resolve();
+    },
+    // What the database's policy hands the profile tab: every task of the
+    // lists this account may see, plus any task handed to it elsewhere.
+    myTodos: function () {
+      var H = window.__harness;
+      if (H.todosOff) return null;
+      var actName = function (artistId) {
+        var a = (H.acts || []).filter(function (x) { return x.id === artistId; })[0];
+        return a ? a.name : 'Artist';
+      };
+      return (H.todoItems || []).filter(function (r) { return todoCanSee(r.artistId) || r.assignedTo === 'u-devin'; })
+        .map(function (r) { var it = todoOut(r); it.artistName = actName(r.artistId); return it; });
+    },
+    /* Favorite Local Spots (0153), in memory: see FAVORITE LOCAL SPOTS near
+       TO DO LISTS. The rows live in __harness.spotRows; the test person's
+       account is u-devin, and tourSpots keys the day's city the way the app
+       does (GR.roadCityKey), so what matches here matches the real table. */
+    spotsOn: function () { return !window.__harness.spotsOff; },
+    mySpots: function () {
+      var H = window.__harness;
+      if (H.spotsOff) return null;
+      return (H.spotRows || []).filter(function (r) { return r.userId === 'u-devin'; }).map(spotOut);
+    },
+    spotAdd: function (p) {
+      var H = window.__harness, q = p || {};
+      H.spotRows = H.spotRows || [];
+      var id = H.spotNext || 100;
+      H.spotNext = id + 1;
+      H.spotRows.push({ id: id, userId: 'u-devin', tourId: q.tourId || null, city: String(q.city || '').slice(0, 60),
+        name: String(q.name || '').slice(0, 80), kind: q.kind || 'other', note: String(q.note || '').slice(0, 240),
+        createdAt: new Date().toISOString() });
+      return Promise.resolve(id);
+    },
+    spotSave: function (id, patch) {
+      var H = window.__harness, p = patch || {};
+      var row = (H.spotRows || []).filter(function (r) { return r.id === id && r.userId === 'u-devin'; })[0];
+      if (!row) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      if ('city' in p) row.city = String(p.city || '').slice(0, 60);
+      if ('name' in p) row.name = String(p.name || '').slice(0, 80);
+      if ('kind' in p) row.kind = p.kind || 'other';
+      if ('note' in p) row.note = String(p.note || '').slice(0, 240);
+      if ('tourId' in p) row.tourId = p.tourId || null;
+      return Promise.resolve();
+    },
+    spotDrop: function (id) {
+      var H = window.__harness;
+      H.spotRows = (H.spotRows || []).filter(function (r) { return !(r.id === id && r.userId === 'u-devin'); });
+      return Promise.resolve();
+    },
+    tourSpots: function (tourId, cityKey) {
+      var H = window.__harness;
+      if (H.spotsOff) return null;
+      return (H.spotRows || []).filter(function (r) {
+        return r.tourId === tourId && window.GR.roadCityKey(r.city) === cityKey;
+      }).map(function (r) {
+        var it = spotOut(r);
+        it.userId = r.userId;
+        // Who recommends it, by first name, the way the real read answers.
+        it.who = (todoName(r.userId) || 'Someone').split(' ')[0];
+        return it;
+      });
+    },
     newGiftId: function () { return 'g' + Date.now() + Math.random().toString(36).slice(2, 6); },
     giveFlowers: function (tourId, uid, n, note, rid, cat) {
       var H = window.__harness, d = window.GR_BACKEND.flowersFor(tourId);
@@ -2607,12 +3036,20 @@ shim = r"""<script>
       var played = (H.acts || []).map(function (a, i) { return { id: a.id, name: a.name, avatar: a.avatar || '', n: 4 - Math.min(i, 3), first: '2012-04-05', last: '2024-10-12' }; })
         .concat(ghostList().filter(function (g) { return g.checked; }).map(function (g) { return { id: g.id, name: g.name, avatar: '', n: 2, first: '2015-06-20', last: '2015-06-21' }; }));
       // (As live: the card's country is a name, not the two-letter code the search row carries.)
-      return Promise.resolve({ id: p.id, name: p.name, city: p.city, region: { Austin: 'TX', Detroit: 'MI', Cleveland: 'OH', 'Lake Buena Vista': 'FL' }[p.city] || '',
+      var out = { id: p.id, name: p.name, city: p.city, region: { Austin: 'TX', Detroit: 'MI', Cleveland: 'OH', 'Lake Buena Vista': 'FL' }[p.city] || '',
         country: { US: 'United States', GB: 'United Kingdom', CA: 'Canada', IE: 'Ireland' }[p.cc] || p.cc,
         address: p.name === 'Mohawk' ? '912 Red River St, Austin, TX 78701' : '', phone: '', unclaimed: true,
         shows: played.reduce(function (n, x) { return n + x.n; }, 0), firstYear: played.length ? 2012 : null, lastYear: played.length ? 2024 : null,
         artists: played, workers: (H.placeWork || []).filter(function (x) { return x.kind === 'venue' && x.id === id; }).length,
-        myWork: w ? { role: w.role, state: w.state } : null });
+        myWork: w ? { role: w.role, state: w.state } : null };
+      // Ratings (0154) ride on the card, as venue_card sends them after the
+      // migration; with __harness.ratingsOff the card reads as 0134 made it.
+      if (!H.ratingsOff) {
+        var st = (H.venueStars || {})[id] || {}, vals = Object.keys(st).map(function (u) { return st[u]; });
+        out.rating = vals.length ? Math.round(vals.reduce(function (n, v) { return n + v; }, 0) / vals.length * 10) / 10 : null;
+        out.ratings = vals.length;
+      }
+      return Promise.resolve(out);
     },
     festivalCard: function (id) {
       var H = window.__harness, p = (H.places || []).filter(function (x) { return x.kind === 'festival' && x.id === id; })[0];
@@ -2624,6 +3061,42 @@ shim = r"""<script>
         editions: played.length ? [{ year: 2014, n: 1 }, { year: 2016, n: 1 }, { year: 2018, n: 1 }] : [],
         artists: played, workers: (H.placeWork || []).filter(function (x) { return x.kind === 'festival' && x.id === id; }).length,
         myWork: w ? { role: w.role, state: w.state } : null });
+    },
+    /* Ratings (0154), in memory. Venue stars live in __harness.venueStars
+       ({ venueId: { userId: stars } }); the band's words on a night in
+       __harness.showStars ([{ tourId, showId, userId, crowd, venue, city,
+       at }]). This phone's account is u-devin. __harness.ratingsOff = true
+       answers as with no tables (a build ahead of its migration): no rating
+       line, no sheets, and the venue card loses its rating keys. */
+    ratingsOn: function () { return !window.__harness.ratingsOff; },
+    venueRate: function (id, stars) {
+      var H = window.__harness;
+      if (H.ratingsOff) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      H.venueStars = H.venueStars || {};
+      var m = H.venueStars[id] = H.venueStars[id] || {};
+      m['u-devin'] = Math.max(1, Math.min(10, Math.round(Number(stars) || 0)));
+      (H.rateCalls = H.rateCalls || []).push({ fn: 'venueRate', args: [id, stars] });
+      return Promise.resolve();
+    },
+    myVenueRating: function (id) {
+      var H = window.__harness, m = (H.venueStars || {})[id];
+      return Promise.resolve(!H.ratingsOff && m && m['u-devin'] >= 1 ? m['u-devin'] : null);
+    },
+    showRate: function (tourId, showId, o) {
+      var H = window.__harness, p = o || {};
+      if (H.ratingsOff) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      var one = function (v) { var n = Math.round(Number(v)); return n >= 1 && n <= 10 ? n : null; };
+      H.showStars = (H.showStars || []).filter(function (r) { return !(r.tourId === tourId && r.showId === showId && r.userId === 'u-devin'); });
+      H.showStars.push({ tourId: tourId, showId: showId, userId: 'u-devin', crowd: one(p.crowd), venue: one(p.venue), city: one(p.city), at: new Date().toISOString() });
+      (H.rateCalls = H.rateCalls || []).push({ fn: 'showRate', args: [tourId, showId, p] });
+      return Promise.resolve();
+    },
+    showRatings: function (tourId) {
+      var H = window.__harness;
+      if (H.ratingsOff) return null;
+      return (H.showStars || []).filter(function (r) { return r.tourId === tourId; }).map(function (r) {
+        return { showId: r.showId, userId: r.userId, crowd: r.crowd, venue: r.venue, city: r.city, at: r.at };
+      });
     },
     /* Invite codes (0134), for a Greenroom admin: __harness.admin = false
        answers null, as it does for anyone else. Kept in __harness.codes,
@@ -2766,10 +3239,17 @@ shim = r"""<script>
     artistTourCard: function () { return Promise.resolve(null); },
     findArtists: function (text) {
       var H = window.__harness, t = String(text || '').trim().replace(/^@/, '').toLowerCase();
+      // Spelled-solid forms count too (spaces and punctuation out), so
+      // "iseestars" or "Dreambeach" finds a page whose name carries spaces.
+      var solid = function (s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); };
+      var ft = solid(t);
       var all = (H.acts || []).map(function (a) { return { id: a.id, name: a.name, handle: a.handle, avatar: a.avatar, mine: true, unclaimed: false, mbid: a.mbid || '', about: '' }; })
         .concat(ghostList().filter(function (g) { return g.checked; }).map(function (g) {
           return { id: g.id, name: g.name, handle: g.handle, avatar: '', mine: false, unclaimed: !g.owner, mbid: g.mbid, about: g.about || '' }; }));
-      return Promise.resolve(t.length < 2 ? [] : all.filter(function (a) { return a.handle.indexOf(t) === 0 || a.name.toLowerCase().indexOf(t) >= 0; }));
+      return Promise.resolve(t.length < 2 ? [] : all.filter(function (a) {
+        return a.handle.indexOf(t) === 0 || a.name.toLowerCase().indexOf(t) >= 0 ||
+          (ft.length >= 2 && (solid(a.name).indexOf(ft) >= 0 || solid(a.handle).indexOf(ft) === 0));
+      }));
     },
     findTours: function (text) {
       var t = String(text || '').trim().toLowerCase();
@@ -2826,14 +3306,16 @@ shim = r"""<script>
     invite: function (tourId, email, role, name, phone, extra) {
       var why = window.__harness.inviteFails;
       if (why) return Promise.reject(Object.assign(new Error(String(why)), { code: String(why) }));
-      window.__harness.invited.push([email, role, name, (extra || {}).tourRole || '']);
+      // (The fifth entry is the invite's "Riding on the bus?" answer, 0150.)
+      window.__harness.invited.push([email, role, name, (extra || {}).tourRole || '', (extra || {}).ridesBus !== false]);
       // As live (0133): a Manager is stored as editor + manager; anything else is crew.
       var mgr = role === 'manager' || role === 'editor';
       role = mgr ? 'editor' : 'viewer';
       window.__harness.members.push({ invited_email: email, role: role, manager: mgr, display_name: name, user_id: null });
       // Like the real crew list, which reads the same members table.
       window.__harness.crew = window.__harness.crew.concat([{ owner: false, role: role, manager: mgr, name: name || '', email: email,
-        invitedEmail: email, phone: phone || '', tourRole: (extra || {}).tourRole || '', joined: false }]);
+        invitedEmail: email, phone: phone || '', tourRole: (extra || {}).tourRole || '', joined: false,
+        ridesBus: (extra || {}).ridesBus !== false }]);
       return Promise.resolve(window.__harness.inviteStatus || 'sent');
     },
     uninvite: function (tourId, email) {

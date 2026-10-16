@@ -1278,6 +1278,20 @@
     eq(G.crewKey('  SAM  REYES!  '), 'crew:sam-reyes', 'case and junk ignored');
   });
 
+  test('a city keys the way the counting rules spell it (road_city_key)', function () {
+    eq(G.roadCityKey('Montréal'), 'montreal', 'accents off');
+    eq(G.roadCityKey('montreal'), 'montreal', 'already plain');
+    eq(G.roadCityKey('W. Hollywood'), 'west hollywood', 'a leading W. opens up');
+    eq(G.roadCityKey('Saint Paul'), 'st paul', 'Saint and St are one');
+    eq(G.roadCityKey('Wilkes-Barre'), 'wilkes barre', 'hyphens are spaces');
+    eq(G.roadCityKey('NYC'), 'new york', 'NYC is New York');
+    eq(G.roadCityKey('New York City'), 'new york', 'so is New York City');
+    eq(G.roadCityKey('Washington D.C.'), 'washington', 'Washington DC is Washington');
+    eq(G.roadCityKey('Ft. Lauderdale (sold out)'), 'ft lauderdale', 'a note in brackets goes');
+    eq(G.roadCityKey('Austin, TX'), 'austin, tx', 'the state stays part of the spelling');
+    eq(G.roadCityKey(null), '', 'nothing in, nothing out');
+  });
+
   /* ============ Tour closeout ============ */
 
   test('CSV cells with commas, quotes and lines survive intact', function () {
@@ -1446,6 +1460,29 @@
   test('shows logged before the Received box keep counting', function () {
     eq(G.calc(tourOne()).income, 73500, 'legacy income');
     eq(G.showMoneyState(tourOne().shows.r0), 'owed', 'a legacy night reads owed until both boxes are ticked');
+  });
+
+  test('merchTen: the app scores a night against the tour’s average, 5 is average, capped 1 to 10', function () {
+    eq(G.merchTen(1000, 1000), 5, 'an average night is a 5');
+    eq(G.merchTen(1600, 1000), 8, 'above average scales up');
+    eq(G.merchTen(400, 1000), 2, 'below average scales down');
+    eq(G.merchTen(5000, 1000), 10, 'capped at 10');
+    eq(G.merchTen(0, 1000), 1, 'a night with nothing never goes under 1');
+    eq(G.merchTen(1090, 1000), 5, 'rounded to the nearest whole score');
+    eq(G.merchTen(1000, 0), null, 'no average yet: no score');
+    eq(G.merchTen(null, 1000), null, 'no number for the night: no score');
+  });
+
+  test('merchNightlyAvg: only nights with merch logged set the yardstick', function () {
+    var t = { shows: keyed([
+      { loggedAt: 1, income: { guarantee: 500, merch: 900 } },
+      { loggedAt: 1, income: { guarantee: 500, merch: 1100 } },
+      { loggedAt: 1, income: { guarantee: 500 } },           // no merch logged: not a merch night
+      { income: { merch: 4000 } }                            // not logged yet: not counted
+    ]) };
+    eq(G.merchNightlyAvg(t), 1000, 'the average of the two merch nights');
+    eq(G.merchTen(1100, G.merchNightlyAvg(t)), 6, 'the better night scores above a 5');
+    eq(G.merchNightlyAvg({ shows: {} }), 0, 'no nights: no yardstick');
   });
 
   test('a show is owed until BOTH the guarantee and the merch are received', function () {

@@ -1247,6 +1247,30 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .ds-rail.gl-rail > :last-child { margin-right: 0; }
 .gl-dock-btns { display: flex; align-items: center; justify-content: space-between; padding: 4px 18px 0; }
 .gl-dock-btns .add-mini { margin: 0; }
+.gl-dock-btns .crew-invite { margin: 0; }
+/* MY PAY's bottom buttons, a size down (Devin, 2026-10-15). */
+.pt-two.mp .pf-btn { min-height: 34px; padding: 0 10px; font-size: 13px; }
+/* Guest list: the Invite crew pill for Add guest and Import list, one round
+   share button between them opening the phone's own share sheet. */
+.gl-trio { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.gl-trio.pinned { position: fixed; left: 0; right: 0; bottom: calc(55px + env(safe-area-inset-bottom, 0px)); z-index: 39; }
+.gl-share { appearance: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); color: var(--pos); flex: none; }
+.gl-share:active { transform: translateY(1px); }
+/* The small glowing mark beside a name while its person is on the road. */
+/* The Today and Overview day counts, one row: both numbers green, same size,
+   each centred over one line of words (Devin, 2026-10-15). */
+.pt-counts { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin: 2px 2px 10px; }
+.pt-cnt { display: flex; flex-direction: column; align-items: center; gap: 1px; margin: 0; min-width: 86px; }
+.pt-cnt.empty { min-width: 86px; }
+.pt-cnt .num { font-size: 26px; font-weight: 800; line-height: 1; color: var(--pos); }
+.pt-cnt-l { font-size: 10.5px; color: var(--ink-2); white-space: nowrap; }
+/* Settings wears the menu's rows; its danger row stays red. */
+.st-sheet .mn-group { margin: 0 -14px; }
+.mn-row.mn-danger .mn-label, .mn-row.mn-danger .mn-ic { color: var(--neg); }
+.vp-ontour { flex: none; display: inline-block; margin-left: 2px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--pos); color: var(--pos); font-size: 9px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; animation: tasksglow 2.2s ease-in-out infinite; }
 
 .ds-amens { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .ds-amen { padding: 5px 11px; border-radius: 999px; font-size: 13px; font-weight: 600; }
@@ -1969,7 +1993,7 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .fw-dot.on { opacity: 1; filter: none; }
 .fw-mine-t { margin: 9px 0 0; font-size: 14px; line-height: 1.35; color: var(--ink-2); }
 .fw-list { position: relative; z-index: 1; list-style: none; margin: 6px 0 0; padding: 0; }
-.fw-card { display: block; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+.fw-card { display: block; padding: 15px 2px; border-bottom: 1px solid var(--line); }
 .fw-main { display: flex; align-items: center; gap: 14px; }
 /* The person's name is the handle that opens their flowers underneath. */
 .fw-name-btn { appearance: none; border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
@@ -1983,17 +2007,17 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .fw-face { flex: none; appearance: none; border: 0; background: none; padding: 0; margin: 0; cursor: pointer; border-radius: 50%; }
 .pf-photo.fw-photo { width: 56px; height: 56px; font-size: 21px; }
 .fw-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.fw-name { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: 14px; font-weight: 700;
+.fw-name { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: 13px; font-weight: 700;
   letter-spacing: .01em; text-transform: uppercase; }
 .fw-name-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fw-you { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2);
   font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: none; }
-.fw-role { margin: -3px 0 0; font-size: 12px; color: var(--ink-3); }
+.fw-role { margin: -3px 0 0; font-size: 11px; color: var(--ink-3); }
 .fw-stats { display: flex; justify-content: space-between; gap: 8px; max-width: 250px; }
 .fw-stat { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.fw-n { display: inline-flex; align-items: center; gap: 3px; font-size: 14.5px; font-weight: 700; line-height: 1.2; color: var(--ink); }
-.fw-l { font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
-.fw-emo { font-size: 13px; line-height: 1; }
+.fw-n { display: inline-flex; align-items: center; gap: 3px; font-size: 13px; font-weight: 700; line-height: 1.2; color: var(--ink); }
+.fw-l { font-size: 10.5px; color: var(--ink-2); white-space: nowrap; }
+.fw-emo { font-size: 12px; line-height: 1; }
 /* The laurels, the way a social app crowns a favourite: a green branch either side. */
 .laurels { display: inline-flex; align-items: center; gap: 1px; color: var(--pos); }
 .lau svg { display: block; width: 8px; height: 16px; fill: currentColor; }
@@ -2003,6 +2027,11 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .fw-give { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 28px; margin-top: 2px; padding: 0 12px;
   border: 0; border-radius: 9px; background: var(--brand); color: var(--on-brand); font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; }
 .fw-give:disabled { background: var(--surface-2); color: var(--ink-3); cursor: default; }
+/* Your own card: the year's flowers you still have to give, where the others have Give. */
+.fw-left.sm { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; height: 24px; margin-top: 2px;
+  padding: 0 10px; border-radius: 9px; background: var(--surface-2); color: var(--ink-2); font-size: 12px; font-weight: 650; }
+/* The road badge stays under the name in size (Devin, 2026-10-15). */
+.fw-name .hist-tier.sm { font-size: 8.5px; padding: 1px 5px; }
 .fw-h { position: relative; z-index: 1; margin: 28px 2px 6px; font-size: 16px; font-weight: 700; }
 .fw-feed { position: relative; z-index: 1; list-style: none; margin: 0; padding: 0; }
 .fw-gift { display: flex; align-items: flex-start; gap: 12px; padding: 11px 2px; border-bottom: 1px solid var(--line); }
@@ -2105,6 +2134,16 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .plc-kind { margin: 0; font-size: 15px; line-height: 1.35; color: var(--ink-2); }
 .plc-count { margin: 6px 0 0; font-size: 15px; font-weight: 600; color: var(--ink); }
 .plc-addr { display: block; margin: 6px 0 0; font-size: 14px; color: var(--ink-2); text-decoration: underline; overflow-wrap: anywhere; }
+/* Ratings (0154): the venue page's rating line, and the 1-10 row both rating
+   sheets share (ten equal buttons, so it holds at 375px). */
+.plc-rating { font-weight: 500; color: var(--ink-2); }
+.rt-row { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin: 6px 0 14px; }
+.rt-b { appearance: none; height: 36px; padding: 0; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--surface); color: var(--ink-2); font: inherit; font-size: 14px; }
+.rt-b.on { border-color: var(--pos); background: var(--pos-soft); color: var(--pos); font-weight: 700; }
+.rt-band { margin: 2px 0 10px; }
+.rt-band .note { margin: 4px 0 0; }
+.ov-rate { margin-top: 10px; }
 .plc-h { position: relative; z-index: 1; margin: 0 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
 .plc-artists { position: relative; z-index: 1; }
 .pf-btn.plc-still { cursor: default; }
@@ -2165,7 +2204,22 @@ button.ivc-row:active { background: var(--surface-2); }
   background: var(--brand); color: var(--on-brand); cursor: pointer; animation: bopulse 1.4s ease-in-out infinite;
   box-shadow: 0 0 16px color-mix(in oklab, var(--brand), transparent 40%); }
 .ci-btn.done { animation: none; background: var(--surface-2); color: var(--ink-2); box-shadow: none; cursor: default; }
+/* Bus Check in: the same button, green only at bus call (while a seat on the
+   bus still isn't on) or when someone stepped off at a stop; this quiet look
+   the rest of the day. */
+.ci-btn.quiet { animation: none; background: var(--surface-2); color: var(--ink); box-shadow: none; }
 @media (prefers-reduced-motion: reduce) { .ci-btn { animation: none; } }
+/* The Bus Check in sheet: On Bus / Off Bus side by side, the count, then
+   everyone's word. And the invite form's small "Riding on the bus?" ask. */
+.bus-two { display: flex; gap: 8px; margin: 4px 0 12px; }
+.bus-two .bus-big { flex: 1 1 0; min-height: 56px; font-size: 16px; font-weight: 700; }
+.bus-count { margin: 2px 0 10px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.bus-word { flex: none; font-size: 13px; font-weight: 700; color: var(--ink-3); }
+.bus-word.on { color: var(--pos); }
+.bus-word.off { color: var(--neg); }
+.bus-ask { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.bus-ask-l { font-size: 13px; color: var(--ink-2); }
+.bus-ask .seg { flex: 0 0 auto; margin: 0; }
 /* Checked in, or logged: the horns pop in, rock, and throw a ring of smaller ones. */
 .hs-horn { position: relative; display: grid; place-items: center; font-size: 88px; line-height: 1;
   filter: drop-shadow(0 0 24px color-mix(in oklab, var(--pos), transparent 45%)); }
@@ -3361,7 +3415,7 @@ button.fl-row { cursor: pointer; }
 /* "Need a Reimbursement?" on MY PAY (Devin, 2026-10-15): one green button,
    centered, with what's waiting in a quiet line under it. */
 .rb-need { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 4px 0 16px; }
-.rb-need-btn { min-height: 46px; padding: 0 26px; font-size: 15px; }
+.rb-need-btn { min-height: 36px; padding: 0 18px; font-size: 13.5px; }
 .rb-need-hint { margin: 0; text-align: center; }
 /* Your own asks, under the form. */
 .rb-sheet .sh-h3 { margin-top: 20px; }
@@ -3445,6 +3499,23 @@ button.fl-row { cursor: pointer; }
 .tf-row-x { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .tf-row-x .hint { display: block; }
 .tf-paste { width: 100%; min-height: 140px; resize: vertical; margin-top: 10px; }
+/* To Do Lists (0152): the section on an artist's page and the profile's tab. */
+.td-block { margin-top: 18px; }
+.td-cat { margin: 14px 0 0; font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); }
+.td-ah { margin-top: 20px; }
+.td-list { list-style: none; margin: 0; padding: 0; }
+.td-li { border-bottom: 1px solid var(--line-2); }
+.td-li .fl-row { min-height: 50px; padding: 7px 2px; gap: 12px; }
+.td-tick { flex: none; width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--ink-3); background: none; color: var(--on-brand); padding: 0; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.td-tick.on { background: var(--brand); border-color: var(--brand); }
+.td-body { white-space: normal; font-size: 15px; }
+.td-body.done { color: var(--ink-3); text-decoration: line-through; }
+.td-due.late { color: var(--neg); font-weight: 600; }
+.td-add { gap: 10px; }
+.td-none { margin: 8px 0 2px; }
+.td-in { width: 100%; resize: vertical; }
+.td-invited { margin: 2px 0 10px; }
+.page.profile .td-h { margin-top: 2px; }
 /* Two tours over the same nights: the tag on both, the contested nights, the picker. */
 .tn-conflict { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; border: 1px solid #E0A020; background: rgba(224, 160, 32, .14); color: #E0A020; font-size: 11px; font-weight: 700; letter-spacing: .03em; cursor: pointer; vertical-align: 2px; font-family: inherit; }
 .tn-tag.warn { color: #E0A020; border-color: #E0A020; }
@@ -3739,24 +3810,17 @@ button.input.role-pick.empty { color: var(--ink-3); font-weight: 500; }
    first. ?splash in the address plays it regardless, for testing. */
 (function () {
   var s = document.getElementById('gr-splash');
-  // When the app was last open, kept on the phone: written now, when the app
-  // goes to the background (visibilitychange / pagehide), and every minute
-  // while it stays open, since a crash or a swipe-close can skip pagehide.
-  var KEY = 'gr-last-open', last = 0;
-  try { last = Number(window.localStorage.getItem(KEY)) || 0; } catch (e) { last = 0; }
-  function stamp() { try { window.localStorage.setItem(KEY, String(Date.now())); } catch (e) { /* a phone that keeps nothing */ } }
-  stamp();
-  document.addEventListener('visibilitychange', stamp);
-  window.addEventListener('pagehide', stamp);
-  setInterval(stamp, 60 * 1000);
-  var how = 'navigate';
+  // Devin's rule (2026-10-15): a HARD CLOSE earns the drive-by, switching
+  // away and back does not. A fresh launch is a page with no session mark
+  // (a hard close ends the session and clears it); a reload mid-session
+  // (an update, a refresh) keeps the mark and skips the intro.
+  var fresh = true;
   try {
-    var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
-    if (nav && nav.type) how = nav.type;
-  } catch (e) { /* older browsers: treat as a fresh launch */ }
-  var rested = !(last && Date.now() - last < 30 * 60 * 1000); // half an hour away earns the drive-by again
+    fresh = !window.sessionStorage.getItem('gr-sess');
+    window.sessionStorage.setItem('gr-sess', '1');
+  } catch (e) { /* a phone that keeps nothing: every open plays it */ }
   var forced = /[?&](slow)?splash\b/.test(location.search);
-  if (!forced && (how !== 'navigate' || !rested)) { s.remove(); return; }
+  if (!forced && !fresh) { s.remove(); return; }
   var word = s.querySelector('.sp-word'), bus = s.querySelector('.sp-bus'), stage = s.querySelector('.sp-stage');
   var finished = false;
   function done(wait) {

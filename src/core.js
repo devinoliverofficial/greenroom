@@ -711,6 +711,23 @@
     var inc = show && isObj(show.income) ? show.income : {};
     return Math.max(0, round((num(inc.merch) - num(show && show.merchCash)) * 100) / 100);
   }
+  /* The app's own merch score for a night, 1 to 10 (Devin: "the app itself
+     can rate the merch 1-10 based on our average"): the night's merch income
+     against the tour's nightly average, scaled so an average night is a 5
+     and capped at 1 and 10. With no average to stand against (no merch
+     logged on the tour yet), there is no score: null. */
+  function merchTen(night, avg) {
+    night = optNum(night); avg = num(avg);
+    if (!(avg > 0) || night == null || !(night >= 0)) return null;
+    return Math.max(1, Math.min(10, Math.round(5 * night / avg)));
+  }
+  // What a tour's nights with merch logged brought in on an average night
+  // (the yardstick merchTen measures against). No such night: 0.
+  function merchNightlyAvg(t) {
+    var nights = rows(t && t.shows).filter(function (s) { return s.loggedAt && num(s.income && s.income.merch) > 0; });
+    if (!nights.length) return 0;
+    return nights.reduce(function (n, s) { return n + num(s.income.merch); }, 0) / nights.length;
+  }
   // Whether each half of a night's money is in. Devin's rule, exactly: a
   // half with money logged is in only when its Received box is ticked (and,
   // for a guarantee, nothing is still owed) — no exceptions for an agency
@@ -2092,6 +2109,29 @@
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
 
+  /* The city's name as the counting rules spell it: a faithful copy of the
+     database's public.road_city_key (0115 as 0128 left it), the ONE rule for
+     whether two typed cities are the same place. Accents come off, periods,
+     apostrophes and hyphens go, "Saint" / "Mount" / "Fort" and a leading
+     "W." open up the same way, NYC is New York. Favorite Local Spots keys
+     its rows with it: the server's trigger recomputes it on every write, so
+     what the app works out here and what the table holds always agree. */
+  var CITY_ACCENTS = 'áàâäãåāçćčďéèêëēęěíìîïīłñńňóòôöõōøřśšťúùûüūůýÿźżž';
+  var CITY_PLAIN = 'aaaaaaacccdeeeeeeeiiiiilnnnooooooorsstuuuuuuyyzzz';
+  function roadCityKey(city) {
+    var s = String(city == null ? '' : city)
+      .replace(/\s*\(.*\)\s*/g, ' ').replace(/\s*\(.*$/, '')
+      .toLowerCase()
+      .replace(/[^\x00-\x7f]/g, function (ch) {
+        var i = CITY_ACCENTS.indexOf(ch);
+        return i >= 0 ? CITY_PLAIN[i] : ch;
+      })
+      .replace(/[.'’]/g, '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+    return s.replace(/^saint /, 'st ').replace(/^mount /, 'mt ').replace(/^fort /, 'ft ')
+      .replace(/^n /, 'north ').replace(/^s /, 'south ').replace(/^e /, 'east ').replace(/^w /, 'west ')
+      .replace(/^new york city$/, 'new york').replace(/^nyc$/, 'new york').replace(/^washington dc$/, 'washington');
+  }
+
   /* ---------------- Guest list ---------------- */
 
   var GUEST_PASSES = ['GA', 'VIP', 'All Access', 'Photo Pass'];
@@ -2492,7 +2532,8 @@
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 
     cardDebts: cardDebts, otherDebts: otherDebts, cardSummary: cardSummary,
-    guaranteeIn: guaranteeIn, merchDue: merchDue, showMoneyState: showMoneyState, showReceived: showReceived,
+    guaranteeIn: guaranteeIn, merchDue: merchDue, merchTen: merchTen, merchNightlyAvg: merchNightlyAvg,
+    showMoneyState: showMoneyState, showReceived: showReceived,
     GUARANTEE_REASONS: GUARANTEE_REASONS, guaranteeWhy: guaranteeWhy, guaranteeTotal: guaranteeTotal,
     guaranteeGap: guaranteeGap, guaranteeOwed: guaranteeOwed, guaranteeKept: guaranteeKept, guaranteeLost: guaranteeLost,
     CASH_MOVES: CASH_MOVES, cashSummary: cashSummary, cashByShow: cashByShow,
@@ -2512,7 +2553,7 @@
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,
     parseGuestList: parseGuestList,
     normalizeTourImport: normalizeTourImport, mergeDaySheet: mergeDaySheet,
-    budgetFrom: budgetFrom, hasBudget: hasBudget, crewKey: crewKey,
+    budgetFrom: budgetFrom, hasBudget: hasBudget, crewKey: crewKey, roadCityKey: roadCityKey,
     dailyUpdate: dailyUpdate
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
