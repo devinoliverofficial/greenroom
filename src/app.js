@@ -4649,6 +4649,33 @@
     var got = t ? daySheetShowFor(t) : null;
     return got ? String(got.shows[got.index].city || '').trim() : '';
   }
+  /* Typing a place's name can find it (0164, Devin: "when you search places
+     in greenroom places start to pop up as you type"): the sheet asks the
+     server road (OpenStreetMap, through Photon) and a quiet list drops under
+     the Name field. Only when the two functions are live; without them the
+     sheet is exactly as it always was. */
+  function placeFindOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.placeSearchOn && B.placeSearch && B.placeSearchOn());
+  }
+  // What OpenStreetMap calls a place, turned into the Spots kinds. Only the
+  // words that map cleanly; any other word leaves the picker as it stands.
+  var SPOT_OSM_KINDS = { restaurant: 'food', fast_food: 'food', food_court: 'food',
+    pastry: 'food', bakery: 'food', ice_cream: 'food', deli: 'food',
+    cafe: 'coffee', coffee: 'coffee', coffee_shop: 'coffee',
+    bar: 'bar', pub: 'bar', biergarten: 'bar',
+    nightclub: 'club', club: 'club',
+    attraction: 'to do', museum: 'to do', park: 'to do', viewpoint: 'to do',
+    theme_park: 'to do', zoo: 'to do', gallery: 'to do' };
+  // Where a found place is, written the way Spots writes cities ("Austin,
+  // Texas"), or with the country when there is no state and it is abroad.
+  function spotPlaceCity(p) {
+    var city = String(p.city || '').trim(), state = String(p.state || '').trim(),
+      country = String(p.country || '').trim();
+    if (!city) return '';
+    if (state) return city + ', ' + state;
+    return country && country !== 'United States' ? city + ', ' + country : city;
+  }
   // One place: the name, its kind as a small tag, the note under it. Tapping
   // the row opens the edit sheet (your own rows are all this tab holds).
   function spotRowEl(x) {
@@ -4715,6 +4742,65 @@
             Array.prototype.forEach.call(kindWrap.children, function (b, i) { b.setAttribute('aria-pressed', String(SPOT_KINDS[i][0] === f.kind)); });
           } }, c[1]);
       }));
+      /* Typing a name finds the place (0164): three characters on, a quiet
+         list under the field, each row a button filling the name, the city
+         and the kind when OpenStreetMap's word maps onto one of ours. The
+         list never holds focus: it steps aside on a pick, on Escape, and
+         when the field lets go (a beat later, so a tap on a row can land).
+         Nothing shows while an answer is on its way; an empty answer shows
+         nothing. Without the search functions the sheet is exactly as it
+         always was. */
+      var nameField = field('Name', nameIn);
+      if (placeFindOn()) {
+        var drop = h('div', { class: 'sp-drop', hidden: true, 'aria-label': 'Places found' });
+        var findTimer = 0, findSeq = 0, dropAway = 0;
+        var closeDrop = function () { drop.hidden = true; drop.replaceChildren(); };
+        var pick = function (p) {
+          clearTimeout(dropAway);
+          closeDrop();
+          nameIn.value = String(p.name || '').trim().slice(0, 80);
+          var where = spotPlaceCity(p);
+          if (where) cityIn.value = where.slice(0, 60);
+          var w = String(p.kind || '').toLowerCase();
+          var kind = Object.prototype.hasOwnProperty.call(SPOT_OSM_KINDS, w) ? SPOT_OSM_KINDS[w] : '';
+          if (kind) {
+            f.kind = kind;
+            Array.prototype.forEach.call(kindWrap.children, function (b, i) { b.setAttribute('aria-pressed', String(SPOT_KINDS[i][0] === f.kind)); });
+          }
+          nameIn.focus();                     // typing on simply searches again
+        };
+        nameIn.oninput = function () {
+          clearTimeout(findTimer);
+          var q = nameIn.value.trim(), n = ++findSeq;
+          if (q.length < 3) { closeDrop(); return; }
+          findTimer = setTimeout(function () {
+            window.GR_BACKEND.placeSearch(q, function (rows) {
+              if (n !== findSeq || !nameIn.isConnected) return;
+              rows = (Array.isArray(rows) ? rows : []).filter(function (p) {
+                return G.isObj(p) && String(p.name || '').trim();
+              }).slice(0, 8);
+              if (!rows.length) { closeDrop(); return; }
+              drop.replaceChildren.apply(drop, rows.map(function (p) {
+                var name = String(p.name || '').trim(), where = spotPlaceCity(p);
+                return h('button', { class: 'sp-opt', type: 'button',
+                  'aria-label': 'Use ' + name + (where ? ' in ' + where : ''),
+                  onclick: function () { pick(p); } },
+                  h('span', { class: 'sp-opt-name' }, name),
+                  where ? h('span', { class: 'sp-opt-sub' }, where) : null);
+              }).concat([h('p', { class: 'hint sp-credit' }, 'Places from OpenStreetMap')]));
+              drop.hidden = false;
+            });
+          }, 450);
+        };
+        nameIn.onblur = function () {
+          clearTimeout(dropAway);
+          dropAway = setTimeout(function () { closeDrop(); }, 250);
+        };
+        nameIn.onkeydown = function (e) {
+          if (e.key === 'Escape' && !drop.hidden) { e.preventDefault(); e.stopPropagation(); closeDrop(); }
+        };
+        nameField = field('Name', h('div', { class: 'sp-find' }, nameIn, drop));
+      }
       var noteIn = h('textarea', { class: 'input td-in', rows: 2, maxlength: 240, value: item ? item.note : '',
         placeholder: 'Why it’s worth the walk (optional)', 'aria-label': 'A note' });
       var shareRow = shareTour ? h('div', { class: 'bus-ask' },
@@ -4745,7 +4831,7 @@
         h('h2', { class: 'sh-title' }, item ? 'Edit spot' : 'Add a spot'),
         h('p', { class: 'sh-sub' }, 'A place worth coming back to next time the run is in town.'),
         field('City', cityIn),
-        field('Name', nameIn),
+        nameField,
         h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Kind'), kindWrap),
         field('Note (optional)', noteIn),
         shareRow,

@@ -91,6 +91,13 @@
   // failed (no signal), lists wait a minute before asking again.
   var pcCache = {}, pcAsk = {}, pcKnown = null, pcProbing = null, pcFailAt = 0;
   var PC_FRESH = 600e3, PC_RETRY = 60e3, PC_MAX = 200;
+  // Spots find places as they're typed (0164): whether the two functions are
+  // there at all (null until the probe answers; the answer is the session's),
+  // the session's answers by the squeezed typed words, and the one search in
+  // flight (a newer one cancels the older poll, so stale answers never land).
+  // (The cache has no prototype: typed words are its keys, and a word like
+  // "constructor" must read as unseen, not as something Object carries.)
+  var placeKnown = null, placeProbing = false, placeCache = Object.create(null), placeGen = 0, placeTimer = 0;
   var FLOWERS_FRESH = 60e3; // asked again after a minute anyway: people join, phones sleep through changes
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
@@ -2592,6 +2599,70 @@
       if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadTourSpots(tourId, cityKey);
       return c ? c.data : null;
     },
+    /* Spots find places as they're typed (0164). placeSearchOn: are the two
+       functions there (asked once per session; false until it answers, so a
+       build ahead of its migration leaves the sheet typing plain).
+       placeSearch(q, cb): the places for some typed words, by ask-then-take:
+       the ask answers the server's week-long cache at once, or hands back a
+       wait ticket the take is polled for (every 700 milliseconds, up to six
+       looks), or says busy once (the house pace gate), and the ask is then
+       asked once more after a beat. cb gets up to eight
+       { name, kind, city, state, country } rows (kind is OpenStreetMap's own
+       word), or [] when nothing was found or no answer came. One search is
+       in flight at a time: a newer call cancels the older poll, so a stale
+       answer never lands. Answers are kept for the session by the squeezed
+       lower-cased words, so retyping costs nothing. */
+    placeSearchOn: function () {
+      if (placeKnown === null) placeProbe();
+      return placeKnown === true;
+    },
+    placeSearch: function (q, cb) {
+      var qk = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      var gen = ++placeGen;                   // a newer search cancels the older poll
+      clearTimeout(placeTimer);
+      var land = function (rows) { if (gen === placeGen) cb(rows); };
+      if (placeKnown !== true || !session || qk.length < 2 || qk.length > 80) { land([]); return; }
+      if (placeCache[qk]) { land(placeCache[qk]); return; }
+      var keep = function (rows) {
+        rows = (Array.isArray(rows) ? rows : []).filter(isObj).slice(0, 8);
+        placeCache[qk] = rows;
+        land(rows);
+      };
+      var took = function (a, tries) {
+        if (gen !== placeGen) return;
+        if (!isObj(a)) { land([]); return; }
+        if (Array.isArray(a.places)) { keep(a.places); return; }
+        if (a.wait != null && tries < 6) {
+          placeTimer = setTimeout(function () {
+            if (gen !== placeGen) return;
+            sb.rpc('place_search_take', { req_id: a.wait, q: qk }).then(function (r) {
+              if (gen !== placeGen) return;
+              if (r.error) { if (fnMissing(r.error)) placeKnown = false; land([]); return; }
+              took(r.data, tries + 1);
+            }, function () { land([]); });
+          }, 700);
+          return;
+        }
+        land([]);
+      };
+      var ask = function (again) {
+        sb.rpc('place_search_ask', { q: qk }).then(function (r) {
+          if (gen !== placeGen) return;
+          if (r.error) {
+            if (fnMissing(r.error)) placeKnown = false;
+            land([]);
+            return;
+          }
+          var a = isObj(r.data) ? r.data : null;
+          if (a && a.busy && !again) {        // the house pace gate: one more polite try
+            placeTimer = setTimeout(function () { if (gen === placeGen) ask(true); }, 900);
+            return;
+          }
+          took(a && a.busy ? null : a, 0);
+        }, function () { land([]); });
+      };
+      ask(false);
+    },
     /* Flowers. Everyone on a tour has 10 to give to the others on it. The
        getters answer at once from what this phone has (null while it's
        first being fetched, { error: true } if that failed) and fetch again
@@ -3157,6 +3228,21 @@
       if (q.error && fnMissing(q.error)) cityEvKnown = false;
       else { cityEvKnown = true; emit('tours'); }
     }, function () { cityEvProbing = false; });
+  }
+  /* ---- Spots find places as they're typed (0164) ---- */
+  // Is the function there? One ask per session, with an empty q: a database
+  // that has it answers {none} (too short to search, which is itself the
+  // answer, and nothing is asked of the map); one that does not says the
+  // function is missing, and the Spots sheet simply types plain. No signal:
+  // unanswered, asked again the next time the sheet draws.
+  function placeProbe() {
+    if (placeProbing || !session) return;
+    placeProbing = true;
+    sb.rpc('place_search_ask', { q: '' }).then(function (q) {
+      placeProbing = false;
+      if (q.error && fnMissing(q.error)) placeKnown = false;
+      else if (!q.error) { placeKnown = true; emit('tours'); }
+    }, function () { placeProbing = false; });
   }
   /* ---- Venue history (0160): the tour's artist's nights in tonight's room ---- */
   // Is the function there? One ask per session, with empty ids: a database

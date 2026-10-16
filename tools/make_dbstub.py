@@ -1090,7 +1090,25 @@ shim = r"""<script>
                             again by itself.
        __harness.spotsOff = true   the probe answers as with no table (a
                             build ahead of its migration): no Spots tab on
-                            the profile and no block on any day sheet. */
+                            the profile and no block on any day sheet.
+     FINDING PLACES AS YOU TYPE (0164): the Add/Edit spot sheet's Name field
+     searches once three characters are down, and a quiet list drops under
+     the field (name over city and state, Places from OpenStreetMap at its
+     foot). Picking a row fills the name, the city, and the Kind when the
+     row's OpenStreetMap word maps onto one of the app's kinds. Open the
+     page with ?spots (or plain), profile > Spots > Add a spot, and type
+     "voo" at 375 pixels wide to see it.
+       __harness.placeRows  what typing finds: rows of { name, kind, city,
+                            state, country }, matched on the name's words,
+                            up to eight, after a wire's beat. Seeded at load
+                            (no switch needed) with a Portland pastry row
+                            (Voodoo Doughnut: picking it sets Kind to Food),
+                            a Berlin nightclub (no state, so it writes
+                            "Berlin, Germany" and sets Club), and a Portland
+                            books row whose word maps onto nothing, so the
+                            picker is left as it stands.
+       __harness.placesOff = true   the probe answers as with no 0164: the
+                            Name field types plain, no list under it. */
   // A row the way the real backend hands one over (the key worked out from
   // the city with the one rule, as the database's trigger keeps it).
   function spotOut(r) {
@@ -1113,6 +1131,19 @@ shim = r"""<script>
     return 'Austin seeded from two people, one Phoenix spot for the later night';
   };
   try { if (/[?&]spots\b/.test(String(location.search || ''))) window.__harness.spots(); } catch (e) { /* no address to read */ }
+  // The places typing can find (0164), there from the start so the Name
+  // field's list can be seen without a switch. Rows the shape the real take
+  // hands over; kind is OpenStreetMap's own word.
+  window.__harness.placeRows = [
+    { name: 'Voodoo Doughnut', kind: 'pastry', city: 'Portland', state: 'Oregon', country: 'United States' },
+    { name: 'Voodoo Brewing', kind: 'bar', city: 'Meadville', state: 'Pennsylvania', country: 'United States' },
+    { name: 'Veracruz All Natural', kind: 'restaurant', city: 'Austin', state: 'Texas', country: 'United States' },
+    { name: 'Houndstooth Coffee', kind: 'cafe', city: 'Austin', state: 'Texas', country: 'United States' },
+    { name: 'Hotel Vegas', kind: 'bar', city: 'Austin', state: 'Texas', country: 'United States' },
+    { name: 'Berghain', kind: 'nightclub', city: 'Berlin', state: '', country: 'Germany' },
+    { name: 'Barton Springs Pool', kind: 'park', city: 'Austin', state: 'Texas', country: 'United States' },
+    { name: 'Powell’s City of Books', kind: 'books', city: 'Portland', state: 'Oregon', country: 'United States' }
+  ];
   /* ---- ALSO IN TOWN TONIGHT (0157): the night's other concerts on the day sheet ----
      The database's little cache and its two functions are played by
      __harness.cityEventRows here ({ showId: [{ name, venue, time, url }] }).
@@ -2672,6 +2703,20 @@ shim = r"""<script>
         it.who = (todoName(r.userId) || 'Someone').split(' ')[0];
         return it;
       });
+    },
+    /* Finding places as you type (0164), in memory: see FINDING PLACES AS
+       YOU TYPE under FAVORITE LOCAL SPOTS. Answers come from
+       __harness.placeRows, matched on the typed words against the name,
+       up to eight, after a wire's beat. */
+    placeSearchOn: function () { return !window.__harness.placesOff; },
+    placeSearch: function (q, cb) {
+      var H = window.__harness;
+      var qk = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      if (H.placesOff || qk.length < 2) { cb([]); return; }
+      var rows = (H.placeRows || []).filter(function (p) {
+        return String(p.name || '').toLowerCase().indexOf(qk) !== -1;
+      }).slice(0, 8);
+      setTimeout(function () { cb(JSON.parse(JSON.stringify(rows))); }, 250);
     },
     newGiftId: function () { return 'g' + Date.now() + Math.random().toString(36).slice(2, 6); },
     giveFlowers: function (tourId, uid, n, note, rid, cat) {
