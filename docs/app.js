@@ -17648,20 +17648,20 @@
       // button short (BUYOUT ALERT is Managers-only; the bus waits on its
       // table and a live run) centres what it has beside the other's pair,
       // so nothing sits against a hole.
-      h('div', { class: 'cal-open cal-grid' },
-        h('div', { class: 'cal-col' },
-          h('button', { class: 'btn quiet sm glow', type: 'button',
-            onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
-            icon('calendar', 14), 'View calendar'),
-          buyoutAlertBtn(id, t)),
-        h('div', { class: 'cal-col' },
-          h('button', { class: 'btn quiet sm glow', type: 'button',
-            onclick: function () { openSetlist(id); } },
-            icon('music', 14), 'View Setlist'),
-          ovBusBtn(id, t))),
-      // The tour's shared shopping list (0155), on a line of its own under
-      // them; everyone on the tour sees it, Crew included.
-      (function () { var sb = suppliesBtn(id); return sb ? h('div', { class: 'cal-open cal-under' }, sb) : null; })(),
+      // Four matching buttons two by two, BUYOUT ALERT dead centre over the
+      // cross (Devin, 2026-10-16: "lets put 'buyout alert' in the center of
+      // the 4 buttons... make sure all the font in these buttons are the
+      // same size"). Supplies joined the grid, so it wears the same size.
+      h('div', { class: 'cal-open cal-grid cal-four' },
+        h('button', { class: 'btn quiet sm glow', type: 'button',
+          onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
+          icon('calendar', 14), 'View calendar'),
+        h('button', { class: 'btn quiet sm glow', type: 'button',
+          onclick: function () { openSetlist(id); } },
+          icon('music', 14), 'View Setlist'),
+        ovBusBtn(id, t),
+        suppliesBtn(id),
+        (function () { var b = buyoutAlertBtn(id, t); return b ? h('div', { class: 'cal-mid' }, b) : null; })()),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
@@ -19562,33 +19562,32 @@
      call, already marked on, or not on the bus list yourself (no On Bus to
      tap): the plain button (Devin, 2026-10-16: "light up green after at bus
      call until someone clicks on bus"). */
-  function busCheckInBtn(id, busCall, pinned) {
-    var B = window.GR_BACKEND;
-    // No button at all until the bus table is live: the old once-a-day
-    // Check In is retired (Devin, 2026-10-15: "The check in button should
-    // now be gone. We are basically replacing that with the bus call button").
-    if (!busOn()) return null;
-    var data = B.busList(id);
-    var me = B.uid ? B.uid() : null;
-    var riders = (data && data.people) || [];
-    var mine = riders.filter(function (p) { return p.userId === me; })[0] || null;
-    var on = riders.filter(function (p) { return busWordToday(p) === 'on'; }).length;
-    var green = !!mine && busCallDue(busCall) && busWordToday(mine) !== 'on';
-    return h('div', { class: 'ci-wrap' + (pinned ? ' pinned' : '') },
-      h('button', { class: 'ci-btn quiet' + (green ? ' glow' : ''), type: 'button',
-        'aria-label': 'Bus Check in' + (data ? ': ' + on + ' of ' + riders.length + ' on the bus' : ''),
-        onclick: function () { openBusSheet(id, busCall); } }, 'Bus Check in'));
-  }
+  // (The old once-a-day Check In is retired - Devin, 2026-10-15: "The check
+  // in button should now be gone. We are basically replacing that with the
+  // bus call button." The bus button now wears the same dress as every
+  // other Overview button - Devin, 2026-10-16: "lets make 'bus check in'
+  // the same asthetic as the rest of the buttons" - with green ink from
+  // bus call until this account's own On Bus.)
   /* The button's seat on the Overview, under View Setlist (Devin,
      2026-10-16: "Move 'bus check in' button to the overview"; it came off
      the Chat's tools row). Today's bus call, from today's day sheet, lights
      it while the run is on. */
   function ovBusBtn(id, t) {
-    if (!t || !tourIsLive(t)) return null;
+    if (!t || !tourIsLive(t) || !busOn()) return null;
+    var B = window.GR_BACKEND;
     var today = G.tourToday();
     var s = G.rows(t.shows).filter(function (x) { return x.date === today; })[0];
     var busCall = s && G.isObj(s.daySheet) ? s.daySheet.busCall : '';
-    return busCheckInBtn(id, busCall, false);
+    var data = B.busList(id);
+    var me = B.uid ? B.uid() : null;
+    var riders = (data && data.people) || [];
+    var mine = riders.filter(function (p) { return p.userId === me; })[0] || null;
+    var on = riders.filter(function (p) { return busWordToday(p) === 'on'; }).length;
+    var hot = !!mine && busCallDue(busCall) && busWordToday(mine) !== 'on';
+    return h('button', { class: 'btn quiet sm glow' + (hot ? ' ci-due' : ''), type: 'button',
+      'aria-label': 'Bus Check in' + (data ? ': ' + on + ' of ' + riders.length + ' on the bus' : ''),
+      onclick: function () { openBusSheet(id, busCall); } },
+      icon('people', 14), 'Bus Check in');
   }
   /* The sheet: On Bus / Off Bus for your own seat (your word is the only one
      a phone may say), then the driver's count and everyone's word. Pokes
@@ -19848,18 +19847,19 @@
     // 'Requests' on the button so the row isn't crowded (Devin, 2026-10-16);
     // the aria keeps the full words. Every played show, and tonight's once
     // doors pass, reads its buttons in one row for the band alone: Day
-    // sheet, then Rate centred between them, then Requests (Devin,
-    // 2026-10-16: "The 'rate' button should be centered between day sheets
-    // and requests"). A row without Rate keeps Day sheet and Requests side
-    // by side, no hole.
+    // sheet, then Rate centred between them, then Requests. Every show row
+    // shares ONE set of columns, so a row without Rate keeps Day sheet and
+    // Requests exactly under the rows above (Devin, 2026-10-16: "the 'day
+    // sheet' and 'requests' button should still be centered with the
+    // buttons above it"): the Rate slot stays, empty.
     var reqBtn = !asks ? h('span', { 'aria-hidden': 'true' }) : h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
       'aria-label': 'Special requests for ' + (s.city || 'this show') + (open ? ', ' + open + ' waiting for an answer' : ''),
       onclick: function () { openRequests(id, s); } },
       'Requests');
     var rateBtn = rateCalBtn(id, s);
-    var line = h('div', { class: 'show-row cal-row' + (rateBtn ? ' cal-three' : '') + (s.date === today ? ' is-today' : '') },
+    var line = h('div', { class: 'show-row cal-row cal-three' + (s.date === today ? ' is-today' : '') },
       dateBlock(s.date), whereBlock(s), daySheetBtn(id, s.date, from, fromLabel),
-      rateBtn, reqBtn);
+      h('span', { class: 'cal-rate-slot' + (rateBtn ? '' : ' empty'), 'aria-hidden': rateBtn ? null : 'true' }, rateBtn), reqBtn);
     // Devin: "slide left on a date and edit/delete show". It's the tour's own
     // show that changes, so every tab that reads the tour follows.
     if (!(canEditTour(id) && s.id)) return h('li', null, line);
