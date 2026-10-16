@@ -1839,6 +1839,9 @@ select.input { appearance: none; -webkit-appearance: none; background-image: non
 /* A Tours tab: the tour being played today leads and glows. */
 .lr-title.tl-title { display: flex; align-items: center; gap: 8px; overflow: visible; }
 .tl-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The Tours tab's quiet line while the confirmed tours are on their way
+   (2026-10-16): never an empty space where tours belong. */
+.tl-wait { margin-top: 18px; }
 .tl-now { flex: none; display: inline-block; padding: 1px 8px; border-radius: 999px;
   background: var(--pos-soft); color: var(--pos); font-size: 10.5px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
 .tl-live { border-radius: 12px; animation: tasksglow 2.2s ease-in-out infinite;
@@ -2186,6 +2189,10 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
    word chips under the stars, a short note with its quiet counter. The
    same star drawing, small, says the band's average on Today's History. */
 .rw-sheet { min-height: calc(100% - 28px - env(safe-area-inset-top, 0px)); }
+/* A To Do List opened from the profile (2026-10-16): the list itself as a
+   full-height sheet, the tab's own block inside it. */
+.td-sheet { min-height: calc(100% - 28px - env(safe-area-inset-top, 0px)); }
+.td-sheet .td-block { margin-top: 4px; }
 .rw-back { position: absolute; top: 10px; left: 8px; }
 .rw-where { margin: 30px 44px 0; text-align: center; font-size: 12.5px; }
 .rw-dots { display: flex; gap: 6px; justify-content: center; margin: 16px 0 0; }
@@ -2211,7 +2218,11 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .cal-pair { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; justify-self: end; }
 /* Today's History section, and the band's stars under its line (0165). */
 .pt-hist { margin: 26px 2px 8px; }
+/* Dressed like the day sheet's Notes (2026-10-16): the ds-sec heading and
+   the ds-notes card do the look; only the spacing inside is set here. */
+.pt-hist .ds-sec { margin-top: 0; }
 .pt-hist .hist-fans { margin: 4px 0 0; }
+.pt-hist .ds-notes .hist-fans { margin: 0; }
 .pt-hist-stars { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .plc-h { position: relative; z-index: 1; margin: 0 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
 .plc-artists { position: relative; z-index: 1; }
@@ -2286,6 +2297,13 @@ button.ivc-row:active { background: var(--surface-2); }
    invite form's small "Riding on the bus?" ask. */
 .bus-head.sh-title { margin: 2px 0 4px; text-align: center; }
 .ds-venue.bus-call { margin: 0 0 4px; }
+/* The bus call time as the sheet's head (2026-10-16): the venue glow, sized
+   up, with the day's one status word right under it. */
+.ds-venue.bus-call-head { margin: 8px 0 2px; }
+.bus-call-head .ds-venue-name { font-size: 27px; }
+.bus-status { margin: 0 0 6px; min-height: 18px; text-align: center; font-size: 14px; font-weight: 800; letter-spacing: .08em; }
+.bus-status.aboard { color: var(--pos); }
+.bus-status.short { color: var(--neg); }
 .bus-sub { text-align: center; }
 .bus-two { margin: 2px 0 12px; }
 .bus-two .bus-big { width: 108px; }

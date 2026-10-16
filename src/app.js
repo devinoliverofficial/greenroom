@@ -936,6 +936,10 @@
   });
 
   function afterRender() {
+    // A To Do List open as a sheet draws its rows again with the page, so a
+    // tick inside it shows at once (the handlers it borrows from the page's
+    // tab end on render(true)).
+    if (todoSheetLive) todoSheetLive();
     if (S.route.name === 'tour' || S.route.name === 'offtour') mountHero();
     // MY PAY's own climbing graph (the Income side).
     var payChart = $('.pay-chart');
@@ -4575,11 +4579,41 @@
     var a = myActs().list;
     return !!(a && a.some(function (x) { return x.mine || x.kind === 'band'; }));
   }
+  /* The list itself, as its own full-height sheet (Devin, 2026-10-16: "when
+     you click it from your personal user profile 'to do' tab it should take
+     you to a 'to do list' not the artists page"): the artist's name up top,
+     then exactly what the page's tab shows - the On this list line, the
+     tasks under their categories, Add a task and Invite someone (todoBlock,
+     reused whole). The card rides the app's own cache (actOf), so a cold
+     open says Loading until it lands; ticks redraw through afterRender. */
+  var todoSheetLive = null;
+  function openTodoSheet(artistId, name) {
+    var box = h('div', { class: 'td-sheet-box' });
+    var mine = null;
+    function draw() {
+      if (sheet !== mine || !box.isConnected) { if (todoSheetLive === draw) todoSheetLive = null; return; }
+      var c = actOf(artistId);
+      var body = c.card ? todoBlock(artistId, c.card) : null;
+      box.replaceChildren(body || h('p', { class: 'note' }, c.failed
+        ? 'Couldn’t load this list. Check your signal and try again.' : 'Loading…'));
+    }
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, name || 'To Do List'),
+        box,
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+      ];
+    }, { label: (name || 'The artist') + ' To Do List', cls: 'td-sheet',
+      onClose: function () { if (todoSheetLive === draw) todoSheetLive = null; } });
+    mine = sheet;
+    todoSheetLive = draw;
+    draw();
+  }
   // "Your To Do List": everything handed to you leads, each task naming its
   // artist; then one row per artist you work for - every list these tasks
   // reach, and your own artist pages even before their first task (the same
-  // list the profile's artists come from). Tapping a row opens that artist's
-  // page on its To Do List tab (Devin, 2026-10-16).
+  // list the profile's artists come from). Tapping a row opens that list
+  // itself, a sheet of its own, not the artist's page (Devin, 2026-10-16).
   function pfTodos() {
     var B = window.GR_BACKEND;
     var all = todosOn() && B.myTodos ? B.myTodos() : null;
@@ -4610,7 +4644,7 @@
       var logo = g.avatar || (cached && cached.avatar) || '';
       return h('li', null, h('button', { class: 'list-row art-row', type: 'button',
         'aria-label': g.name + ' To Do List: ' + (g.open ? plural(g.open, 'open task') : 'nothing yet'),
-        onclick: function () { S.actTab = { id: g.id, tab: 'todo' }; openAct(g.id); } },
+        onclick: function () { openTodoSheet(g.id, g.name); } },
         h('span', { class: 'avatar' + (logo ? ' has photo' : ' letter'), 'aria-hidden': 'true' },
           logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : (String(g.name).trim().charAt(0).toUpperCase() || '?')),
         h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, g.name),
@@ -4652,11 +4686,31 @@
   /* Typing a place's name can find it (0164, Devin: "when you search places
      in greenroom places start to pop up as you type"): the sheet asks the
      server road (OpenStreetMap, through Photon) and a quiet list drops under
-     the Name field. Only when the two functions are live; without them the
-     sheet is exactly as it always was. */
+     the Name field. Since 0166 the ask leans to a town, like the map in his
+     pocket: the sheet's own City words when there are two characters of
+     them, else tonight's city when the account is out on a live tour (the
+     one the profile's Today shows), else nowhere in particular. Only when
+     the two functions are live; without them the sheet is exactly as it
+     always was. */
   function placeFindOn() {
     var B = window.GR_BACKEND;
     return S.mode === 'db' && !!(B && B.placeSearchOn && B.placeSearch && B.placeSearchOn());
+  }
+  // Tonight's city for the lean: the city the profile's Today tab heads
+  // with, and only while the run is really on the road today.
+  function placeNearNow() {
+    var tourId = profileTourId();
+    var t = tourId ? getTour(tourId) : null;
+    if (!t || !tourIsLive(t)) return '';
+    var got = overviewDays(t);
+    if (!got) return '';
+    var entry = got.days[got.index];
+    var today = G.tourToday();
+    if (entry.date < today && !entry.show) {
+      entry = got.days.filter(function (x) { return x.show; }).pop() || entry;
+    }
+    var s = entry.show, off = s ? null : offDayFor(t, entry.date);
+    return String((s ? s.city : off && off.city) || '').trim();
   }
   // What OpenStreetMap calls a place, turned into the Spots kinds. Only the
   // words that map cleanly; any other word leaves the picker as it stands.
@@ -4742,14 +4796,17 @@
             Array.prototype.forEach.call(kindWrap.children, function (b, i) { b.setAttribute('aria-pressed', String(SPOT_KINDS[i][0] === f.kind)); });
           } }, c[1]);
       }));
-      /* Typing a name finds the place (0164): three characters on, a quiet
-         list under the field, each row a button filling the name, the city
-         and the kind when OpenStreetMap's word maps onto one of ours. The
-         list never holds focus: it steps aside on a pick, on Escape, and
-         when the field lets go (a beat later, so a tap on a row can land).
-         Nothing shows while an answer is on its way; an empty answer shows
-         nothing. Without the search functions the sheet is exactly as it
-         always was. */
+      /* Typing a name finds the place (0164; near the city, 0166): three
+         characters on, a quiet list under the field, each row a button
+         filling the name, the city and the kind when OpenStreetMap's word
+         maps onto one of ours. The ask leans to the sheet's City words (two
+         characters or more), else tonight's city on a live tour, and each
+         row's muted line says the street and the town, the way his photo
+         reads. The list never holds focus: it steps aside on a pick, on
+         Escape, and when the field lets go (a beat later, so a tap on a row
+         can land). Nothing shows while an answer is on its way; an empty
+         answer shows nothing. Without the search functions the sheet is
+         exactly as it always was. */
       var nameField = field('Name', nameIn);
       if (placeFindOn()) {
         var drop = h('div', { class: 'sp-drop', hidden: true, 'aria-label': 'Places found' });
@@ -4773,8 +4830,12 @@
           clearTimeout(findTimer);
           var q = nameIn.value.trim(), n = ++findSeq;
           if (q.length < 3) { closeDrop(); return; }
+          // Where the search leans (0166): the sheet's City words, else
+          // tonight's city on a live tour, else nowhere in particular.
+          var near = cityIn.value.trim();
+          if (near.length < 2) near = placeNearNow();
           findTimer = setTimeout(function () {
-            window.GR_BACKEND.placeSearch(q, function (rows) {
+            window.GR_BACKEND.placeSearch(q, near, function (rows) {
               if (n !== findSeq || !nameIn.isConnected) return;
               rows = (Array.isArray(rows) ? rows : []).filter(function (p) {
                 return G.isObj(p) && String(p.name || '').trim();
@@ -4782,11 +4843,15 @@
               if (!rows.length) { closeDrop(); return; }
               drop.replaceChildren.apply(drop, rows.map(function (p) {
                 var name = String(p.name || '').trim(), where = spotPlaceCity(p);
+                // The muted line under the name reads like his photo: the
+                // street when the map knows one, the town always.
+                var sub = [String(p.street || '').trim(), String(p.city || '').trim()]
+                  .filter(Boolean).join(' · ');
                 return h('button', { class: 'sp-opt', type: 'button',
                   'aria-label': 'Use ' + name + (where ? ' in ' + where : ''),
                   onclick: function () { pick(p); } },
                   h('span', { class: 'sp-opt-name' }, name),
-                  where ? h('span', { class: 'sp-opt-sub' }, where) : null);
+                  sub ? h('span', { class: 'sp-opt-sub' }, sub) : null);
               }).concat([h('p', { class: 'hint sp-credit' }, 'Places from OpenStreetMap')]));
               drop.hidden = false;
             });
@@ -4997,12 +5062,15 @@
   }
   /* THE TODAY HISTORY SECTION (Devin, 2026-10-16: "there should just be a
      history section at the bottom of the 'today' tab that says how many
-     times we've played this venue, what the rating was"). The same line as
-     before, under its own quiet History heading at the foot of the
-     profile's Today tab; and under it, when the server's answer carries the
-     band's stars (0165 hands them to the band alone), the stars drawn small
-     with how many ratings they stand on. Absent keys, no stars line: a crew
-     phone sees the history alone, and before 0165 nothing changes. */
+     times we've played this venue, what the rating was"; later the same
+     day: "'History' should look a lot like 'Notes'"). The same lines as
+     before, now in the day sheet's Notes dress: the same centred ds-sec-h
+     heading and the same ds-notes card around the lines, at the foot of the
+     profile's Today tab. Under the times-played line, when the server's
+     answer carries the band's stars (0165 hands them to the band alone),
+     the stars drawn small with how many ratings they stand on. Absent keys,
+     no stars line: a crew phone sees the history alone, and before 0165
+     nothing changes. */
   function todayHistory(tourId, s) {
     var line = venueHistLine(tourId, s);
     if (!line) return null;
@@ -5010,12 +5078,14 @@
     var sig = venue.toLowerCase() + '|' + String(s.city).trim().toLowerCase();
     var a = window.GR_BACKEND.venueHistory(tourId, s.id, sig);
     var st = G.isObj(a) ? G.num(a.stars) : 0, rn = G.isObj(a) ? Math.round(G.num(a.ratings)) : 0;
-    return h('section', { class: 'pt-hist', 'aria-label': 'History' },
-      h('h3', { class: 'mn-h' }, 'History'),
-      line,
-      st > 0 && rn > 0 ? h('p', { class: 'pt-hist-stars', 'aria-label': st + ' stars from ' + plural(rn, 'rating') },
-        rwStarRow(Math.round(st * 2) / 2, 15),
-        h('span', { class: 'pt-hist-n' }, 'from ' + plural(rn, 'rating'))) : null);
+    return h('section', { class: 'ds-page pt-hist', 'aria-label': 'History' },
+      h('section', { class: 'ds-sec' },
+        h('h3', { class: 'ds-sec-h' }, 'History'),
+        h('div', { class: 'ds-notes pt-hist-box' },
+          line,
+          st > 0 && rn > 0 ? h('p', { class: 'pt-hist-stars', 'aria-label': st + ' stars from ' + plural(rn, 'rating') },
+            rwStarRow(Math.round(st * 2) / 2, 15),
+            h('span', { class: 'pt-hist-n' }, 'from ' + plural(rn, 'rating'))) : null)));
   }
   /* ---- Endorsing, and the role that goes with it. The artist's page says
      what this person IS to it — the title the public sees there (Brent is
@@ -10944,7 +11014,8 @@
     entries = entries.filter(function (e) { return tourIsLive(e[1]); })
       .concat(entries.filter(function (e) { return !tourIsLive(e[1]); }));
     // Then the tours an artist confirmed for you that aren't already here.
-    var B = window.GR_BACKEND, meCard = socialOn() && B && B.uid ? cardOf(B.uid()).card : null;
+    var B = window.GR_BACKEND, meC = socialOn() && B && B.uid ? cardOf(B.uid()) : null;
+    var meCard = meC ? meC.card : null;
     var ownSpans = entries.map(function (e) {
       var d = G.rows(e[1] && e[1].shows).map(function (x) { return x.date; }).filter(G.parseDay).sort();
       return { name: e[1].name, artist: artistOf(e[1]), first: d[0] || '', last: d[d.length - 1] || '', shows: d.length };
@@ -10958,6 +11029,18 @@
       return r.tour.artistId ? historyTourRow(r.tour.artistId, r, null, { artist: r.artist, role: rolesShort(r.role || r.tour.role || '') })
         : timelineRow(r, null, true);
     })) : null;
+    /* The card never landing used to leave NOTHING where the confirmed tours
+       belong (Devin, 2026-10-16: "my tour tab on my user side doesnt show
+       all the tours"). While the answer is still on its way, or after an
+       ask that failed, one quiet line says so in the credited list's place;
+       cardOf keeps asking again on its own and the page draws again when it
+       lands. A card that is here with nothing confirmed shows nothing, as
+       before. */
+    if (!creditedList && meC && !meCard) {
+      creditedList = h('p', { class: 'note tl-wait' }, meC.failed
+        ? 'Your confirmed tours could not load. It keeps trying on its own.'
+        : 'Loading your confirmed tours.');
+    }
     if (!entries.length) {
       return creditedList || emptyState('No tours yet', canWrite()
         ? 'Tap + to add an artist, then their first tour.'
@@ -17011,14 +17094,15 @@
   }
 
   /* ---- "Rate the show" (0154, reshaped 2026-10-16): after doors on a show
-     night, and through the day after, the band says how the night was. The
-     button lives on the calendar's tonight row now (Devin: "this should be
-     in the 'view calendar' section in the same fashion as 'vote' & 'special
-     requests'"), and once migration 0165 is live it opens the one-question
-     wizard below; before it, the old three-slider sheet (kept whole as
-     openRateShowSliders). Members of the tour's artist and the tour's owner
-     only; the database holds the rows to the band, so the artist page and
-     the tour show nothing public. ---- */
+     night, and on every night already played, the band says how the night
+     was. The button lives on the calendar's show rows (Devin: "this should
+     be in the 'view calendar' section in the same fashion as 'vote' &
+     'special requests'", and "I should be able to see 'rate' on all
+     previous shows on the current tour"), and once migration 0165 is live
+     it opens the one-question wizard below; before it, the old three-slider
+     sheet (kept whole as openRateShowSliders). Members of the tour's artist
+     and the tour's owner only; the database holds the rows to the band, so
+     the artist page and the tour show nothing public. ---- */
   // The night that can be rated now: tonight once doors have passed, else
   // yesterday's show (still changeable today), else nothing.
   function rateShowOf(t) {
@@ -17052,15 +17136,22 @@
     });
   }
   /* The calendar's Rate button (Devin, 2026-10-16: "So it'll be 'rate'
-     'vote' 'requests'"). Only the show inside tonight's rating window
-     carries it, for the band alone; sent, it goes quiet but stays tappable
-     until midnight. Drawing it warms the review-column probe, so the tap
-     already knows which sheet to open. */
+     'vote' 'requests'", and later the same day: "I should be able to see
+     'rate' on all previous shows on the current tour"). Every played show
+     row carries it, for the band alone - the database lets the band write
+     and change a rating on any show of the tour, with no date rule (0154's
+     policies check the person and the show, never the night). Tonight's row
+     keeps its after-doors rule. Sent, a row's button goes quiet but stays
+     tappable. Drawing it warms the review-column probe, so the tap already
+     knows which sheet to open. */
   function rateCalBtn(tourId, s) {
     var t = getTour(tourId);
     if (!t || !s || !s.id || !bandOnTour(tourId, t)) return null;
-    var r = rateShowOf(t);
-    if (!r || r.id !== s.id) return null;
+    var played = !!G.parseDay(s.date) && s.date < G.tourToday();
+    if (!played) {
+      var r = rateShowOf(t);
+      if (!r || r.id !== s.id) return null;
+    }
     var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
     if (B.showReviewOn) B.showReviewOn();
     var mine = (B.showRatings(tourId) || []).filter(function (x) { return x.showId === s.id && x.userId === uid; })[0];
@@ -17144,7 +17235,7 @@
       return [
         h('h2', { class: 'sh-title' }, 'Rate the show'),
         h('p', { class: 'sh-sub' }, [[s.city, s.venue].filter(Boolean).join(' · '),
-          'The band sees this, nobody else. You can change it until midnight.'].filter(Boolean).join('. ')),
+          'The band sees this, nobody else. You can change it any time.'].filter(Boolean).join('. ')),
         host, foot
       ];
     }, { label: 'Rate the show' });
@@ -17347,8 +17438,11 @@
     openSheet(function () {
       var t = getTour(tourId) || {}, s = (G.isObj(t.shows) && t.shows[showId]) || {};
       return [
+        // Truthful for tonight and for an old show alike: the database lets
+        // the band change a rating any time (0154's update policy has no
+        // date rule), so no midnight clause.
         h('p', { class: 'sh-sub rw-where' }, [[s.city, s.venue].filter(Boolean).join(' · '),
-          'The band sees this, nobody else. You can change it until midnight.'].filter(Boolean).join('. ')),
+          'The band sees this, nobody else. You can change it any time.'].filter(Boolean).join('. ')),
         host
       ];
     }, { label: 'Rate the show', cls: 'rw-sheet' });
@@ -19256,7 +19350,11 @@
      gone), each tour day opens on "No word yet", and the sheet reads like
      the Overview: crew rows with pictures, On Bus / Off Bus in View
      calendar's dress, the bus call time glowing like the city, and one line
-     that says "Don't get left behind". */
+     that says "Don't get left behind". The head again (Devin, 2026-10-16):
+     the 'Bus Check In' title is gone, the bus call time is the big top line,
+     and right under it one status word for the day - WE ARE A BUS in the
+     house green once every rider has said On bus today, MISSING CREW in red
+     for anything else (someone unsaid, someone off, nobody yet). */
   function busOn() {
     var B = window.GR_BACKEND;
     return S.mode === 'db' && !!(B && B.busOn && B.busList && B.busSet && B.busOn());
@@ -19326,6 +19424,9 @@
   function openBusSheet(id, busCall) {
     var B = window.GR_BACKEND, busy = false;
     var box = h('div', { class: 'bus-box' });
+    // The day's one status word, right under the bus call time; draw() keeps
+    // it true as words land. No bus call, no time to sit under: no word.
+    var statusEl = busCall ? h('p', { class: 'bus-status', role: 'status' }) : null;
     function draw() {
       // The table went away under us (a migration rolled back): the sheet
       // goes quietly, the way the button already has.
@@ -19336,6 +19437,14 @@
       var riders = data.people || [];
       var mine = riders.filter(function (p) { return p.userId === me; })[0] || null;
       var on = riders.filter(function (p) { return busWordToday(p) === 'on'; }).length;
+      // WE ARE A BUS in the house green only when every rider on the list
+      // said On bus today; anything else (someone unsaid, someone off,
+      // nobody yet) reads MISSING CREW in red (Devin, 2026-10-16).
+      if (statusEl) {
+        var allOn = riders.length > 0 && riders.every(function (p) { return busWordToday(p) === 'on'; });
+        statusEl.textContent = allOn ? 'WE ARE A BUS' : 'MISSING CREW';
+        statusEl.className = 'bus-status' + (allOn ? ' aboard' : ' short');
+      }
       // Their profile photos, the way the Overview's crew list shows them.
       var faces = (B.facesFor && B.facesFor(id)) || {};
       var big = function (state, label) {
@@ -19368,11 +19477,15 @@
     draw();
     openSheet(function () {
       return [
-        // The head reads like the Overview's: the title centred, the bus
-        // call time glowing the way the city and a day sheet's venue do.
-        h('h2', { class: 'sh-title bus-head' }, 'Bus Check In'),
-        busCall ? h('div', { class: 'ds-venue glow bus-call' },
-          h('span', { class: 'ds-venue-name' }, 'Bus call ' + G.cleanTime(busCall))) : null,
+        // The bus call time IS the head now, big in the venue's own glow,
+        // the day's status word right under it (Devin, 2026-10-16: "get rid
+        // of 'bus check in' at the top above the bus call time. Just have
+        // the bus call time big"). With no bus call set there is no time to
+        // lead with, so that sheet keeps the old title.
+        busCall ? h('div', { class: 'ds-venue glow bus-call bus-call-head' },
+            h('span', { class: 'ds-venue-name' }, 'Bus call ' + G.cleanTime(busCall)))
+          : h('h2', { class: 'sh-title bus-head' }, 'Bus Check In'),
+        statusEl,
         h('p', { class: 'sh-sub bus-sub' }, 'Don\u2019t get left behind'),
         box,
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
@@ -19561,8 +19674,8 @@
     var reqs = asks ? B.requestsFor(id, s.date) : [];
     var open = reqs.filter(function (r) { return r.status === 'pending'; }).length;
     // 'Requests' on the button so the row isn't crowded (Devin, 2026-10-16);
-    // the aria keeps the full words. Tonight's rateable show stacks Rate
-    // above it in the same column, for the band alone.
+    // the aria keeps the full words. Every played show, and tonight's once
+    // doors pass, stacks Rate above it in the same column, for the band alone.
     var reqBtn = !asks ? h('span', { 'aria-hidden': 'true' }) : h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
       'aria-label': 'Special requests for ' + (s.city || 'this show') + (open ? ', ' + open + ' waiting for an answer' : ''),
       onclick: function () { openRequests(id, s); } },

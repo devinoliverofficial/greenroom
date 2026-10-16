@@ -2599,43 +2599,54 @@
       if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadTourSpots(tourId, cityKey);
       return c ? c.data : null;
     },
-    /* Spots find places as they're typed (0164). placeSearchOn: are the two
-       functions there (asked once per session; false until it answers, so a
-       build ahead of its migration leaves the sheet typing plain).
-       placeSearch(q, cb): the places for some typed words, by ask-then-take:
-       the ask answers the server's week-long cache at once, or hands back a
-       wait ticket the take is polled for (every 700 milliseconds, up to six
-       looks), or says busy once (the house pace gate), and the ask is then
-       asked once more after a beat. cb gets up to eight
-       { name, kind, city, state, country } rows (kind is OpenStreetMap's own
-       word), or [] when nothing was found or no answer came. One search is
-       in flight at a time: a newer call cancels the older poll, so a stale
-       answer never lands. Answers are kept for the session by the squeezed
-       lower-cased words, so retyping costs nothing. */
+    /* Spots find places as they're typed (0164; near, 0166). placeSearchOn:
+       are the two functions there (asked once per session; false until it
+       answers, so a build ahead of its migration leaves the sheet typing
+       plain).
+       placeSearch(q, near, cb): the places for some typed words, leaning to
+       a town when `near` carries one (the sheet's City words, or tonight's
+       city), by ask-then-take: the ask answers the server's week-long cache
+       at once, or hands back a wait ticket the take is polled for (every
+       700 milliseconds, up to six looks), or says busy once (the house pace
+       gate), and the ask is then asked once more after a beat. After a city
+       hop the take itself hands back a FRESH wait ticket, and the poll
+       simply carries on with that one. cb gets up to eight
+       { name, kind, street, city, state, country } rows (kind is
+       OpenStreetMap's own word), or [] when nothing was found or no answer
+       came. One search is in flight at a time: a newer call cancels the
+       older poll, so a stale answer never lands. Answers are kept for the
+       session by the squeezed lower-cased words plus the town, so retyping
+       costs nothing. (An older phone's placeSearch(q, cb) still works: the
+       town is simply taken as none.) */
     placeSearchOn: function () {
       if (placeKnown === null) placeProbe();
       return placeKnown === true;
     },
-    placeSearch: function (q, cb) {
+    placeSearch: function (q, near, cb) {
+      if (typeof near === 'function') { cb = near; near = ''; }
       var qk = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      var nv = String(near || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      var ck = qk + '|' + nv.toLowerCase();
       var gen = ++placeGen;                   // a newer search cancels the older poll
       clearTimeout(placeTimer);
       var land = function (rows) { if (gen === placeGen) cb(rows); };
       if (placeKnown !== true || !session || qk.length < 2 || qk.length > 80) { land([]); return; }
-      if (placeCache[qk]) { land(placeCache[qk]); return; }
+      if (placeCache[ck]) { land(placeCache[ck]); return; }
       var keep = function (rows) {
         rows = (Array.isArray(rows) ? rows : []).filter(isObj).slice(0, 8);
-        placeCache[qk] = rows;
+        placeCache[ck] = rows;
         land(rows);
       };
       var took = function (a, tries) {
         if (gen !== placeGen) return;
         if (!isObj(a)) { land([]); return; }
         if (Array.isArray(a.places)) { keep(a.places); return; }
+        // a.wait is whatever ticket the last answer handed over: the ask's,
+        // or the fresh one the take sends back after a city hop (0166).
         if (a.wait != null && tries < 6) {
           placeTimer = setTimeout(function () {
             if (gen !== placeGen) return;
-            sb.rpc('place_search_take', { req_id: a.wait, q: qk }).then(function (r) {
+            sb.rpc('place_search_take', { req_id: a.wait, q: qk, near: nv }).then(function (r) {
               if (gen !== placeGen) return;
               if (r.error) { if (fnMissing(r.error)) placeKnown = false; land([]); return; }
               took(r.data, tries + 1);
@@ -2646,7 +2657,7 @@
         land([]);
       };
       var ask = function (again) {
-        sb.rpc('place_search_ask', { q: qk }).then(function (r) {
+        sb.rpc('place_search_ask', { q: qk, near: nv }).then(function (r) {
           if (gen !== placeGen) return;
           if (r.error) {
             if (fnMissing(r.error)) placeKnown = false;

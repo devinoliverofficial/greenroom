@@ -364,7 +364,13 @@ shim = r"""<script>
      To see one: open the page, set __harness.roadStats to other numbers, wait a minute or tap View profile,
      then JSON.parse(localStorage.getItem('gr-road:u-devin')).trail .
      TO SEE A PHONE THAT NEVER HAD AN ANSWER: localStorage.removeItem('gr-road:u-devin') , then open with
-     ?cardlate=4000 : one number for four seconds (how many tours the harness account has), then the four. */
+     ?cardlate=4000 : one number for four seconds (how many tours the harness account has), then the four.
+     THE TOURS TAB IS NEVER SILENTLY SHORT (2026-10-16, his bug "my tour tab on my user side doesnt show all
+     the tours"): the profile's Tours tab draws the confirmed tours from this same card, so with the card still
+     on its way it now says "Loading your confirmed tours." where they belong (open with ?cardlate=4000, Tours
+     tab), and after a failed ask "Your confirmed tours could not load. It keeps trying on its own." (open with
+     ?cardfail) - never an empty space that reads as no tours. A card that is here with nothing confirmed shows
+     nothing there, as before. */
   try {
     var cardAsk = String(location.search || ''), cardLate = /[?&]cardlate=(\d{1,5})\b/.exec(cardAsk);
     if (cardLate) window.__harness.cardLate = Number(cardLate[1]);
@@ -869,7 +875,12 @@ shim = r"""<script>
      Bus, a word said before the 5 AM day line reads as "No word yet", and
      the sheet carries the Overview look: crew rows with pictures, On Bus /
      Off Bus in View calendar's dress, the bus call time glowing, and the
-     line "Don't get left behind".
+     line "Don't get left behind". The head again (2026-10-16): no 'Bus
+     Check In' title any more - the bus call time IS the big top line, and
+     right under it the day's one status word: WE ARE A BUS in the house
+     green once every rider said On bus today, MISSING CREW in red for
+     anything else (someone unsaid, someone off, nobody yet). A sheet with
+     no bus call set keeps the old title, having no time to lead with.
        __harness.bus()      tonight's Austin show gets a bus call half an hour
                             from now (within the hour, so it counts as due),
                             four ride the bus (Jeff Mora and Dana
@@ -887,9 +898,13 @@ shim = r"""<script>
                             start screen as soon as the app is up (the app
                             lends the harness openBusSheet), so the restyled
                             head, buttons, rows and line show at 375px
-                            without walking to the Chat.
+                            without walking to the Chat. Two of four riders
+                            are on, so the head reads MISSING CREW in red.
+       __harness.busAllOn() every rider says On bus now and a 'bus' poke
+                            lands: an open sheet's head turns to WE ARE A
+                            BUS in the house green by itself.
        __harness.busStates  every word said today; empty it ({}) then poke
-                            'bus' for "no word yet" all round.
+                            'bus' for "no word yet" all round (MISSING CREW).
        __harness.busOff = true   the probe answers as with no table (a build
                             ahead of its migration): no button in the Chat and no
                             "Riding on the bus?" on the invite form.
@@ -911,6 +926,17 @@ shim = r"""<script>
     H.busStates = { 'u-brent': { state: 'on', at: now }, 'u-jeff': { state: 'on', at: now } };
     H.poke('bus');
     return 'bus call ' + tours.t1.shows.s1.daySheet.busCall;
+  };
+  // Every rider aboard, so the sheet's head turns to WE ARE A BUS (see the
+  // BUS CHECK IN notes above).
+  window.__harness.busAllOn = function () {
+    var H = window.__harness, now = new Date().toISOString();
+    var st = H.busStates || (H.busStates = {});
+    (H.crew || []).forEach(function (m) {
+      if (m.joined && m.userId && m.ridesBus !== false) st[m.userId] = { state: 'on', at: now };
+    });
+    H.poke('bus');
+    return Object.keys(st).length + ' riders on';
   };
   try { if (/[?&]bus\b/.test(String(location.search || ''))) {
     window.__harness.bus();
@@ -1010,8 +1036,14 @@ shim = r"""<script>
                             assignee. The I See Stars page grows its To Do
                             List tab (fourth in its tab row) and the profile
                             its To Do List tab, one tappable row per artist
-                            (I See Stars and Opener Band) that opens that
-                            page on its To Do List tab.
+                            (I See Stars and Opener Band). Since 2026-10-16
+                            a profile row opens the LIST ITSELF: a
+                            full-height sheet titled with the artist's name,
+                            holding exactly what the page's tab holds (the
+                            On this list line, the tasks, Add a task, Invite
+                            someone), never the artist's page; a tick inside
+                            it draws at once. The page's own tab stays for
+                            whoever browses the page with a list to see.
                             Or open the page with ?todos.
        __harness.todoItems / __harness.todoInvites   every row; change them
                             by hand, then __harness.poke('todo') and every
@@ -1091,22 +1123,35 @@ shim = r"""<script>
        __harness.spotsOff = true   the probe answers as with no table (a
                             build ahead of its migration): no Spots tab on
                             the profile and no block on any day sheet.
-     FINDING PLACES AS YOU TYPE (0164): the Add/Edit spot sheet's Name field
-     searches once three characters are down, and a quiet list drops under
-     the field (name over city and state, Places from OpenStreetMap at its
-     foot). Picking a row fills the name, the city, and the Kind when the
-     row's OpenStreetMap word maps onto one of the app's kinds. Open the
-     page with ?spots (or plain), profile > Spots > Add a spot, and type
-     "voo" at 375 pixels wide to see it.
-       __harness.placeRows  what typing finds: rows of { name, kind, city,
-                            state, country }, matched on the name's words,
-                            up to eight, after a wire's beat. Seeded at load
-                            (no switch needed) with a Portland pastry row
-                            (Voodoo Doughnut: picking it sets Kind to Food),
-                            a Berlin nightclub (no state, so it writes
-                            "Berlin, Germany" and sets Club), and a Portland
-                            books row whose word maps onto nothing, so the
-                            picker is left as it stands.
+     FINDING PLACES AS YOU TYPE (0164, NEAR THE CITY since 0166): the
+     Add/Edit spot sheet's Name field searches once three characters are
+     down, and a quiet list drops under the field (name over street and
+     town, '212 East 6th Street · Austin' - the street when the map knows
+     one, the town always - with Places from OpenStreetMap at its foot).
+     The ask leans to a town, like the map in his pocket: the sheet's City
+     words when two or more characters are typed there, else tonight's city
+     while the account is on a live tour (the harness run is, so an empty
+     City field leans to Austin), else nowhere. Picking a row fills the
+     name, the city, and the Kind when the row's OpenStreetMap word maps
+     onto one of the app's kinds. Open the page with ?spots (or plain),
+     profile > Spots > Add a spot, and type "voo" at 375 pixels wide to see
+     it: two Voodoo Doughnut rows, the Austin one first while the sheet
+     leans there; clear the City field to 'Portland' and the Portland one
+     leads instead.
+       __harness.placeRows  what typing finds: rows of { name, kind, street,
+                            city, state, country }, matched on the name's
+                            words, up to eight, after a wire's beat; rows
+                            whose city matches the lean lead the list.
+                            Seeded at load (no switch needed) with the two
+                            Voodoo Doughnut branches (picking one sets Kind
+                            to Food), a Berlin nightclub (no state, so it
+                            writes "Berlin, Germany" and sets Club), a row
+                            with no street (Barton Springs Pool: the muted
+                            line is the town alone), and a Portland books
+                            row whose word maps onto nothing, so the picker
+                            is left as it stands.
+       __harness.placeAsks  every ask the sheet sent: [{ q, near }], so a
+                            check can see what the lean really was.
        __harness.placesOff = true   the probe answers as with no 0164: the
                             Name field types plain, no list under it. */
   // A row the way the real backend hands one over (the key worked out from
@@ -1135,14 +1180,15 @@ shim = r"""<script>
   // field's list can be seen without a switch. Rows the shape the real take
   // hands over; kind is OpenStreetMap's own word.
   window.__harness.placeRows = [
-    { name: 'Voodoo Doughnut', kind: 'pastry', city: 'Portland', state: 'Oregon', country: 'United States' },
-    { name: 'Voodoo Brewing', kind: 'bar', city: 'Meadville', state: 'Pennsylvania', country: 'United States' },
-    { name: 'Veracruz All Natural', kind: 'restaurant', city: 'Austin', state: 'Texas', country: 'United States' },
-    { name: 'Houndstooth Coffee', kind: 'cafe', city: 'Austin', state: 'Texas', country: 'United States' },
-    { name: 'Hotel Vegas', kind: 'bar', city: 'Austin', state: 'Texas', country: 'United States' },
-    { name: 'Berghain', kind: 'nightclub', city: 'Berlin', state: '', country: 'Germany' },
-    { name: 'Barton Springs Pool', kind: 'park', city: 'Austin', state: 'Texas', country: 'United States' },
-    { name: 'Powell’s City of Books', kind: 'books', city: 'Portland', state: 'Oregon', country: 'United States' }
+    { name: 'Voodoo Doughnut', kind: 'pastry', street: '22 Southwest 3rd Avenue', city: 'Portland', state: 'Oregon', country: 'United States' },
+    { name: 'Voodoo Doughnut', kind: 'pastry', street: '212 East 6th Street', city: 'Austin', state: 'Texas', country: 'United States' },
+    { name: 'Voodoo Brewing', kind: 'bar', street: '215 Arch Street', city: 'Meadville', state: 'Pennsylvania', country: 'United States' },
+    { name: 'Veracruz All Natural', kind: 'restaurant', street: '1704 East Cesar Chavez Street', city: 'Austin', state: 'Texas', country: 'United States' },
+    { name: 'Houndstooth Coffee', kind: 'cafe', street: '4200 North Lamar Boulevard', city: 'Austin', state: 'Texas', country: 'United States' },
+    { name: 'Hotel Vegas', kind: 'bar', street: '1502 East 6th Street', city: 'Austin', state: 'Texas', country: 'United States' },
+    { name: 'Berghain', kind: 'nightclub', street: 'Am Wriezener Bahnhof', city: 'Berlin', state: '', country: 'Germany' },
+    { name: 'Barton Springs Pool', kind: 'park', street: '', city: 'Austin', state: 'Texas', country: 'United States' },
+    { name: 'Powell’s City of Books', kind: 'books', street: '1005 West Burnside Street', city: 'Portland', state: 'Oregon', country: 'United States' }
   ];
   /* ---- ALSO IN TOWN TONIGHT (0157): the night's other concerts on the day sheet ----
      The database's little cache and its two functions are played by
@@ -1327,8 +1373,16 @@ shim = r"""<script>
      which this fake backend always sends (see venueCard above). The band's
      Rate button sits on the CALENDAR's tonight row after doors (Devin,
      2026-10-16: "'rate' 'vote' 'requests'"; the show-day button reads
-     Requests now), for the tour's owner (this phone, u-devin) and the
-     artist's Members, stacked above Requests; sent, it goes quiet. A tap
+     Requests now) AND on every show row already played (Devin, later the
+     same day: "I should be able to see 'rate' on all previous shows on the
+     current tour" - the database lets the band write or change a rating on
+     any show of the tour, no date rule, so the context line says "You can
+     change it any time"), for the tour's owner (this phone, u-devin) and
+     the artist's Members, stacked above Requests; sent, that row's button
+     goes quiet. TO SEE THE PLAYED ROWS: Calendar > View previous dates -
+     Dallas and Houston each carry Rate (plain, no switch needed); send one
+     and only that row's button goes quiet, each opening the wizard on its
+     own city and venue. A tap
      opens the one-question wizard (0165): eleven screens at 375px, five
      stars with halves (LEFT half of a star is the half step, RIGHT the
      whole), word chips by star side, a 100-character note each, Yes/No for
@@ -1349,7 +1403,9 @@ shim = r"""<script>
                             below), so one address shows everything: the
                             Calendar's tonight row has Rate over Requests
                             (the wizard, every screen), and the profile's
-                            Today tab ends in the History section with the
+                            Today tab ends in the History section - dressed
+                            like the day sheet's Notes since 2026-10-16, the
+                            centred heading over the one card - with the
                             small stars line. Or open with ?rate.
        __harness.venueStars every venue's stars ({ venueId: { userId: stars } });
        __harness.showStars  every night's band rows, each with its review;
@@ -2704,18 +2760,30 @@ shim = r"""<script>
         return it;
       });
     },
-    /* Finding places as you type (0164), in memory: see FINDING PLACES AS
-       YOU TYPE under FAVORITE LOCAL SPOTS. Answers come from
-       __harness.placeRows, matched on the typed words against the name,
-       up to eight, after a wire's beat. */
+    /* Finding places as you type (0164, near a town since 0166), in memory:
+       see FINDING PLACES AS YOU TYPE under FAVORITE LOCAL SPOTS. Answers
+       come from __harness.placeRows (each row carrying its street), matched
+       on the typed words against the name, up to eight, after a wire's
+       beat. `near` is honored the way the server leans to a town: rows
+       whose city matches near's first words lead the list, the rest follow.
+       The last ask is kept in __harness.placeAsks ([{ q, near }]), so a
+       check can see what the sheet really sent. */
     placeSearchOn: function () { return !window.__harness.placesOff; },
-    placeSearch: function (q, cb) {
+    placeSearch: function (q, near, cb) {
+      if (typeof near === 'function') { cb = near; near = ''; }
       var H = window.__harness;
       var qk = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      var nk = String(near || '').split(',')[0].toLowerCase().replace(/\s+/g, ' ').trim();
+      (H.placeAsks = H.placeAsks || []).push({ q: qk, near: String(near || '') });
       if (H.placesOff || qk.length < 2) { cb([]); return; }
       var rows = (H.placeRows || []).filter(function (p) {
         return String(p.name || '').toLowerCase().indexOf(qk) !== -1;
-      }).slice(0, 8);
+      });
+      if (nk) {
+        var here = rows.filter(function (p) { return String(p.city || '').toLowerCase() === nk; });
+        rows = here.concat(rows.filter(function (p) { return here.indexOf(p) < 0; }));
+      }
+      rows = rows.slice(0, 8);
       setTimeout(function () { cb(JSON.parse(JSON.stringify(rows))); }, 250);
     },
     newGiftId: function () { return 'g' + Date.now() + Math.random().toString(36).slice(2, 6); },
