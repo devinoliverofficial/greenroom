@@ -1285,7 +1285,14 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
   0%, 100% { text-shadow: 0 0 2px color-mix(in oklab, var(--pos), transparent 85%); }
   50% { text-shadow: 0 0 14px color-mix(in oklab, var(--pos), transparent 45%); }
 }
-.cal-open.bo-under { margin-top: 2px; }
+.cal-open.cal-under { margin-top: 8px; }
+/* View calendar, BUYOUT ALERT, View Setlist: three equal buttons, centred,
+   one line at phone width (Devin, 2026-10-16). */
+.cal-open.cal-trio { display: grid; grid-auto-flow: column; grid-auto-columns: 108px; justify-content: center; gap: 8px; }
+.cal-trio > .btn, .cal-trio > .bo-wrap { min-width: 0; }
+.cal-trio .btn { width: 100%; justify-content: center; min-height: 34px; padding: 0 6px; gap: 4px; font-size: 11.5px; white-space: nowrap; }
+.cal-trio .bo-wrap { position: static; display: flex; }
+.cal-trio .bo-alert.btn.sm { width: 100%; min-height: 34px; padding: 0 6px; font-size: 10.5px; border-radius: 10px; }
 .vh-addr { display: block; margin-top: 1px; font-size: 12.5px; color: var(--ink-2); text-decoration: underline; }
 .pt-cnt { display: flex; flex-direction: column; align-items: center; gap: 1px; margin: 0; min-width: 86px; }
 .pt-cnt.empty { min-width: 86px; }

@@ -16522,18 +16522,19 @@
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       // "Rate the show" (0154): the band's own, after doors; nothing here for anyone else.
       rateShowRow(id, t),
-      h('div', { class: 'cal-open' },
+      // Three across, the same size, centred: View calendar, BUYOUT ALERT in
+      // the middle (Managers only), View Setlist (Devin, 2026-10-16).
+      h('div', { class: 'cal-open cal-trio' },
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
-          icon('calendar', 16), 'View calendar'),
+          icon('calendar', 14), 'View calendar'),
+        buyoutAlertBtn(id, t),
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { openSetlist(id); } },
-          icon('music', 16), 'View Setlist'),
-        // The tour's shared shopping list (0155), with how many lines are
-        // still to get; everyone on the tour sees it, Crew included.
-        suppliesBtn(id)),
-      // Small, right under those two (Devin, 2026-10-15).
-      h('div', { class: 'cal-open bo-under' }, buyoutAlertBtn(id, t)),
+          icon('music', 14), 'View Setlist')),
+      // The tour's shared shopping list (0155), on a line of its own under
+      // them; everyone on the tour sees it, Crew included.
+      (function () { var sb = suppliesBtn(id); return sb ? h('div', { class: 'cal-open cal-under' }, sb) : null; })(),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
