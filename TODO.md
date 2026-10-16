@@ -17,6 +17,9 @@ All 25 ideas were collected and talked through first (his answers are the rule).
 - [x] 16 "View Setlist" beside View calendar: one numbered list for the whole tour, Managers and Members edit, everyone views
 - [ ] Not tried on a real phone yet; the artist-page bar question above is open
 
+## MODELXCREW Wave 2 app: SHIPPED 9927404 (build 20261015-201747)
+All evening fixes live (day-count rows, hard-close intro, Crew Stats checks and trims, menu-style Settings, guest share sheet and pass parity, ON TOUR glow, amount-ordered expenses, alphabetical categories, smaller MY PAY buttons, Create Account, one-word search). The five gated features ride in it and wake per apply below. Before 0151 is applied: add the doc buyoutTrack reconciliation (backfill + tick UI counts doc marks).
+
 ## MODELXCREW Wave 2 (database, staged): WAITS ON HIS WORD, one by one
 - [ ] 0149 claims follow the fold (fixes the claim picker not matching the artist page, and whole-tour claims missing alternate spellings): rehearsed, two adversarial reviews, every finding fixed and re-proven (nothing shrinks, 96 picker rows = the page's claimable rows, stale phones safe, seats recomputed). App follow-up after apply: tag festival rows in the picker
 - [ ] 0150 bus check-ins, 0151 buyout tracking, 0152 To Do List, 0153 Favorite Local Spots, 0154 venues + ratings (feeds the EXISTING venues table; backfill makes ~30 pages), 0155 tour supplies: written, loaded clean rolled back; functional rehearsals + app screens next
