@@ -67,6 +67,10 @@
   // Tour supplies (0155): each tour's shared list, and whether the table is
   // there at all (null until the first ask answers; the answer is the session's).
   var supplyCache = {}, supplyAsk = {}, supplyGen = {}, supplyKnown = null, supplyProbing = false;
+  // Also in town tonight (0157): whether the city_events functions are there
+  // at all (null until the first ask answers; the answer is the session's).
+  // The answers themselves live in the app, which polls the take function.
+  var cityEvKnown = null, cityEvProbing = false;
   var FLOWERS_FRESH = 60e3; // asked again after a minute anyway: people join, phones sleep through changes
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
@@ -1553,6 +1557,10 @@
       var q = await sb.from('artist_follows').delete().eq('user_id', session.user.id).eq('artist_id', artistId);
       if (q.error) throw mapError(q.error);
     },
+    /* The card rides through whole, so whatever the database's card carries
+       reaches the page - avatarCredit and avatarSource among it once 0158 is
+       live (a bare page's picture from Wikimedia Commons, and whose photo it
+       is), and quietly absent from a database that does not know them yet. */
     artistCard: async function (id) {
       var q = await sb.rpc('artist_card', { a_id: id });
       if (q.error) throw mapError(q.error);
@@ -2082,6 +2090,36 @@
       var c = buyoutCache[tourId];
       if (c && c.data) c.data = c.data.filter(function (r) { return !(r.showId === showId && r.userId === userId); });
       emit('tours');
+    },
+    /* Also in town tonight (0157). cityEventsOn: are the functions there
+       (asked once per session; false until it answers, so a build ahead of
+       its migration simply shows nothing). cityEventsAsk: the other concerts
+       in a show's city that night, answered from the server's little cache
+       ({events}), or {wait: id} while Ticketmaster is asked, or {off} when no
+       key is in the dashboard. cityEventsTake: reads the answer by its
+       request id and caches it on the server for the whole tour's day. The
+       app holds what came back and does the polling. */
+    cityEventsOn: function () {
+      if (cityEvKnown === null) cityEvProbe();
+      return cityEvKnown === true;
+    },
+    cityEventsAsk: async function (tourId, showId) {
+      if (!session) throw err('unavailable');
+      var q = await sb.rpc('city_events_ask', { t_id: tourId, s_id: showId });
+      if (q.error) {
+        if (fnMissing(q.error)) { cityEvKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      return isObj(q.data) ? q.data : null;
+    },
+    cityEventsTake: async function (reqId, tourId, showId) {
+      if (!session) throw err('unavailable');
+      var q = await sb.rpc('city_events_take', { req_id: reqId, t_id: tourId, s_id: showId });
+      if (q.error) {
+        if (fnMissing(q.error)) { cityEvKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      return isObj(q.data) ? q.data : null;
     },
     /* Tour flyers (0156). flyersOn: is the table there (asked once per
        session; false until it answers, so a build ahead of its migration
@@ -2936,6 +2974,22 @@
     p.gen = gen;
     busAsk[tourId] = p;
     return p;
+  }
+  /* ---- Also in town tonight (0157): the night's other concerts ---- */
+  // Is the function there? One ask per session, with empty ids: a database
+  // that has it refuses them (not on that tour), which is itself the answer;
+  // one that does not says the function is missing, and the whole feature
+  // stays out of sight (cityEventsOn answers false, so the app draws
+  // nothing). No signal: unanswered, asked again the next time something
+  // draws.
+  function cityEvProbe() {
+    if (cityEvProbing || !session) return;
+    cityEvProbing = true;
+    sb.rpc('city_events_ask', { t_id: '', s_id: '' }).then(function (q) {
+      cityEvProbing = false;
+      if (q.error && fnMissing(q.error)) cityEvKnown = false;
+      else { cityEvKnown = true; emit('tours'); }
+    }, function () { cityEvProbing = false; });
   }
   /* ---- Buyout ticks (0151): who has been handed their buyout ---- */
   // Is the table there? One ask per session. A build ahead of its migration

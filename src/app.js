@@ -4144,6 +4144,17 @@
             under: h('p', { class: 'hist-fans' }, h('span', { class: 'hf-txt' }, plural(G.num(card.followers), 'fan')))
           });
         })(),
+        // The page's picture came from Wikimedia Commons (0158): its licence
+        // asks to be named, so a quiet line under the header says whose photo
+        // it is and links where it lives. A picture an owner picked carries
+        // no credit, so the line simply is not there.
+        (function () {
+          var cr = String(card.avatarCredit || '').trim();
+          if (!cr || !card.avatar) return null;
+          var src = String(card.avatarSource || '').trim();
+          return h('p', { class: 'hist-credit' }, /^https:\/\//.test(src)
+            ? h('a', { class: 'hist-src', target: '_blank', rel: 'noopener', href: src }, cr) : cr);
+        })(),
         h('p', { class: 'pf-roles' }, 'Artist', unclaimed ? h('span', { class: 'act-tag' }, 'Unclaimed') : null),
         card.bio ? h('p', { class: 'pf-bio' }, card.bio)
           : aboutLine ? h('p', { class: 'pf-bio act-about' }, aboutLine)
@@ -4639,6 +4650,74 @@
           h('div', { class: 'row-label' }, x.name,
             h('span', { class: 'hint' }, spotKindLabel(x.kind) + ' · ' + (x.who || 'Someone') + ' recommends it')));
       })));
+  }
+  /* ---- ALSO IN TOWN TONIGHT (0157, Devin's ask): on a show day the day
+     sheet also lists the other concerts in that city that night. The
+     listings are Ticketmaster's (their Discovery API), so each row links
+     the event's own Ticketmaster page and a line says whose listings they
+     are. Nothing renders before migration 0157 is live (cityEventsOn stays
+     false), with no key in the dashboard ({off}), or when the night has
+     nothing to show. ---- */
+  function cityEventsOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.cityEventsOn && B.cityEventsAsk && B.cityEventsTake && B.cityEventsOn());
+  }
+  /* One show's answer, held on the phone. The first look asks; a {wait}
+     answer is polled the way the tour finder polls its answer: the take
+     function every few seconds, a handful of times, then it lets go
+     quietly. An {off} answer, or a miss, stays quiet too. */
+  function ceOf(tourId, showId) {
+    S.cityEv = S.cityEv || {};
+    var k = tourId + '|' + showId;
+    var c = S.cityEv[k] || (S.cityEv[k] = { rows: null, off: false, asking: false, tries: 0, timer: null, at: 0 });
+    if (c.asking || c.off || c.rows || (c.at && Date.now() - c.at < 60e3)) return c;
+    var B = window.GR_BACKEND;
+    c.asking = true;
+    B.cityEventsAsk(tourId, showId).then(function (a) { ceTook(k, tourId, showId, a); },
+      function () { c.asking = false; c.at = Date.now(); });
+    return c;
+  }
+  function ceTook(k, tourId, showId, a) {
+    var c = S.cityEv && S.cityEv[k];
+    if (!c) return;
+    c.asking = false; c.at = Date.now();
+    if (!G.isObj(a)) return;
+    if (a.off) { c.off = true; return; }
+    if (Array.isArray(a.events)) { c.rows = a.events; if (a.events.length) render(true); return; }
+    if (a.wait == null || c.tries >= 8) return;
+    c.tries += 1;
+    clearTimeout(c.timer);
+    c.timer = setTimeout(function () {
+      c.timer = null;
+      var B = window.GR_BACKEND;
+      if (!B || !B.cityEventsTake) return;
+      c.asking = true;
+      B.cityEventsTake(a.wait, tourId, showId).then(function (x) { ceTook(k, tourId, showId, x); },
+        function () { c.asking = false; });
+    }, 4000);
+  }
+  /* The block itself, under everything else on the day's sheet: up to five
+     rows, the artist with the venue and time under it, each linking its
+     Ticketmaster page, and the one-line credit their terms ask for. Only on
+     the day being played, and only when there are rows. */
+  function cityTonight(tourId, s) {
+    if (!s || !s.id || !cityEventsOn()) return null;
+    if (s.date !== G.tourToday()) return null;
+    var rows = ceOf(tourId, s.id).rows;
+    if (!rows || !rows.length) return null;
+    return h('section', { class: 'ds-sec sp-rec' },
+      h('h3', { class: 'ds-sec-h' }, 'ALSO IN TOWN TONIGHT'),
+      h('div', { class: 'ledger' }, rows.slice(0, 5).map(function (x) {
+        var name = String(x.name || '').trim() || 'Concert';
+        var sub = [String(x.venue || '').trim(), String(x.time || '').trim()].filter(Boolean).join(' · ');
+        var url = String(x.url || '');
+        return h('div', { class: 'row ds-row' },
+          h('div', { class: 'row-label' },
+            /^https:\/\//.test(url) ? h('a', { class: 'ds-link', href: url, target: '_blank', rel: 'noopener' }, name) : name,
+            sub ? h('span', { class: 'hint' }, sub) : null));
+      })),
+      h('p', { class: 'hist-credit' }, 'Listings: ',
+        h('a', { class: 'hist-src', target: '_blank', rel: 'noopener', href: 'https://www.ticketmaster.com' }, 'Ticketmaster')));
   }
   /* ---- Endorsing, and the role that goes with it. The artist's page says
      what this person IS to it — the title the public sees there (Brent is
@@ -8029,8 +8108,8 @@
     var wide = (o.cls || '').indexOf('all-dock') >= 0;
     return h('nav', { class: 'tabbar dock' + (o.cls ? ' ' + o.cls : ''), 'aria-label': o.label || 'Greenroom',
       'data-sig': 'dock|' + sig + '|' + current + '|' + me.photo.length + '|' + profileName() + '|' + actingSig() },
-      // An uneven count: the photo rides the far right, a size up (Devin, 2026-10-15).
-      wide ? [h('div', { class: 'dock-half dock-wide' }, left, right), homeFace(current)]
+      // The photo leads the bar from the LEFT, a size up (Devin, 2026-10-15, second pass).
+      wide ? [homeFace(current), h('div', { class: 'dock-half dock-wide' }, left, right)]
         : [h('div', { class: 'dock-half left' }, left), homeFace(current), h('div', { class: 'dock-half right' }, right)]);
   }
   // The Search tab, on every bar. Only a signed-in build has Search.
@@ -8048,7 +8127,7 @@
      no tour pages, so their bar is Search and the photo alone. */
   function socialBar(current) {
     var to = overviewRoute();
-    if (!to) return dock([searchTab(current)], [], current, 'social|fan', { cls: 'social-bar' });
+    if (!to) return dock([], [searchTab(current)], current, 'social|fan', { cls: 'all-dock social-bar' });
     return tourTabs(to.name === 'tour' ? to.id : null, '', { cur: current, away: true });
   }
   /* Where Overview goes. The tour you picked, else the one on the road, as
@@ -10075,7 +10154,7 @@
     // the RIGHT (Devin, 2026-10-15, second pass).
     return [
       h('div', { class: 'pt-headrow' }, pfLeftChip(t), pfTourBar(id, t, count, 'details'), pfOffChip(t)),
-      dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, city, place, address,
+      dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, s ? '' : city, place, address,
         s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
         [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
@@ -10112,7 +10191,7 @@
       h('div', { class: 'pt-dayrow-l' },
         chip || extra ? h('p', { class: 'pt-dr-chips' }, chip, extra) : null,
         h('p', { class: 'pt-dr-date' }, dayLong(date)),
-        h('p', { class: 'pt-dr-city' }, city)),
+        city ? h('p', { class: 'pt-dr-city' }, city) : null),
       h('div', { class: 'pt-dayrow-c' },
         place ? h('p', { class: 'pt-dr-venue' }, place) : null,
         address ? h('a', { class: 'pt-dr-addr', href: mapsHref(address), target: '_blank', rel: 'noopener' }, address) : null),
@@ -15368,7 +15447,9 @@
   function tourTabs(id, current, o) {
     // Everyone gets the Budget tab now (Devin, 2026-10-07): Crew open it to
     // MY PAY; the tour's own book inside stays for Managers only.
-    var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
+    // His order (2026-10-15): Overview, Budget, Day sheet, Guest list, Chat.
+    // Crew Stats leaves the bar; its page still opens from the Overview.
+    var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs' && t.view !== 'stats'; });
     tabs.splice(1, 0, BUDGET_TAB);
     var framed = !!(o && o.off);
     // away: the same bar worn by a page outside the tour (the profile, the
@@ -15394,9 +15475,9 @@
         if (!on || !there) go(to);
       });
     });
-    // Search rides every bar, far left (Devin, 2026-10-15: "You add the search magnify glass tab here").
+    // Search rides every bar, far RIGHT now (Devin, 2026-10-15, second pass).
     var find = searchTab(o && o.cur);
-    if (find) buttons.unshift(find);
+    if (find) buttons.push(find);
     var half = Math.ceil(buttons.length / 2);
     return dock(buttons.slice(0, half), buttons.slice(half), (o && o.cur) || '',
       (framed ? 'off:' : '') + (away ? 'away:' : '') + (find ? 'find:' : '') + (id || '') + '|' + current + '|' + tabs.map(function (t) { return t.label; }).join(','),
@@ -16603,7 +16684,10 @@
 
     return [
       h('div', { class: 'sec-head', style: 'margin-top:30px;text-align:center' },
-        h('h2', { class: 'sec-title hdr' }, 'Crew')),
+        h('h2', { class: 'sec-title hdr' }, 'Crew'),
+        // Crew Stats left the bottom bar (his tab order): its door lives here.
+        h('button', { class: 'btn quiet sm', type: 'button', style: 'margin-top:4px',
+          onclick: function () { go({ name: 'tour', id: tourId, view: 'stats' }); } }, 'Crew Stats')),
       list,
       manages ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
         h('button', { class: 'crew-invite', type: 'button',
@@ -17671,15 +17755,15 @@
       ? h('button', { class: 'row-label crew-label gl-name', type: 'button', 'aria-label': name + ', ' + pass + '. Tap to edit',
           onclick: function () { openGuestEdit(g, { name: name, pass: pass, aff: aff }, o); } }, face, who)
       : h('div', { class: 'row-label crew-label' }, face, who);
+    // The pass sits at the far right, the green word the crew roles wear
+    // (Devin, 2026-10-15).
     return h('div', { class: 'row crew-row' }, label,
       h('div', { class: 'crew-side' },
-        h('span', { class: 'role-slot' },
-          h('span', { class: 'role-box' },
-            h('span', { class: 'role-tag' + (g.passType === 'All Access' ? ' aa' : '') }, pass.toUpperCase()))),
         email ? h('a', { class: 'crew-call', href: 'mailto:' + email, 'aria-label': 'Email ' + name }, icon('mail', 17))
           : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }),
         phone ? h('a', { class: 'crew-call', href: 'tel:' + phone.replace(/[^0-9+]/g, ''), 'aria-label': 'Call ' + name }, icon('phone', 17))
-          : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' })));
+          : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }),
+        h('span', { class: 'role-tag gl-pass' + (g.passType === 'All Access' ? ' aa' : '') }, pass.toUpperCase())));
   }
   function guestLedger(rows) {
     var el = h('div', { class: 'ledger crew-list guest-rows' }, rows);
@@ -18942,13 +19026,17 @@
     // places shared with this tour for the day's city, only when there are
     // any (and never before migration 0153 is live).
     var spotsRec = spotsRecommended(id, s ? s.city : off.city);
+    // ALSO IN TOWN TONIGHT, under everything: the night's other concerts in
+    // this city, only on the day being played, only when there are rows (and
+    // never before migration 0157 is live).
+    var alsoTonight = s ? cityTonight(id, s) : null;
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
     // Check In sits right under the venue's name.
-    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, copyBtn, spotsRec];
+    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, copyBtn, spotsRec, alsoTonight];
 
-    return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn, spotsRec];
+    return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn, spotsRec, alsoTonight];
   }
 
   function clearDaySheet(tourId, show, date, off) {

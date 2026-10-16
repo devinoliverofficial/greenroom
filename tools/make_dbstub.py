@@ -1002,6 +1002,67 @@ shim = r"""<script>
     return 'Austin seeded from two people, one Phoenix spot for the later night';
   };
   try { if (/[?&]spots\b/.test(String(location.search || ''))) window.__harness.spots(); } catch (e) { /* no address to read */ }
+  /* ---- ALSO IN TOWN TONIGHT (0157): the night's other concerts on the day sheet ----
+     The database's little cache and its two functions are played by
+     __harness.cityEventRows here ({ showId: [{ name, venue, time, url }] }).
+     The block sits under everything on tonight's day sheet, each row linking
+     its Ticketmaster page, with the Listings: Ticketmaster line under it; it
+     only draws on the day being played and only when there are rows.
+       __harness.cityEvents()   seeds five concerts for tonight's Austin show
+                            (s1) and answers how many. Open the tour's day
+                            sheet and the block is there. Or open the page
+                            with ?cityevents. (An already-open sheet holds
+                            its empty answer up to a minute before asking
+                            again.)
+       __harness.cityEventRows  every seeded answer, by show id; change it,
+                            then reopen the day sheet.
+       __harness.cityEventsWait = 2   the next two asks answer {wait}, the
+                            way the server answers while Ticketmaster is
+                            asked, so the app's polling of the take function
+                            is tested: the block appears a few seconds late.
+       __harness.cityEventsDark = true   every ask answers {off}, as with no
+                            key in the dashboard's Vault: the app stays
+                            silent.
+       __harness.cityEventsOff = true   the probe answers as with no function
+                            (a build ahead of its migration): no block on any
+                            day sheet. */
+  window.__harness.cityEvents = function () {
+    var H = window.__harness;
+    H.cityEventRows = H.cityEventRows || {};
+    H.cityEventRows.s1 = [
+      { name: 'The Midnight Division', venue: 'Stubbs', time: '8:00 PM', url: 'https://www.ticketmaster.com/event/0000000000000001' },
+      { name: 'Glass Harbor', venue: 'Emos', time: '7:30 PM', url: 'https://www.ticketmaster.com/event/0000000000000002' },
+      { name: 'Carmen Vela', venue: 'ACL Live', time: '8:00 PM', url: 'https://www.ticketmaster.com/event/0000000000000003' },
+      { name: 'Driveway Kids', venue: 'The Parish', time: '9:00 PM', url: 'https://www.ticketmaster.com/event/0000000000000004' },
+      { name: 'Low Tide Choir', venue: 'Antones', time: '7:00 PM', url: 'https://www.ticketmaster.com/event/0000000000000005' }
+    ];
+    return H.cityEventRows.s1.length + ' concerts seeded for tonight';
+  };
+  try { if (/[?&]cityevents\b/.test(String(location.search || ''))) window.__harness.cityEvents(); } catch (e) { /* no address to read */ }
+  /* ---- ARTIST PICTURES (0158): a bare page's picture from Wikimedia Commons ----
+     The worker that walks MusicBrainz to Wikidata to Commons never runs
+     here; what it leaves behind does: an unclaimed page whose avatar came
+     that way carries avatarCredit ("Photo: <author> - <licence>") and
+     avatarSource (the picture's own Commons page) on its card, and the
+     artist page draws a quiet credit line under the header linking the
+     source. A page whose picture an owner picked carries no credit and no
+     line.
+       __harness.artistPhoto()  gives the unclaimed Sleeping With Sirens page
+                            (pub1) a small pretend picture with its credit
+                            and source. Search for it and open the page: the
+                            photo is there with the credit line under the
+                            header. Or open the page with ?artistphoto.
+       __harness.ghosts[0].avatar / .avatarCredit / .avatarSource   the raw
+                            fields; empty the credit and the line goes while
+                            the picture stays, as after an owner's upload. */
+  window.__harness.artistPhoto = function () {
+    var g = ghostList()[0];
+    g.avatar = 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 fill=%22%23194d33%22/><circle cx=%2232%22 cy=%2226%22 r=%2210%22 fill=%22%23cde8d8%22/><path d=%22M12 56c3-12 10-16 20-16s17 4 20 16z%22 fill=%22%23cde8d8%22/></svg>';
+    g.avatarCredit = 'Photo: Alex Example - CC BY-SA 4.0';
+    g.avatarSource = 'https://commons.wikimedia.org/wiki/File:Example_band.jpg';
+    return 'the unclaimed page has a credited picture';
+  };
+  try { if (/[?&]artistphoto\b/.test(String(location.search || ''))) window.__harness.artistPhoto(); } catch (e) { /* no address to read */ }
   try {
     var offAsk = /[?&]offtour=(next|none|travel)\b/.exec(String(location.search || ''));
     if (offAsk) window.__harness.offTour(offAsk[1]);
@@ -2152,6 +2213,26 @@ shim = r"""<script>
       });
       window.__harness.poke('buyout');
       return Promise.resolve();
+    },
+    /* Also in town tonight (0157), in memory: see ALSO IN TOWN TONIGHT near
+       FAVORITE LOCAL SPOTS. Answers come from __harness.cityEventRows by
+       show id; cityEventsWait counts down {wait} answers so the app's poll
+       of the take function is exercised, and cityEventsDark answers {off},
+       as with no key in Vault. */
+    cityEventsOn: function () { return !window.__harness.cityEventsOff; },
+    cityEventsAsk: function (tourId, showId) {
+      var H = window.__harness;
+      if (H.cityEventsOff) return Promise.reject(new Error('unavailable'));
+      if (H.cityEventsDark) return Promise.resolve({ off: true });
+      if (H.cityEventsWait > 0) { H.cityEventsWait -= 1; return Promise.resolve({ wait: 7 }); }
+      return Promise.resolve({ events: (H.cityEventRows || {})[showId] || [] });
+    },
+    cityEventsTake: function (reqId, tourId, showId) {
+      var H = window.__harness;
+      if (H.cityEventsOff) return Promise.reject(new Error('unavailable'));
+      if (H.cityEventsDark) return Promise.resolve({ off: true });
+      if (H.cityEventsWait > 0) { H.cityEventsWait -= 1; return Promise.resolve({ wait: reqId }); }
+      return Promise.resolve({ events: (H.cityEventRows || {})[showId] || [] });
     },
     /* Supplies (0155), in memory: see SUPPLIES near LIVE WITHOUT A RESTART.
        The rows live in __harness.supplyRows; anyone ticks, but the words and
@@ -3343,7 +3424,10 @@ shim = r"""<script>
         if (!g.owner) waiting = waiting.concat(((H.ghostCrew || {})[g.id] || []).map(function (m) {
           return Object.assign({ userId: m.userId, kind: 'crew', role: m.role || '', avatar: '', endorsed: true }, P[m.userId], m.userId === 'u-devin' ? { handle: H.handle || '' } : {});
         }));
-        return Promise.resolve({ id: g.id, handle: g.handle, name: g.name, bio: '', avatar: '', mine: false,
+        // (0158) A bare page's picture from Wikimedia Commons rides the card
+        // with its credit and source; see ARTIST PICTURES above.
+        return Promise.resolve({ id: g.id, handle: g.handle, name: g.name, bio: '', avatar: g.avatar || '',
+          avatarCredit: g.avatarCredit || '', avatarSource: g.avatarSource || '', mine: false,
           // (The check follows the encyclopedia's answer: a page made a moment ago has none until a nudge confirms it.)
           unclaimed: !g.owner, verified: !!g.owner, checkmark: !!g.checked, claimed: !!g.owner, about: g.about || '', country: g.country || '', myClaim: mc ? mc.status : null,
           myClaimCode: mc && mc.status === 'pending' ? (mc.code || null) : null,
@@ -3352,7 +3436,8 @@ shim = r"""<script>
       }
       if (!a) return Promise.resolve(null);
       var fol = (H.artistFollows || []).indexOf(a.id) >= 0;
-      return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '', mine: !a.notMine,
+      return Promise.resolve({ id: a.id, handle: a.handle, name: a.name, bio: a.bio || '', avatar: a.avatar || '',
+        avatarCredit: a.avatarCredit || '', avatarSource: a.avatarSource || '', mine: !a.notMine,
         unclaimed: false, verified: !!a.verified || /i see stars/i.test(a.name || ''), checkmark: !!a.verified || /i see stars/i.test(a.name || ''), claimed: !!a.verified || /i see stars/i.test(a.name || ''), about: a.about || '', country: a.country || '', myClaim: null,
         myClaimCode: null, myRequest: null,
         iFollow: fol, followers: (a.followers || 0) + (fol ? 1 : 0),
