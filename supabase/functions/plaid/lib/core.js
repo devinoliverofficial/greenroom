@@ -1485,17 +1485,20 @@
     var last = d[d.length - 1];
     return parseDay(tour.spanEnd) && tour.spanEnd > last ? tour.spanEnd : last;
   }
-  /* How many days until the band is home: today through the run's last
-     calendar day, plus the travel day home after it, off days included
-     (Devin's rule: home is its own day after the last tour date). Only
-     while the run is on; null before it starts, once the home day has
-     come, or with no dated shows at all. `today` can be given for tests. */
+  /* How many days until the band is home: today through the run's LAST
+     DATED SHOW, off days included, and nothing further (Devin, 2026-10-16:
+     "the home date should take us only until the end of tour no extra days
+     or travel days", for the countdown alone - travel days still stretch
+     the run everywhere else, via tourEnd). The last show day reads 1. Only
+     while the run is on; null before it starts, after the last date, or
+     with no dated shows at all. `today` can be given for tests. */
   function daysLeftOnTour(tour, today) {
-    var start = tourStart(tour), end = tourEnd(tour);
-    if (!start || !end) return null;
+    var d = rows(tour && tour.shows).map(function (s) { return s.date; }).filter(parseDay).sort();
+    var start = tourStart(tour);
+    if (!start || !d.length) return null;
     var day = parseDay(today) ? today : tourToday();
     if (day < start) return null;
-    var n = daysBetween(day, addDays(end, 1));
+    var n = daysBetween(day, addDays(d[d.length - 1], 1));
     return n >= 1 ? n : null;
   }
   /* The days a tour takes card charges for, as the tour manager chose them:

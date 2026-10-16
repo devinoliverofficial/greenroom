@@ -4055,7 +4055,14 @@
     var tours = Array.isArray(card.tours) ? card.tours : [];
     // A page nobody runs yet: no band or crew to show, so it opens on its tours.
     var unclaimed = !!card.unclaimed;
+    // The To Do List rides its own tab now (Devin, 2026-10-16: it left the
+    // viewer experience). The tab is there only for the people the database
+    // hands the list to - the page's Members, the account behind it, and the
+    // invited; todoList answers null for everyone else, who get the three
+    // tabs exactly as before, with no sign a list exists.
+    var todoTab = !!(todosOn() && B.todoList(id));
     var tab = (S.actTab && S.actTab.id === id && S.actTab.tab) || (unclaimed ? 'tours' : 'band');
+    if (tab === 'todo' && !todoTab) tab = unclaimed ? 'tours' : 'band';
     var pickTab = function (t) { S.actTab = { id: id, tab: t }; render(true); };
     var tabBtn = function (key, label, ic) {
       return h('button', { class: 'vp-tab' + (tab === key ? ' on' : ''), type: 'button', role: 'tab',
@@ -4272,9 +4279,14 @@
       manage ? joinedCards(id) : null,
       // For a Greenroom admin: whoever is asking to run this page.
       unclaimed ? claimQueueCards(id) : null,
-      h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('band', 'Members', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap')),
+      h('div', { class: 'vp-tabs' + (todoTab ? ' four' : ' three'), role: 'tablist' }, tabBtn('band', 'Members', 'music'), tabBtn('crew', 'Crew', 'people'), tabBtn('tours', 'Tours', 'tabmap'),
+        todoTab ? tabBtn('todo', 'To Do List', 'check') : null),
       tab === 'band' ? people(bandList, 'band')
         : tab === 'crew' ? people(crewList, 'crew')
+        // The artist's To Do List (0152), its own tab since 2026-10-16: only
+        // for its Members, the account that runs the page, and the people a
+        // Member invited (the todoTab gate above).
+        : tab === 'todo' ? todoBlock(id, card)
         : [tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', manage ? 'Tours you file under ' + card.name + ' show up here.'
                 : histBusy(hc0.row) ? (histWaiting(hc0.row) ? 'The rest of ' + card.name + '\u2019s road history comes in tomorrow.' : 'Reading ' + card.name + '\u2019s road history\u2026')
@@ -4282,10 +4294,6 @@
            // Under the tours, for whoever runs the page: a rescan any time, and the search's own status.
            manage && card.verified && hc0.row ? rescanButton(id) : null,
            tourFinderBlock(id, card, manage, unclaimed)],
-      // The artist's To Do List (0152): only for its Members, the account
-      // that runs the page, and the people a Member invited. Everyone else
-      // gets the page exactly as before, with no sign a list exists.
-      todoBlock(id, card),
       historyCredit(id),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(manage && id === actingAs() ? 'me' : ''));
@@ -4361,18 +4369,27 @@
       h('ul', { class: 'rows td-list' }, done.map(function (x) { return todoRow(artistId, artistName, x); }))));
     return out;
   }
-  /* The section on the artist's page. todoList answers null for anyone the
-     database keeps out (and while it's still being fetched, and before the
-     migration is live), and then there is no section at all: no heading, no
-     empty state, nothing to wonder about. */
+  /* The To Do List tab's content on the artist's page. todoList answers null
+     for anyone the database keeps out (and while it's still being fetched,
+     and before the migration is live), and then there is no tab at all: no
+     heading, no empty state, nothing to wonder about. One quiet line up top
+     says who the list reaches: the artist's Members and the people invited. */
   function todoBlock(artistId, card) {
     if (!card || !todosOn()) return null;
     var B = window.GR_BACKEND;
     var items = B.todoList(artistId);
     if (!items) return null;
     var canRun = todoCanRun(card);
+    var who = [], seen = {};
+    (card.members || []).forEach(function (m) {
+      var k = m.userId || m.name;
+      if (m.kind === 'band' && !m.pending && m.name && !seen[k]) { seen[k] = true; who.push(m.name); }
+    });
+    (B.todoInvites(artistId) || []).forEach(function (v) {
+      if (!seen[v.userId]) { seen[v.userId] = true; who.push(v.name || 'Someone'); }
+    });
     return h('section', { class: 'tf-block td-block', 'aria-label': card.name + ' To Do List' },
-      h('h3', { class: 'mn-h mn-over' }, 'To Do List'),
+      who.length ? h('p', { class: 'note td-who' }, 'On this list: ' + who.join(', ')) : null,
       items.length ? null : h('p', { class: 'note td-none' }, 'Nothing on the list yet. Everyone on it can add tasks, hand them out and tick them off.'),
       todoGroups(artistId, card.name, items),
       h('div', { class: 'am-more td-add' },
@@ -4559,7 +4576,10 @@
     return !!(a && a.some(function (x) { return x.mine || x.kind === 'band'; }));
   }
   // "Your To Do List": everything handed to you leads, each task naming its
-  // artist; then each artist's list you can see, categories in his order.
+  // artist; then one row per artist you work for - every list these tasks
+  // reach, and your own artist pages even before their first task (the same
+  // list the profile's artists come from). Tapping a row opens that artist's
+  // page on its To Do List tab (Devin, 2026-10-16).
   function pfTodos() {
     var B = window.GR_BACKEND;
     var all = todosOn() && B.myTodos ? B.myTodos() : null;
@@ -4567,15 +4587,36 @@
     var meId = B.uid ? B.uid() : null;
     var mine = all.filter(function (x) { return x.assignedTo === meId && !x.doneAt; });
     var byArtist = [], slot = {};
+    var put = function (id, name, avatar) {
+      if (!id) return null;
+      var g = slot[id];
+      if (!g) { g = slot[id] = { id: id, name: name || 'Artist', avatar: avatar || '', open: 0 }; byArtist.push(g); }
+      if (!g.avatar && avatar) g.avatar = avatar;
+      if (name && g.name === 'Artist') g.name = name;
+      return g;
+    };
     all.forEach(function (x) {
-      if (mine.indexOf(x) >= 0) return;
-      var g = slot[x.artistId];
-      if (!g) { g = slot[x.artistId] = { id: x.artistId, name: x.artistName || 'Artist', items: [] }; byArtist.push(g); }
-      g.items.push(x);
+      var g = put(x.artistId, x.artistName || '');
+      if (g && !x.doneAt) g.open += 1;
+    });
+    ((myActs().list) || []).forEach(function (a) {
+      if (a && a.id && (a.mine || a.kind === 'band')) put(a.id, a.name, a.avatar);
     });
     if (!mine.length && !byArtist.length) {
       return emptyState('Nothing on your lists', 'Tasks on your artists’ To Do Lists, and any task handed to you, show up here.');
     }
+    var artRow = function (g) {
+      var cached = S.actCards && S.actCards[g.id] && S.actCards[g.id].card;
+      var logo = g.avatar || (cached && cached.avatar) || '';
+      return h('li', null, h('button', { class: 'list-row art-row', type: 'button',
+        'aria-label': g.name + ' To Do List: ' + (g.open ? plural(g.open, 'open task') : 'nothing yet'),
+        onclick: function () { S.actTab = { id: g.id, tab: 'todo' }; openAct(g.id); } },
+        h('span', { class: 'avatar' + (logo ? ' has photo' : ' letter'), 'aria-hidden': 'true' },
+          logo ? h('img', { class: 'brand-logo', src: logo, alt: '' }) : (String(g.name).trim().charAt(0).toUpperCase() || '?')),
+        h('span', { class: 'lr-text' }, h('span', { class: 'lr-title' }, g.name),
+          h('span', { class: 'lr-sub' }, g.open ? plural(g.open, 'open task') : 'Nothing yet')),
+        icon('chevron', 18)));
+    };
     return [
       h('h3', { class: 'mn-h mn-over td-h' }, 'Your To Do List'),
       mine.length ? [
@@ -4583,11 +4624,7 @@
         h('ul', { class: 'rows td-list' }, mine.map(function (x) {
           return todoRow(x.artistId, x.artistName || '', x, { artist: x.artistName || '' });
         }))] : null,
-      byArtist.map(function (g) {
-        return h('section', { class: 'td-group' },
-          h('h4', { class: 'mn-h mn-over td-ah' }, g.name),
-          todoGroups(g.id, g.name, g.items));
-      })
+      byArtist.length ? h('ul', { class: 'tour-list rows td-arts' }, byArtist.map(artRow)) : null
     ];
   }
   /* ---- Favorite Local Spots (0153, Devin's name): the restaurants, coffee

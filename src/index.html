@@ -2615,6 +2615,9 @@ button.acct-row:active { background: var(--surface-2); }
 .am-li .fl-row { flex: 1; min-width: 0; }
 .am-more { position: relative; z-index: 1; display: flex; justify-content: center; margin: 14px 0 6px; }
 .vp-tabs.three .vp-tab { font-size: 14px; gap: 7px; }
+/* Four tabs on an artist page (the To Do List rides along): sized so all four fit a 375 wide phone. */
+.vp-tabs.four .vp-tab { font-size: 12px; gap: 4px; white-space: nowrap; padding-left: 2px; padding-right: 2px; }
+.vp-tabs.four .vp-tab .ic svg { width: 16px; height: 16px; }
 .avatar.photo .brand-logo { object-fit: cover; padding: 0; }
 .vp-vouch { display: flex; align-items: center; gap: 4px; }
 .pf-check.sm svg { width: 13px; height: 13px; }
@@ -3549,8 +3552,10 @@ button.fl-row { cursor: pointer; }
 .tf-row-x { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .tf-row-x .hint { display: block; }
 .tf-paste { width: 100%; min-height: 140px; resize: vertical; margin-top: 10px; }
-/* To Do Lists (0152): the section on an artist's page and the profile's tab. */
-.td-block { margin-top: 18px; }
+/* To Do Lists (0152): a tab on an artist's page and the profile's tab. */
+.td-block { margin-top: 6px; }
+.td-who { margin: 2px 0 0; }
+.td-arts { margin-top: 12px; }
 .td-cat { margin: 14px 0 0; font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); }
 .td-ah { margin-top: 20px; }
 .td-list { list-style: none; margin: 0; padding: 0; }

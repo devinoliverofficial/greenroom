@@ -972,7 +972,7 @@ shim = r"""<script>
     return H.supplyRows.filter(function (r) { return !r.doneAt; }).length + ' open lines';
   };
   try { if (/[?&]supplies\b/.test(String(location.search || ''))) window.__harness.supplies(); } catch (e) { /* no address to read */ }
-  /* ---- TO DO LISTS (0152): the artist page's section, and "Your To Do List" on the profile ----
+  /* ---- TO DO LISTS (0152): a tab on the artist page, and "Your To Do List" on the profile ----
      The database tables todo_items and todo_invites are __harness.todoItems
      ([{ id, artistId, cat, body, assignedTo, due, doneAt, createdBy, createdAt }])
      and __harness.todoInvites ([{ artistId, userId, invitedBy, at }]) here.
@@ -988,14 +988,17 @@ shim = r"""<script>
                             a task of their own there too), then a 'todo'
                             poke lands, the way the database tells an
                             assignee. The I See Stars page grows its To Do
-                            List section and the profile its To Do List tab.
+                            List tab (fourth in its tab row) and the profile
+                            its To Do List tab, one tappable row per artist
+                            (I See Stars and Opener Band) that opens that
+                            page on its To Do List tab.
                             Or open the page with ?todos.
        __harness.todoItems / __harness.todoInvites   every row; change them
                             by hand, then __harness.poke('todo') and every
                             open list draws again by itself.
        __harness.todosOff = true   the probe answers as with no table (a
-                            build ahead of its migration): no section on any
-                            artist page and no tab on the profile. */
+                            build ahead of its migration): no tab on any
+                            artist page and none on the profile. */
   // Their name the way the real list reads it back (the profiles table here
   // is the people map).
   function todoName(uid) {
@@ -2500,7 +2503,7 @@ shim = r"""<script>
        RESTART. The rows live in __harness.todoItems and __harness.todoInvites;
        who may see a list follows the database's rule (todoCanSee above), so
        todoList answers null for a page none of the test person's business
-       and the app draws no section there. */
+       and the app draws no To Do List tab there. */
     todosOn: function () { return !window.__harness.todosOff; },
     todoList: function (artistId) {
       var H = window.__harness;
