@@ -103,6 +103,55 @@ create trigger buyout_tracks_poke after insert or delete on public.buyout_tracks
 -- publication: the pokes table carries the live line, as 0144 set it up,
 -- and the publication stays exactly as it is.)
 
+
+-- The marks the tours already hold (show.buyoutTrack.paid, the old tracker)
+-- become rows here, so MY PAY says Received for buyouts handed out before
+-- this table existed. Only over the email bridge: a paid key names a crew
+-- entry on the tour's doc, that entry's email names a seat
+-- (members.invited_email), and only a seat with an account gets a row.
+-- No email match, no row - nothing is guessed. Running it twice adds nothing.
+do $$
+declare t record; sh record; pk record; v_email text; v_uid uuid; v_ent jsonb; v_name text;
+begin
+  for t in select id, owner_id, doc from tours
+            where jsonb_typeof(doc -> 'shows') = 'object'
+  loop
+    for sh in select e.key as show_id, e.value as show
+                from jsonb_each(t.doc -> 'shows') e
+               where jsonb_typeof(e.value -> 'buyoutTrack' -> 'paid') = 'object'
+    loop
+      for pk in select p.key as who from jsonb_each(sh.show -> 'buyoutTrack' -> 'paid') p
+      loop
+        v_uid := null;
+        if pk.who like 'n:%' then
+          -- the old tracker's own key: 'n:' + the lowercased name; the seat
+          -- whose typed name says the same person (the MY PAY match rule)
+          v_name := substr(pk.who, 3);
+          select m.user_id into v_uid from members m
+           where m.tour_id = t.id and m.user_id is not null
+             and lower(btrim(coalesce(m.display_name, ''))) = v_name
+           limit 1;
+        else
+          -- a crew map key: that entry's email names the seat
+          v_ent := case when jsonb_typeof(t.doc -> 'crew') = 'object'
+                        then t.doc -> 'crew' -> pk.who else null end;
+          v_email := lower(btrim(coalesce(v_ent ->> 'email', '')));
+          if v_email <> '' then
+            select m.user_id into v_uid from members m
+             where m.tour_id = t.id and m.user_id is not null
+               and lower(btrim(coalesce(m.invited_email, ''))) = v_email
+             limit 1;
+          end if;
+        end if;
+        continue when v_uid is null;
+        insert into buyout_tracks (tour_id, show_id, user_id, tracked_by)
+        values (t.id, sh.show_id, v_uid, t.owner_id)
+        on conflict do nothing;
+      end loop;
+    end loop;
+  end loop;
+end $$;
+
 notify pgrst, 'reload schema';
 
 -- ============================== To roll back ==============================

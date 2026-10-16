@@ -118,12 +118,14 @@ shim = r"""<script>
       };
     }
   };
-  // A fake reader: flyers come from __harness.flyers (one list per read);
-  // anything else reads as nothing.
+  // A fake reader: flyer readings come from __harness.flyers when a test has
+  // set it to a list, one list per read; anything else reads as nothing.
+  // (Out of the box __harness.flyers is the TOUR FLYERS seeding function,
+  // further down, so only a list put there on purpose feeds the reader.)
   var fakeSample = function () { return Promise.resolve({ text: '' }); };
   fakeSample.json = function (prompt) {
     window.__harness.reads = (window.__harness.reads || 0) + 1;
-    if (/concert tour flyer/.test(String(prompt))) return Promise.resolve((window.__harness.flyers || []).shift() || []);
+    if (/concert tour flyer/.test(String(prompt))) return Promise.resolve((Array.isArray(window.__harness.flyers) ? window.__harness.flyers : []).shift() || []);
     // The tour finder's reading: two tours out of the pretend archives.
     if (/TOUR FINDER/.test(String(prompt))) return Promise.resolve([
       { name: 'Let Light Overcome the Darkness Tour', role: 'support', start: '2019-11-05', end: '2019-12-08', region: 'US', lineup: 'Our Last Night, The Word Alive, Ashland',
@@ -706,6 +708,41 @@ shim = r"""<script>
     H.claims = (H.claims || []).filter(function (c) { return !(c.artistId === 'pub1' && c.userId === 'u-devin'); })
       .concat([{ id: 'cl-joined', artistId: 'pub1', userId: 'u-devin', note: 'I sing in it.', link: '', role: 'Vocals', links: {}, code: 'GR-J01NED', status: 'pending', at: ago(1) }]);
     return window.GR_BACKEND.decideClaim('cl-joined', true).then(function () { window.__harness.poke('listing,joined'); return 'pub1'; });
+  };
+  /* ---- TOUR FLYERS (0156): the poster above a tour dropdown's dates ----
+     The probe answers true here and the map starts empty, so every open
+     dropdown shows nothing new and the rows of a page the test person runs
+     say "Add flyer".
+     HOOKS:
+       __harness.flyers()          seeds one flyer (a drawn stand-in poster) on the test artist's
+                                   "10 Years In The Black" and answers the page's id. Open that page
+                                   (__harness.artistSide(), then Search, I See Stars) and tap the
+                                   tour: the dropdown says View flyer above the dates, the sheet
+                                   shows the poster full width with Remove flyer, and the row says
+                                   Change flyer; the page's other tours still say Add flyer. Careful:
+                                   a test that assigns a LIST to __harness.flyers feeds the fake
+                                   reader instead (the old hook, unchanged); the seeding function
+                                   only sits there until then.
+       __harness.tourFlyers        what's seeded or saved: { <artistId>: { <group key>: { url, sourceUrl } } }.
+       __harness.flyerPuts         every save the app made: [{ artistId, gk, size }].
+       __harness.flyerDrops        every removal: [{ artistId, gk }].
+       __harness.flyerFail = true  every save fails, as with no signal.
+       __harness.flyersOff = true  the probe answers false, as before migration 0156: no flyer
+                                   lines anywhere. */
+  window.__harness.flyers = function () {
+    var H = window.__harness, a = issPage(false);
+    H.tourFlyers = H.tourFlyers || {};
+    var m = H.tourFlyers[a.id] = H.tourFlyers[a.id] || {};
+    m['10 Years In The Black'] = { url: 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420"><rect width="300" height="420" fill="#101418"/>' +
+      '<rect x="14" y="14" width="272" height="392" fill="none" stroke="#3ddc84" stroke-width="3"/>' +
+      '<text x="150" y="150" fill="#3ddc84" font-family="Arial" font-size="30" font-weight="bold" text-anchor="middle">PRETEND</text>' +
+      '<text x="150" y="195" fill="#3ddc84" font-family="Arial" font-size="30" font-weight="bold" text-anchor="middle">FLYER</text>' +
+      '<text x="150" y="260" fill="#e8f1ea" font-family="Arial" font-size="14" text-anchor="middle">10 Years In The Black</text>' +
+      '<text x="150" y="285" fill="#8a949c" font-family="Arial" font-size="12" text-anchor="middle">a stand-in poster for the harness</text></svg>'),
+      sourceUrl: 'https://example.com/pretend-flyer-page' };
+    emit();
+    return a.id;
   };
   // A brand-new Crew account (see LIVE WITHOUT A RESTART above): set up before the app starts.
   var held = {};
@@ -3278,6 +3315,37 @@ shim = r"""<script>
     contactOf: function (uid) { return Promise.resolve(uid === 'u-brent' ? { phone: '(313) 555-0142', email: 'brent@example.com' } : { phone: '', email: '' }); },
     flyer: function (tourId) { return Promise.resolve((window.__harness.flyers2 || {})[tourId] || ''); },
     saveFlyer: function (tourId, img) { var H = window.__harness; H.flyers2 = H.flyers2 || {}; H.flyers2[tourId] = img || ''; return Promise.resolve(); },
+    /* Tour flyers (0156), the poster above a tour dropdown's dates: the probe
+       answers true (set __harness.flyersOff for a build ahead of its
+       migration), reads come straight from __harness.tourFlyers, and a save
+       keeps the picked file as a data address, as the bucket would keep a
+       public one. See TOUR FLYERS above for the hooks. */
+    flyersOn: function () { return !window.__harness.flyersOff; },
+    tourFlyers: function (artistId) { return (window.__harness.tourFlyers || {})[artistId] || {}; },
+    flyerPut: function (artistId, gk, file) {
+      var H = window.__harness;
+      if (H.flyerFail) return Promise.reject(Object.assign(new Error('offline'), { code: 'offline' }));
+      H.tourFlyers = H.tourFlyers || {};
+      var m = H.tourFlyers[artistId] = H.tourFlyers[artistId] || {};
+      return new Promise(function (res, rej) {
+        var r = new FileReader();
+        r.onload = function () {
+          // (A hand-picked image clears the source receipt, as the real save does.)
+          m[gk] = { url: String(r.result), sourceUrl: '' };
+          H.flyerPuts = (H.flyerPuts || []).concat([{ artistId: artistId, gk: gk, size: file && file.size }]);
+          emit(); res(m[gk].url);
+        };
+        r.onerror = function () { rej(Object.assign(new Error('unavailable'), { code: 'unavailable' })); };
+        r.readAsDataURL(file);
+      });
+    },
+    flyerDrop: function (artistId, gk) {
+      var H = window.__harness, m = (H.tourFlyers || {})[artistId];
+      if (m) delete m[gk];
+      H.flyerDrops = (H.flyerDrops || []).concat([{ artistId: artistId, gk: gk }]);
+      emit();
+      return Promise.resolve();
+    },
     myProfile: function () { return { firstName: me.first_name, lastName: me.last_name, fullName: me.full_name,
       username: me.username, phone: me.phone, tourRole: me.tour_role, email: 'devin@example.com' }; },
     saveProfile: function (p) { me.first_name = p.firstName; me.last_name = p.lastName;

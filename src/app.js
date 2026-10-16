@@ -3558,7 +3558,6 @@
       myRoad(uid), mine && !mine.error && mine.counts ? mine.counts.endorsements : null));
     var can = !!(uid && window.GR_BACKEND.myArtists);
     var inner = [h('span', { class: 'vp-user-t' }, card.handle || who), checked ? verifiedBadge() : null,
-      onTourChip(myTourNowOn()),
       can ? h('span', { class: 'acct-arrow', 'aria-hidden': 'true' }, icon('chevron', 16)) : null];
     return can
       ? h('h1', { class: 'band-name vp-user mid' }, h('button', { class: 'acct-btn', type: 'button',
@@ -6811,6 +6810,37 @@
     }
     return c;
   }
+  /* ---- Tour flyers (0156): the poster above a tour dropdown's dates.
+     Nothing here renders before the migration is live: flyersOn() stays
+     false until the backend finds the table. ---- */
+  function flyersOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.flyersOn && B.tourFlyers && B.flyerPut && B.flyersOn());
+  }
+  // Keeping a flyer on a tour of the page: the image goes up, then the row
+  // under the dropdown swaps to View flyer and Change flyer.
+  function keepTourFlyer(artistId, gk, busyKey, file) {
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) { toast('That image is over 8 MB. Pick a smaller one.'); return; }
+    S.flyerBusy = busyKey; render(true);
+    window.GR_BACKEND.flyerPut(artistId, gk, file).then(function () {
+      S.flyerBusy = null; toast('Flyer saved'); render(true);
+    }, function (x) { S.flyerBusy = null; render(true); saveFailed('flyer', x); });
+  }
+  /* The flyer itself, full width, with the tour's name over it. The page's
+     owner can also take it down from here. */
+  function openFlyerLook(artistId, name, fl, manage, gk) {
+    openSheet(function () {
+      return [h('h2', { class: 'sh-title' }, name),
+        h('img', { class: 'tc-flyer', src: fl.url, alt: name + ' flyer' }),
+        fl.sourceUrl ? h('a', { class: 'pt-addr', href: fl.sourceUrl, target: '_blank', rel: 'noopener' }, 'Where this flyer came from') : null,
+        manage ? h('button', { class: 'btn ghost block danger', type: 'button', onclick: function (e) {
+          var b = e.currentTarget; b.disabled = true;
+          window.GR_BACKEND.flyerDrop(artistId, gk).then(function () { closeSheet(); toast('Flyer removed'); render(true); },
+            function (x) { b.disabled = false; saveFailed('flyer', x); });
+        } }, 'Remove flyer') : null];
+    }, { label: name + ' flyer', cls: 'tc-sheet' });
+  }
   // say: the "I was on this tour" line for this row, when the person looking may say so (see viewAct).
   // o (profile rows): { artist, role } puts the artist's name in the sub line and the role under it,
   // the way timelineRow prints them, so the same dropdown fits a person's Tours tab.
@@ -6858,6 +6888,28 @@
     // Devin: "When you click it it shows the dates and the bands it was with."
     var lineup = String(src.lineup || r.lineup || '').trim();
     var withLine = open && lineup ? h('p', { class: 'tn-with' }, 'With ' + lineup) : null;
+    // Tour flyers (0156, Devin: "above the dates it can say 'view flyer'").
+    // One tourFlyers ask covers every row on the page (the backend holds the
+    // answer), so an open row never fetches on its own. The page's owner also
+    // puts one up, or swaps it, right here.
+    var flyerLine = null;
+    if (open && flyersOn()) {
+      var fmap = window.GR_BACKEND.tourFlyers(artistId);
+      var fl = fmap ? fmap[nkey] : null;
+      var fparts = [];
+      if (fl && fl.url) fparts.push(h('button', { class: 'linkbtn', type: 'button',
+        onclick: function () { openFlyerLook(artistId, r.name, fl, manage, nkey); } }, 'View flyer'));
+      if (manage && S.flyerBusy === k) {
+        fparts.push(fparts.length ? ' · ' : '', 'Saving the flyer…');
+      } else if (manage) {
+        var fctl = fileControl({ label: fl && fl.url ? 'Change flyer' : 'Add flyer', cls: 'linkbtn', accept: imageAccept(),
+          ariaLabel: (fl && fl.url ? 'Change the flyer of ' : 'Add a flyer to ') + r.name,
+          onFiles: function (files) { keepTourFlyer(artistId, nkey, k, files[0]); } });
+        if (fparts.length) fparts.push(' · ');
+        fparts.push(fctl[0], fctl[1]);
+      }
+      if (fparts.length) flyerLine = h('p', { class: 'pt-next pt-nodates' }, fparts);
+    }
     var inner = h('div', { class: 'pt-run tn-run' + (open ? ' open' : '') + (conflict ? ' has-conflict' : '') },
       h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
         onclick: function () { S.tnOpen[k] = !open; render(true); } },
@@ -6865,7 +6917,7 @@
           h('span', { class: 'lr-sub' }, [o.artist || '', span].filter(Boolean).join(' · ')),
           o.role ? h('span', { class: 'lr-sub tl-role' }, o.role) : null),
         icon('chevron', 16)),
-      say || null, withLine, body);
+      say || null, withLine, flyerLine, body);
     // Devin: "slide a tour to the left and it will say 'edit'" — the page's owner only.
     // A year's loose shows are not a tour: nothing to rename or take off.
     if (!manage || src.kind === 'shows') return h('li', { class: 'tn-li' }, inner);
@@ -7972,9 +8024,12 @@
   function dock(left, right, current, sig, o) {
     o = o || {};
     var me = myCard();
+    var wide = (o.cls || '').indexOf('all-dock') >= 0;
     return h('nav', { class: 'tabbar dock' + (o.cls ? ' ' + o.cls : ''), 'aria-label': o.label || 'Greenroom',
       'data-sig': 'dock|' + sig + '|' + current + '|' + me.photo.length + '|' + profileName() + '|' + actingSig() },
-      h('div', { class: 'dock-half left' }, left), homeFace(current), h('div', { class: 'dock-half right' }, right));
+      // An uneven count: the photo rides the far right, a size up (Devin, 2026-10-15).
+      wide ? [h('div', { class: 'dock-half dock-wide' }, left, right), homeFace(current)]
+        : [h('div', { class: 'dock-half left' }, left), homeFace(current), h('div', { class: 'dock-half right' }, right)]);
   }
   // The Search tab, on every bar. Only a signed-in build has Search.
   function searchTab(current) {
@@ -9938,8 +9993,7 @@
     // Tonight, the day and the city on the left; the venue and its address in
     // the middle; how many days until a day off in the right corner.
     return [
-      pfTourBar(id, t, count, 'details'),
-      pfCountsRow(t),
+      h('div', { class: 'pt-headrow' }, pfTourBar(id, t, count, 'details'), pfCountsRow(t)),
       dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, city, place, address,
         s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
@@ -16052,8 +16106,6 @@
     var quote = String(d.quote || '').trim();
     return [
       h('div', { class: 'ov-today' },
-        // Top-left, level with the pencil on the right.
-        buyoutAlertBtn(id, t),
         canEditTour(id) ? h('button', { class: 'iconbtn ov-edit', type: 'button',
           'aria-label': 'Edit today',
           onclick: function () { openTodaySheet(id, next ? next.id : null); } },
@@ -16086,6 +16138,8 @@
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { openSetlist(id); } },
           icon('music', 16), 'View Setlist')),
+      // Small, right under those two (Devin, 2026-10-15).
+      h('div', { class: 'cal-open bo-under' }, buyoutAlertBtn(id, t)),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
@@ -16924,6 +16978,7 @@
             h('button', { class: 'btn primary block', type: 'button', onclick: function () {
               openBuyoutTracker(tourId, s, total, s.buyoutTrack, function (next) {
                 var n = buyoutPaidCount(next);
+                buyoutDbMirror(tourId, s.id, s.buyoutTrack, next);
                 save({ buyoutTrack: next }, 'Buyouts handed out · ' + (n === 1 ? '1 person' : n + ' people'));
               });
             } }, paid ? 'Change who received' : 'Tick who received'),
@@ -17293,7 +17348,7 @@
       ta.remove();
       toast(ok ? 'Guest list copied for the box office' : 'Press and hold to copy');
     };
-    return h('button', { class: 'gl-share', type: 'button', 'aria-label': 'Share the guest list',
+    return h('button', { class: 'crew-invite', type: 'button', 'aria-label': 'Share the guest list',
       onclick: async function () {
         if (navigator.share) {
           try { await navigator.share({ title: subject, text: listText }); return; }
@@ -17308,7 +17363,7 @@
               h('button', { class: 'btn ghost block', type: 'button', onclick: function () { copyIt(); closeSheet(); } }, icon('copy', 17), 'Copy'))
           ];
         }, { label: 'Share the guest list' });
-      } }, icon('share', 20));
+      } }, icon('share', 15), 'Share');
   }
 
 
@@ -17384,11 +17439,14 @@
     var pass = (q > 1 ? '+' + (q - 1) + ' \u00b7 ' : '') + (g.passType || 'GA');
     var email = String(g.email || '').trim(), phone = String(g.phone || '').trim();
     var aff = String(g.affiliation || '').trim();
-    var inner = [name, aff ? h('span', { class: 'hint crew-sub' }, aff) : null];
+    var face = personPhoto({ name: name }, 'xs crew-face');
+    var who = h('div', { class: 'crew-who' },
+      h('span', { class: 'crew-name' }, name),
+      aff ? h('span', { class: 'hint crew-sub' }, aff) : null);
     var label = o.canManage
-      ? h('button', { class: 'row-label gl-name', type: 'button', 'aria-label': name + ', ' + pass + '. Tap to edit',
-          onclick: function () { openGuestEdit(g, { name: name, pass: pass, aff: aff }, o); } }, inner)
-      : h('div', { class: 'row-label' }, inner);
+      ? h('button', { class: 'row-label crew-label gl-name', type: 'button', 'aria-label': name + ', ' + pass + '. Tap to edit',
+          onclick: function () { openGuestEdit(g, { name: name, pass: pass, aff: aff }, o); } }, face, who)
+      : h('div', { class: 'row-label crew-label' }, face, who);
     return h('div', { class: 'row crew-row' }, label,
       h('div', { class: 'crew-side' },
         h('span', { class: 'role-slot' },
@@ -18454,13 +18512,12 @@
         var cards = groups.map(function (g) { return [].concat.apply([], g).filter(Boolean); })
           .filter(function (g) { return g.length; })
           .map(function (g) { return h('div', { class: 'ledger ds-block' }, g); });
-        return cards.length ? h('section', { class: 'ds-sec' }, h('h3', { class: 'ds-sec-h' }, title), cards) : null;
+        return cards.length ? h('section', { class: 'ds-sec' }, title ? h('h3', { class: 'ds-sec-h' }, title) : null, cards) : null;
       };
-      var address = String(d.venueAddress || '').trim();
       body = [
-        section('Venue', [
-          (address && !(o && o.onlySet)) ? dsRow('Address', h('a', { class: 'ds-val ds-link', href: mapsHref(address),
-            target: '_blank', rel: 'noopener' }, address)) : null,
+        // The address lives under the venue's name at the top now; these
+        // keep no heading of their own (Devin, 2026-10-15).
+        section('', [
           textRow('Venue phone', d.venuePhone),
           textRow('Wifi', d.wifi),
           textRow('Wifi password', d.wifiPass),
@@ -18560,6 +18617,10 @@
           s && s.soldOut ? h('span', { class: 'vh-soldout' }, 'SOLD OUT') : null),
         h('div', { class: 'vh-city' }, s ? (s.city || 'Show') : (off.city || 'Day off')),
         s && s.venue ? h('div', { class: 'vh-venue' }, s.venue) : null,
+        (function () {
+          var ad = s ? String((G.isObj(s.daySheet) ? s.daySheet : {}).venueAddress || '').trim() : '';
+          return ad ? h('a', { class: 'vh-addr', href: mapsHref(ad), target: '_blank', rel: 'noopener' }, ad) : null;
+        })(),
         !s && off.hotel ? h('div', { class: 'vh-venue' }, off.hotel) : null),
       h('button', { class: 'iconbtn vh-arrow', type: 'button', 'aria-label': 'Next day',
         disabled: S.dsIndex >= days.length - 1,
@@ -19858,6 +19919,72 @@
   // Everyone with a seat: the crew list's signed-up rows, the owner among
   // them. null while the list is still being fetched (the ask is made here
   // too: the tour's creator never goes through moneyLead's own one).
+  /* One truth for buyouts (the reviewer's catch): a tick in the new list
+     also writes the money mark on the show - but ONLY when the show already
+     has a per-head figure from the old tracker, because inventing one would
+     invent income. The old tracker mirrors into the database the same way,
+     so the two can never drift apart. */
+  function buyoutDocMark(id, showId, userId, want) {
+    var t = getTour(id); if (!t || !canEditTour(id)) return;
+    var s = G.isObj(t.shows) ? t.shows[showId] : null; if (!s) return;
+    var tr = G.isObj(s.buyoutTrack) ? s.buyoutTrack : null;
+    if (!tr || !(G.num(tr.perHead) > 0)) return;
+    var c = S.crewCache && S.crewCache[id];
+    var row = c && c.rows.filter(function (m) { return m.userId === userId; })[0];
+    var email = row ? String(row.email || '').trim().toLowerCase() : '';
+    // The old tracker keys people by the crew map's own key, else by
+    // 'n:' + the lowercased name: the mirror writes the SAME keys.
+    var ent = G.rows(t.crew).filter(function (e) {
+      return (email && String(e.email || '').trim().toLowerCase() === email) ||
+        (row && row.name && e.name && String(e.name).trim() === String(row.name).trim());
+    })[0];
+    var nk = 'n:' + String((row && row.name) || '').trim().toLowerCase();
+    var key = ent ? ent.id : nk;
+    var paid = Object.assign({}, G.isObj(tr.paid) ? tr.paid : {});
+    var had = !!(paid[key] || (nk !== 'n:' && paid[nk]));
+    if (want === had) return;
+    if (want) paid[key] = { name: (ent && ent.name) || (row && row.name) || 'Someone', artist: !!(ent && G.isMember(ent)) };
+    else { delete paid[key]; if (nk !== 'n:') delete paid[nk]; }
+    var patch = {}; patch[showId] = { buyoutTrack: Object.assign({}, tr, { paid: paid }) };
+    api.update(id, { shows: patch }).then(function () { render(true); });
+  }
+  // The other direction: the old tracker's save mirrors into the database,
+  // quietly, by the same email-first match. Nothing happens before 0151.
+  function buyoutDbMirror(id, showId, prev, next) {
+    var B = window.GR_BACKEND;
+    if (!buyoutsOn() || !B || !B.buyoutTrack) return;
+    var t = getTour(id); if (!t) return;
+    var c = S.crewCache && S.crewCache[id];
+    var rows = (c && c.rows) || [];
+    var uidOf = function (key) {
+      if (/^u:/.test(key)) return key.slice(2);
+      if (/^n:/.test(key)) {
+        var nm = key.slice(2);
+        var byName = rows.filter(function (m) {
+          return String(m.name || '').trim().toLowerCase() === nm;
+        })[0];
+        return byName ? byName.userId : null;
+      }
+      var ent = G.rows(t.crew).filter(function (e) { return e.id === key; })[0];
+      if (!ent) return null;
+      var email = String(ent.email || '').trim().toLowerCase();
+      var row = rows.filter(function (m) {
+        return (email && String(m.email || '').trim().toLowerCase() === email) ||
+          (ent.name && m.name && String(m.name).trim() === String(ent.name).trim());
+      })[0];
+      return row ? row.userId : null;
+    };
+    var a = G.isObj(prev) && G.isObj(prev.paid) ? prev.paid : {};
+    var b = G.isObj(next) && G.isObj(next.paid) ? next.paid : {};
+    Object.keys(b).forEach(function (k) {
+      if (a[k]) return; var u = uidOf(k);
+      if (u) B.buyoutTrack(id, showId, u).catch(function () { /* the backfill or the next tick catches it */ });
+    });
+    Object.keys(a).forEach(function (k) {
+      if (b[k]) return; var u = uidOf(k);
+      if (u) B.buyoutUntrack(id, showId, u).catch(function () { /* same */ });
+    });
+  }
   function buyoutPeople(id) {
     var B = window.GR_BACKEND;
     var c = S.crewCache && S.crewCache[id];
@@ -19990,6 +20117,7 @@
         if (buyoutsOn()) toast('Couldn’t save that. Try again.');
         return;
       }
+      buyoutDocMark(id, showId, userId, want);
       delete pend[key];
       draw();
       render(true);

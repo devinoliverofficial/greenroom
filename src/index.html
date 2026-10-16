@@ -379,10 +379,12 @@ a.btn { text-decoration: none; }
    around your photo, eight slots in all. They must fit a phone, so every slot
    shares the width evenly (four left of the photo, three right), the photo's
    column narrows, the labels shrink and the icons come down a size. */
-.tabbar.dock.all-dock { grid-template-columns: 4fr 52px 3fr; }
+.tabbar.dock.all-dock { grid-template-columns: 1fr 64px; }
+.dock.all-dock .dock-wide { display: flex; align-items: stretch; justify-content: space-between; }
+.dock.all-dock .dock-wide .tabbar-b { flex: 1; min-width: 0; }
 .dock.all-dock .dock-half .tabbar-b span { font-size: 8.2px; letter-spacing: -.03em; }
 .dock.all-dock .dock-half .tabbar-b .ic svg { width: 20px; height: 20px; }
-.dock.all-dock .tabbar-b .sb-face { width: 30px; height: 30px; font-size: 13px; }
+.dock.all-dock .tabbar-b .sb-face { width: 38px; height: 38px; font-size: 16px; }
 .tabbar-b .ic { opacity: .85; }
 .tabbar-b.on { color: var(--pos); }
 .tabbar-b.on .ic { opacity: 1; }
@@ -1261,6 +1263,15 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 /* The Today and Overview day counts, one row: both numbers green, same size,
    each centred over one line of words (Devin, 2026-10-15). */
 .pt-counts { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin: 2px 2px 10px; }
+/* Level with the tour's name on Today (Devin, 2026-10-15). */
+.pt-headrow { display: flex; align-items: center; gap: 10px; }
+.pt-headrow .pt-tourbar { flex: 1; min-width: 0; }
+.pt-headrow .pt-counts { margin: 0; gap: 16px; justify-content: flex-end; }
+.pt-headrow .pt-cnt, .pt-headrow .pt-cnt.empty { min-width: 0; }
+.pt-headrow .pt-cnt.empty { display: none; }
+.pt-headrow .pt-cnt .num { font-size: 20px; }
+.cal-open.bo-under { margin-top: 2px; }
+.vh-addr { display: block; margin-top: 1px; font-size: 12.5px; color: var(--ink-2); text-decoration: underline; }
 .pt-cnt { display: flex; flex-direction: column; align-items: center; gap: 1px; margin: 0; min-width: 86px; }
 .pt-cnt.empty { min-width: 86px; }
 .pt-cnt .num { font-size: 26px; font-weight: 800; line-height: 1; color: var(--pos); }
@@ -1993,7 +2004,7 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .fw-dot.on { opacity: 1; filter: none; }
 .fw-mine-t { margin: 9px 0 0; font-size: 14px; line-height: 1.35; color: var(--ink-2); }
 .fw-list { position: relative; z-index: 1; list-style: none; margin: 6px 0 0; padding: 0; }
-.fw-card { display: block; padding: 15px 2px; border-bottom: 1px solid var(--line); }
+.fw-card { display: block; padding: 16px 2px; border-bottom: 1px solid var(--line); }
 .fw-main { display: flex; align-items: center; gap: 14px; }
 /* The person's name is the handle that opens their flowers underneath. */
 .fw-name-btn { appearance: none; border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
@@ -2007,7 +2018,7 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .fw-face { flex: none; appearance: none; border: 0; background: none; padding: 0; margin: 0; cursor: pointer; border-radius: 50%; }
 .pf-photo.fw-photo { width: 56px; height: 56px; font-size: 21px; }
 .fw-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.fw-name { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: 13px; font-weight: 700;
+.fw-name { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; font-size: 12.5px; font-weight: 700;
   letter-spacing: .01em; text-transform: uppercase; }
 .fw-name-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fw-you { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2);
@@ -2015,8 +2026,8 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .fw-role { margin: -3px 0 0; font-size: 11px; color: var(--ink-3); }
 .fw-stats { display: flex; justify-content: space-between; gap: 8px; max-width: 250px; }
 .fw-stat { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.fw-n { display: inline-flex; align-items: center; gap: 3px; font-size: 13px; font-weight: 700; line-height: 1.2; color: var(--ink); }
-.fw-l { font-size: 10.5px; color: var(--ink-2); white-space: nowrap; }
+.fw-n { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 700; line-height: 1.2; color: var(--ink); }
+.fw-l { font-size: 10px; color: var(--ink-2); white-space: nowrap; }
 .fw-emo { font-size: 12px; line-height: 1; }
 /* The laurels, the way a social app crowns a favourite: a green branch either side. */
 .laurels { display: inline-flex; align-items: center; gap: 1px; color: var(--pos); }
@@ -2027,6 +2038,7 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .fw-give { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 28px; margin-top: 2px; padding: 0 12px;
   border: 0; border-radius: 9px; background: var(--brand); color: var(--on-brand); font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; }
 .fw-give:disabled { background: var(--surface-2); color: var(--ink-3); cursor: default; }
+.fw-give.sm { height: 24px; padding: 0 10px; font-size: 12.5px; }
 /* Your own card: the year's flowers you still have to give, where the others have Give. */
 .fw-left.sm { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; height: 24px; margin-top: 2px;
   padding: 0 10px; border-radius: 9px; background: var(--surface-2); color: var(--ink-2); font-size: 12px; font-weight: 650; }
@@ -3186,7 +3198,7 @@ button.fl-row { cursor: pointer; }
 .fw-card { padding: 10px 2px; }
 .fw-main { gap: 12px; }
 .fw-drop { margin-left: 54px; }
-.pf-photo.fw-photo { width: 46px; height: 46px; font-size: 18px; }
+.pf-photo.fw-photo { width: 36px; height: 36px; font-size: 15px; }
 .fw-name { font-size: 13.5px; gap: 5px; }
 .fw-role { font-size: 11.5px; }
 .fw-stats { max-width: 230px; }

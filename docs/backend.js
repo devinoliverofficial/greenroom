@@ -59,6 +59,11 @@
   // tables are there at all (null until the first ask answers; the answer is
   // the session's). showRateCache holds one answer per tour.
   var showRateCache = {}, showRateAsk = {}, showRateGen = {}, rateKnown = null, rateProbing = false;
+  // Tour flyers (0156): each artist page's flyers by tour group key, and
+  // whether the table is there at all (null until the first ask answers; the
+  // answer is the session's).
+  var flyerCache = {}, flyerAsk = {}, flyerGen = {}, flyerKnown = null, flyerProbing = false;
+  var FLYER_FRESH = 300e3; // flyers change rarely: five minutes between asks is plenty
   var FLOWERS_FRESH = 60e3; // asked again after a minute anyway: people join, phones sleep through changes
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
@@ -2075,6 +2080,80 @@
       if (c && c.data) c.data = c.data.filter(function (r) { return !(r.showId === showId && r.userId === userId); });
       emit('tours');
     },
+    /* Tour flyers (0156). flyersOn: is the table there (asked once per
+       session; false until it answers, so a build ahead of its migration
+       simply shows nothing). tourFlyers: one artist page's flyers, keyed by
+       the tour group key the page's dropdowns already use, at once from what
+       this phone holds (null while it's first being fetched): one ask covers
+       every row on the page. flyerPut: the image into the public bucket at a
+       path only the page's owner may write, then the row with its public
+       address. flyerDrop: the row, then the file. */
+    flyersOn: function () {
+      if (flyerKnown === null) flyerProbe();
+      return flyerKnown === true;
+    },
+    tourFlyers: function (artistId, fresh) {
+      if (flyerKnown !== true) return null;
+      var c = flyerCache[artistId];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLYER_FRESH) loadFlyers(artistId);
+      return c ? c.data : null;
+    },
+    flyerPut: async function (artistId, gk, file) {
+      if (!session) throw err('unavailable');
+      var ext = { 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }[file && file.type] || 'jpg';
+      var path = artistId + '/' + flyerKey(gk) + '.' + ext;
+      var up = await sb.storage.from('flyers').upload(path, file,
+        { upsert: true, contentType: (file && file.type) || 'image/jpeg', cacheControl: '3600' });
+      if (up.error) throw mapError(up.error);
+      var pub = sb.storage.from('flyers').getPublicUrl(path);
+      // The file keeps its name when it's replaced, so the address carries a
+      // version mark: phones must not keep showing the old art.
+      var url = ((pub && pub.data && pub.data.publicUrl) || '') + '?v=' + Date.now();
+      // The row is updated first and only inserted when there is none (the
+      // column grants allow no one-step upsert, as with the bus check-ins).
+      // A hand-picked image clears source_url: the receipt of where a flyer
+      // was found belongs only to art that really came from there.
+      var row = { url: url, source_url: null, added_by: session.user.id };
+      var up2 = await sb.from('artist_tour_flyers').update(row)
+        .eq('artist_id', artistId).eq('gk', gk).select('gk');
+      if (up2.error) {
+        if (tableMissing(up2.error)) { flyerKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(up2.error);
+      }
+      if (!up2.data || !up2.data.length) {
+        var ins = await sb.from('artist_tour_flyers').insert({ artist_id: artistId, gk: gk, url: url, added_by: session.user.id });
+        if (ins.error && ins.error.code === '23505') {
+          // The row landed between the two calls (another tab): say the address again.
+          var again = await sb.from('artist_tour_flyers').update(row)
+            .eq('artist_id', artistId).eq('gk', gk).select('gk');
+          if (again.error) throw mapError(again.error);
+        } else if (ins.error) {
+          if (tableMissing(ins.error)) { flyerKnown = false; emit('tours'); throw err('unavailable'); }
+          throw mapError(ins.error);
+        }
+      }
+      var c = flyerCache[artistId];
+      if (c && c.data) c.data[gk] = { url: url, sourceUrl: '' };
+      emit('tours');
+      return url;
+    },
+    flyerDrop: async function (artistId, gk) {
+      if (!session) throw err('unavailable');
+      var q = await sb.from('artist_tour_flyers').delete().eq('artist_id', artistId).eq('gk', gk);
+      if (q.error) {
+        if (tableMissing(q.error)) { flyerKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      // The file too, whatever type it was saved as; a name that isn't there
+      // is simply skipped, and a file left behind shows nowhere anyway.
+      var fk = flyerKey(gk);
+      try {
+        await sb.storage.from('flyers').remove(['jpg', 'png', 'webp', 'gif'].map(function (x) { return artistId + '/' + fk + '.' + x; }));
+      } catch (e) { /* the row is gone, which is what the pages read */ }
+      var c = flyerCache[artistId];
+      if (c && c.data) delete c.data[gk];
+      emit('tours');
+    },
     /* To Do Lists (0152). todosOn: are the tables there (asked once per
        session; false until it answers, so a build ahead of its migration
        simply shows nothing). todoList: an artist's tasks, at once from what
@@ -2820,6 +2899,57 @@
       }, function () { if (buyoutAsk[tourId] === p) delete buyoutAsk[tourId]; });
     p.gen = gen;
     buyoutAsk[tourId] = p;
+    return p;
+  }
+  /* ---- Tour flyers (0156): the poster above a tour dropdown's dates ---- */
+  // Is the table there? One ask per session. A build ahead of its migration
+  // finds none, and the whole feature stays out of sight (flyersOn answers
+  // false, so the app draws nothing). No signal: unanswered, asked again the
+  // next time something draws.
+  function flyerProbe() {
+    if (flyerProbing || !session) return;
+    flyerProbing = true;
+    sb.from('artist_tour_flyers').select('artist_id').limit(1).then(function (q) {
+      flyerProbing = false;
+      if (!q.error) { flyerKnown = true; emit('tours'); }
+      else if (tableMissing(q.error)) flyerKnown = false;
+    }, function () { flyerProbing = false; });
+  }
+  // The file's name in the bucket: a tour group key holds spaces and colons,
+  // so it becomes a short hex digest, the same one every time, and replacing
+  // a flyer lands on the same file.
+  function fnv32(s, seed) {
+    var h = seed >>> 0;
+    for (var i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0; }
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
+  function flyerKey(gk) {
+    var s = String(gk);
+    return fnv32(s, 0x811c9dc5) + fnv32(s.split('').reverse().join(''), 0x811c9dc5) + s.length.toString(36);
+  }
+  // One artist page's flyers in one answer, a map by tour group key, so the
+  // rows of a page share a single ask however many are opened.
+  function loadFlyers(artistId) {
+    var gen = flyerGen[artistId] || 0, ask = flyerAsk[artistId];
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.from('artist_tour_flyers').select('gk, url, source_url').eq('artist_id', artistId)
+      .then(function (q) {
+        if (q.error) {
+          // Not there yet: the feature goes quiet. Anything else (no signal):
+          // what was held stands, and the next draw asks again.
+          if (tableMissing(q.error)) { flyerKnown = false; delete flyerCache[artistId]; emit('tours'); }
+          return null;
+        }
+        var map = {};
+        (q.data || []).forEach(function (r) { map[r.gk] = { url: r.url, sourceUrl: r.source_url || '' }; });
+        return map;
+      }).then(function (data) {
+        if (data) flyerCache[artistId] = { data: data, at: Date.now(), stale: gen !== (flyerGen[artistId] || 0) };
+        if (flyerAsk[artistId] === p) delete flyerAsk[artistId];
+        if (data) emit('tours');
+      }, function () { if (flyerAsk[artistId] === p) delete flyerAsk[artistId]; });
+    p.gen = gen;
+    flyerAsk[artistId] = p;
     return p;
   }
   /* ---- To Do Lists (0152): each artist's tasks, and your own tab ---- */
