@@ -14912,7 +14912,7 @@
         // Log income and Your cards share the bottom of the screen, side by side (Devin, 2026-10-15).
         h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
         h('div', { class: 'pt-two pinned mp' },
-          h('button', { class: 'pf-btn go', type: 'button', onclick: function () { openMyPayIncome(id, null); } }, icon('plus', 16), 'Log income'),
+          h('button', { class: 'btn quiet sm glow', type: 'button', onclick: function () { openMyPayIncome(id, null); } }, icon('plus', 16), 'Log income'),
           myPayCardsBtn(id))];
     }
     var colHead = h('div', { class: 'row ex-head', 'aria-hidden': 'true' },
@@ -14936,7 +14936,7 @@
       // Add expense and Your cards share the bottom of the screen, side by side (Devin, 2026-10-15).
       h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
       h('div', { class: 'pt-two pinned mp' },
-        h('button', { class: 'pf-btn go', type: 'button', onclick: function () { openMyPayCat(id, null); } }, icon('plus', 16), 'Add expense'),
+        h('button', { class: 'btn quiet sm glow', type: 'button', onclick: function () { openMyPayCat(id, null); } }, icon('plus', 16), 'Add expense'),
         myPayCardsBtn(id))];
   }
   // Logging what came in: weekly pay, per diems, buyouts, a bonus.
@@ -15065,7 +15065,7 @@
     var c = myPayCardsInfo();
     if (c.none) return null;
     var n = c.inbox.length, k = c.accounts.length;
-    return h('button', { class: 'pf-btn', type: 'button',
+    return h('button', { class: 'btn quiet sm glow', type: 'button',
       'aria-label': 'Your cards' + (k ? ', ' + plural(k, 'account') + ' connected' : '') + (n ? ', ' + n + ' new' : ''),
       onclick: function () { openMyPayCards(id); } },
       icon('card', 16), 'Your cards', n ? h('span', { class: 'dm-dot' }, n) : null);
@@ -15347,7 +15347,7 @@
          paid.length ? paid.length + ' paid back' : null].filter(Boolean).join(' · ')
       : '';
     return h('div', { class: 'rb-need' },
-      h('button', { class: 'btn primary rb-need-btn', type: 'button', onclick: function () { openMyPayBack(id); } }, 'Need a Reimbursement?'),
+      h('button', { class: 'btn quiet sm glow rb-need-btn', type: 'button', onclick: function () { openMyPayBack(id); } }, 'Need a Reimbursement?'),
       hint ? h('p', { class: 'note rb-need-hint' }, hint) : null);
   }
   // How an ask stands, to the person who made it.
@@ -15670,12 +15670,10 @@
   function tourTabs(id, current, o) {
     // Everyone gets the Budget tab now (Devin, 2026-10-07): Crew open it to
     // MY PAY; the tour's own book inside stays for Managers only.
-    // His order (2026-10-15, final): Overview, Budget, Day sheet, Guest
-    // list, Chat, Crew Stats - the photo leads and Search closes the bar.
-    var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs' && t.view !== 'stats'; });
+    // His order (2026-10-16): Overview, Budget, Day sheet, Guest list, Crew
+    // Stats, Chat - the photo leads and Search closes the bar.
+    var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
     tabs.splice(1, 0, BUDGET_TAB);
-    var statsTab = TOUR_TABS.filter(function (t) { return t.view === 'stats'; })[0];
-    if (statsTab) tabs.push(statsTab);
     var framed = !!(o && o.off);
     // away: the same bar worn by a page outside the tour (the profile, the
     // menu, Search). A tap opens that page of the tour exactly as the old
@@ -17939,9 +17937,10 @@
       h('div', { class: 'sec-head', style: 'margin-top:8px;text-align:center;margin-bottom:4px' },
         h('p', { class: 'gl-when glow' }, s.date === today ? 'Today\u2019s' : dayLong(s.date)),
         h('h2', { class: 'sec-title hdr' }, 'Guest List')),
-      h('p', { class: 'note', style: 'margin:0 2px 2px;text-align:center' },
-        [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ') +
-        (sum.names ? ' · ' + plural(sum.names, 'name') + ' · ' + plural(sum.tickets, 'ticket') : '')),
+      // Today's list needs no where-and-how-many line (Devin, 2026-10-16:
+      // "It already says today's guest list"); another night keeps its place.
+      s.date === today ? null : h('p', { class: 'note', style: 'margin:0 2px 2px;text-align:center' },
+        [String(s.city || '').trim(), String(s.venue || '').trim()].filter(Boolean).join(' · ')),
       rowsOut.length
         ? guestLedger(rowsOut)
         : h('div', { style: 'min-height:60px' }),

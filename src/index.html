@@ -1260,7 +1260,8 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
   width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); color: var(--pos); flex: none; }
 .gl-share:active { transform: translateY(1px); }
 /* A guest's pass: the green word the crew roles wear, far right. */
-.guest-rows .role-tag.gl-pass { background: none; padding: 0; border-radius: 0; color: var(--pos); font-size: 11.5px; font-weight: 650; white-space: nowrap; }
+.guest-rows .role-tag.gl-pass { background: none; padding: 0; border-radius: 0; color: var(--pos); font-size: 11.5px; font-weight: 650;
+  white-space: nowrap; display: inline-block; width: 84px; text-align: center; }
 /* The small glowing mark beside a name while its person is on the road. */
 /* The Today and Overview day counts, one row: both numbers green, same size,
    each centred over one line of words (Devin, 2026-10-15). */
@@ -1292,6 +1293,7 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .pt-cnt-l { font-size: 10.5px; color: var(--ink-2); white-space: nowrap; }
 /* Settings wears the menu's rows; its danger row stays red. */
 .st-sheet .mn-group { margin: 0 -14px; }
+.st-sheet .mn-ic { color: var(--pos); }
 .mn-row.mn-danger .mn-label, .mn-row.mn-danger .mn-ic { color: var(--neg); }
 .vp-ontour { flex: none; display: inline-block; margin-left: 2px; padding: 2px 8px; border-radius: 999px;
   border: 1px solid var(--pos); color: var(--pos); font-size: 9px; font-weight: 800; letter-spacing: .06em;
@@ -3441,7 +3443,9 @@ button.fl-row { cursor: pointer; }
 /* "Need a Reimbursement?" on MY PAY (Devin, 2026-10-15): one green button,
    centered, with what's waiting in a quiet line under it. */
 .rb-need { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 4px 0 16px; }
-.rb-need-btn { min-height: 36px; padding: 0 18px; font-size: 13.5px; }
+.rb-need-btn { min-height: 0; }
+.pt-two.mp { justify-content: center; gap: 10px; }
+.pt-two.mp .btn { flex: none; }
 .rb-need-hint { margin: 0; text-align: center; }
 /* Your own asks, under the form. */
 .rb-sheet .sh-h3 { margin-top: 20px; }
@@ -3840,11 +3844,14 @@ button.input.role-pick.empty { color: var(--ink-3); font-weight: 500; }
   // away and back does not. A fresh launch is a page with no session mark
   // (a hard close ends the session and clears it); a reload mid-session
   // (an update, a refresh) keeps the mark and skips the intro.
+  // (sessionStorage outlives a swipe-close on an iPhone home-screen app, so
+  // it cannot tell. The document can: a hard close always means a brand-new
+  // page, opened by navigation; an update or a refresh is a reload.)
   var fresh = true;
   try {
-    fresh = !window.sessionStorage.getItem('gr-sess');
-    window.sessionStorage.setItem('gr-sess', '1');
-  } catch (e) { /* a phone that keeps nothing: every open plays it */ }
+    var nav0 = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+    if (nav0 && nav0.type && nav0.type !== 'navigate') fresh = false;
+  } catch (e) { /* older browsers: a fresh launch */ }
   var forced = /[?&](slow)?splash\b/.test(location.search);
   if (!forced && !fresh) { s.remove(); return; }
   var word = s.querySelector('.sp-word'), bus = s.querySelector('.sp-bus'), stage = s.querySelector('.sp-stage');
