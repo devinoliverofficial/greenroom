@@ -338,6 +338,7 @@ shim = r"""<script>
   window.__harness.calls = []; window.__harness.feedFns = [];
   // A Crew phone: __harness.asCrew = true before the tour is opened, or the page opened with ?crew.
   try { if (/[?&]crew\b/.test(String(location.search || ''))) window.__harness.asCrew = true; } catch (e) { /* no address to read */ }
+  try { if (/[?&]placeslow\b/.test(String(location.search || ''))) window.__harness.placesReadyAt = Date.now() + 1500; } catch (e) { /* no address to read */ }
   // A Manager who did not create the tour (tour role Tour Manager): __harness.asManager = true before the tour is opened, or ?manager.
   try { if (/[?&]manager\b/.test(String(location.search || ''))) window.__harness.asManager = true; } catch (e) { /* no address to read */ }
   /* ---- THE PROFILE NUMBERS: a profile card that comes late, fails, or comes back empty ----
@@ -1177,7 +1178,13 @@ shim = r"""<script>
        __harness.placeAsks  every ask the sheet sent: [{ q, near }], so a
                             check can see what the lean really was.
        __harness.placesOff = true   the probe answers as with no 0164: the
-                            Name field types plain, no list under it. */
+                            Name field types plain, no list under it.
+       ?placeslow (or __harness.placesReadyAt = Date.now() + ms): the probe
+                            takes its real-world beat to answer, the way a
+                            fresh session's does; typing at once must STILL
+                            end in suggestions (the backend waits the probe
+                            out). The first-open race Devin hit, kept
+                            visible. */
   // A row the way the real backend hands one over (the key worked out from
   // the city with the one rule, as the database's trigger keeps it).
   function spotOut(r) {
@@ -2855,7 +2862,13 @@ shim = r"""<script>
        whose city matches near's first words lead the list, the rest follow.
        The last ask is kept in __harness.placeAsks ([{ q, near }]), so a
        check can see what the sheet really sent. */
-    placeSearchOn: function () { return !window.__harness.placesOff; },
+    placeSearchOn: function () {
+      var H = window.__harness;
+      if (H.placesOff) return false;
+      // ?placeslow: the real backend's probe takes a beat on a fresh
+      // session; this mimics it so the first-open race stays visible.
+      return !(H.placesReadyAt && Date.now() < H.placesReadyAt);
+    },
     placeSearch: function (q, near, cb) {
       if (typeof near === 'function') { cb = near; near = ''; }
       var H = window.__harness;
@@ -2863,6 +2876,13 @@ shim = r"""<script>
       var nk = String(near || '').split(',')[0].toLowerCase().replace(/\s+/g, ' ').trim();
       (H.placeAsks = H.placeAsks || []).push({ q: qk, near: String(near || '') });
       if (H.placesOff || qk.length < 2) { cb([]); return; }
+      if (H.placesReadyAt && Date.now() < H.placesReadyAt) {
+        // The real backend waits its probe out rather than answering
+        // nothing; the stub does the same.
+        var me = this;
+        setTimeout(function () { me.placeSearch(q, near, cb); }, 250);
+        return;
+      }
       var rows = (H.placeRows || []).filter(function (p) {
         return String(p.name || '').toLowerCase().indexOf(qk) !== -1;
       });

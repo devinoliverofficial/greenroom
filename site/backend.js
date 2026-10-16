@@ -2631,7 +2631,22 @@
       var gen = ++placeGen;                   // a newer search cancels the older poll
       clearTimeout(placeTimer);
       var land = function (rows) { if (gen === placeGen) cb(rows); };
-      if (placeKnown !== true || !session || qk.length < 2 || qk.length > 80) { land([]); return; }
+      if (!session || qk.length < 2 || qk.length > 80 || placeKnown === false) { land([]); return; }
+      if (placeKnown === null) {
+        // The probe's answer is still on its way (the first search of a
+        // session): wait it out instead of answering nothing - the silent
+        // first-open failure Devin hit. Up to four seconds, then empty.
+        placeProbe();
+        var opened = Date.now();
+        var again = function () {
+          if (gen !== placeGen) return;
+          if (placeKnown === true) { window.GR_BACKEND.placeSearch(qk, nv, cb); return; }
+          if (placeKnown === false || Date.now() - opened > 4000) { land([]); return; }
+          placeTimer = setTimeout(again, 250);
+        };
+        placeTimer = setTimeout(again, 250);
+        return;
+      }
       if (placeCache[ck]) { land(placeCache[ck]); return; }
       var keep = function (rows) {
         rows = (Array.isArray(rows) ? rows : []).filter(isObj).slice(0, 8);
@@ -5890,6 +5905,11 @@
     });
     var got = await sb.auth.getSession();
     session = got.data ? got.data.session : null;
+    // The place-search probe warms at boot, so the first Add a spot of a
+    // session already knows the road is there (Devin, 2026-10-16: typing
+    // in a fresh session found a field that was never wired - the probe
+    // was still out when the sheet was built).
+    if (session) setTimeout(placeProbe, 1200);
     var note = '';
     if (link.access && link.refresh) {
       var set = await sb.auth.setSession({ access_token: link.access, refresh_token: link.refresh });

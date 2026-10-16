@@ -4723,9 +4723,14 @@
      one the profile's Today shows), else nowhere in particular. Only when
      the two functions are live; without them the sheet is exactly as it
      always was. */
+  /* The field is wired whenever the search FUNCTIONS exist: the probe's
+     answer is the backend's business now (it waits the probe out on the
+     first search of a session), so a sheet opened before the probe lands
+     still finds a live field - the silent first-open failure Devin hit
+     twice is gone. */
   function placeFindOn() {
     var B = window.GR_BACKEND;
-    return S.mode === 'db' && !!(B && B.placeSearchOn && B.placeSearch && B.placeSearchOn());
+    return S.mode === 'db' && !!(B && B.placeSearchOn && B.placeSearch);
   }
   // Tonight's city for the lean: the city the profile's Today tab heads
   // with, and only while the run is really on the road today.
