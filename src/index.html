@@ -2180,7 +2180,39 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .rt-b.on { border-color: var(--pos); background: var(--pos-soft); color: var(--pos); font-weight: 700; }
 .rt-band { margin: 2px 0 10px; }
 .rt-band .note { margin: 4px 0 0; }
-.ov-rate { margin-top: 10px; }
+/* The rating wizard (0165): a full-height sheet, one question a screen,
+   five stars with halves (each star an outlined base with a green fill
+   clipped to the fraction, and two invisible half buttons over it), the
+   word chips under the stars, a short note with its quiet counter. The
+   same star drawing, small, says the band's average on Today's History. */
+.rw-sheet { min-height: calc(100% - 28px - env(safe-area-inset-top, 0px)); }
+.rw-back { position: absolute; top: 10px; left: 8px; }
+.rw-where { margin: 30px 44px 0; text-align: center; font-size: 12.5px; }
+.rw-dots { display: flex; gap: 6px; justify-content: center; margin: 16px 0 0; }
+.rw-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.rw-dots i.on { background: var(--brand); }
+.rw-q { margin: 24px 0 18px; font-size: 27px; }
+.rw-row { display: inline-flex; gap: 3px; vertical-align: middle; }
+.rw-star { position: relative; display: inline-block; color: var(--ink-3); }
+.rw-star .ic, .rw-star svg { display: block; }
+.rw-fill { position: absolute; top: 0; left: 0; bottom: 0; overflow: hidden; color: var(--pos); pointer-events: none; }
+.rw-pick { display: flex; gap: 8px; justify-content: center; margin: 8px 0 4px; }
+.rw-half, .rw-whole { position: absolute; top: 0; bottom: 0; width: 50%; margin: 0; padding: 0; border: 0; background: none; cursor: pointer; }
+.rw-half { left: 0; }
+.rw-whole { right: 0; }
+.rw-yn { display: flex; gap: 10px; margin: 10px 0 4px; }
+.rw-yn .btn { flex: 1; min-height: 58px; font-size: 17px; }
+.rw-chips { justify-content: center; margin: 16px 0 4px; }
+.rw-host .input { margin-top: 14px; }
+.rw-count { margin: 6px 2px 0; font-size: 12px; color: var(--ink-3); text-align: right; }
+.rw-foot { margin-top: 22px; }
+.rw-keep { margin: 2px 0 0; text-align: center; font-size: 12px; color: var(--ink-3); }
+/* Tonight's calendar row: Rate stacked over Requests in the same column. */
+.cal-pair { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; justify-self: end; }
+/* Today's History section, and the band's stars under its line (0165). */
+.pt-hist { margin: 26px 2px 8px; }
+.pt-hist .hist-fans { margin: 4px 0 0; }
+.pt-hist-stars { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .plc-h { position: relative; z-index: 1; margin: 0 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
 .plc-artists { position: relative; z-index: 1; }
 .pf-btn.plc-still { cursor: default; }

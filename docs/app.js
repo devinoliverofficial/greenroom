@@ -4909,6 +4909,28 @@
       ];
     }, { label: 'Your nights at ' + venue });
   }
+  /* THE TODAY HISTORY SECTION (Devin, 2026-10-16: "there should just be a
+     history section at the bottom of the 'today' tab that says how many
+     times we've played this venue, what the rating was"). The same line as
+     before, under its own quiet History heading at the foot of the
+     profile's Today tab; and under it, when the server's answer carries the
+     band's stars (0165 hands them to the band alone), the stars drawn small
+     with how many ratings they stand on. Absent keys, no stars line: a crew
+     phone sees the history alone, and before 0165 nothing changes. */
+  function todayHistory(tourId, s) {
+    var line = venueHistLine(tourId, s);
+    if (!line) return null;
+    var venue = String(s.venue || '').trim();
+    var sig = venue.toLowerCase() + '|' + String(s.city).trim().toLowerCase();
+    var a = window.GR_BACKEND.venueHistory(tourId, s.id, sig);
+    var st = G.isObj(a) ? G.num(a.stars) : 0, rn = G.isObj(a) ? Math.round(G.num(a.ratings)) : 0;
+    return h('section', { class: 'pt-hist', 'aria-label': 'History' },
+      h('h3', { class: 'mn-h' }, 'History'),
+      line,
+      st > 0 && rn > 0 ? h('p', { class: 'pt-hist-stars', 'aria-label': st + ' stars from ' + plural(rn, 'rating') },
+        rwStarRow(Math.round(st * 2) / 2, 15),
+        h('span', { class: 'pt-hist-n' }, 'from ' + plural(rn, 'rating'))) : null);
+  }
   /* ---- Endorsing, and the role that goes with it. The artist's page says
      what this person IS to it — the title the public sees there (Brent is
      "Guitar" on the band's page, whatever he does behind the scenes) — and
@@ -8148,7 +8170,7 @@
     }
     return h('section', { class: 'tf-block', 'aria-label': 'Tour search' },
       h('h3', { class: 'mn-h mn-over tf-h' }, 'Tour search'),
-      h('p', { class: 'note tf-p' }, 'Greenroom reads twelve music-news archives and Wikipedia for ' + ((card || {}).name || 'the act') + '’s tour announcements and puts every tour it finds on the page — name, dates, venues where the article had them. It does this by itself. Wrong one? Slide it left on the Tours list and fix it.'),
+      h('p', { class: 'note tf-p' }, 'Greenroom reads the music press and the open archives for ' + ((card || {}).name || 'the act') + '’s tour announcements and puts every tour it finds on the page — name, dates, venues where the article had them. It does this by itself. Wrong one? Slide it left on the Tours list and fix it.'),
       body);
   }
 
@@ -8189,7 +8211,8 @@
   }
   // setlist.fm, and the sites the band handed pages over from (Concert Archives asks to be cited).
   var TF_CREDIT = { 'concertarchives.org': ['Concert Archives', 'https://www.concertarchives.org/'], 'songkick.com': ['Songkick', 'https://www.songkick.com/'], 'bandsintown.com': ['Bandsintown', 'https://www.bandsintown.com/'],
-    'web.archive.org': ['the band’s own pages (Wayback Machine)', 'https://web.archive.org/'] };
+    'web.archive.org': ['the band’s own pages (Wayback Machine)', 'https://web.archive.org/'],
+    'mixesdb.com': ['MixesDB', 'https://www.mixesdb.com/'] };
   function setlistCredit(url, credits) {
     var more = (Array.isArray(credits) ? credits : []).map(function (k) { return TF_CREDIT[k]; }).filter(Boolean);
     return h('p', { class: 'hist-credit' }, 'Tour data: ',
@@ -10573,14 +10596,16 @@
     return [
       h('div', { class: 'pt-headrow' }, pfLeftChip(t), pfTourBar(id, t, count, 'details'), pfOffChip(t)),
       dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, s ? '' : city, place, address,
-        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null,
-        // Tonight's room in the band's own history, under the venue (0160; nothing before it is live).
-        s && isToday ? venueHistLine(id, s) : null),
+        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
         [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
       // The day sheet tab's own schedule style, word for word (Devin,
       // 2026-10-16: "the entire day sheet text style under schedule").
       sheet ? h('div', { class: 'ds-page pt-ds' }, sheet) : null,
+      // HISTORY (Devin, 2026-10-16): tonight's room in the band's own story,
+      // in its own quiet section at the bottom of the tab, with what the
+      // rating was under it when the server says (the band alone hears it).
+      s && isToday ? todayHistory(id, s) : null,
       // Room at the end, so the last of the day sheet scrolls clear of Bus Check in.
       checkIn ? [h('div', { class: 'ci-room', 'aria-hidden': 'true' }), checkIn] : null
     ];
@@ -10608,7 +10633,8 @@
   /* A day in three columns: what and where in the left corner (the tag, the
      date, the city), the venue and its address in the middle, and corner
      (Today's days until a day off) in the right corner. under: one more
-     line in the middle, below the venue and its address (the venue history). */
+     line in the middle, below the venue and its address (free since the
+     venue history moved to Today's own History section, 2026-10-16). */
   function dayRow(chip, date, city, place, address, extra, corner, under) {
     return h('div', { class: 'pt-dayrow' },
       h('div', { class: 'pt-dayrow-l' },
@@ -16898,14 +16924,15 @@
       tourTabs(id, 'money'));
   }
 
-  /* ---- "Rate the show" (0154): after doors on a show night, and through
-     the day after, the band says how the night was: Crowd, Venue and City,
-     each 1 to 10, sent once and changeable until midnight. Members of the
-     tour's artist and the tour's owner only; the database holds the rows to
-     the band, so the artist page and the tour show nothing public. Beside
-     the band's numbers sits the app's own merch score (Devin: "the app
-     itself can rate the merch 1-10 based on our average"): the night's
-     merch against the tour's nightly average, an average night a 5. ---- */
+  /* ---- "Rate the show" (0154, reshaped 2026-10-16): after doors on a show
+     night, and through the day after, the band says how the night was. The
+     button lives on the calendar's tonight row now (Devin: "this should be
+     in the 'view calendar' section in the same fashion as 'vote' & 'special
+     requests'"), and once migration 0165 is live it opens the one-question
+     wizard below; before it, the old three-slider sheet (kept whole as
+     openRateShowSliders). Members of the tour's artist and the tour's owner
+     only; the database holds the rows to the band, so the artist page and
+     the tour show nothing public. ---- */
   // The night that can be rated now: tonight once doors have passed, else
   // yesterday's show (still changeable today), else nothing.
   function rateShowOf(t) {
@@ -16938,16 +16965,34 @@
         : !!name && String(x.name || '').trim().toLowerCase() === name);
     });
   }
-  function rateShowRow(tourId, t) {
-    var s = rateShowOf(t);
-    if (!s || !bandOnTour(tourId, t)) return null;
+  /* The calendar's Rate button (Devin, 2026-10-16: "So it'll be 'rate'
+     'vote' 'requests'"). Only the show inside tonight's rating window
+     carries it, for the band alone; sent, it goes quiet but stays tappable
+     until midnight. Drawing it warms the review-column probe, so the tap
+     already knows which sheet to open. */
+  function rateCalBtn(tourId, s) {
+    var t = getTour(tourId);
+    if (!t || !s || !s.id || !bandOnTour(tourId, t)) return null;
+    var r = rateShowOf(t);
+    if (!r || r.id !== s.id) return null;
     var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
-    var mine = (B.showRatings(tourId) || []).filter(function (r) { return r.showId === s.id && r.userId === uid; })[0];
-    return h('div', { class: 'cal-open ov-rate' },
-      h('button', { class: 'btn quiet sm', type: 'button', onclick: function () { openRateShow(tourId, s.id); } },
-        mine ? 'Rate the show · sent' : 'Rate the show'));
+    if (B.showReviewOn) B.showReviewOn();
+    var mine = (B.showRatings(tourId) || []).filter(function (x) { return x.showId === s.id && x.userId === uid; })[0];
+    return h('button', { class: 'cal-btn' + (mine ? ' idle' : ''), type: 'button',
+      'aria-label': mine ? 'Rate this show, sent' : 'Rate this show',
+      onclick: function () { openRateShow(tourId, s.id); } }, 'Rate');
   }
+  /* Which sheet a tap opens: the one-question wizard once the database
+     carries the review column (0165), else the old three-slider sheet, kept
+     whole below. The probe is warmed where the button draws, so the answer
+     is usually in before anyone taps. */
   function openRateShow(tourId, showId) {
+    var B = window.GR_BACKEND;
+    if (B && B.showReviewOn && B.showReviewOn()) openRateWizard(tourId, showId);
+    else openRateShowSliders(tourId, showId);
+  }
+  // The 0154 sheet, word for word: what a build ahead of 0165 still opens.
+  function openRateShowSliders(tourId, showId) {
     var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
     var CATS = [['crowd', 'Crowd'], ['venue', 'Venue'], ['city', 'City']];
     var st = { busy: false, touched: false, seeded: false, waits: 0 };
@@ -17019,6 +17064,210 @@
     }, { label: 'Rate the show' });
   }
 
+  /* ---- The structured rating flow (0165; Devin, 2026-10-16: "like
+     airbnb... you're presented with one question at a time and you rate out
+     of 5 stars (you can also do half stars)"). Eleven questions in his
+     order. The word lists are migration 0165's validator lists, verbatim:
+     3 stars and under opens the Bad words, above 3 the Good words, and
+     "Buyout" sits on both catering sides on purpose. ---- */
+  var RW_QS = [
+    { key: 'crowd', ask: 'How was the crowd?' },
+    { key: 'venue', ask: 'How was the venue?' },
+    { key: 'greenroom', ask: 'How was the greenroom?' },
+    { key: 'shower', ask: 'Was there a shower?', yn: true },
+    { key: 'laundry', ask: 'Was there laundry?', yn: true },
+    { key: 'accommodated', ask: 'Did the venue accommodate your needs?', yn: true },
+    { key: 'staff', ask: 'How was the staff?' },
+    { key: 'area', ask: 'How was the area?' },
+    { key: 'catering', ask: 'How was the catering?' },
+    { key: 'sound', ask: 'How was the sound?' },
+    { key: 'stage', ask: 'How was the stage?' }
+  ];
+  var RW_SUBS = {
+    crowd: { bad: ['Dead', 'Lukewarm', 'Sleepy', 'Stiff', 'Awkward', 'Sparse', 'Hostile', 'Brutal'],
+      good: ['Energetic', 'Loud', 'Rowdy', 'Friendly', 'Emotional', 'Relentless', 'Electric', 'Large'] },
+    venue: { bad: ['Cramped', 'Muddy', 'Outdated', 'Disorganized', 'Grimy', 'Sketchy', 'Nightmare'],
+      good: ['Clean', 'Iconic', 'Intimate', 'Spacious', 'Comfortable', 'Solid', 'New', 'Organized'] },
+    greenroom: { bad: ['Shared', 'Cramped', 'Muddy', 'Outdated', 'Grimy', 'Sketchy', 'Nightmare', 'Noisy', 'Cold', 'Dirty', 'Nonexistent'],
+      good: ['Clean', 'Spacious', 'Comfortable', 'Accommodating', 'Stocked', 'Private', 'Cozy', 'Convenient', 'Quiet'] },
+    staff: { bad: ['Absent', 'Mean', 'Clueless', 'Slow', 'Disorganized', 'Rude', 'Unhelpful', 'Lazy', 'Territorial', 'Hostile', 'Shady'],
+      good: ['Professional', 'Hospitable', 'Friendly', 'Responsive', 'Organized', 'Legendary', 'Helpful', 'Knowledgable', 'Dialed', 'Proactive'] },
+    area: { bad: ['Boring', 'Isolated', 'Industrial', 'Strip Mall', 'Dead', 'Dangerous', 'Sketchy', 'Rundown', 'Forgettable', 'Sleepy', 'Overpriced', 'Hectic', 'Bleak', 'Grim'],
+      good: ['Safe', 'Convenient', 'Quiet', 'Vibrant', 'Walkable', 'Charming', 'Scenic', 'Lively', 'Great Food', 'Beautiful', 'Cultured', 'Underrated', 'Fun', 'Chill'] },
+    catering: { bad: ['Bland', 'Skimpy', 'Greasy', 'Cold', 'Stale', 'Processed', 'Nonexistent', 'Buyout'],
+      good: ['Gourmet', 'Homemade', 'Fresh', 'Generous', 'Healthy', 'Thoughtful', 'Next Level', 'Legendary', 'Buyout'] },
+    sound: { bad: ['Boomy', 'Echoey', 'Boxy', 'Harsh', 'Thin', 'Quiet', 'Underpowered', 'Uneven', 'Dated', 'Distorted', 'Unreliable', 'Broken'],
+      good: ['Perfect', 'Treated', 'Controlled', 'Massive', 'Crystal', 'Punchy', 'Modern', 'Powerful', 'Balanced', 'Reliable', 'Updated'] },
+    stage: { bad: ['Tight', 'Shallow', 'Bad Production', 'Removed', 'Slippery', 'Awkward', 'Unsafe', 'Tiny', 'Cluttered'],
+      good: ['Massive', 'Spacious', 'Pro', 'Lit', 'High production', 'Video Wall', 'Tall', 'Intimate', 'Wide', 'Catwalk'] }
+  };
+  // One star, drawn: outlined when empty, filled when green.
+  var RW_STAR = 'M12 2.8l2.8 5.9 6.4.9-4.7 4.4 1.2 6.4L12 17.3l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.9z';
+  function rwStarSvg(size, filled) {
+    var span = document.createElement('span');
+    span.className = 'ic';
+    span.setAttribute('aria-hidden', 'true');
+    span.innerHTML = '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="' +
+      (filled ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">' +
+      '<path d="' + RW_STAR + '"/></svg>';
+    return span;
+  }
+  /* Five stars read-only, filled to the half (a green overlay clipped to
+     the fraction): the Today History line, and anywhere stars are said. */
+  function rwStarRow(value, size, label) {
+    var row = h('span', label ? { class: 'rw-row', role: 'img', 'aria-label': label }
+      : { class: 'rw-row', 'aria-hidden': 'true' });
+    for (var i = 1; i <= 5; i++) {
+      var f = Math.max(0, Math.min(1, G.num(value) - (i - 1)));
+      var star = h('span', { class: 'rw-star' }, rwStarSvg(size, false));
+      if (f > 0) star.append(h('span', { class: 'rw-fill', style: 'width:' + (f * 100) + '%' }, rwStarSvg(size, true)));
+      row.append(star);
+    }
+    return row;
+  }
+  /* Five stars to pick from, two buttons a star: the LEFT half gives the
+     half step, the RIGHT half the whole star (no toggling; tapping another
+     half simply moves the pick). */
+  function rwPickRow(value, onPick) {
+    var row = h('div', { class: 'rw-row rw-pick', role: 'radiogroup', 'aria-label': 'Stars, half a star to five' });
+    for (var i = 1; i <= 5; i++) (function (i) {
+      var f = Math.max(0, Math.min(1, value - (i - 1)));
+      var star = h('span', { class: 'rw-star' }, rwStarSvg(52, false));
+      if (f > 0) star.append(h('span', { class: 'rw-fill', style: 'width:' + (f * 100) + '%' }, rwStarSvg(52, true)));
+      star.append(
+        h('button', { class: 'rw-half', type: 'button', role: 'radio', 'aria-checked': String(value === i - 0.5),
+          'aria-label': (i - 0.5) + ' stars', onclick: function () { onPick(i - 0.5); } }),
+        h('button', { class: 'rw-whole', type: 'button', role: 'radio', 'aria-checked': String(value === i),
+          'aria-label': i + (i === 1 ? ' star' : ' stars'), onclick: function () { onPick(i); } }));
+      row.append(star);
+    })(i);
+    return row;
+  }
+  /* The wizard itself: a full-screen sheet, one question a screen, Next
+     through all eleven (Done on the last), a back arrow, a quiet dot line
+     saying where you are. Every question is optional; closing midway keeps
+     nothing. Done builds the review with only the answered questions,
+     shaped exactly as show_review_ok wants, mirrors crowd and venue into
+     the old 1-10 ints (stars times two) so the 0154 averages stay alive,
+     and sends it all on the one show_ratings row. */
+  function openRateWizard(tourId, showId) {
+    var B = window.GR_BACKEND;
+    var at = 0, busy = false;
+    var ans = {};
+    RW_QS.forEach(function (q) { ans[q.key] = q.yn ? { yn: null, note: '' } : { stars: 0, subs: [], note: '' }; });
+    var host = h('div', { class: 'rw-host' });
+    function buildReview() {
+      var review = {};
+      RW_QS.forEach(function (q) {
+        var a = ans[q.key], n = a.note.trim().slice(0, 100);
+        if (q.yn) {
+          if (a.yn === true || a.yn === false) {
+            var o = { yn: a.yn };
+            if (n) o.note = n;
+            review[q.key] = o;
+          }
+        } else if (a.stars >= 0.5) {
+          var o2 = { stars: a.stars };
+          if (a.subs.length) o2.subs = a.subs.slice(0, 14);
+          if (n) o2.note = n;
+          review[q.key] = o2;
+        }
+      });
+      return review;
+    }
+    async function send() {
+      if (busy) return;
+      var review = buildReview();
+      if (!Object.keys(review).length) { toast('Pick at least one answer first.'); return; }
+      busy = true; draw();
+      var f = { crowd: review.crowd ? Math.round(review.crowd.stars * 2) : null,
+        venue: review.venue ? Math.round(review.venue.stars * 2) : null, city: null, review: review };
+      try { await B.showRate(tourId, showId, f); }
+      catch (x) {
+        busy = false;
+        // The column is not there after all (a build ahead of 0165): the
+        // old sheet opens instead, and the session remembers.
+        if (x && x.code === 'review-missing') { openRateShowSliders(tourId, showId); return; }
+        draw();
+        toast(x && x.code === 'offline' ? NO_SIGNAL : 'Couldn’t send that. Try again.');
+        return;
+      }
+      closeSheet();
+      toast('Sent to the band');
+      render(true);
+    }
+    function setStars(q, a, n) {
+      a.stars = n;
+      // The star side picks the word list: words from the other side come off.
+      var list = n <= 3 ? RW_SUBS[q.key].bad : RW_SUBS[q.key].good;
+      a.subs = a.subs.filter(function (w) { return list.indexOf(w) >= 0; });
+      draw();
+    }
+    function draw() {
+      var q = RW_QS[at], a = ans[q.key];
+      var kids = [];
+      kids.push(at > 0 ? h('button', { class: 'iconbtn rw-back', type: 'button', 'aria-label': 'Back',
+        onclick: function () { if (busy) return; at -= 1; draw(); } }, icon('back', 20)) : null);
+      var dots = h('div', { class: 'rw-dots', role: 'img', 'aria-label': 'Question ' + (at + 1) + ' of ' + RW_QS.length });
+      RW_QS.forEach(function (x, i) { dots.append(h('i', { class: i === at ? 'on' : '' })); });
+      kids.push(dots);
+      kids.push(h('h2', { class: 'sh-title rw-q' }, q.ask));
+      if (q.yn) {
+        // Yes or No; the one picked taps off again, since every question is optional.
+        kids.push(h('div', { class: 'rw-yn', role: 'group', 'aria-label': q.ask },
+          [['Yes', true], ['No', false]].map(function (p) {
+            var on = a.yn === p[1];
+            return h('button', { class: 'btn block ' + (on ? 'primary' : 'ghost'), type: 'button', 'aria-pressed': String(on),
+              onclick: function () { if (busy) return; a.yn = on ? null : p[1]; draw(); } }, p[0]);
+          })));
+      } else {
+        kids.push(rwPickRow(a.stars, function (n) { if (busy) return; setStars(q, a, n); }));
+        if (a.stars >= 0.5) {
+          var words = a.stars <= 3 ? RW_SUBS[q.key].bad : RW_SUBS[q.key].good;
+          kids.push(h('div', { class: 'chips rw-chips', role: 'group', 'aria-label': 'Words for it' },
+            words.map(function (w) {
+              var on = a.subs.indexOf(w) >= 0;
+              return h('button', { class: 'chip', type: 'button', 'aria-pressed': String(on),
+                onclick: function () {
+                  if (busy) return;
+                  if (on) a.subs = a.subs.filter(function (x) { return x !== w; });
+                  else a.subs.push(w);
+                  draw();
+                } }, w);
+            })));
+        }
+      }
+      if (q.yn || a.stars >= 0.5) {
+        var count = h('p', { class: 'note rw-count' }, a.note.length + ' of 100');
+        // A note on a yes/no question travels only with a Yes or a No.
+        var warn = q.yn ? h('p', { class: 'note' }, 'Pick Yes or No to send this note.') : null;
+        var warnNow = function () { if (warn) warn.hidden = !(a.note.trim() && a.yn == null); };
+        warnNow();
+        kids.push(h('input', { class: 'input', type: 'text', maxlength: '100', value: a.note,
+          placeholder: 'Anything specific (optional)', 'aria-label': 'Anything specific', autocomplete: 'off',
+          enterkeyhint: 'done',
+          oninput: function (e) { a.note = String(e.target.value || '').slice(0, 100); count.textContent = a.note.length + ' of 100'; warnNow(); } }));
+        kids.push(count);
+        kids.push(warn);
+      }
+      kids.push(h('div', { class: 'stack rw-foot' },
+        h('button', { class: 'btn primary block', type: 'button', disabled: busy || null,
+          onclick: function () { if (busy) return; if (at < RW_QS.length - 1) { at += 1; draw(); } else send(); } },
+          busy ? 'Sending…' : at < RW_QS.length - 1 ? 'Next' : 'Done'),
+        h('p', { class: 'note rw-keep' }, 'Nothing is saved until you tap Done.')));
+      fillEl(host, kids);
+    }
+    draw();
+    openSheet(function () {
+      var t = getTour(tourId) || {}, s = (G.isObj(t.shows) && t.shows[showId]) || {};
+      return [
+        h('p', { class: 'sh-sub rw-where' }, [[s.city, s.venue].filter(Boolean).join(' · '),
+          'The band sees this, nobody else. You can change it until midnight.'].filter(Boolean).join('. ')),
+        host
+      ];
+    }, { label: 'Rate the show', cls: 'rw-sheet' });
+  }
+
   /* Today, and only today: where you are, who you're playing to, and a line
      from the tour manager. */
   function overviewBody(id, t) {
@@ -17060,8 +17309,7 @@
       d.presale ? h('div', { class: 'ov-presale' },
         h('span', { class: 'ov-msg-k' }, 'Pre-sale'),
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
-      // "Rate the show" (0154): the band's own, after doors; nothing here for anyone else.
-      rateShowRow(id, t),
+      // (Rate the show left this spot for the calendar's tonight row, Devin, 2026-10-16.)
       // Three across, the same size, centred: View calendar, BUYOUT ALERT in
       // the middle (Managers only), View Setlist (Devin, 2026-10-16).
       h('div', { class: 'cal-open cal-trio' },
@@ -19226,12 +19474,17 @@
     var asks = !!(B && B.requestsFor); // requests live with a signed-in tour
     var reqs = asks ? B.requestsFor(id, s.date) : [];
     var open = reqs.filter(function (r) { return r.status === 'pending'; }).length;
+    // 'Requests' on the button so the row isn't crowded (Devin, 2026-10-16);
+    // the aria keeps the full words. Tonight's rateable show stacks Rate
+    // above it in the same column, for the band alone.
+    var reqBtn = !asks ? h('span', { 'aria-hidden': 'true' }) : h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
+      'aria-label': 'Special requests for ' + (s.city || 'this show') + (open ? ', ' + open + ' waiting for an answer' : ''),
+      onclick: function () { openRequests(id, s); } },
+      'Requests');
+    var rateBtn = rateCalBtn(id, s);
     var line = h('div', { class: 'show-row cal-row' + (s.date === today ? ' is-today' : '') },
       dateBlock(s.date), whereBlock(s), daySheetBtn(id, s.date, from, fromLabel),
-      !asks ? h('span', { 'aria-hidden': 'true' }) : h('button', { class: 'cal-btn' + (open ? ' on' : ''), type: 'button',
-        'aria-label': 'Special requests for ' + (s.city || 'this show') + (open ? ', ' + open + ' waiting for an answer' : ''),
-        onclick: function () { openRequests(id, s); } },
-        'Special requests'));
+      rateBtn ? h('span', { class: 'cal-pair' }, rateBtn, reqBtn) : reqBtn);
     // Devin: "slide left on a date and edit/delete show". It's the tour's own
     // show that changes, so every tab that reads the tour follows.
     if (!(canEditTour(id) && s.id)) return h('li', null, line);

@@ -59,6 +59,9 @@
   // tables are there at all (null until the first ask answers; the answer is
   // the session's). showRateCache holds one answer per tour.
   var showRateCache = {}, showRateAsk = {}, showRateGen = {}, rateKnown = null, rateProbing = false;
+  // The structured review (0165): does show_ratings carry the review column
+  // (null until the first ask answers; the answer is the session's).
+  var reviewKnown = null, reviewProbing = false;
   // Tour flyers (0156): each artist page's flyers by tour group key, and
   // whether the table is there at all (null until the first ask answers; the
   // answer is the session's).
@@ -1410,8 +1413,13 @@
       var one = function (v) { var n = Math.round(Number(v)); return n >= 1 && n <= 10 ? n : null; };
       var row = { tour_id: tourId, show_id: showId, user_id: session.user.id,
         crowd: one(p.crowd), venue: one(p.venue), city: one(p.city) };
+      // The structured review (0165) rides the same row when the app sends one.
+      if (isObj(p.review)) row.review = p.review;
       var q = await sb.from('show_ratings').upsert(row, { onConflict: 'tour_id,show_id,user_id' });
       if (q.error) {
+        // No review column after all (a build ahead of 0165): remembered for
+        // the session, and the app shows the old sheet instead.
+        if (row.review && columnMissing(q.error)) { reviewKnown = false; emit('tours'); throw err('review-missing'); }
         if (tableMissing(q.error)) { rateKnown = false; emit('tours'); throw err('unavailable'); }
         throw mapError(q.error);
       }
@@ -1428,6 +1436,17 @@
       var c = showRateCache[tourId];
       if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadShowRatings(tourId);
       return c ? c.data : null;
+    },
+    /* The structured review (0165). showReviewOn: does show_ratings carry
+       the review column (asked once per session, a cheap one-row read of
+       the column alone, warmed where the Rate button draws; false until it
+       answers, so a build ahead of 0165 keeps the old three-slider sheet).
+       The wizard's answers ride showRate as p.review on the same row; a
+       write that finds no column answers code 'review-missing', is
+       remembered for the session, and the app opens the old sheet. */
+    showReviewOn: function () {
+      if (reviewKnown === null) reviewProbe();
+      return reviewKnown === true;
     },
     /* ---- Invite codes: what gets someone through the door with no tour
        invite. A Greenroom admin makes them; null for everyone else (so the
@@ -2151,7 +2170,10 @@
        so a room typed in fresh is asked about afresh. An answer is
        { artistId, artist, count, nights: [{ date, name, kind }] }: the
        nights newest first, at most 100 of them; count is all of them; kind
-       is 'tour', 'festival' or 'shows'. */
+       is 'tour', 'festival' or 'shows'. Once 0165 is live the answer may
+       also carry 'stars' (the band's own average, one decimal) and
+       'ratings' (how many reviews it stands on) - the server hands those
+       to the band alone, so their absence simply means nothing to show. */
     venueHistoryOn: function () {
       if (vhKnown === null) vhProbe();
       return vhKnown === true;
@@ -3236,8 +3258,13 @@
         return { date: String(n.date), name: String(n.name || '').trim(),
           kind: n.kind === 'festival' || n.kind === 'shows' ? n.kind : 'tour' };
       });
-      return { data: { artistId: String(a.artistId), artist: String(a.artist || '').trim(),
-        count: Math.max(nights.length, Math.round(Number(a.count)) || 0), nights: nights } };
+      var out = { artistId: String(a.artistId), artist: String(a.artist || '').trim(),
+        count: Math.max(nights.length, Math.round(Number(a.count)) || 0), nights: nights };
+      // What the rating was (0165): 'stars' and 'ratings' ride the same
+      // answer, for the band alone; absent, there is simply nothing to show.
+      var rs = Number(a.stars), rn = Math.round(Number(a.ratings));
+      if (rn > 0 && isFinite(rs) && rs > 0) { out.stars = Math.round(rs * 10) / 10; out.ratings = rn; }
+      return { data: out };
     }).then(function (got) {
       if (vhAsk[k] === p) delete vhAsk[k];
       if (!got) return;
@@ -3734,6 +3761,19 @@
       if (!q.error) { rateKnown = true; emit('tours'); }
       else if (tableMissing(q.error)) rateKnown = false;
     }, function () { rateProbing = false; });
+  }
+  // Does show_ratings carry the review column (0165)? One cheap ask per
+  // session, at feature use: the column alone, one row at most. A database
+  // from before answers that the column is missing, and the old sheet
+  // stays; no signal leaves it unanswered, asked again at the next draw.
+  function reviewProbe() {
+    if (reviewProbing || !session) return;
+    reviewProbing = true;
+    sb.from('show_ratings').select('review').limit(1).then(function (q) {
+      reviewProbing = false;
+      if (!q.error) { reviewKnown = true; emit('tours'); }
+      else if (columnMissing(q.error) || tableMissing(q.error)) reviewKnown = false;
+    }, function () { reviewProbing = false; });
   }
   function showRateStale() {
     Object.keys(showRateCache).forEach(function (k) { showRateGen[k] = (showRateGen[k] || 0) + 1; if (showRateCache[k]) showRateCache[k].stale = true; });

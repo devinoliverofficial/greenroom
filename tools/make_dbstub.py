@@ -1158,11 +1158,22 @@ shim = r"""<script>
      probe answers true here. The line sits under the venue (and its address)
      on Today and on the day sheet, only on the day being played; a tap opens
      the sheet of the nights before tonight, newest first.
+     The line lives in two places: on the TOUR day sheet it still sits under
+     the venue; on the profile's TODAY tab it is the History section at the
+     bottom (Devin, 2026-10-16), the same tappable line under an mn-h
+     heading, and under it, when the answer carries 'stars' and 'ratings'
+     (0165 hands them to the band alone), the stars drawn small with
+     "from <n> ratings".
      HOOKS:
        __harness.venueHistory()   seeds five earlier nights at Mohawk for tonight's
                             Austin show (s1): two tours, a festival, a third tour and
                             a year's shows outside a tour, so Today and the day sheet
-                            read "Your 6th time at Mohawk". Answers the words. Or open
+                            read "Your 6th time at Mohawk" - plus the band's own
+                            stars (4.5 from 3 ratings), so Today's History section
+                            shows the small green stars line. Delete
+                            __harness.venueHistoryRows.s1.stars and .ratings (then
+                            switch tabs) for what a crew phone sees: the history
+                            alone, no stars line. Answers the words. Or open
                             the page with ?venuehistory.
        __harness.venueHistoryFirst()   tonight's row with no nights before it: the
                             line reads "Your first time at Mohawk" and is not a button.
@@ -1175,7 +1186,7 @@ shim = r"""<script>
   window.__harness.venueHistory = function () {
     var H = window.__harness, a = creditIss();
     H.venueHistoryRows = H.venueHistoryRows || {};
-    H.venueHistoryRows.s1 = { artistId: a ? a.id : 'act-iss', artist: 'I See Stars', count: 5, nights: [
+    H.venueHistoryRows.s1 = { artistId: a ? a.id : 'act-iss', artist: 'I See Stars', count: 5, stars: 4.5, ratings: 3, nights: [
       { date: '2026-03-07', name: 'Spin the Wheel', kind: 'tour' },
       { date: '2019-03-15', name: 'SXSW 2019', kind: 'festival' },
       { date: '2017-03-14', name: 'Treehouse Tour', kind: 'tour' },
@@ -1279,15 +1290,20 @@ shim = r"""<script>
     return Promise.resolve(out);
   }
   window.__harness.members = []; window.__harness.invited = []; window.__harness.notified = []; window.__harness.notes = [];
-  /* ---- VENUE AND SHOW RATINGS (0154): stars on a venue's page, and the band's word on a night ----
+  /* ---- VENUE AND SHOW RATINGS (0154 + 0165): stars on a venue's page, and the band's word on a night ----
      A venue page shows its rating line ("8.3 from 3 ratings", or "No ratings
      yet") and a Rate this venue button once the card carries rating keys,
      which this fake backend always sends (see venueCard above). The band's
-     Rate the show row sits on the Overview after doors, for the tour's owner
-     (this phone, u-devin) and the artist's Members; its sheet holds Crowd,
-     Venue and City, the band's averages, and the app's own merch score (a
-     night against the tour's average; the seeded Dallas night has merch
-     logged, tonight's Austin show gains some below).
+     Rate button sits on the CALENDAR's tonight row after doors (Devin,
+     2026-10-16: "'rate' 'vote' 'requests'"; the show-day button reads
+     Requests now), for the tour's owner (this phone, u-devin) and the
+     artist's Members, stacked above Requests; sent, it goes quiet. A tap
+     opens the one-question wizard (0165): eleven screens at 375px, five
+     stars with halves (LEFT half of a star is the half step, RIGHT the
+     whole), word chips by star side, a 100-character note each, Yes/No for
+     shower, laundry and accommodated, Next through to Done. Done writes one
+     row: the review rides __harness.showStars (its review key) and
+     __harness.rateCalls, crowd and venue mirrored into the old 1-10 ints.
        __harness.venue()    opens the way to a rated venue page: Mohawk
                             (Austin) becomes a page with three people's stars
                             on it, 9, 8 and 8 (8.3 from 3 ratings). Find it in
@@ -1296,18 +1312,24 @@ shim = r"""<script>
                             the average on the page. Or open with ?venue.
        __harness.rate()     tonight's Austin show reads as after doors (its
                             day sheet's doors time moves to half an hour ago),
-                            merch is logged on it ($1,400 on a tour whose
-                            nights average $1,150 with it: the app scores it
-                            6), and two band
-                            rows land in __harness.showStars, so the sheet
-                            shows "The band so far". The Overview then has the
-                            quiet Rate the show row. Or open with ?rate.
+                            merch is logged on it, two band rows land in
+                            __harness.showStars, and the venue history is
+                            seeded with the band's stars (venueHistory()
+                            below), so one address shows everything: the
+                            Calendar's tonight row has Rate over Requests
+                            (the wizard, every screen), and the profile's
+                            Today tab ends in the History section with the
+                            small stars line. Or open with ?rate.
        __harness.venueStars every venue's stars ({ venueId: { userId: stars } });
-       __harness.showStars  every night's band rows; __harness.rateCalls what
-                            this phone wrote.
+       __harness.showStars  every night's band rows, each with its review;
+                            __harness.rateCalls what this phone wrote.
        __harness.ratingsOff = true   the probe answers as with no tables (a
                             build ahead of its migration): no rating line, no
-                            buttons, no sheets, anywhere. */
+                            buttons, no sheets, anywhere.
+       __harness.reviewOff = true   the review column alone answers as before
+                            0165: Rate opens the old three-slider sheet; set
+                            it while the wizard is open and Done answers
+                            'review-missing', so the old sheet appears. */
   window.__harness.venue = function () {
     var H = window.__harness;
     H.places = H.places || [];
@@ -1329,8 +1351,11 @@ shim = r"""<script>
     H.showStars = (H.showStars || []).filter(function (r) { return !(r.tourId === 't1' && r.showId === 's1' && r.userId !== 'u-devin'); });
     H.showStars.push({ tourId: 't1', showId: 's1', userId: 'u-amy', crowd: 8, venue: 7, city: 9, at: now },
       { tourId: 't1', showId: 's1', userId: 'u-ben', crowd: 6, venue: 7, city: null, at: now });
+    // Tonight's room in the band's history too, stars and all, so one
+    // address shows the wizard and the Today History section together.
+    H.venueHistory();
     emit();
-    return 'doors ' + tours.t1.shows.s1.daySheet.doors + ', merch 1400 logged, two band rows on tonight';
+    return 'doors ' + tours.t1.shows.s1.daySheet.doors + ', merch 1400 logged, two band rows and the rated history on tonight';
   };
   try { if (/[?&]venue\b/.test(String(location.search || ''))) window.__harness.venue(); } catch (e) { /* no address to read */ }
   try { if (/[?&]rate\b/.test(String(location.search || ''))) window.__harness.rate(); } catch (e) { /* no address to read */ }
@@ -3557,10 +3582,16 @@ shim = r"""<script>
     /* Ratings (0154), in memory. Venue stars live in __harness.venueStars
        ({ venueId: { userId: stars } }); the band's words on a night in
        __harness.showStars ([{ tourId, showId, userId, crowd, venue, city,
-       at }]). This phone's account is u-devin. __harness.ratingsOff = true
-       answers as with no tables (a build ahead of its migration): no rating
-       line, no sheets, and the venue card loses its rating keys. */
+       review, at }]). This phone's account is u-devin. __harness.ratingsOff
+       = true answers as with no tables (a build ahead of its migration): no
+       rating line, no sheets, and the venue card loses its rating keys.
+       The structured review (0165): showReviewOn answers true here, so the
+       Rate button opens the one-question wizard; __harness.reviewOff = true
+       answers as before 0165 (the old three-slider sheet opens instead,
+       and a wizard already open answers Done with 'review-missing', the
+       way a write that finds no column does, so the old sheet appears). */
     ratingsOn: function () { return !window.__harness.ratingsOff; },
+    showReviewOn: function () { return !window.__harness.ratingsOff && !window.__harness.reviewOff; },
     venueRate: function (id, stars) {
       var H = window.__harness;
       if (H.ratingsOff) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
@@ -3577,9 +3608,13 @@ shim = r"""<script>
     showRate: function (tourId, showId, o) {
       var H = window.__harness, p = o || {};
       if (H.ratingsOff) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      // A review sent to a database without the column (reviewOff flipped on
+      // after the wizard opened): the write answers the way the real one does.
+      if (p.review && H.reviewOff) return Promise.reject(Object.assign(new Error('review-missing'), { code: 'review-missing' }));
       var one = function (v) { var n = Math.round(Number(v)); return n >= 1 && n <= 10 ? n : null; };
       H.showStars = (H.showStars || []).filter(function (r) { return !(r.tourId === tourId && r.showId === showId && r.userId === 'u-devin'); });
-      H.showStars.push({ tourId: tourId, showId: showId, userId: 'u-devin', crowd: one(p.crowd), venue: one(p.venue), city: one(p.city), at: new Date().toISOString() });
+      H.showStars.push({ tourId: tourId, showId: showId, userId: 'u-devin', crowd: one(p.crowd), venue: one(p.venue), city: one(p.city),
+        review: p.review || null, at: new Date().toISOString() });
       (H.rateCalls = H.rateCalls || []).push({ fn: 'showRate', args: [tourId, showId, p] });
       return Promise.resolve();
     },
@@ -3587,7 +3622,7 @@ shim = r"""<script>
       var H = window.__harness;
       if (H.ratingsOff) return null;
       return (H.showStars || []).filter(function (r) { return r.tourId === tourId; }).map(function (r) {
-        return { showId: r.showId, userId: r.userId, crowd: r.crowd, venue: r.venue, city: r.city, at: r.at };
+        return { showId: r.showId, userId: r.userId, crowd: r.crowd, venue: r.venue, city: r.city, review: r.review || null, at: r.at };
       });
     },
     /* Invite codes (0134), for a Greenroom admin: __harness.admin = false
