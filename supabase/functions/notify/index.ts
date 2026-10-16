@@ -1,7 +1,16 @@
 // Fan-out for Greenroom notifications. A signed-in member reports an event on
 // a tour ("guests added", "we're in the green", "merch milestone", "sold
-// out"); this looks up everyone else on that tour who opted into that kind of
-// news and web-pushes them. Senders never notify themselves.
+// out", and since 2026-10-15 Devin's event kinds: a day-off poll vote, flowers
+// given, a chat message, a payment logged, a day sheet posted, a buyout
+// tracked); this looks up everyone on that tour the kind is for who opted
+// into that kind of news and web-pushes them. Senders never notify themselves.
+//
+// Each kind's pref key on push_subs.prefs, and what a phone that never saved
+// the key counts as: vote and chat are OFF until asked for (brand new, and
+// chatty); flowers, payment, buyout (each about you alone) and sheet (the day
+// sheet everyone already got) are ON unless switched off; green stays with
+// the Managers and is ON unless switched off; requests honor prefs.requests
+// the same way. soldout and merchnums stay opt-in as stored.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import webpush from "npm:web-push@3.6.7";
 
@@ -29,6 +38,7 @@ interface NotifyBody { tourId?: string; type?: string; data?: Record<string, unk
 /* What a phone sends is cut to size here, so one sender cannot push a page of
    text (or a ticket count of a million) to everyone on the tour. */
 const cut = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+const money = (n: number) => "$" + Math.round(n).toLocaleString("en-US");
 
 function message(type: string, d: Record<string, unknown>, tourName: string): { title: string; body: string } | null {
   const city = cut(d.city, 60);
@@ -53,6 +63,36 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
       const who = String(d.who ?? "Someone");
       return text ? { title: tourName, body: `${who} has a special request${city ? " for " + city : ""}: "${text}"` } : null;
     }
+    case "vote": {
+      // A day-off poll vote landed, for the tour's Managers.
+      const who = String(d.who ?? "Someone");
+      const day = cut(d.date, 12);
+      return { title: tourName, body: `${who} voted on the day off poll${day ? " (" + day + ")" : ""}` };
+    }
+    case "flowers": {
+      // Flowers were given, for the one person who got them.
+      const who = String(d.who ?? "Someone");
+      const n = Math.min(10, Math.max(1, Math.floor(Number(d.n ?? 1)) || 1));
+      return { title: tourName, body: `${who} gave you ${n === 1 ? "a flower" : n + " flowers"}` };
+    }
+    case "chat": {
+      // A chat message landed, for everyone on the tour who asked for it.
+      const text = String(d.text ?? "").replace(/\s+/g, " ").trim().slice(0, 140);
+      const who = String(d.who ?? "Someone");
+      return text ? { title: tourName, body: `${who}: ${text}` } : null;
+    }
+    case "payment": {
+      // The band logged a payment, for the one person who was paid.
+      const amount = Math.max(0, Math.min(1e7, Number(d.amount) || 0));
+      return { title: tourName, body: amount > 0 ? `${money(amount)} was logged as paid to you` : "A payment to you was logged" };
+    }
+    case "sheet":
+      // A day sheet was posted (Ari's own DAY SHEET AVAILABLE still runs on
+      // show day; this one says it the moment it is saved).
+      return { title: tourName, body: `The ${city || "show day"} day sheet is up` };
+    case "buyout":
+      // A buyout was marked tracked, for the one person it was handed to.
+      return { title: tourName, body: `Your buyout${city ? " for " + city : ""} is marked received` };
     default:
       return null;
   }
@@ -109,7 +149,8 @@ Deno.serve(async (req) => {
   const tourId = String(body.tourId ?? "");
   const type = String(body.type ?? "");
   const data = body.data ?? {};
-  if (!tourId || !["guest", "green", "merch", "soldout", "alert", "request"].includes(type)) {
+  if (!tourId || !["guest", "green", "merch", "soldout", "alert", "request",
+    "vote", "flowers", "chat", "payment", "sheet", "buyout"].includes(type)) {
     return reply(400, { error: "invalid" });
   }
 
@@ -125,23 +166,35 @@ Deno.serve(async (req) => {
   if (type === "alert" && !managers.has(senderId) && !(await isTourManager(tourId, senderId))) {
     return reply(403, { error: "not_manager" });
   }
-  // Only a Manager can send the tour's money news.
-  if ((type === "green" || type === "merch") && !managers.has(senderId)) {
+  // Only a Manager can send the tour's money news; a payment or a buyout
+  // tick is the tour's money too, so only a Manager says one happened.
+  if ((type === "green" || type === "merch" || type === "payment" || type === "buyout") && !managers.has(senderId)) {
     return reply(403, { error: "not_manager" });
   }
 
   const tourName = cut((tour.doc as Record<string, unknown>)?.name, 80) || "Greenroom";
-  if (type === "request") {
-    // The asker's own name, never one sent along with the request.
+  if (["request", "vote", "chat", "flowers"].includes(type)) {
+    // The sender's own name, never one sent along with the event.
     const { data: prof } = await admin.from("profiles").select("full_name, username").eq("user_id", senderId).maybeSingle();
     data.who = String(prof?.full_name || prof?.username || "Someone");
   }
   const msg = message(type, data, tourName);
   if (!msg) return reply(400, { error: "invalid" });
 
-  // Everyone else on the tour who opted into this kind of news; money news
-  // and special requests go to the tour's Managers only.
-  const targets = [...memberIds].filter((id) => id !== senderId && (!FOR_MANAGERS.includes(type) || managers.has(id)));
+  // Who hears it: money news, special requests and poll votes go to the
+  // tour's Managers; flowers, a payment and a buyout go to the one person
+  // they are about (who must be on the tour); everything else goes to
+  // everyone on the tour. Senders never notify themselves.
+  const PERSONAL = ["flowers", "payment", "buyout"];
+  let targets: string[];
+  if (type === "vote") {
+    targets = [...managers].filter((id) => id !== senderId);
+  } else if (PERSONAL.includes(type)) {
+    const to = String(data.to ?? "");
+    targets = memberIds.has(to) && to !== senderId ? [to] : [];
+  } else {
+    targets = [...memberIds].filter((id) => id !== senderId && (!FOR_MANAGERS.includes(type) || managers.has(id)));
+  }
   if (!targets.length) return reply(200, { sent: 0 });
   const { data: subs } = await admin.from("push_subs")
     .select("endpoint, p256dh, auth, prefs, user_id")
@@ -154,14 +207,25 @@ Deno.serve(async (req) => {
     // Each phone picks CREW, ARTIST or ALL, plus SOLD OUT and MERCH NUMBERS.
     // A phone set up before those choices counts as ALL.
     const group = String(prefs.group ?? "all");
-    if (type === "alert" || type === "request") {
-      // An alert, or a request waiting on an answer, ignores preferences.
+    if (type === "alert") {
+      // An alert ignores preferences: it is the Managers' siren.
+    } else if (type === "request") {
+      // A request waiting on an answer: on unless the Manager's phone said no.
+      if (prefs.requests === false) continue;
     } else if (type === "soldout") {
       if (prefs.soldout !== true) continue;
     } else if (type === "merch") {
       if (prefs.merchnums !== true) continue;
     } else if (type === "green") {
-      // Only the tour's Managers get it (above), whatever group their phone is on.
+      // Only the tour's Managers get it (above): on unless their phone said no.
+      if (prefs.green === false) continue;
+    } else if (type === "vote" || type === "chat") {
+      // Brand new, and chatty: off until the phone asks for it.
+      if (prefs[type] !== true) continue;
+    } else if (type === "flowers" || type === "payment" || type === "buyout" || type === "sheet") {
+      // About you alone (or the day sheet everyone already got): on unless
+      // the phone switched it off.
+      if (prefs[type] === false) continue;
     } else if (group !== "all") continue;   // guest list: ALL only
     try {
       await webpush.sendNotification(

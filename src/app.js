@@ -687,6 +687,8 @@
     busRedraw();
     // (And a buyout tick list that is up: fresh ticks just landed.)
     buyoutTicksRedraw();
+    // (And a supplies sheet that is up: fresh lines just landed.)
+    suppliesRedraw();
   }
   function loadLocal() {
     var data = null;
@@ -8709,7 +8711,9 @@
     if (!fr) return;
     var cur = frKindOf(fr.step);
     var next = fr.queue[cur ? fr.queue.indexOf(cur) + 1 : 0];
-    if (!next) { frFinish(); return; }
+    // After the last kind's questions: Members and Crew are offered their
+    // notifications once (Devin, 2026-10-15), then the run is saved.
+    if (!next) { if (frNotifDue(fr)) frGo('notif'); else frFinish(); return; }
     /* The kind being left keeps one screen behind it: its search. Skipped
        from its role or proof screen, with the artist that was picked let go
        just below, those screens would be empty ones for Back to walk through
@@ -8835,6 +8839,7 @@
     return s === 'handle' ? frHandle(fr)
       : s === 'birth' ? frBirth(fr)
       : s === 'phone' ? frPhone(fr)
+      : s === 'notif' ? frNotif(fr)
       : s === 'm-find' || s === 'c-find' ? frArtist(fr)
       : s === 'm-unclaimed' ? frUnclaimed(fr)
       : s === 'm-role' || s === 'c-role' ? frRole(fr)
@@ -9082,6 +9087,80 @@
     forgetCrew();
     if (frStill(fr, op)) { fr.fails = 0; frNextKind(); }
   }
+  /* ---- Turn notifications on (Devin, 2026-10-15: "when signing up you
+     should get asked Turn Notifications On with the list"). One screen,
+     after the last kind's own questions, with the same list the
+     Notifications sheet carries, and Not now to skip it cleanly. Only for
+     someone who ticked Member or Crew (a fan is on nobody's tour and skips
+     it entirely), only on a true first run (from Settings the Notifications
+     sheet already does this), and only on a phone whose browser can (an
+     iPhone Safari tab cannot; the sheet explains that later, this screen
+     simply stays away). ---- */
+  function frNotifDue(fr) {
+    var B = window.GR_BACKEND;
+    if (fr.again || fr.f.notifDone) return false;
+    if (!fr.kinds.some(function (k) { return k === 'member' || k === 'crew'; })) return false;
+    return !!(B && B.pushSupported && B.pushSupported() && B.pushEnable && B.pushState);
+  }
+  function frNotif(fr) {
+    var f = fr.f;
+    if (!f.notif) {
+      f.notif = {};
+      // Money news is the band's own: only for someone already on a tour
+      // whose money they can see (everyone else picks it up later, from the
+      // Notifications sheet, once they are).
+      f.notifMoney = allTourEntries().some(function (e) { return canSeeMoney(e[0]); });
+      NOTIF_GROUPS.forEach(function (grp) {
+        if (grp[0] === 'Money' && !f.notifMoney) return;
+        grp[1].forEach(function (k) { f.notif[k[0]] = notifStart(k[0], k[3], {}); });
+      });
+    }
+    var st = f.notif;
+    var body = NOTIF_GROUPS.map(function (grp) {
+      if (grp[0] === 'Money' && !f.notifMoney) return null;
+      return h('div', { class: 'notif-group' },
+        h('div', { class: 'row-label' }, grp[0]),
+        h('div', { class: 'ds-yns' }, grp[1].map(function (k) {
+          return h('div', { class: 'ds-yn', style: 'min-height:48px' },
+            h('div', { class: 'row-label', style: 'flex:1' }, k[1],
+              h('span', { class: 'hint' }, k[2])),
+            segmented(['Off', 'On'], st[k[0]] ? 1 : 0, function (i) { st[k[0]] = i === 1; }, k[1]));
+        })));
+    });
+    return frShell({ title: 'Turn notifications on',
+      sub: 'What this phone hears about. Each one is yours to change later, under Notifications.',
+      body: body,
+      onBack: fr.trail.length ? frBack : null,
+      next: { label: 'Turn notifications on', ready: true, onTap: frSaveNotif },
+      alt: { label: 'Not now', onTap: function () { fr.f.notifDone = true; frFinish(); } } });
+  }
+  async function frSaveNotif() {
+    var B = window.GR_BACKEND, fr = S.firstRun, f = fr.f;
+    if (fr.busy) return;
+    blurActive();
+    var op = frBegin();
+    try {
+      // A save with no answer in 12 seconds counts as one that failed, as at the end of the run.
+      await Promise.race([B.pushEnable(notifPrefsOut(f.notif || {}, !!f.notifMoney)),
+        sleep(12000).then(function () { throw Object.assign(new Error('offline'), { code: 'offline' }); })]);
+    } catch (x) {
+      if (!frStill(fr, op)) return;
+      fr.busy = false;
+      // Their phone said no: nothing holds them here, and the sheet under
+      // Notifications explains the phone's own settings later.
+      if (x && x.code === 'denied') { f.notifDone = true; frFinish(); return; }
+      fr.fails = (fr.fails || 0) + 1;
+      // Nobody is held here by a save that keeps failing: after the third try they go on without it.
+      if (fr.fails >= 3) { fr.fails = 0; f.notifDone = true; frFinish(); return; }
+      fr.err = frWhy('notif', x, 'Couldn’t turn that on. Try again.');
+      render(true);
+      return;
+    }
+    S.pushOn = true;
+    f.notifDone = true;
+    if (frStill(fr, op)) { fr.fails = 0; frFinish(); }
+  }
+
   /* The account's own card (name, phone, role) is saved whole, so a change
      to one line of it starts from what the card holds at that moment and
      waits for the change before it: the phone number and the role are saved
@@ -13965,6 +14044,8 @@
         if (await api.update(id, patch)) {
           delete S.drafts['exp:' + id];
           toast(money(st.amount) + ' paid to ' + (p.name || 'crew'));
+          // Their phone hears they were paid, if it asked to.
+          notifyCrewPaid(id, p, st.amount);
           st.amount = null; st.merch = null;
           render(true); again();
         }
@@ -15423,6 +15504,8 @@
       try {
         await saveNote(id, 'chat', { id: newId(), body: body, author: myName() });
         delete S.drafts[draftKey];
+        // Everyone on the tour who asked for chat news hears it landed.
+        sendNotify(id, 'chat', { text: body.slice(0, 140) });
         refresh();
       } catch (e2) { toast('Couldn’t send that. Try again.'); }
     };
@@ -16137,7 +16220,10 @@
           icon('calendar', 16), 'View calendar'),
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { openSetlist(id); } },
-          icon('music', 16), 'View Setlist')),
+          icon('music', 16), 'View Setlist'),
+        // The tour's shared shopping list (0155), with how many lines are
+        // still to get; everyone on the tour sees it, Crew included.
+        suppliesBtn(id)),
       // Small, right under those two (Devin, 2026-10-15).
       h('div', { class: 'cal-open bo-under' }, buyoutAlertBtn(id, t)),
 
@@ -16207,6 +16293,148 @@
       }, { label: 'Set list' });
     }
     build();
+  }
+
+  /* ---------------- Tour supplies (0155) ----------------
+     One shared list per tour, "clean and easy" (Devin, 2026-10-15), opened
+     from the Overview beside the calendar. Anyone on the tour, Crew
+     included, adds a line and ticks it off; your own lines slide left to
+     Edit and Delete, and a Manager's slide works on every line. The
+     database refuses the rest and its own plain words are shown as they
+     are. Behind suppliesOn: before migration 0155 nothing renders. */
+  function suppliesOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.suppliesOn && B.suppliesOn());
+  }
+  // The Overview's button, with a quiet count of what is still to get.
+  function suppliesBtn(id) {
+    if (!suppliesOn()) return null;
+    var rows = window.GR_BACKEND.supplies(id);
+    var open = (rows || []).filter(function (r) { return !r.doneAt; }).length;
+    return h('button', { class: 'btn quiet sm glow', type: 'button',
+      'aria-label': 'Supplies' + (open ? ', ' + plural(open, 'open line') : ''),
+      onclick: function () { openSupplies(id); } },
+      icon('check', 16), 'Supplies', open ? h('span', { class: 'num', style: 'opacity:.65' }, String(open)) : null);
+  }
+  // A supplies sheet that is up draws itself again when fresh lines land (a
+  // re-read, or this phone's own write answered).
+  var suppliesLive = null;
+  function suppliesRedraw() {
+    if (!suppliesLive) return;
+    // (Never under a finger: a row swapped out mid-tap swallows the tap.)
+    if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(suppliesRedraw, 400); return; }
+    try { suppliesLive(); } catch (e) { /* it draws again on its next tap */ }
+  }
+  function openSupplies(id) {
+    var B = window.GR_BACKEND;
+    var edit = null;   // the line whose words are being changed: { id, text }
+    var pend = {};     // a tick on its way: what the circle shows meanwhile
+    var busy = false;
+    var box = h('div', { class: 'ledger' });
+    // The server refuses what it refuses: its plain words when it wrote
+    // some, the usual line otherwise.
+    function refused(e, fallback) {
+      toast(e && e.code === 'said' && e.message ? e.message
+        : e && e.code === 'permission' ? 'Only whoever added a line, or a Manager, can change it.'
+        : fallback);
+    }
+    async function tick(r, on) {
+      if (pend[r.id] != null) return;
+      pend[r.id] = on;
+      draw();
+      try { await B.supplyTick(r.id, on); }
+      catch (e) { refused(e, 'Couldn’t save that. Try again.'); }
+      delete pend[r.id];
+      draw();
+    }
+    function lineRow(r) {
+      if (edit && edit.id === r.id) {
+        var words = h('input', { class: 'input', type: 'text', maxlength: 120, value: edit.text,
+          'aria-label': 'The line’s words', autocomplete: 'off', autofocus: true,
+          oninput: function (e) { edit.text = e.target.value; } });
+        return h('form', { class: 'row', style: 'gap:8px', novalidate: true, onsubmit: async function (e) {
+          e.preventDefault();
+          blurActive();
+          var next = String(edit.text || '').trim();
+          if (!next) return;
+          try { await B.supplySave(r.id, next); edit = null; }
+          catch (e2) { refused(e2, 'Couldn’t save that. Try again.'); }
+          draw();
+        } },
+          words,
+          h('button', { class: 'btn sm primary', type: 'submit', style: 'flex:none' }, 'Save'),
+          h('button', { class: 'btn sm ghost', type: 'button', style: 'flex:none',
+            onclick: function () { edit = null; draw(); } }, 'Cancel'));
+      }
+      var on = pend[r.id] != null ? pend[r.id] : !!r.doneAt;
+      var face = h('button', { class: 'row rowbtn', type: 'button', style: 'gap:12px',
+        'aria-label': (on ? 'Put back on the list: ' : 'Tick off: ') + r.body,
+        onclick: function () { tick(r, !on); } },
+        h('span', { class: 'poll-dot', style: on ? 'background:var(--brand);box-shadow:none' : null },
+          on ? icon('check', 14) : null),
+        h('div', { class: 'row-label', style: on ? 'text-decoration:line-through;opacity:.6' : null }, r.body));
+      // Your own line slides to Edit and Delete; a Manager's slide works on
+      // all of them. The database holds the same rule, whatever is tried.
+      var mine = B.uid && B.uid() === r.addedBy;
+      if (!mine && !moneyLead(id)) return face;
+      return swipeRow(face, [
+        h('button', { class: 'sw-edit', type: 'button', 'aria-label': 'Change the words: ' + r.body,
+          onclick: function () { edit = { id: r.id, text: r.body }; draw(); } }, icon('edit', 16), 'Edit'),
+        h('button', { class: 'sw-undo', type: 'button', 'aria-label': 'Delete: ' + r.body,
+          onclick: async function () {
+            try { await B.supplyDrop(r.id); }
+            catch (e) { refused(e, 'Couldn’t delete that. Try again.'); }
+            draw();
+          } }, icon('trash', 16), 'Delete')
+      ], { noTapOpen: true });
+    }
+    function draw() {
+      // The table went away under us (a migration rolled back), or the seat
+      // did: the sheet goes quietly.
+      if (!suppliesOn()) { if (suppliesLive === draw) closeSheet(); return; }
+      var rows = B.supplies(id);
+      if (!rows) { box.replaceChildren(h('p', { class: 'note' }, 'Loading…')); return; }
+      var open = rows.filter(function (r) { return !r.doneAt; });
+      var done = rows.filter(function (r) { return !!r.doneAt; });
+      var kids = [];
+      if (!rows.length) kids.push(h('div', { class: 'row' },
+        h('span', { class: 'hint' }, 'Nothing on the list yet. Add the first thing below.')));
+      open.forEach(function (r) { kids.push(lineRow(r)); });
+      if (done.length) {
+        kids.push(h('div', { class: 'row head' }, h('span', { class: 'lg-name' }, 'Done')));
+        done.forEach(function (r) { kids.push(lineRow(r)); });
+      }
+      box.replaceChildren.apply(box, kids);
+    }
+    var addIn = h('input', { class: 'input', type: 'text', maxlength: 120, placeholder: 'Add to the list',
+      'aria-label': 'Add to the list', autocomplete: 'off', enterkeyhint: 'done' });
+    // The add field rides the bottom of the sheet, over its bottom padding.
+    var addForm = h('form', { class: 'tc-foot', style: 'display:flex;gap:8px;align-items:center', novalidate: true,
+      onsubmit: async function (e) {
+        e.preventDefault();
+        var words = String(addIn.value || '').trim();
+        if (!words || busy) return;
+        busy = true;
+        addIn.value = '';
+        try { await B.supplyAdd(id, words); }
+        catch (e2) { addIn.value = words; refused(e2, 'Couldn’t add that. Try again.'); }
+        busy = false;
+        draw();
+      } },
+      addIn,
+      h('button', { class: 'btn sm primary', type: 'submit', style: 'flex:none' }, 'Add'));
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Supplies'),
+        h('p', { class: 'sh-sub' }, 'One list for the whole tour. Anyone on the run can add a line and tick it off.'),
+        box,
+        addForm
+      ];
+    }, { label: 'Supplies', onClose: function () { if (suppliesLive === draw) suppliesLive = null; } });
+    suppliesLive = draw;
+    // Fresh lines while the sheet is up.
+    if (B.supplies) B.supplies(id, true);
   }
 
   /* The tour's phone book: who is on the run and how to reach them. */
@@ -18015,6 +18243,8 @@
         S.flowersAt = Date.now(); // profiles showing flowers ask again
         closeMine();
         toast(fwFirst(p) + ' got their flowers ' + FLOWER);
+        // Their phone hears about it, if it asked to (fire and forget).
+        sendNotify(id, 'flowers', { to: p.userId, n: n });
         render(true);
       } });
       paint();
@@ -18263,7 +18493,12 @@
             onclick: async function () {
               if (busy || closed || mineHere) return;
               busy = true;
-              try { await B.vote(id, date, o.id); toast('Voted: ' + o.label); }
+              try {
+                await B.vote(id, date, o.id);
+                toast('Voted: ' + o.label);
+                // The tour's Managers hear a vote landed (their phones choose).
+                sendNotify(id, 'vote', { date: date });
+              }
               catch (e) { toast(Date.parse(p.closesAt) <= Date.now() ? 'Voting has closed.' : 'Couldn’t vote. Try again.'); }
               busy = false;
               draw(); render(true);
@@ -19753,6 +19988,11 @@
           var fromToday = !!S.todayResume;
           closeSheet(); toast('Day sheet posted'); render(true);
           if (window.GR_BACKEND && window.GR_BACKEND.ariKick) window.GR_BACKEND.ariKick(tourId);
+          // Everyone opted in hears the sheet went up (the new notify's
+          // 'sheet' kind; the server already live answers invalid, harmlessly).
+          var shd = (getTour(tourId) || {}).shows;
+          var shx = shd && G.isObj(shd[showId]) ? shd[showId] : {};
+          sendNotify(tourId, 'sheet', { city: shx.city || '', date: shx.date || '' });
           // Most runs keep the same set times every night — offer to carry them.
           if (sheet.setTimes.length) {
             if (fromToday) S.todayAfter = function () { askSetTimesEverywhere(tourId, showId, sheet.setTimes); };
@@ -20118,6 +20358,12 @@
         return;
       }
       buyoutDocMark(id, showId, userId, want);
+      // The ticked person's phone hears their buyout is marked received, if
+      // it asked to (the undo stays quiet; the poke already redraws MY PAY).
+      if (want) {
+        var bsh = buyoutShows(getTour(id) || {}).filter(function (x) { return x.id === showId; })[0];
+        sendNotify(id, 'buyout', { to: userId, city: (bsh && bsh.city) || '' });
+      }
       delete pend[key];
       draw();
       render(true);
@@ -22199,6 +22445,29 @@
     return Promise.resolve(null);
   }
 
+  /* A crew payment was logged: tell the person paid, by their phone's own
+     choice (the new notify's 'payment' kind; the server already live answers
+     invalid for it, harmlessly). The crew row is matched to a signed-up
+     member the way the pay pages match one: their email first, else the name
+     as typed, capitals aside. Nobody matched, nobody pinged - MY PAY still
+     shows the payment itself. Fire and forget: B.notify never throws. */
+  function notifyCrewPaid(tourId, p, amount) {
+    var B = window.GR_BACKEND;
+    if (!(S.mode === 'db' && B && B.crew && B.notify)) return;
+    var cached = S.crewCache && S.crewCache[tourId] && S.crewCache[tourId].rows;
+    Promise.resolve(cached || B.crew(tourId)).then(function (rows) {
+      var em = String(p.email || '').trim().toLowerCase(), nm = String(p.name || '').trim().toLowerCase();
+      var hit = (rows || []).filter(function (r) {
+        var re = String(r.invitedEmail || r.email || '').trim().toLowerCase();
+        return em && re === em;
+      })[0] || (rows || []).filter(function (r) {
+        var rn = String(r.name || r.username || '').trim().toLowerCase();
+        return nm && rn === nm;
+      })[0];
+      if (hit && hit.userId) sendNotify(tourId, 'payment', { to: hit.userId, amount: G.num(amount) });
+    }).catch(function () { /* fire and forget */ });
+  }
+
   /* Everyone on the tour, not just the manager, needs a way to let tour
      alerts reach their phone. Shown in the chat until this phone is on. */
   /* Tour alerts live behind one glowing bell at the top of the chat: the
@@ -22248,7 +22517,67 @@
     }, { label: 'Tour alerts' });
   }
 
-  /* Per-device notification choices: what this phone wants to hear about. */
+  /* Devin's notification kinds (2026-10-15), each one key on this phone's
+     prefs, grouped plainly. The fourth word says what a phone that saved
+     before these keys existed counts as: today's behavior where one exists
+     ('crewish': ON unless the phone chose ARTIST; 'artistish': ON unless it
+     chose CREW; 'on': it always went out), 'off' for a brand-new kind,
+     'stored' for the two switches that already lived on the row. The new
+     notify and ari functions read the same keys with the same fallbacks. */
+  var NOTIF_GROUPS = [
+    ['The day\u2019s times', [
+      ['loadin', 'Load In', '30 minutes before, and at load in', 'crewish'],
+      ['soundcheck', 'Sound Check', '30 minutes before, and at sound check', 'off'],
+      ['vip', 'VIP', '30 minutes before, and at VIP', 'off'],
+      ['lastcall', 'Last call for guest list', 'At the time on the day sheet', 'off'],
+      ['stage', 'Stage Notification', '60 minutes before your band\u2019s set', 'off'],
+      ['stage30', '30 min stage warning', '30 minutes before your band\u2019s set', 'artistish'],
+      ['loadout', 'Load out', 'At load out', 'off'],
+      ['buscall', 'Bus Call', '30 minutes before, at bus call, and a check-in nudge', 'off']]],
+    ['People', [
+      ['sheet', 'Day sheet added', 'A day sheet goes up', 'on'],
+      ['soldout', 'SOLD OUT', 'A show gets marked sold out', 'stored'],
+      ['requests', 'Special requests', 'Someone sends a special request', 'on'],
+      ['vote', 'VOTE', 'Someone votes on a day off poll', 'off'],
+      ['flowers', 'Flowers', 'Someone on the tour gives you flowers', 'on'],
+      ['chat', 'Greenroom chat', 'A message lands in the tour chat', 'off'],
+      ['payment', 'Payment notification', 'The band logs a payment to you', 'on'],
+      ['buyout', 'Buyout marked tracked', 'Your buyout is marked received', 'on']]],
+    // Money news: only for people who can see the tour's money.
+    ['Money', [
+      ['green', 'In the green', 'The tour\u2019s net turns positive', 'on'],
+      ['received', 'Merch or guarantee income logged received', 'A night\u2019s money is logged received', 'off'],
+      ['merchnums', 'MERCH NUMBERS', 'A night\u2019s merch numbers come in', 'stored']]]
+  ];
+  // What a key starts as on this phone: the saved choice, else what the old
+  // behavior already did for it.
+  function notifStart(key, was, saved) {
+    if (typeof saved[key] === 'boolean') return saved[key];
+    var g = saved.group === 'crew' || saved.group === 'artist' ? saved.group : 'all';
+    if (was === 'crewish') return g !== 'artist';
+    if (was === 'artistish') return g !== 'crew';
+    if (was === 'on') return true;
+    if (was === 'stored') return saved[key] === true;
+    return false;
+  }
+  /* The one prefs object pushEnable sends: every kind's key beside the old
+     ones. The server already live reads group, soldout and merchnums alone
+     and ignores the rest harmlessly; group is said the way the new choices
+     land nearest (load in and the stage warnings both on: ALL; one side:
+     its side; neither: CREW, since some group must be said), so that server
+     stays roughly right until Devin pastes the new functions. */
+  function notifPrefsOut(st, seesMoney) {
+    var out = {};
+    NOTIF_GROUPS.forEach(function (grp) {
+      grp[1].forEach(function (k) { out[k[0]] = st[k[0]] === true; });
+    });
+    if (!seesMoney) { out.green = false; out.received = false; out.merchnums = false; }
+    var artistish = out.stage || out.stage30;
+    out.group = out.loadin && artistish ? 'all' : artistish ? 'artist' : 'crew';
+    return out;
+  }
+  /* Per-device notification choices: Devin's full list, an All switch at the
+     top, then every kind as its own toggle, grouped plainly. */
   function openNotifications(tourId) {
     var B = window.GR_BACKEND;
     if (!B || S.mode !== 'db') {
@@ -22266,42 +22595,47 @@
     B.pushState().then(function (state) {
       var on = state.on;
       var saved = state.prefs || {};
-      // One group per phone (what Ari sends it), plus two extras. A phone set
-      // up before the groups counts as ALL, same as the server.
-      var prefs = {
-        group: saved.group === 'crew' || saved.group === 'artist' ? saved.group : 'all',
-        soldout: !!saved.soldout,
-        merchnums: !!saved.merchnums
-      };
-      // Merch numbers are the band's money: only for someone who can see a tour's money.
+      // Money news is the band's own: only for someone who can see a tour's money.
       var seesMoney = tourId ? canSeeMoney(tourId) : allTourEntries().some(function (e) { return canSeeMoney(e[0]); });
-      if (!seesMoney) prefs.merchnums = false;
-      var GROUPS = ['crew', 'artist', 'all'];
-      var SAYS = {
-        crew: 'LOAD IN 10 minutes before load in, and DAY SHEET AVAILABLE.',
-        artist: 'SHOW TIME 30 minutes before your set, and DAY SHEET AVAILABLE.',
-        all: 'Everything: LOAD IN, SHOW TIME, DAY SHEET AVAILABLE and guest list adds.'
-      };
+      var st = {};
+      NOTIF_GROUPS.forEach(function (grp) {
+        grp[1].forEach(function (k) { st[k[0]] = notifStart(k[0], k[3], saved); });
+      });
+      if (!seesMoney) { st.green = false; st.received = false; st.merchnums = false; }
       openSheet(function () {
-        var groupHint = h('span', { class: 'hint' }, SAYS[prefs.group]);
+        var segs = {}, keysShown = [];
+        // Flip one segmented control where it stands, without a redraw.
+        function setSeg(seg, i) {
+          Array.prototype.forEach.call(seg.children, function (b, j) { b.setAttribute('aria-checked', String(j === i)); });
+        }
+        function allOn() { return keysShown.every(function (k) { return st[k]; }); }
+        function syncAll() { setSeg(allSeg, allOn() ? 1 : 0); }
         function toggleRow(key, label, hint) {
+          var seg = segmented(['Off', 'On'], st[key] ? 1 : 0, function (i) { st[key] = i === 1; syncAll(); }, label);
+          segs[key] = seg;
+          keysShown.push(key);
           return h('div', { class: 'ds-yn', style: 'min-height:48px' },
             h('div', { class: 'row-label', style: 'flex:1' }, label,
               hint ? h('span', { class: 'hint' }, hint) : null),
-            segmented(['Off', 'On'], prefs[key] ? 1 : 0, function (i) { prefs[key] = i === 1; }, label));
+            seg);
         }
+        var groups = NOTIF_GROUPS.map(function (grp) {
+          if (grp[0] === 'Money' && !seesMoney) return null;
+          return h('div', { class: 'notif-group' },
+            h('div', { class: 'row-label' }, grp[0]),
+            h('div', { class: 'ds-yns' }, grp[1].map(function (k) { return toggleRow(k[0], k[1], k[2]); })));
+        });
+        var allSeg = segmented(['Off', 'On'], allOn() ? 1 : 0, function (i) {
+          keysShown.forEach(function (k) { st[k] = i === 1; setSeg(segs[k], i); });
+        }, 'All notifications');
         var saveBtn = h('button', { class: 'btn primary block', type: 'button',
           onclick: async function () {
             saveBtn.disabled = true;
             try {
               // Tour alerts always come through once this phone is signed up.
-              await B.pushEnable({ group: prefs.group, soldout: prefs.soldout, merchnums: prefs.merchnums });
+              await B.pushEnable(notifPrefsOut(st, seesMoney));
               S.pushOn = true;
-              // MERCH NUMBERS is the tour's money: the database keeps it for Managers, whatever a phone asks.
-              var kept = prefs.merchnums ? await B.pushState().catch(function () { return null; }) : null;
-              toast(kept && kept.prefs && kept.prefs.merchnums === false
-                ? 'Saved. MERCH NUMBERS stays off: it is for people who manage every tour they are on.'
-                : 'This phone gets ' + prefs.group.toUpperCase() + ' notifications');
+              toast('Notifications saved for this phone');
               closeSheet();
               render(true);
             } catch (e) {
@@ -22318,15 +22652,11 @@
             h('div', { class: 'row-label', style: 'flex:1' }, 'Tour alerts',
               h('span', { class: 'hint' }, 'From the tour manager \u2014 always on')),
             h('span', { class: 'role-tag aa' }, on ? 'ON' : 'ON AFTER SAVE')),
-          h('div', { class: 'notif-group' },
-            h('div', { class: 'row-label' }, 'From Ari', groupHint),
-            segmented(['CREW', 'ARTIST', 'ALL'], GROUPS.indexOf(prefs.group), function (i) {
-              prefs.group = GROUPS[i];
-              groupHint.textContent = SAYS[prefs.group];
-            }, 'Which notifications')),
-          h('div', { class: 'ds-yns' },
-            toggleRow('soldout', 'SOLD OUT', 'A show gets marked sold out'),
-            seesMoney ? toggleRow('merchnums', 'MERCH NUMBERS', 'A night\u2019s merch numbers come in') : null),
+          h('div', { class: 'ds-yn', style: 'min-height:48px' },
+            h('div', { class: 'row-label', style: 'flex:1' }, 'All',
+              h('span', { class: 'hint' }, 'Every kind below, on or off at once')),
+            allSeg),
+          groups,
           h('div', { class: 'stack' }, saveBtn,
             on ? h('button', { class: 'btn ghost block', type: 'button',
               onclick: async function () {

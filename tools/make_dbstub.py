@@ -849,6 +849,41 @@ shim = r"""<script>
     return 'Dallas tracked for ' + joined.length + ', Houston for nobody';
   };
   try { if (/[?&]buyouts\b/.test(String(location.search || ''))) window.__harness.buyouts(); } catch (e) { /* no address to read */ }
+  /* ---- SUPPLIES (0155): the tour's shared list, under Overview ----
+     The database table tour_supplies is __harness.supplyRows here
+     ([{ id, tourId, body, addedBy, doneAt, doneBy, at }]). Anyone on the
+     tour adds and ticks; the words of a line, and its delete, belong to
+     whoever wrote it or a Manager, and the fake refuses the rest with the
+     database's own plain words (code 'said'), so the sheet's toast is
+     tested as it ships. This phone's account is u-devin; with ?crew its
+     taps are a Crew phone's (ticks still land, another's words refuse).
+     HOOKS:
+       __harness.supplies()  seeds the Harness run's list: three open lines
+                            (one Brent's), two ticked off, and answers how
+                            many are open. The Overview grows a Supplies
+                            button beside View Setlist with the open count;
+                            its sheet lists open lines first, then Done, the
+                            add field pinned at the bottom. Or open the page
+                            with ?supplies.
+       __harness.supplyRows  every line; change them by hand, then
+                            __harness.poke('supply') and an open sheet draws
+                            again by itself.
+       __harness.suppliesOff = true   the probe answers as with no table (a
+                            build ahead of its migration): no button on the
+                            Overview and no sheet anywhere. */
+  window.__harness.supplies = function () {
+    var H = window.__harness;
+    var ago = function (h) { return new Date(Date.now() - h * 36e5).toISOString(); };
+    H.supplyRows = [
+      { id: 'sp1', tourId: 't1', body: 'Gaff tape, two rolls', addedBy: 'u-devin', doneAt: null, doneBy: null, at: ago(30) },
+      { id: 'sp2', tourId: 't1', body: 'Guitar strings, 10-46', addedBy: 'u-brent', doneAt: null, doneBy: null, at: ago(26) },
+      { id: 'sp3', tourId: 't1', body: 'Water for the bus', addedBy: 'u-devin', doneAt: null, doneBy: null, at: ago(4) },
+      { id: 'sp4', tourId: 't1', body: 'Sharpies for the signing', addedBy: 'u-brent', doneAt: ago(20), doneBy: 'u-devin', at: ago(28) },
+      { id: 'sp5', tourId: 't1', body: 'Batteries, AA', addedBy: 'u-devin', doneAt: ago(2), doneBy: 'u-brent', at: ago(25) }];
+    H.poke('supply');
+    return H.supplyRows.filter(function (r) { return !r.doneAt; }).length + ' open lines';
+  };
+  try { if (/[?&]supplies\b/.test(String(location.search || ''))) window.__harness.supplies(); } catch (e) { /* no address to read */ }
   /* ---- TO DO LISTS (0152): the artist page's section, and "Your To Do List" on the profile ----
      The database tables todo_items and todo_invites are __harness.todoItems
      ([{ id, artistId, cat, body, assignedTo, due, doneAt, createdBy, createdAt }])
@@ -2116,6 +2151,58 @@ shim = r"""<script>
         return !(r.tourId === tourId && r.showId === showId && r.userId === userId);
       });
       window.__harness.poke('buyout');
+      return Promise.resolve();
+    },
+    /* Supplies (0155), in memory: see SUPPLIES near LIVE WITHOUT A RESTART.
+       The rows live in __harness.supplyRows; anyone ticks, but the words and
+       the delete of someone else's line refuse with the database's own plain
+       words (code 'said') unless this phone is a Manager (not ?crew), the
+       way the trigger and the delete policy cut them. */
+    suppliesOn: function () { return !window.__harness.suppliesOff; },
+    supplies: function (tourId) {
+      var H = window.__harness;
+      return (H.supplyRows || []).filter(function (r) { return r.tourId === tourId; })
+        .map(function (r) { return { id: r.id, body: r.body, addedBy: r.addedBy, doneAt: r.doneAt, doneBy: r.doneBy, at: r.at }; });
+    },
+    supplyAdd: function (tourId, body) {
+      var H = window.__harness, rows = H.supplyRows || (H.supplyRows = []);
+      var words = String(body == null ? '' : body).replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (!words) return Promise.reject(new Error('unavailable'));
+      if (rows.filter(function (r) { return r.tourId === tourId && !r.doneAt; }).length >= 200) {
+        return Promise.reject(Object.assign(new Error('This tour’s supplies list is full. Tick things off or delete old lines first.'), { code: 'said' }));
+      }
+      var row = { id: 'sp' + Date.now() + Math.floor(Math.random() * 1000), tourId: tourId, body: words,
+        addedBy: 'u-devin', doneAt: null, doneBy: null, at: new Date().toISOString() };
+      rows.push(row);
+      window.__harness.poke('supply');
+      return Promise.resolve(row.id);
+    },
+    supplyTick: function (id, on) {
+      var H = window.__harness;
+      (H.supplyRows || []).forEach(function (r) {
+        if (r.id === id) { r.doneAt = on ? new Date().toISOString() : null; r.doneBy = on ? 'u-devin' : null; }
+      });
+      window.__harness.poke('supply');
+      return Promise.resolve();
+    },
+    supplySave: function (id, body) {
+      var H = window.__harness;
+      var r = (H.supplyRows || []).filter(function (x) { return x.id === id; })[0];
+      if (!r) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      if (r.addedBy !== 'u-devin' && H.asCrew) {
+        return Promise.reject(Object.assign(new Error('Only whoever added a line, or a Manager, can change its words.'), { code: 'said' }));
+      }
+      r.body = String(body == null ? '' : body).replace(/\s+/g, ' ').trim().slice(0, 120) || r.body;
+      window.__harness.poke('supply');
+      return Promise.resolve();
+    },
+    supplyDrop: function (id) {
+      var H = window.__harness;
+      var r = (H.supplyRows || []).filter(function (x) { return x.id === id; })[0];
+      if (!r) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      if (r.addedBy !== 'u-devin' && H.asCrew) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      H.supplyRows = (H.supplyRows || []).filter(function (x) { return x.id !== id; });
+      window.__harness.poke('supply');
       return Promise.resolve();
     },
     /* To Do Lists (0152), in memory: see TO DO LISTS near LIVE WITHOUT A
@@ -3397,7 +3484,24 @@ shim = r"""<script>
     pastCrew: function () { return Promise.resolve(window.__harness.past.slice()); },
     forgetPastCrew: function (email) { window.__harness.past = window.__harness.past.filter(function (p) { return p.email !== email; }); return Promise.resolve(); },
     pushSupported: function () { return window.__harness.pushSupported; },
-    pushState: function () { return Promise.resolve({ on: window.__harness.pushOn, prefs: {} }); },
+    /* NOTIFICATIONS: what the phone saved comes back on the next open, so
+       the rebuilt sheet (every kind its own toggle) and the sign-up's "Turn
+       notifications on" screen are tested end to end.
+       HOOKS:
+         __harness.pushPrefs    the one prefs object the last save sent: every
+                                kind's key (loadin, soundcheck, vip, lastcall,
+                                stage, stage30, loadout, buscall, sheet,
+                                soldout, requests, vote, flowers, chat,
+                                payment, buyout, green, received, merchnums)
+                                beside the old group.
+         __harness.pushOn       whether this phone is signed up.
+         __harness.notified     every sendNotify the app fired: [type, data],
+                                now including vote, flowers, chat, payment,
+                                sheet and buyout.
+         __harness.pushSupported = false   the browser cannot (an iPhone
+                                Safari tab): the sign-up screen stays away and
+                                the sheet explains the home screen. */
+    pushState: function () { return Promise.resolve({ on: window.__harness.pushOn, prefs: window.__harness.pushPrefs || {} }); },
     pushEnable: function (prefs) { window.__harness.pushOn = true; window.__harness.pushPrefs = prefs; return Promise.resolve(); },
     ariKick: function (tourId) { window.__harness.ariKicks = (window.__harness.ariKicks || 0) + 1; return Promise.resolve(); },
     pushDisable: function () { window.__harness.pushOn = false; return Promise.resolve(); },

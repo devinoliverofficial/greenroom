@@ -6,11 +6,26 @@
 //   SHOW TIME            30 min before our band's set             -> Artist + All
 //   DAY SHEET AVAILABLE  show day, once the day sheet is up       -> everyone
 //   MERCH NUMBERS        a night's merch number arrives / changes -> phones that asked
+//   SOUND CHECK          30 min before, and at, our sound check   -> phones that asked
+//   VIP                  30 min before, and at, the sheet's VIP   -> phones that asked
+//   LAST CALL            the guest list's last call, at its time  -> phones that asked
+//   STAGE                60 min before our band's set             -> phones that asked
+//   LOAD OUT             at the sheet's load out                  -> phones that asked
+//   BUS CALL             30 min before, and at, bus call (the at-time one
+//                        carries the check-in nudge)              -> phones that asked
 //   DAY-OFF POLL         a poll goes up -> everyone; 2 hours before it closes
 //                        (noon the day before) -> everyone who hasn't voted
 //   GAME BALL            the first show, every 7 days after, and the last
 //                        show: a vote opens that day (everyone), closes at
 //                        noon the next day, and the winner is announced
+//
+// Every kind honors its own key on push_subs.prefs (loadin, soundcheck, vip,
+// lastcall, stage, stage30, loadout, buscall, sheet). A phone that never
+// saved the new keys falls back to what its group already got: LOAD IN to
+// CREW and ALL, SHOW TIME (the 30-minute stage warning, key stage30) to
+// ARTIST and ALL, DAY SHEET AVAILABLE (key sheet) to everyone. Every other
+// kind here is brand new and falls back to OFF, so nobody's phone gets
+// noisier until they ask.
 //
 // Times on a day sheet are the venue's local time, so each show is read in
 // its own city's time zone. Every message goes out once (table ari_sent).
@@ -181,6 +196,18 @@ const groupOf = (s: Sub): Group => {
   const g = String((s.prefs ?? {}).group ?? "all");
   return g === "crew" || g === "artist" ? g : "all";
 };
+/* Does this phone want a kind? Its own saved key decides; a phone that never
+   saved the key falls back to what its group already got (see the table at
+   the top). */
+const wants = (s: Sub, key: string, dflt: (g: Group) => boolean): boolean => {
+  const p = (s.prefs ?? {}) as Record<string, unknown>;
+  if (typeof p[key] === "boolean") return p[key] === true;
+  return dflt(groupOf(s));
+};
+const CREWISH = (g: Group) => g !== "artist";     // LOAD IN went to CREW and ALL
+const ARTISTISH = (g: Group) => g !== "crew";     // SHOW TIME went to ARTIST and ALL
+const EVERYONE = (_g: Group) => true;             // the day sheet went to everyone
+const NOBODY = (_g: Group) => false;              // a brand-new kind: off until asked for
 
 // Claim the message; only the first claim for a show and kind goes out.
 async function claim(tourId: string, showId: string, kind: string): Promise<boolean> {
@@ -305,11 +332,11 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
   const everyone = async () => (subs ??= await crewSubs(tour.id, tour.owner_id));
   let sent = 0;
 
-  const announce = async (showId: string, kind: "loadin" | "showtime" | "daysheet", groups: Group[]) => {
+  const announce = async (showId: string, kind: string, text: string, key: string, dflt: (g: Group) => boolean) => {
     if (!(await claim(tour.id, showId, kind))) return;
-    const to = (await everyone()).filter((s) => groups.includes(groupOf(s)));
+    const to = (await everyone()).filter((s) => wants(s, key, dflt));
     // Phones only: the chat is for settlements and merch, not reminders.
-    sent += await push(to, SAY[kind], tour.id);
+    sent += await push(to, text, tour.id);
   };
 
   for (const [showId, raw] of shows) {
@@ -343,21 +370,60 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
     const due = (at: number | null, before: number) =>
       at != null && nowOnShowDay >= at - before && nowOnShowDay < at;
 
+    // At the time itself: a short catch window, so a cron minute that ran
+    // late still says it once (the claim keeps it to once).
+    const atWin = (at: number | null) => at != null && nowOnShowDay >= at && nowOnShowDay < at + 15;
+
     // DAY SHEET AVAILABLE: straight away when it's posted on show day;
     // a sheet posted ahead of time goes out at 9 AM that day.
     if (here.date === date) {
       const posted = num(ds.postedAt);
       const postedToday = posted > 0 && localNow(new Date(posted), tz).date === here.date;
-      if (postedToday || here.minutes >= 9 * 60) await announce(showId, "daysheet", ["crew", "artist", "all"]);
+      if (postedToday || here.minutes >= 9 * 60) await announce(showId, "daysheet", SAY.daysheet, "sheet", EVERYONE);
     }
 
-    // LOAD IN: 10 minutes out.
-    if (due(onShowDay(minutesOf(ds.loadIn, true)), 10)) await announce(showId, "loadin", ["crew", "all"]);
+    // LOAD IN: 10 minutes out, in Devin's own words.
+    if (due(onShowDay(minutesOf(ds.loadIn, true)), 10)) await announce(showId, "loadin", SAY.loadin, "loadin", CREWISH);
 
-    // SHOW TIME: 30 minutes before our band plays.
+    // SHOW TIME: 30 minutes before our band plays (the 30-minute stage
+    // warning, key stage30), in Devin's own words.
     const sets = Array.isArray(ds.setTimes) ? ds.setTimes : [];
     const ours = ourBand ? sets.find((r) => isObj(r) && String(r.band ?? "").trim().toLowerCase() === ourBand) : null;
-    if (isObj(ours) && due(onShowDay(minutesOf(ours.time)), 30)) await announce(showId, "showtime", ["artist", "all"]);
+    const oursAt = isObj(ours) ? onShowDay(minutesOf(ours.time)) : null;
+    if (due(oursAt, 30)) await announce(showId, "showtime", SAY.showtime, "stage30", ARTISTISH);
+
+    // STAGE: 60 minutes before our band plays. Its window closes where the
+    // 30-minute warning's opens, so a late catch-up never says 60 at 20.
+    if (oursAt != null && nowOnShowDay >= oursAt - 60 && nowOnShowDay < oursAt - 30) {
+      await announce(showId, "stage60", "You're on in 60 minutes.", "stage", NOBODY);
+    }
+
+    // SOUND CHECK: ours by band name, else the only one on the sheet.
+    const checks = Array.isArray(ds.soundchecks) ? ds.soundchecks : [];
+    const oursCheck = (ourBand ? checks.find((r) => isObj(r) && String(r.band ?? "").trim().toLowerCase() === ourBand) : null)
+      ?? (checks.length === 1 && isObj(checks[0]) ? checks[0] : null);
+    const scAt = isObj(oursCheck) ? onShowDay(minutesOf(oursCheck.time)) : null;
+    if (due(scAt, 30)) await announce(showId, "soundcheck-pre", "Sound check in 30 minutes.", "soundcheck", NOBODY);
+    if (atWin(scAt)) await announce(showId, "soundcheck", "Sound check. It's time.", "soundcheck", NOBODY);
+
+    // VIP: 30 minutes out, and at the time.
+    const vipAt = onShowDay(minutesOf(ds.vip));
+    if (due(vipAt, 30)) await announce(showId, "vip-pre", "VIP in 30 minutes.", "vip", NOBODY);
+    if (atWin(vipAt)) await announce(showId, "vip", "VIP is starting.", "vip", NOBODY);
+
+    // LAST CALL for the guest list: at the time the Tour Manager set.
+    const lcAt = onShowDay(minutesOf(ds.lastCall));
+    if (atWin(lcAt)) await announce(showId, "lastcall", "Last call for the guest list.", "lastcall", NOBODY);
+
+    // LOAD OUT: at the time.
+    const loAt = onShowDay(minutesOf(ds.loadOut));
+    if (atWin(loAt)) await announce(showId, "loadout", "Load out. Wrap it up and pack the truck.", "loadout", NOBODY);
+
+    // BUS CALL: 30 minutes out, then at the time with the check-in nudge
+    // folded in (one message at the time, never two at once).
+    const bcAt = onShowDay(minutesOf(ds.busCall));
+    if (due(bcAt, 30)) await announce(showId, "buscall-pre", "Bus call in 30 minutes.", "buscall", NOBODY);
+    if (atWin(bcAt)) await announce(showId, "buscall", "BUS CALL. Tap On Bus so the driver knows you're on.", "buscall", NOBODY);
   }
   return sent;
 }

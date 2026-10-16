@@ -64,6 +64,9 @@
   // answer is the session's).
   var flyerCache = {}, flyerAsk = {}, flyerGen = {}, flyerKnown = null, flyerProbing = false;
   var FLYER_FRESH = 300e3; // flyers change rarely: five minutes between asks is plenty
+  // Tour supplies (0155): each tour's shared list, and whether the table is
+  // there at all (null until the first ask answers; the answer is the session's).
+  var supplyCache = {}, supplyAsk = {}, supplyGen = {}, supplyKnown = null, supplyProbing = false;
   var FLOWERS_FRESH = 60e3; // asked again after a minute anyway: people join, phones sleep through changes
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
@@ -2154,6 +2157,82 @@
       if (c && c.data) delete c.data[gk];
       emit('tours');
     },
+    /* Tour supplies (0155). suppliesOn: is the table there (asked once per
+       session; false until it answers, so a build ahead of its migration
+       simply shows nothing). supplies: one tour's whole list, at once from
+       what this phone holds (null while it's first being fetched). supplyAdd
+       puts a line on; supplyTick ticks it off or back on (the database
+       writes who and when); supplySave changes a line's words; supplyDrop
+       takes it off. The database refuses words or a delete that aren't the
+       writer's or a Manager's, and a refusal it wrote for people ("Only
+       whoever added a line...") is thrown with those words kept, so the
+       sheet can say them as they are. */
+    suppliesOn: function () {
+      if (supplyKnown === null) supplyProbe();
+      return supplyKnown === true;
+    },
+    supplies: function (tourId, fresh) {
+      if (supplyKnown !== true) return null;
+      var c = supplyCache[tourId];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadSupplies(tourId);
+      return c ? c.data : null;
+    },
+    supplyAdd: async function (tourId, body) {
+      if (!session) throw err('unavailable');
+      var words = String(body == null ? '' : body).replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (!words) throw err('unavailable');
+      var q = await sb.from('tour_supplies')
+        .insert({ tour_id: tourId, body: words, added_by: session.user.id })
+        .select('id, created_at').single();
+      if (q.error) {
+        if (tableMissing(q.error)) { supplyKnown = false; emit('tours'); throw err('unavailable'); }
+        throw supplySaid(q.error);
+      }
+      var c = supplyCache[tourId];
+      if (c && c.data) c.data.push({ id: q.data.id, body: words, addedBy: session.user.id,
+        doneAt: null, doneBy: null, at: q.data.created_at });
+      emit('tours');
+      return q.data.id;
+    },
+    supplyTick: async function (id, on) {
+      if (!session) throw err('unavailable');
+      var at = on ? new Date().toISOString() : null;
+      var q = await sb.from('tour_supplies').update({ done_at: at }).eq('id', id).select('id');
+      if (q.error) {
+        if (tableMissing(q.error)) { supplyKnown = false; emit('tours'); throw err('unavailable'); }
+        throw supplySaid(q.error);
+      }
+      if (!q.data || !q.data.length) throw err('permission');
+      supplyRowPatch(id, function (r) { r.doneAt = at; r.doneBy = at ? session.user.id : null; });
+      emit('tours');
+    },
+    supplySave: async function (id, body) {
+      if (!session) throw err('unavailable');
+      var words = String(body == null ? '' : body).replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (!words) throw err('unavailable');
+      var q = await sb.from('tour_supplies').update({ body: words }).eq('id', id).select('id');
+      if (q.error) {
+        if (tableMissing(q.error)) { supplyKnown = false; emit('tours'); throw err('unavailable'); }
+        throw supplySaid(q.error);
+      }
+      if (!q.data || !q.data.length) throw err('permission');
+      supplyRowPatch(id, function (r) { r.body = words; });
+      emit('tours');
+    },
+    supplyDrop: async function (id) {
+      if (!session) throw err('unavailable');
+      var q = await sb.from('tour_supplies').delete().eq('id', id).select('id');
+      if (q.error) {
+        if (tableMissing(q.error)) { supplyKnown = false; emit('tours'); throw err('unavailable'); }
+        throw supplySaid(q.error);
+      }
+      if (!q.data || !q.data.length) throw err('permission');
+      Object.keys(supplyCache).forEach(function (k) {
+        var c = supplyCache[k];
+        if (c && c.data) c.data = c.data.filter(function (r) { return r.id !== id; });
+      });
+      emit('tours');
+    },
     /* To Do Lists (0152). todosOn: are the tables there (asked once per
        session; false until it answers, so a build ahead of its migration
        simply shows nothing). todoList: an artist's tasks, at once from what
@@ -2952,6 +3031,69 @@
     flyerAsk[artistId] = p;
     return p;
   }
+  /* ---- Tour supplies (0155): the tour's shared list, under Overview ---- */
+  // Is the table there? One ask per session. A build ahead of its migration
+  // finds none, and the whole feature stays out of sight (suppliesOn answers
+  // false, so the app draws nothing). No signal: unanswered, asked again the
+  // next time something draws.
+  function supplyProbe() {
+    if (supplyProbing || !session) return;
+    supplyProbing = true;
+    sb.from('tour_supplies').select('id').limit(1).then(function (q) {
+      supplyProbing = false;
+      if (!q.error) { supplyKnown = true; emit('tours'); }
+      else if (tableMissing(q.error)) supplyKnown = false;
+    }, function () { supplyProbing = false; });
+  }
+  function supplyStale() {
+    Object.keys(supplyCache).forEach(function (k) { supplyGen[k] = (supplyGen[k] || 0) + 1; if (supplyCache[k]) supplyCache[k].stale = true; });
+  }
+  // One line as this phone holds it, changed in place once a write answered.
+  function supplyRowPatch(id, change) {
+    Object.keys(supplyCache).forEach(function (k) {
+      var c = supplyCache[k];
+      if (c && c.data) c.data.forEach(function (r) { if (r.id === id) change(r); });
+    });
+  }
+  // The database's refusals here are written for people ("Only whoever added
+  // a line, or a Manager, can change its words."): those words are carried
+  // out as they are, so the sheet can say them. Anything else maps the
+  // usual way.
+  function supplySaid(e) {
+    var m = String(e && e.message || '');
+    if (/supply line|supplies list|change its words/i.test(m)) {
+      var x = new Error(m);
+      x.code = 'said';
+      return x;
+    }
+    return mapError(e);
+  }
+  // A tour's whole list, oldest first (the sheet puts open lines first
+  // itself). Held a minute, asked again on a 'supply' poke.
+  function loadSupplies(tourId) {
+    var gen = supplyGen[tourId] || 0, ask = supplyAsk[tourId];
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.from('tour_supplies').select('id, body, added_by, done_at, done_by, created_at')
+      .eq('tour_id', tourId).order('created_at')
+      .then(function (q) {
+        if (q.error) {
+          // Not there yet: the feature goes quiet. Anything else (no signal):
+          // what was held stands, and the next draw asks again.
+          if (tableMissing(q.error)) { supplyKnown = false; delete supplyCache[tourId]; emit('tours'); }
+          return null;
+        }
+        return (q.data || []).map(function (r) {
+          return { id: r.id, body: r.body, addedBy: r.added_by, doneAt: r.done_at, doneBy: r.done_by, at: r.created_at };
+        });
+      }).then(function (data) {
+        if (data) supplyCache[tourId] = { data: data, at: Date.now(), stale: gen !== (supplyGen[tourId] || 0) };
+        if (supplyAsk[tourId] === p) delete supplyAsk[tourId];
+        if (data) emit('tours');
+      }, function () { if (supplyAsk[tourId] === p) delete supplyAsk[tourId]; });
+    p.gen = gen;
+    supplyAsk[tourId] = p;
+    return p;
+  }
   /* ---- To Do Lists (0152): each artist's tasks, and your own tab ---- */
   // Is the table there? One ask per session. A build ahead of its migration
   // finds none, and the whole feature stays out of sight (todosOn answers
@@ -3285,6 +3427,9 @@
       // A 'todo' poke (0152): a task was handed to this account, so the
       // lists held here are out of date.
       if (!what || /(^|,)todo(,|$)/.test(what)) todoStale();
+      // A 'supply' poke (0155): nothing sends one today, but a missed-poke
+      // sweep ('') re-reads the tour's supplies list all the same.
+      if (!what || /(^|,)supply(,|$)/.test(what)) supplyStale();
       socialTell(what);
     }
     if (pokeOwed) { pokeOwed = false; poked(''); }
@@ -3300,6 +3445,7 @@
     busStale();
     buyoutStale();
     todoStale();
+    supplyStale();
     showRateStale();
     socialTell('');
     if (!pokeBusy) sgLimit(sb.rpc('claim_invites'), 10000).then(function () {}, function () { /* the next start links it */ });
