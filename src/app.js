@@ -10502,6 +10502,7 @@
      off; then that day's sheet. A day with nothing filled in shows nothing
      under it at all. Bus Check in sits at the bottom of the screen. */
   function pfToday(id, t, count) {
+    maybeCountdownSplash(id, t);
     var got = overviewDays(t);
     if (!got) return [pfTourBar(id, t, count, 'details'), emptyState('No dates yet', 'Once shows are on the run, today shows up here.')];
     var today = G.tourToday();
@@ -18342,6 +18343,7 @@
       }
     }
     if (view === 'details') {
+      maybeCountdownSplash(id, t);
       return h('div', { class: 'page tour has-tabs' },
         tourBand(t, id, view),
         h('div', { class: 'title-row' },
@@ -19217,6 +19219,30 @@
       el.classList.remove('on');
       setTimeout(function () { el.remove(); }, 350);
     }, reduced() ? 1800 : 2300);
+  }
+  /* The final stretch, splashed: with ten days or fewer left on the run,
+     the first open of each day throws the horns with the count (Devin,
+     2026-10-16: "a splash effect countdown that starts every day... only
+     once a day during the 10 day countdown"). Once a day per tour,
+     remembered on the phone; it waits out the intro so the two never
+     overlap, and says nothing it cannot say twice. */
+  function maybeCountdownSplash(id, t) {
+    if (!t || !tourIsLive(t)) return;
+    var left = G.daysLeftOnTour(t);
+    if (left == null || left > 10) return;
+    var key = 'gr-cdown:' + id + ':' + G.tourToday();
+    try {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, '1');
+    } catch (e) { return; }
+    var tries = 0;
+    var show = function () {
+      // The intro overlay sits above every splash; let it finish first.
+      if (document.getElementById('gr-splash') && tries++ < 40) { setTimeout(show, 600); return; }
+      hornSplash(left + (left === 1 ? ' day left' : ' days left'),
+        String(t.name || '').trim() || null);
+    };
+    setTimeout(show, 450);
   }
   /* One charge added from its own row (Devin, 2026-10-12: "could happen faster
      so you can kinda keep clicking add"): the same horns, small, up for under

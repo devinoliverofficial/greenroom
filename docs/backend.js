@@ -303,6 +303,9 @@
       var a = document.activeElement;
       var typing = !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable));
       if (typing || document.querySelector('#sheet-root .sheet') || document.visibilityState === 'hidden') return;
+      // Never yank the page out from under the intro mid-drive (Devin,
+      // 2026-10-16: if it starts, it finishes). The next check reloads.
+      if (document.getElementById('gr-splash')) return;
       window.location.reload();
     }).catch(function () { /* next time */ });
   }

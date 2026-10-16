@@ -1413,17 +1413,19 @@
     eq(G.parseDay('not a date'), null, 'nonsense');
   });
 
-  test('days left on tour: home is its own day after the last date, off days included', function () {
+  test('days left on tour: today through the last dated show, nothing further', function () {
     var t = { shows: keyed([{ date: '2026-03-01' }, { date: '2026-03-03' }, { date: '2026-03-10' }]) };
-    eq(G.daysLeftOnTour(t, '2026-03-03'), 8, 'mid-tour: the 3rd through the 10th, then home on the 11th');
+    eq(G.daysLeftOnTour(t, '2026-03-03'), 8, 'mid-tour: the 3rd through the 10th inclusive');
     eq(G.daysLeftOnTour(t, '2026-03-05'), 6, 'an off day mid-tour still counts down');
     eq(G.daysLeftOnTour(t, '2026-03-10'), 1, 'the last show day reads 1 day left');
-    eq(G.daysLeftOnTour(t, '2026-03-11'), null, 'home: hidden');
+    eq(G.daysLeftOnTour(t, '2026-03-11'), null, 'after the last date: hidden');
     eq(G.daysLeftOnTour(t, '2026-02-20'), null, 'not on the road yet: hidden');
     eq(G.daysLeftOnTour({ shows: {} }, '2026-03-03'), null, 'no dates: hidden');
-    // Travel days stretch the run the way tourEnd reads them.
+    // Travel days never pad the countdown (Devin, 2026-10-16), though they
+    // still stretch the run itself through tourEnd.
     var t2 = { spanEnd: '2026-03-12', shows: keyed([{ date: '2026-03-10' }]) };
-    eq(G.daysLeftOnTour(t2, '2026-03-10'), 3, 'travel days after the last show count');
+    eq(G.daysLeftOnTour(t2, '2026-03-10'), 1, 'travel days after the last show do not count');
+    eq(G.daysLeftOnTour(t2, '2026-03-11'), null, 'a travel day home shows no countdown');
   });
 
   /* ============ Formatting ============ */
