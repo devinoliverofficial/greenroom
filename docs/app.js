@@ -17648,10 +17648,12 @@
       // button short (BUYOUT ALERT is Managers-only; the bus waits on its
       // table and a live run) centres what it has beside the other's pair,
       // so nothing sits against a hole.
-      // Four matching buttons two by two, BUYOUT ALERT dead centre over the
-      // cross (Devin, 2026-10-16: "lets put 'buyout alert' in the center of
-      // the 4 buttons... make sure all the font in these buttons are the
-      // same size"). Supplies joined the grid, so it wears the same size.
+      // Four matching buttons two by two with BUYOUT ALERT on its own
+      // centred row between the pairs - in the middle of the four without
+      // covering any of them (Devin, 2026-10-16: "lets put 'buyout alert'
+      // in the center of the 4 buttons... I don't want 'buyout alert'
+      // button to overlap the other buttons"). Supplies lives in the grid,
+      // so every button wears the same size.
       h('div', { class: 'cal-open cal-grid cal-four' },
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
@@ -17659,9 +17661,9 @@
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { openSetlist(id); } },
           icon('music', 14), 'View Setlist'),
+        (function () { var b = buyoutAlertBtn(id, t); return b ? h('div', { class: 'cal-midrow' }, b) : null; })(),
         ovBusBtn(id, t),
-        suppliesBtn(id),
-        (function () { var b = buyoutAlertBtn(id, t); return b ? h('div', { class: 'cal-mid' }, b) : null; })()),
+        suppliesBtn(id)),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
@@ -19859,7 +19861,8 @@
     var rateBtn = rateCalBtn(id, s);
     var line = h('div', { class: 'show-row cal-row cal-three' + (s.date === today ? ' is-today' : '') },
       dateBlock(s.date), whereBlock(s), daySheetBtn(id, s.date, from, fromLabel),
-      h('span', { class: 'cal-rate-slot' + (rateBtn ? '' : ' empty'), 'aria-hidden': rateBtn ? null : 'true' }, rateBtn), reqBtn);
+      h('span', { class: 'cal-rate-slot' + (rateBtn ? '' : ' empty'), 'aria-hidden': rateBtn ? null : 'true' }, rateBtn),
+      h('span', { class: 'cal-right-slot' }, reqBtn));
     // Devin: "slide left on a date and edit/delete show". It's the tour's own
     // show that changes, so every tab that reads the tour follows.
     if (!(canEditTour(id) && s.id)) return h('li', null, line);
@@ -19894,13 +19897,18 @@
     if (reh || travel) right = h('span', { class: 'tag quiet' }, reh ? 'Rehearsal' : 'Travel');
     else if (!(window.GR_BACKEND && window.GR_BACKEND.pollFor)) right = h('span', { 'aria-hidden': 'true' }); // polls live with a signed-in tour
     else right = pollBtn(id, date);
-    return h('li', null, h('div', { class: 'show-row is-off cal-row' },
+    // The same columns as the show rows (Devin, 2026-10-16: the alignment
+    // note "should also apply to rehearsal days and travel days"): the Rate
+    // slot rides empty, so Day sheet and the right-hand button sit exactly
+    // under the rows around them.
+    return h('li', null, h('div', { class: 'show-row is-off cal-row cal-three' },
       dateBlock(date),
       h('div', { class: 'where' },
         h('div', { class: 'city' }, off.city || (reh ? 'Rehearsal day' : travel ? 'Travel day' : 'Day off')),
         off.hotel ? h('div', { class: 'venue' }, off.hotel) : null),
       daySheetBtn(id, date, from, fromLabel),
-      right));
+      h('span', { class: 'cal-rate-slot empty', 'aria-hidden': 'true' }),
+      h('span', { class: 'cal-right-slot' }, right)));
   }
   /* Checking in, and logging card charges: a big 🤘 pops and rocks, and
      throws a ring of smaller ones, with the words under it. */
