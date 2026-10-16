@@ -22,7 +22,8 @@ All 25 ideas were collected and talked through first (his answers are the rule).
 - [x] Supplies + the full notifications list live (gated); notify/ari FILES extended, WAITING ON HIS PASTE
 - [x] City events (0157), artist pictures (0158), flyers (0156), fan round (0159) live in the app, dark behind probes until applied
 - [x] dream beach page created live with three sourced nights
-- [ ] EVERY migration 0149-0159 waits on his literal "apply it" per change; 0157 also needs a Vault secret 'ticketmaster_key'
+- [x] ALL of 0149-0160 APPLIED 2026-10-16 on his "Apply everything": nobody's confirmed shows shrank (Steven, Serra, Ryne +1 each), zero duplicate picks, 11 buyout rows carried over matching the tour's real marks exactly (owner and the no-account crew member skipped), 30 venues, flyers bucket, pictures queue (8) with its 2-minute timer, on_tour 2-arg NOT granted to phones (on_tour_me instead); every phone call timed as three real people: all under half a second
+- [ ] 0157 shows-in-the-city stays quiet until a Vault secret 'ticketmaster_key' exists (his sign-up, walked one step at a time)
 - [ ] After 0151 applies: nothing extra (backfill inside); after pastes: ari's LOAD IN wording question, the 'received' money kind sender (his word needed)
 
 ## MODELXCREW Wave 2 app: SHIPPED 9927404 (build 20261015-201747)
