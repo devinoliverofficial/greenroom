@@ -1593,11 +1593,14 @@
     for (var z = lefts.length - 2; z >= 0; z--) lefts[z] = Math.min(lefts[z], lefts[z + 1] - shown[z].w - NAME_GAP);
     shown.forEach(function (l, n) { l.t.setAttribute('x', f(lefts[n] + l.w / 2)); });
 
-    wrap.__mgeo = { svg: svg, W: W, PADX: PADX, slot: slot, X: X, pick: pick, letters: letters };
+    // (y0: where the line sits, for anything placed over the drawing.)
+    wrap.__mgeo = { svg: svg, W: W, PADX: PADX, slot: slot, X: X, pick: pick, letters: letters, y0: y0 };
     wireMonths(wrap);
     // (Drawn again, at a new width or with new data: the month that was named stays named.)
     wrap.__said = -1;
     pickMonth(wrap, wrap.__pick == null ? -1 : wrap.__pick);
+    // (A page that puts something over the drawing places it again here: the crew pay page's tour button.)
+    if (wrap.__drawn) wrap.__drawn(wrap);
   }
 
   // Names month i (0 to 11) in the note row under the big number and marks it on the graph; anything else lets go.
@@ -1612,16 +1615,20 @@
     g.letters.forEach(function (t, k) {
       t.setAttribute('class', 'mc-m' + (k === d.now ? ' now' : '') + (on && k === i ? ' on' : ''));
     });
-    var hero = wrap.closest('.hero'), note = hero ? $('#hero-note', hero) : null;
+    // (wrap.__note: a drawing with a line of its own under it, the crew pay page's, outside any hero.)
+    var hero = wrap.closest('.hero'), note = wrap.__note || (hero ? $('#hero-note', hero) : null);
     if (!note) return;
-    if (!on) { wrap.__said = -1; note.textContent = ''; note.removeAttribute('title'); return; }
+    // (d.rest: what that line says while no month is named.)
+    if (!on) { wrap.__said = -1; note.textContent = d.rest || ''; note.removeAttribute('title'); return; }
     // (The same month again, as a finger moves inside it: nothing to say twice.)
     if (wrap.__said === i) return;
     wrap.__said = i;
-    var full = monthWords(d.months[i]);
+    // (d.words: a drawing with its own way of saying a month: on the crew pay page, what was paid in it.)
+    var say = d.words || monthWords;
+    var full = say(d.months[i]);
     note.textContent = full;
     // The row is one line: where the whole name of the month does not fit beside the words on the left, its first three letters.
-    if (note.scrollWidth > note.clientWidth + 1) note.textContent = monthWords(d.months[i], true);
+    if (note.scrollWidth > note.clientWidth + 1) note.textContent = say(d.months[i], true);
     note.setAttribute('title', full);
   }
 
@@ -1750,6 +1757,9 @@
       // The crew pay page's months live in a sheet, not under the hero.
       var sheetMonths = $('.sheet .month-wrap');
       if (sheetMonths) drawMonths(sheetMonths);
+      // And its one tour, day by day, when that is the drawing showing.
+      var sheetDays = $('.sheet .cwp-days');
+      if (sheetDays) drawPayDays(sheetDays);
       var pay = $('.pay-chart');
       if (pay) drawChart(pay);
     }, 180);
@@ -14327,8 +14337,15 @@
      (drawMonths), cut to this tour. The year is the tour's own (its first
      day's); months the tour is not on are the dashed outlines, and a green
      dot marks each month a payment landed in. No spent bars: the only series
-     is the dots (__months.noSpent, which also keys the dot alone). */
-  function crewPayChartNode(t, p) {
+     is the dots (__months.noSpent, which also keys the dot alone).
+     A month that is named (a tap, a finger drawn across, the arrow keys) is
+     said in the line under the drawing: what was paid in it. The tour's
+     shaded days and its name over them are one button, laid over the
+     drawing (it is a sibling of the drawing, not inside it, so the month
+     taps and a screen reader's picture are untouched): it shows the tour
+     alone, day by day (crewPayChartNode, below). box: what the button is
+     placed in. toTour: what the button does. */
+  function crewPayYearParts(t, p, box, toTour) {
     var a = runStart(t), b = G.tourEnd(t);
     var today = G.tourToday();
     var year = String((a || today).slice(0, 4));
@@ -14354,11 +14371,327 @@
     });
     wrap.__months = { year: year, months: months, bands: bands, noSpent: true,
       now: today.slice(0, 4) === year ? Math.max(0, Math.min(11, +today.slice(5, 7) - 1)) : -1,
-      key: 'crewpay:' + String(p.id || '') + ':' + year };
+      key: 'crewpay:' + String(p.id || '') + ':' + year,
+      // (Said under the drawing: "May: $1,200 paid". rest: the line while no month is named.)
+      words: crewPayMonthWords,
+      rest: bands.length ? 'Tap the tour to see it day by day.' : 'Tap a month to see what was paid in it.' };
     wrap.__pick = -1;
+    var note = h('p', { class: 'mc-off cwp-note', 'aria-live': 'polite', style: CWP_NOTE }, wrap.__months.rest);
+    wrap.__note = note;
+    var hit = null;
+    if (bands.length) {
+      // (Hidden until the drawing is measured: it is placed round the tour's days each time they are drawn.)
+      hit = h('button', { type: 'button', class: 'cwp-hit', title: 'Show the tour day by day',
+        'aria-label': 'Show ' + bands[0].name + ' day by day',
+        style: 'position: absolute; display: none; margin: 0; padding: 0; border: 1px solid var(--ink-3); border-radius: 8px; ' +
+          'background: transparent; cursor: pointer; touch-action: pan-y; -webkit-tap-highlight-color: transparent',
+        onclick: function () { if (toTour) toTour(); } });
+      wrap.__drawn = function () { placeTourHit(box, wrap, hit); };
+    }
     // In a sheet, not under the hero: drawn as soon as it is on the page.
     requestAnimationFrame(function () { if (wrap.isConnected) drawMonths(wrap); });
-    return wrap;
+    return [wrap, hit, note];
+  }
+  // The line under the pay page's drawing: one line, cut short rather than wrapped, so nothing under it moves.
+  var CWP_NOTE = 'margin: -6px 0 12px; min-height: 17px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis';
+  // An amount paid, to the dollar like the rest of the page (with cents only where a dollar figure would read as nothing).
+  function paidAmt(v) {
+    var n = Math.abs(G.num(v));
+    return (G.num(v) < 0 ? '-' : '') + (G.round(n) === 0 ? G.moneyCents(n) : money(n));
+  }
+  // A month on the year chart in words: "May: $1,200 paid", or "May: nothing paid". short: its first three letters.
+  function crewPayMonthWords(m, short) {
+    var name = MONTH_NAMES[m.month - 1] || '';
+    if (short) name = name.slice(0, 3);
+    var v = G.num(m.income);
+    return name + ': ' + (v ? paidAmt(v) + ' paid' : 'nothing paid');
+  }
+  /* The tour's button over the year chart: round its shaded days and the
+     name over them, never narrower than a fingertip (44 px), never past the
+     drawing's edges. Placed again whenever the drawing is (drawMonths calls
+     wrap.__drawn), so a new width moves it with the days. */
+  function placeTourHit(box, wrap, hit) {
+    var g = wrap.__mgeo, b = wrap.__months && wrap.__months.bands[0];
+    if (!g || !b || !hit || !hit.isConnected) return;
+    var r = g.svg.getBoundingClientRect(), o = box.getBoundingClientRect();
+    if (!r.width) return;
+    var k = r.width / g.W;
+    var x0 = g.X(yearPos(b.from)), x1 = g.X(yearPos(b.to, true));
+    // (The name over the days, where there was room to draw it, is part of the button too.)
+    var name = g.svg.querySelector('.mc-tour');
+    if (name) {
+      try {
+        var bb = name.getBBox();
+        if (bb.width > 0) { x0 = Math.min(x0, bb.x); x1 = Math.max(x1, bb.x + bb.width); }
+      } catch (e) { /* not measured: the days alone */ }
+    }
+    x0 = (x0 - 4) * k; x1 = (x1 + 4) * k;
+    var w = Math.min(r.width, Math.max(44, x1 - x0));
+    var left = Math.max(0, Math.min(r.width - w, (x0 + x1) / 2 - w / 2));
+    hit.style.left = (r.left - o.left + left).toFixed(1) + 'px';
+    hit.style.top = (r.top - o.top - 2).toFixed(1) + 'px';
+    hit.style.width = w.toFixed(1) + 'px';
+    hit.style.height = ((g.y0 + 2) * k + 2).toFixed(1) + 'px';
+    hit.style.display = 'block';
+  }
+
+  /* ---- The pay page's graph, one tour at a time ----
+     Devin, 2026-10-16: "I am wondering if this chart should be able to click
+     the tour on the chart and the chart changes to a chart that focuses just
+     on the tour as opposed to yearly." A tap on the tour (its shaded days on
+     the year chart, and its name over them) swaps the drawing for that tour
+     alone, day by day: from its first day as its own calendar has it
+     (runStart: travel and rehearsal days count) to the home day after its
+     last (G.tourEnd, plus one: home is its own day). A green dot on each day
+     a payment is dated, at that amount on one scale from zero, as the year
+     chart draws its months; a tap, a finger drawn across, a mouse over it or
+     the arrow keys name the day and what was paid on it in the line under
+     the drawing. The tour's name sits over it, with a small Year pill that
+     goes back. The payments are crewPayments', the very rows the year
+     chart, PAID and Logged transactions read: this only draws them, and no
+     money rule is decided here. A payment dated outside the tour's days, or
+     with no date, is not lost: a quiet line under the drawing names it. */
+  // tourId|personId of the pay page showing its tour day by day, so the page opened again (after a save, or Back
+  // from Logged transactions) keeps the chart that was chosen. The Year pill lets go of it.
+  var cwpFocus = null;
+  function crewPayChartNode(t, p, id) {
+    var box = h('div', { class: 'cwp-chart', style: 'position: relative' });
+    var key = String(id || '') + '|' + String(p.id || '');
+    var show = function (tour, moveFocus) {
+      // (A tour with no dates any more has no days to draw: the year it is.)
+      var days = tour ? crewPayDays(t, p) : null;
+      // (Only a tap changes what is remembered, so opening someone else's page first does not lose it.)
+      if (moveFocus || (tour && !days)) cwpFocus = days ? key : null;
+      fillEl(box, days ? crewPayTourParts(t, p, days, function () { show(false, true); })
+        : crewPayYearParts(t, p, box, function () { show(true, true); }));
+      if (!moveFocus) return;
+      // (The button that was pressed went with the drawing: the focus goes to the one that comes back, once it is drawn.)
+      var to = $(days ? '.cwp-year' : '.cwp-hit', box);
+      requestAnimationFrame(function () {
+        if (to && to.isConnected) { try { to.focus({ preventScroll: true }); } catch (e) { /* stays where it was */ } }
+      });
+    };
+    show(cwpFocus === key);
+    return box;
+  }
+  /* The tour's days and what was paid on each, from crewPayments. list: one
+     row a day, first day to home day ({ date, paid, n: how many payments,
+     show, rehearsal, today, home }); before, after, undated: cents paid
+     outside the drawing; now: today's place on it, or -1. Null for a tour
+     with no dated show. */
+  function crewPayDays(t, p) {
+    var a = runStart(t), b = G.tourEnd(t);
+    if (!a || !b || b < a) return null;
+    var today = G.tourToday(), shows = {}, list = [], at = {}, d = a;
+    G.rows(t && t.shows).forEach(function (s) { if (G.parseDay(s.date) && !shows[s.date]) shows[s.date] = s; });
+    // (A run longer than 400 days is drawn that far; what is paid after it is named under the drawing.)
+    for (var guard = 0; guard < 400; guard++) {
+      at[d] = list.length;
+      list.push({ date: d, cents: 0, n: 0, show: shows[d] || null, rehearsal: isRehearsalDay(t, d), today: d === today, home: d > b });
+      if (d > b) break;
+      d = G.addDays(d, 1);
+    }
+    var last = list[list.length - 1].date, out = { before: 0, after: 0, undated: 0 };
+    crewPayments(t, p).forEach(function (r) {
+      var c = Math.round(G.num(r.amount) * 100);
+      if (!G.parseDay(r.date)) out.undated += c;
+      else if (r.date < a) out.before += c;
+      else if (r.date > last) out.after += c;
+      else { var x = list[at[r.date]]; x.cents += c; x.n += 1; }
+    });
+    var now = -1;
+    list.forEach(function (x, i) { x.paid = x.cents / 100; if (x.today) now = i; });
+    return { list: list, first: a, home: last, before: out.before, after: out.after, undated: out.undated, now: now,
+      rest: 'Tap a day to see what was paid on it.' };
+  }
+  // A day in words: "Fri, Oct 3, Houston: $400 paid". short: "Oct 3: $400 paid", for a narrow line.
+  function crewPayDayWords(x, short) {
+    var what = x.home ? 'home day' : x.show ? String(x.show.city || x.show.venue || 'Show').split(',')[0].trim() : x.rehearsal ? 'rehearsal' : '';
+    var when = short ? dayMD(x.date) : dayLong(x.date) + (x.today ? ' (today)' : '') + (what ? ', ' + what : '');
+    return when + ': ' + (x.n ? paidAmt(x.paid) + ' paid' + (!short && x.n > 1 ? ' in ' + x.n + ' payments' : '') : 'nothing paid');
+  }
+  // What is paid to them that is on none of the tour's days, as one quiet line ('' when there is none, the usual case).
+  function crewPayOffWords(d) {
+    var parts = [];
+    if (d.before) parts.push(paidAmt(d.before / 100) + ' paid before ' + dayMD(d.first));
+    if (d.after) parts.push(paidAmt(d.after / 100) + ' paid after ' + dayMD(d.home));
+    if (d.undated) parts.push(paidAmt(d.undated / 100) + ' paid with no date');
+    return parts.length ? 'Not on the chart: ' + parts.join('; ') + '.' : '';
+  }
+  // The tour's own view: its name with the Year pill, the drawing, the line that names a day, and what is off the drawing.
+  function crewPayTourParts(t, p, d, toYear) {
+    var name = String((t && t.name) || '').trim() || 'Tour';
+    var paidN = d.list.reduce(function (n, x) { return n + x.n; }, 0);
+    var wrap = h('div', {
+      class: 'month-wrap cwp-days', tabindex: '0', role: 'img', style: 'margin: 6px 0 14px',
+      'aria-label': (p.name || 'Crew') + '’s pay on ' + name + ', day by day from ' + dayMD(d.first) + ' to the home day, ' + dayMD(d.home) +
+        ': a dot on each day a payment was made. ' + (paidN ? plural(paidN, 'payment') + ' on these days. ' : 'No payments on these days yet. ') +
+        'Use the left and right arrow keys to step through the days.'
+    });
+    var note = h('p', { class: 'mc-off cwp-note', 'aria-live': 'polite', style: CWP_NOTE }, d.rest);
+    wrap.__days = d;
+    wrap.__note = note;
+    wrap.__pick = -1;
+    var off = crewPayOffWords(d);
+    // In a sheet: drawn as soon as it is on the page (and again at a new width, from the window's resize).
+    requestAnimationFrame(function () { if (wrap.isConnected) drawPayDays(wrap); });
+    return [
+      h('div', { class: 'cwp-head', style: 'display: flex; align-items: center; gap: 10px; margin: 8px 0 0' },
+        h('strong', { title: name, style: 'flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px' }, name),
+        h('button', { type: 'button', class: 'chip cwp-year', 'aria-label': 'Year: back to the whole year', onclick: toYear,
+          style: 'flex: none; display: inline-flex; align-items: center; gap: 3px; min-height: 32px; padding: 0 12px 0 8px; font-size: 13px' },
+          icon('back', 14), 'Year')),
+      wrap, note,
+      off ? h('p', { class: 'mc-off', style: 'margin: -8px 0 12px' }, off) : null];
+  }
+  /* The tour day by day, in the year chart's own marks (index.html's .mchart):
+     the line, a flat mark for every day, a green dot at the amount paid on a
+     day, today a dashed line down the drawing while the tour is on, and
+     under the line the month each new month starts in, with Home under the
+     last day. The key under it: Paid (and Today), and the tour's first day
+     to its home day. Nothing is animated. */
+  function drawPayDays(wrap) {
+    var d = wrap.__days;
+    if (!d) return;
+    var days = d.list, n = days.length;
+    var W = Math.max(260, Math.round(wrap.clientWidth || 340));
+    var PADX = 4, TOP = 8, PH = 96, FOOT = 20;
+    var y0 = TOP + PH, H = y0 + FOOT;
+    var slot = (W - PADX * 2) / n;
+    var X = function (q) { return PADX + q * slot; };
+    var mid = function (i) { return X(i + 0.5); };
+    var f = function (v) { return v.toFixed(1); };
+    // One dollar scale from zero, set by the most paid on one day.
+    var top = 0;
+    days.forEach(function (x) { top = Math.max(top, x.paid); });
+    top = top > 0 ? top * 1.12 : 1;
+    var Y = function (v) { return y0 - Math.max(0, v) / top * PH; };
+
+    var svg = svgEl('svg', { 'class': 'mchart', viewBox: '0 0 ' + W + ' ' + H, width: W, height: H, 'aria-hidden': 'true' });
+    if (d.now >= 0) svg.appendChild(svgEl('line', { 'class': 'mc-ghost', x1: f(mid(d.now)), y1: f(TOP - 4), x2: f(mid(d.now)), y2: f(y0) }));
+    svg.appendChild(svgEl('line', { 'class': 'mc-zero', x1: PADX, y1: f(y0), x2: W - PADX, y2: f(y0) }));
+    // The day that is picked: an outline round it (shown by .month-wrap.picked), never thinner than a finger can find.
+    var pickW = Math.max(10, slot - 2);
+    var pick = svgEl('rect', { 'class': 'mc-pick', x: 0, y: f(TOP - 4), width: f(pickW), height: f(y0 - TOP + 8), rx: 5 });
+    svg.appendChild(pick);
+    var mw = Math.max(1.5, Math.min(10, slot * 0.55));
+    days.forEach(function (x, i) {
+      svg.appendChild(svgEl('rect', { 'class': 'mc-nil', x: f(mid(i) - mw / 2), y: f(y0 - 2), width: f(mw), height: 2, rx: f(Math.min(1, mw / 2)) }));
+    });
+    days.forEach(function (x, i) {
+      if (!(x.paid > 0)) return;
+      svg.appendChild(svgEl('circle', { 'class': 'mc-dot', cx: f(mid(i)), cy: f(Math.min(Y(x.paid), y0 - 5)), r: 4 }));
+    });
+    wrap.replaceChildren(svg, h('div', { class: 'chart-ends mc-ends' },
+      h('span', { class: 'chart-key mc-key pays' },
+        h('i', { class: 'k-i' }), 'Paid',
+        d.now >= 0 ? [h('i', { style: 'width: 0; height: 10px; border-left: 1.5px dashed var(--ink-3); margin-left: 8px' }), 'Today'] : null),
+      h('span', null, dayMD(d.first) + ' to ' + dayMD(d.home))));
+
+    // Under the line (measured now that it is on the page): the first day's month at the left, Home at the
+    // right under the home day, and between them a tick where each month starts, named where there is room.
+    var label = function (x, text, anchor) {
+      var el = svgEl('text', { 'class': 'mc-m', x: f(x), y: f(y0 + 15), 'text-anchor': anchor }, text);
+      svg.appendChild(el);
+      return el;
+    };
+    var widthOf = function (el) {
+      var w = 0;
+      try { if (typeof el.getComputedTextLength === 'function') w = el.getComputedTextLength(); } catch (e) { w = 0; }
+      return w > 0 ? w : String(el.textContent || '').length * 6.5;
+    };
+    var monthOf = function (day) { return MONTH_NAMES[+day.slice(5, 7) - 1].slice(0, 3); };
+    var firstL = label(PADX, monthOf(days[0].date), 'start');
+    var homeL = label(W - PADX, 'Home', 'end');
+    var room = PADX + widthOf(firstL) + 8, end = W - PADX - widthOf(homeL) - 8;
+    days.forEach(function (x, i) {
+      if (!i || x.date.slice(8, 10) !== '01') return;
+      svg.appendChild(svgEl('line', { 'class': 'mc-zero', x1: f(X(i)), y1: f(y0), x2: f(X(i)), y2: f(y0 + 5) }));
+      var lx = X(i) + 2, el = label(lx, monthOf(x.date), 'start'), w = widthOf(el);
+      if (lx < room || lx + w > end) { el.remove(); return; }
+      room = lx + w + 8;
+    });
+
+    wrap.__dgeo = { svg: svg, W: W, PADX: PADX, slot: slot, n: n, pick: pick, pickW: pickW, mid: mid };
+    wirePayDays(wrap);
+    // (Drawn again, at a new width: the day that was named stays named.)
+    wrap.__said = -1;
+    pickPayDay(wrap, wrap.__pick == null ? -1 : wrap.__pick);
+  }
+  // Names day i in the line under the drawing and marks it; anything else lets go (and the line says how to pick one).
+  function pickPayDay(wrap, i) {
+    var d = wrap.__days, g = wrap.__dgeo;
+    if (!d || !g) return;
+    var on = i >= 0 && i < d.list.length;
+    wrap.__pick = on ? i : -1;
+    wrap.classList.toggle('picked', on);
+    if (on) g.pick.setAttribute('x', Math.max(0, Math.min(g.W - g.pickW, g.mid(i) - g.pickW / 2)).toFixed(1));
+    var note = wrap.__note;
+    if (!note) return;
+    if (!on) { wrap.__said = -1; note.textContent = d.rest; note.removeAttribute('title'); return; }
+    if (wrap.__said === i) return;
+    wrap.__said = i;
+    var full = crewPayDayWords(d.list[i]);
+    note.textContent = full;
+    // One line: where the whole day does not fit, the short way of saying it.
+    if (note.scrollWidth > note.clientWidth + 1) note.textContent = crewPayDayWords(d.list[i], true);
+    note.setAttribute('title', full);
+  }
+  /* Touch, mouse and keys on the day chart, set once on its element, as the
+     year chart's (wireMonths): a tap names the day under it and a second
+     tap on that day lets it go; a finger drawn sideways names each day it
+     passes, while up and down still scrolls the sheet; a mouse names the
+     day it is over and lets go when it leaves; left and right step a day,
+     Home and End go to the first day and the home day, Escape lets go, and
+     so does moving the focus away. */
+  function wirePayDays(wrap) {
+    if (wrap.__wired) return;
+    wrap.__wired = true;
+    var box = function () { return wrap.__dgeo.svg.getBoundingClientRect(); };
+    var at = function (e, r) {
+      var g = wrap.__dgeo, px = r.width ? (e.clientX - r.left) / r.width * g.W : 0;
+      return Math.max(0, Math.min(g.n - 1, Math.floor((px - g.PADX) / g.slot)));
+    };
+    var inside = function (e, r) { return !r.height || (e.clientY >= r.top && e.clientY <= r.bottom); };
+    var down = null;
+    wrap.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'mouse') return;
+      var r = box();
+      // (The key under the drawing is not a day.)
+      if (!inside(e, r)) return;
+      try { wrap.setPointerCapture(e.pointerId); } catch (e2) { /* track anyway */ }
+      down = { x: e.clientX, y: e.clientY, was: wrap.__pick, moved: false, live: false };
+    });
+    wrap.addEventListener('pointermove', function (e) {
+      if (e.pointerType === 'mouse') { var r = box(); if (inside(e, r)) pickPayDay(wrap, at(e, r)); return; }
+      if (!down) return;
+      var dx = Math.abs(e.clientX - down.x), dy = Math.abs(e.clientY - down.y);
+      if (dx + dy > 8) down.moved = true;
+      if (!down.live && dx > 8 && dx > dy) down.live = true;
+      if (down.live) pickPayDay(wrap, at(e, box()));
+    });
+    wrap.addEventListener('pointerup', function (e) {
+      if (!down) return;
+      // A finger's tap: the day it lifted on, or, on the day already named, let go.
+      if (!down.live && !down.moved) { var i = at(e, box()); pickPayDay(wrap, down.was === i ? -1 : i); }
+      down = null;
+    });
+    // (The sheet took the finger for a scroll: whatever was named before it stays.)
+    wrap.addEventListener('pointercancel', function () {
+      if (!down) return;
+      pickPayDay(wrap, down.was);
+      down = null;
+    });
+    wrap.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') pickPayDay(wrap, -1); });
+    wrap.addEventListener('keydown', function (e) {
+      var cur = wrap.__pick, n = wrap.__days.list.length, now = wrap.__days.now;
+      if (e.key === 'ArrowRight') { e.preventDefault(); pickPayDay(wrap, cur < 0 ? 0 : Math.min(n - 1, cur + 1)); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); pickPayDay(wrap, cur < 0 ? (now >= 0 ? now : n - 1) : Math.max(0, cur - 1)); }
+      else if (e.key === 'Home') { e.preventDefault(); pickPayDay(wrap, 0); }
+      else if (e.key === 'End') { e.preventDefault(); pickPayDay(wrap, n - 1); }
+      else if (e.key === 'Escape') { pickPayDay(wrap, -1); }
+    });
+    wrap.addEventListener('blur', function () { if (wrap.isConnected) pickPayDay(wrap, -1); });
   }
   /* One person's pay page, laid out to feel like MY PAY (Devin, 2026-10-15):
      their photo with PROJECTED and PAID up top, the tour's months with a
@@ -14409,7 +14742,7 @@
         h('h2', { class: 'sh-title' }, p.name || 'Crew'),
         h('p', { class: 'sh-sub' }, p.title || 'No title'),
         head,
-        crewPayChartNode(t, p),
+        crewPayChartNode(t, p, id),
         h('h3', { class: 'sh-h3' }, 'Total projection'),
         h('form', { class: 'sh-form', novalidate: true, onsubmit: save },
           field('Total projection', moneyInput({ id: 'cw-total', value: f.pay, label: 'Total projection for the tour', last: true,

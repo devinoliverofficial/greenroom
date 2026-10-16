@@ -514,6 +514,51 @@ shim = r"""<script>
     emit();
   };
   try { if (/[?&]setlist\b/.test(String(location.search || ''))) window.__harness.setlist(true); } catch (e) { /* no address to read */ }
+  /* ---- THE CREW PAY CHART, ONE TOUR AT A TIME: a tap on the tour turns the year into its days ----
+     Nothing on the database: the chart draws the payments the tour already holds (crewPayments in app.js),
+     so there is no probe and nothing to switch off. Out of the box Jeff Mora has one payment (zp1, three
+     days ago) and the harness run is nine days with its home day (the day after the last show), so the day
+     chart has one dot.
+     TO SEE IT: Budget (bottom bar), the Expenses tab, the Crew line, then Jeff Mora's row: his pay page.
+     Under PROJECTED and PAID is the year chart. The harness run's shaded days, with its name over them, sit
+     inside a thin outline (never narrower than a fingertip): tap it, or Tab to it and press Enter. The chart
+     becomes the run alone, day by day, its first day to the home day, with "Harness run" over it and a
+     small Year pill on the right that goes back. Tap a day, draw a finger across, hover with a mouse, or
+     focus the drawing and use the arrow keys (Home, End, Escape): the line under it names the day and what
+     was paid (three days ago reads like "Tue, Oct 13: $500 paid", a show day adds its city, the last day
+     says "home day", today says "(today)"); a second tap on the same day lets go. On the year chart a month
+     that is named (a tap outside the outline, a finger drawn across, the arrow keys) says what was paid in
+     it in the same line, e.g. "September: nothing paid". Close the page and open Jeff's row again: it
+     comes back on the tour until the Year pill is tapped. At 375 px wide nothing is cut: a long tour name
+     ends in "...", and a long day's line falls back to the short "Oct 13: $500 paid".
+     HOOKS:
+       __harness.crewPayRun(true)   fills it out: two rehearsal days before the first show (so the run starts
+                                    six days ago), and five more payments to Jeff: $300 on the first rehearsal
+                                    day, $250 and $100 two days ago (one day, "in 2 payments"), $200 on the
+                                    home day (dated ahead, to see the home day's dot), $300 a week before the
+                                    run began and $150 with no date. The last two are on no day of the run:
+                                    the quiet line under the day chart reads "Not on the chart: $300 paid
+                                    before ...; $150 paid with no date." (false) takes it all away again.
+                                    Or open the page with ?crewpayrun . Use it with the harness run on the road
+                                    (offTour(false)): offTour moves the shows, not these payments. */
+  window.__harness.crewPayRun = function (on) {
+    var t = tours.t1, keys = ['cpr1', 'cpr2', 'cpr3', 'cpr4', 'cpr5', 'cpr6'];
+    keys.forEach(function (k) { delete t.charges[k]; });
+    delete t.rehearsalStart; delete t.rehearsalEnd;
+    if (on !== false) {
+      t.rehearsalStart = inDays(-6); t.rehearsalEnd = inDays(-5);
+      // [key, days from today (null: no date), amount, words]
+      [['cpr1', -6, 300, 'Pay: Jeff, deposit'], ['cpr2', -2, 250, 'Pay: Jeff'], ['cpr3', -2, 100, 'Pay: Jeff, per diem'],
+        ['cpr4', 4, 200, 'Pay: Jeff, last week'], ['cpr5', -13, 300, 'Pay: Jeff, advance'], ['cpr6', null, 150, 'Pay: Jeff, cash']
+      ].forEach(function (r, i) {
+        t.charges[r[0]] = { id: r[0], date: r[1] == null ? '' : inDays(r[1]), merchant: r[3], amount: r[2], category: 'crew', crewId: 'jm',
+          manual: true, paid: true, createdAt: 10 + i };
+      });
+    }
+    emit();
+    return on === false ? 'Jeff is back to one payment' : 'Jeff has six payments; the run starts with two rehearsal days';
+  };
+  try { if (/[?&]crewpayrun\b/.test(String(location.search || ''))) window.__harness.crewPayRun(true); } catch (e) { /* no address to read */ }
   /* ---- LIVE WITHOUT A RESTART (0144): a seat, an artist's yes, a new request, tours confirmed ----
      On the real thing the database touches the account's own row in "pokes" and the phone hears it: the
      backend links any waiting seat, reads the tours again and calls the one function the app handed to
