@@ -10071,8 +10071,10 @@
     var checkIn = isToday ? busCheckInBtn(id, d.busCall, true) : null;
     // Tonight, the day and the city on the left; the venue and its address in
     // the middle; how many days until a day off in the right corner.
+    // Days left on the LEFT, the tour's name in the CENTER, the day off on
+    // the RIGHT (Devin, 2026-10-15, second pass).
     return [
-      h('div', { class: 'pt-headrow' }, pfTourBar(id, t, count, 'details'), pfCountsRow(t)),
+      h('div', { class: 'pt-headrow' }, pfLeftChip(t), pfTourBar(id, t, count, 'details'), pfOffChip(t)),
       dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, city, place, address,
         s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
@@ -10090,17 +10092,17 @@
     return h('p', { class: 'pt-cnt', 'aria-label': said || (n + ' ' + words) },
       h('b', { class: 'num' }, String(n)), h('span', { class: 'pt-cnt-l' }, words));
   }
-  function pfCountsRow(t) {
+  function pfLeftChip(t) {
     var left = G.daysLeftOnTour(t);
+    return left == null ? h('span', { class: 'pt-cnt empty', 'aria-hidden': 'true' })
+      : pfCountChip(left, left === 1 ? 'day left on tour' : 'days left on tour');
+  }
+  function pfOffChip(t, word) {
     var c = daysUntilOff(t);
-    var off = !c || c.off ? null
+    return !c || c.off ? h('span', { class: 'pt-cnt empty', 'aria-hidden': 'true' })
       : c.n === 1 ? pfCountChip(1, c.last ? 'last show tonight' : 'day off tomorrow',
           (c.last ? 'Last show' : 'Day off') + (c.last ? ' tonight' : ' tomorrow'))
-      : pfCountChip(c.n, 'days until day off');
-    if (left == null && !off) return null;
-    return h('div', { class: 'pt-counts' },
-      pfCountChip(left, left === 1 ? 'day left on tour' : 'days left on tour'),
-      off || h('span', { class: 'pt-cnt empty', 'aria-hidden': 'true' }));
+      : pfCountChip(c.n, word || 'days until day off');
   }
   /* A day in three columns: what and where in the left corner (the tag, the
      date, the city), the venue and its address in the middle, and corner
@@ -17497,16 +17499,10 @@
     return { n: n, last: today === dates[dates.length - 1] };
   }
   function ovCountsRow(t) {
-    var left = G.daysLeftOnTour(t);
-    var c = daysUntilOff(t);
-    var off = !c || c.off ? null
-      : c.n === 1 ? pfCountChip(1, c.last ? 'last show tonight' : 'day off tomorrow',
-          (c.last ? 'Last show' : 'Day off') + (c.last ? ' tonight' : ' tomorrow'))
-      : pfCountChip(c.n, 'shows until day off');
-    if (left == null && !off) return null;
-    return h('div', { class: 'pt-counts ov' },
-      pfCountChip(left, left === 1 ? 'day left on tour' : 'days left on tour'),
-      off || h('span', { class: 'pt-cnt empty', 'aria-hidden': 'true' }));
+    var left = pfLeftChip(t), off = pfOffChip(t, 'shows until day off');
+    var l0 = left.classList && left.classList.contains('empty');
+    var o0 = off.classList && off.classList.contains('empty');
+    return l0 && o0 ? null : h('div', { class: 'pt-counts ov' }, left, off);
   }
 
 
@@ -18064,22 +18060,7 @@
   }
   // It's bus call: within the hour before the day sheet's time, or past it.
   // (A bus call that isn't a time, "TBA" or "after load out", never is.)
-  /* Check In, at the bottom of the screen on your profile's Today (pinned:
-     it stays put above the bottom bar): your way of saying you've seen the
-     day's info. Once a day, on a tour day. */
-  function checkInBtn(id, date, pinned) {
-    var B = window.GR_BACKEND;
-    if (S.mode !== 'db' || !B || !B.checkIn || !B.checkedIn) return null;
-    var done = B.checkedIn(id, date);
-    return h('div', { class: 'ci-wrap' + (pinned ? ' pinned' : '') }, h('button', { class: 'ci-btn' + (done ? ' done' : ''), type: 'button', disabled: done,
-      onclick: async function (e) {
-        var b = e.currentTarget;
-        b.disabled = true;
-        try { await B.checkIn(id, date); } catch (x) { b.disabled = false; toast('Couldn\u2019t check in. Try again.'); return; }
-        hornSplash('Checked in', dayMD(date));
-        render(true);
-      } }, done ? '\u2705 Checked in' : 'Check In'));
-  }
+
   function busCallDue(v) {
     var p = G.splitTime(v || '');
     if (!p.ampm || !/^\d{1,2}:\d{2}$/.test(p.main)) return false;
@@ -18106,9 +18087,10 @@
      quiet for someone who isn't on the bus list themselves. */
   function busCheckInBtn(id, busCall, pinned) {
     var B = window.GR_BACKEND;
-    // Until the bus table is live this falls back to the old once-a-day
-    // Check In, so Today never loses its button (the reviewer's catch).
-    if (!busOn()) return checkInBtn(id, G.tourToday(), pinned);
+    // No button at all until the bus table is live: the old once-a-day
+    // Check In is retired (Devin, 2026-10-15: "The check in button should
+    // now be gone. We are basically replacing that with the bus call button").
+    if (!busOn()) return null;
     var data = B.busList(id);
     var me = B.uid ? B.uid() : null;
     var riders = (data && data.people) || [];
@@ -18938,8 +18920,12 @@
     var editBtn = canEditTour(id) ? h('button', {
       class: 'iconbtn sm ds-pencil', type: 'button', 'aria-label': lines.length ? 'Edit this day sheet' : 'Fill in this day sheet',
       onclick: function () { if (s) openDaySheetEditor(id, s.id); else openOffDaySheet(id, entry.date); } }, icon('edit', 18)) : null;
+    var dsAddr = s ? String((G.isObj(s.daySheet) ? s.daySheet : {}).venueAddress || '').trim() : '';
     var placeEl = placeName || trashBtn || editBtn ? h('div', { class: 'ds-venue-row' },
-      editBtn, placeName ? h('div', { class: 'ds-venue' }, placeName) : null, trashBtn) : null;
+      editBtn, placeName ? h('div', { class: 'ds-venue glow' }, h('span', { class: 'ds-venue-name' }, placeName),
+        // The address right under the name (Devin, 2026-10-15), never its own section.
+        dsAddr ? h('a', { class: 'vh-addr', href: mapsHref(dsAddr), target: '_blank', rel: 'noopener' }, dsAddr) : null) : null,
+      trashBtn) : null;
 
     // A day off with nothing decided yet: the same poll as the Calendar,
     // Create poll for the tour manager, Vote for everyone else. Once the
