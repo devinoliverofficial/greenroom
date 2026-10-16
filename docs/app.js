@@ -3170,6 +3170,8 @@
           h('button', { class: 'pf-btn', type: 'button',
             onclick: preview ? justLooking('This is where people message you.') : function () { openDm(uid, peer); } }, 'Message'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openContact(uid, card); } }, 'Contact'))),
+      // Their Top 10 (0159), the MySpace way: pinned above the tabs, as anyone gets it.
+      topTenStrip(uid, false),
       h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('artists', 'Artists', 'people'), tabBtn('tours', 'Tours', 'tabmap'),
         tabBtn('stats', 'Stats', 'tabstats')),
       tab === 'artists'
@@ -4141,7 +4143,13 @@
                              pfStat(G.num(hsum.cities), G.num(hsum.cities) === 1 ? 'city' : 'cities')]
               : [pfStat(bandN, bandN === 1 ? 'member' : 'members', function () { pickTab('band'); }),
                  pfStat(crewList.length, 'crew', function () { pickTab('crew'); })],
-            under: h('p', { class: 'hist-fans' }, h('span', { class: 'hf-txt' }, plural(G.num(card.followers), 'fan')))
+            under: (function () {
+              // Top Fans (0159): the visitor's door to the ranked fan list,
+              // only once the server has answered with somebody on it.
+              var top = manage ? null : topFansLine(id, card.name);
+              return h('p', { class: 'hist-fans' }, h('span', { class: 'hf-txt' }, plural(G.num(card.followers), 'fan')),
+                top ? ' · ' : null, top);
+            })()
           });
         })(),
         // The page's picture came from Wikimedia Commons (0158): its licence
@@ -6027,6 +6035,219 @@
     }, { label: 'Shows attended',
       // The count on your Artists tab is read again once something was ticked.
       onClose: function () { if (st.changed) myAttended(true); } });
+  }
+
+  /* ---- The fan round (0159). Devin: "They can create a top 10 favorite
+     artists on their page (kinda like myspace use to have). Based on how
+     many shows they've attended they are ranked on bands profile pages. We
+     can make a Top Fans page that shows the top 100 fans of that artist
+     based on attendance."
+     The Top 10 is a strip pinned above the profile's tabs, on your own page
+     and on the one others see, each spot opening its artist's page; your own
+     page carries the door to pick and reorder it. Top Fans is a quiet word
+     beside an artist page's fan count, for visitors, opening the ranked
+     list. Nothing here renders before migration 0159 is live: favsOn()
+     stays false until the backend finds the table, and the Top Fans line
+     waits for the server's answer on top of that. ---- */
+  function favsOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && socialOn() && !!(B && B.favoritesOn && B.favoritesOf && B.favoritesOn());
+  }
+  /* The strip: the spots in order, each opening its artist's page. On your
+     own page (own) it carries its edit door, and before the first spot is
+     picked, the card that starts it. Anyone else's page with no spots shows
+     nothing at all. */
+  function topTenStrip(uid, own) {
+    if (!uid || !favsOn()) return null;
+    var rows = window.GR_BACKEND.favoritesOf(uid);
+    if (!Array.isArray(rows)) return null; // still being fetched: quiet
+    if (!rows.length) {
+      if (!own) return null;
+      return h('div', { class: 'tc-asks' },
+        h('button', { class: 'tc-ask', type: 'button', onclick: function () { openTopTen(); } },
+          h('span', { class: 'tc-ask-t' }, 'Pick your Top 10 artists'), icon('chevron', 16)));
+    }
+    var items = rows.slice().sort(function (a, b) { return G.num(a.rank) - G.num(b.rank); });
+    return h('section', { class: 'tf-block', 'aria-label': 'Top 10 artists' },
+      h('h3', { class: 'mn-h mn-over' }, 'Top 10 artists'),
+      h('ul', { class: 'tour-list rows vp-list' }, items.map(function (f) {
+        var name = String(f.name || '').trim() || 'Artist';
+        return h('li', null, h('button', { class: 'list-row art-row', type: 'button', onclick: function () { openAct(f.artistId); } },
+          h('span', { class: 'avatar' + (f.avatar ? ' has photo' : ' letter'), 'aria-hidden': 'true' },
+            f.avatar ? h('img', { class: 'brand-logo', src: f.avatar, alt: '' }) : name.charAt(0).toUpperCase()),
+          h('span', { class: 'lr-text' },
+            h('span', { class: 'lr-title' }, name),
+            h('span', { class: 'lr-sub' }, 'No. ' + G.num(f.rank))),
+          icon('chevron', 18)));
+      })),
+      own ? h('div', { class: 'am-more' },
+        h('button', { class: 'add-pill', type: 'button', onclick: function () { openTopTen(); } },
+          icon('edit', 16), 'Edit your Top 10')) : null);
+  }
+  /* The sheet where a Top 10 is made and kept: the spots in order, each with
+     its arrows and its off button; under them the same artist search the
+     Add members sheet runs, each row adding at the lowest free spot. Every
+     tap saves at once, and what did not take is put back by reading the list
+     again. */
+  function openTopTen() {
+    var B = window.GR_BACKEND, uid = socialOn() ? B.uid() : null;
+    if (!uid || !favsOn()) return;
+    var listEl = h('div', { class: 'acct-list' });
+    var results = h('div', { class: 'am-results' });
+    var timer = 0, seq = 0, last = [], busy = false;
+    var mine = function () {
+      var rows = B.favoritesOf(uid);
+      return Array.isArray(rows) ? rows.slice().sort(function (a, b) { return G.num(a.rank) - G.num(b.rank); }) : null;
+    };
+    var freeRank = function () {
+      var used = (mine() || []).map(function (r) { return G.num(r.rank); });
+      for (var n = 1; n <= 10; n++) { if (used.indexOf(n) < 0) return n; }
+      return 0;
+    };
+    var hold = async function (work) {
+      if (busy) return;
+      busy = true;
+      try { await work(); } catch (e) { saveFailed('top 10', e); }
+      busy = false;
+      paintMine(); paintFound();
+    };
+    // A 32px circle like the take-off button, the arrow drawn with the up icon.
+    var spinBtn = function (label, flip, dead, onTap) {
+      var ic = icon('up', 16);
+      if (flip) ic.style.transform = 'rotate(180deg)';
+      return h('button', { class: 'pe-x', type: 'button', 'aria-label': label,
+        disabled: dead ? true : null, onclick: onTap }, ic);
+    };
+    var rowMine = function (f, i, rows) {
+      var name = String(f.name || '').trim() || 'Artist';
+      return h('div', { class: 'fl-row am-row' },
+        h('span', { class: 'avatar' + (f.avatar ? ' has photo' : ' letter'), 'aria-hidden': 'true' },
+          f.avatar ? h('img', { class: 'brand-logo', src: f.avatar, alt: '' }) : name.charAt(0).toUpperCase()),
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title' }, name),
+          h('span', { class: 'lr-sub' }, 'No. ' + G.num(f.rank))),
+        spinBtn('Move ' + name + ' up', false, i === 0, function () {
+          hold(function () { return B.favSwap(f.artistId, rows[i - 1].artistId); });
+        }),
+        spinBtn('Move ' + name + ' down', true, i === rows.length - 1, function () {
+          hold(function () { return B.favSwap(f.artistId, rows[i + 1].artistId); });
+        }),
+        h('button', { class: 'pe-x', type: 'button', 'aria-label': 'Take ' + name + ' off',
+          onclick: function () { hold(function () { return B.favRemove(f.artistId); }); } }, icon('close', 14)));
+    };
+    var paintMine = function () {
+      var rows = mine();
+      fillEl(listEl, !rows ? h('p', { class: 'note' }, 'Loading…')
+        : !rows.length ? h('p', { class: 'note' }, 'Nobody on it yet. Search below and tap Add.')
+        : rows.map(function (f, i) { return rowMine(f, i, rows); }));
+    };
+    var rowFound = function (a) {
+      var rows = mine() || [];
+      var on = rows.some(function (r) { return r.artistId === a.id; });
+      var btn = h('button', { class: 'am-add' + (on ? ' on' : ''), type: 'button' }, on ? 'Added' : 'Add');
+      btn.onclick = function () {
+        if (on) { hold(function () { return B.favRemove(a.id); }); return; }
+        var rank = freeRank();
+        if (!rank) { toast('Your Top 10 is full. Take one off first.'); return; }
+        hold(function () { return B.favAdd(a.id, rank, { name: a.name, avatar: a.avatar, handle: a.handle }); });
+      };
+      return h('div', { class: 'fl-row am-row' },
+        h('span', { class: 'avatar' + (a.avatar ? ' has photo' : ' letter'), 'aria-hidden': 'true' },
+          a.avatar ? h('img', { class: 'brand-logo', src: a.avatar, alt: '' }) : String(a.name || '?').trim().charAt(0).toUpperCase()),
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title' }, a.name || 'Artist'),
+          a.handle && !machineHandle(a.handle) ? h('span', { class: 'lr-sub' }, '@' + a.handle) : null),
+        btn);
+    };
+    // The words under the box when there are no rows to show; a repaint
+    // after a list tap keeps the last ones instead of wiping them.
+    var hint = 'Type an artist’s name.';
+    var paintFound = function (note) {
+      if (note !== undefined) hint = note;
+      fillEl(results, last.length ? last.map(rowFound) : hint ? h('p', { class: 'note' }, hint) : null);
+    };
+    var search = function (v) {
+      clearTimeout(timer);
+      v = String(v || '').trim();
+      if (v.replace(/^@/, '').length < 2) { last = []; paintFound('Type an artist’s name.'); return; }
+      var n = ++seq;
+      timer = setTimeout(function () {
+        B.findArtists(v).then(function (rows) {
+          if (n !== seq) return;
+          last = Array.isArray(rows) ? rows : [];
+          paintFound(last.length ? null : 'No artist pages found for “' + v + '”.');
+        }).catch(function () { if (n === seq) paintFound('Couldn’t search. Check your signal and try again.'); });
+      }, 300);
+    };
+    // The first open may land before the list has been fetched: drawn again when it arrives.
+    var wake = function () {
+      if (!listEl.isConnected) return;
+      if (mine() === null) { setTimeout(wake, 400); return; }
+      paintMine(); paintFound();
+    };
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Top 10 artists'),
+        h('p', { class: 'sh-sub' }, 'Your favorite artists, in order, for everyone who opens your profile.'),
+        listEl,
+        h('div', { class: 'rv-find am-find' }, icon('search', 17),
+          h('input', { class: 'input rv-search', type: 'search', placeholder: 'Find an artist', autocomplete: 'off',
+            autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', 'aria-label': 'Find an artist',
+            oninput: function (e) { search(e.target.value); } })),
+        results,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn primary block', type: 'button', onclick: function () { closeSheet(); } }, 'Done'))
+      ];
+    }, { label: 'Top 10 artists', cls: 'ca-sheet am-sheet', onClose: function () { render(true); } });
+    paintMine();
+    paintFound('Type an artist’s name.');
+    if (mine() === null) setTimeout(wake, 400);
+  }
+  /* Top Fans, on an artist's page as a visitor gets it: the quiet word
+     beside the fan count, there only once the server has answered with
+     somebody on the list. */
+  function topFansLine(artistId, artistName) {
+    var B = window.GR_BACKEND;
+    if (!favsOn() || !B.topFans) return null;
+    var list = B.topFans(artistId);
+    if (!Array.isArray(list) || !list.length) return null;
+    return h('button', { class: 'hf-btn', type: 'button',
+      onclick: function () { openTopFans(artistId, artistName); } }, 'Top Fans');
+  }
+  // The ranked list itself: photo, name and shows attended, most shows first.
+  function openTopFans(artistId, artistName) {
+    var B = window.GR_BACKEND;
+    var host = h('div', { class: 'att-host' });
+    var draw = function () {
+      var list = B.topFans ? B.topFans(artistId) : null;
+      fillEl(host, !Array.isArray(list) ? h('p', { class: 'note' }, 'Loading…')
+        : !list.length ? h('p', { class: 'note' }, 'Nobody has marked a show attended yet.')
+        : h('div', { class: 'acct-list' }, list.slice(0, 100).map(function (f, i) {
+            var name = String(f.name || '').trim() || 'Someone';
+            return h('div', { class: 'acct-row' }, personPhoto({ name: name, avatar: f.avatar }, 'xs'),
+              h('span', { class: 'lr-text' },
+                h('span', { class: 'lr-title' }, (i + 1) + '. ' + name),
+                h('span', { class: 'lr-sub' }, plural(G.num(f.shows), 'show') + ' attended')));
+          })));
+    };
+    // Drawn again when the fresh answer lands (or the first one, on a cold open).
+    var wake = function () {
+      if (!host.isConnected) return;
+      if (!Array.isArray(B.topFans && B.topFans(artistId))) { setTimeout(wake, 400); return; }
+      draw();
+    };
+    if (B.topFans) B.topFans(artistId, true);
+    openSheet(function () {
+      draw();
+      return [
+        h('h2', { class: 'sh-title' }, 'Top Fans'),
+        h('p', { class: 'sh-sub' }, (artistName ? artistName + '. ' : '') + 'The top 100 fans, by shows attended.'),
+        host,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: 'Top Fans' });
+    setTimeout(wake, 400);
   }
 
   /* Venue and festival pages (Devin: "The page should generate venue pages
@@ -10547,6 +10768,8 @@
               h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }))),
       dbBanner(),
       profileHead(entries.length),
+      // Your Top 10 (0159): the strip others see, with its door to pick and reorder it.
+      topTenStrip(socialOn() ? window.GR_BACKEND.uid() : null, true),
       profileTabs(entries, byArtist, loose, declared),
       // Your numbers count nights from an artist's synced history once it
       // confirms them: that data's source gets its line, on every tab.

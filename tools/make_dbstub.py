@@ -770,6 +770,49 @@ shim = r"""<script>
     emit();
   };
   try { if (/[?&]fan\b/.test(String(location.search || ''))) window.__harness.fan(); } catch (e) { /* no address to read */ }
+  /* ---- THE FAN ROUND (0159): the Top 10 strip, and an artist page's Top Fans ----
+     The probe answers true here, so the pick card sits on your own profile
+     from the start and the strip draws as soon as a list has spots.
+     HOOKS:
+       __harness.topten()   puts up to five artists on the test account's Top 10 and answers
+                            how many. Open your profile: the strip sits above the tabs with
+                            Edit your Top 10 under it; the sheet has the arrows, the off
+                            buttons and the artist search. View profile shows the strip as
+                            others get it, without the door. Or open the page with ?topten.
+       __harness.topTens    every list: { userId: [{ artistId, rank, name, avatar }] }. Change
+                            one by hand, then render follows the next save or reopen.
+       __harness.favCalls   every save the app made: [{ fn: 'favAdd' | 'favRemove' | 'favSwap', args }].
+       __harness.favFail = true   every save fails, as with no signal.
+       __harness.topfans()  seeds twelve ranked fans on the test artist's page and answers the
+                            page's id. Open that page as a visitor (__harness.artistSide(),
+                            then Search, I See Stars): beside the fan count sits Top Fans, and
+                            its sheet lists photo, name and shows attended, most shows first.
+                            Or open the page with ?topfans.
+       __harness.fanRanks   what topFans answers: { artistId: [{ userId, name, avatar, shows }] }.
+       __harness.favoritesOff = true   the probe answers false, as before migration 0159: no
+                            strip, no pick card, no Top Fans line anywhere. */
+  window.__harness.topten = function () {
+    var H = window.__harness;
+    var ids = (H.acts || []).map(function (a) { return a.id; })
+      .concat(ghostList().map(function (g) { return g.id; })).slice(0, 5);
+    H.topTens = H.topTens || {};
+    H.topTens['u-devin'] = ids.map(function (id, i) { return { artistId: id, rank: i + 1 }; });
+    emit();
+    return H.topTens['u-devin'].length + ' on the list';
+  };
+  try { if (/[?&]topten\b/.test(String(location.search || ''))) window.__harness.topten(); } catch (e) { /* no address to read */ }
+  window.__harness.topfans = function () {
+    var H = window.__harness, a = issPage(false);
+    var names = ['Riley Sun', 'Maya Tran', 'Jo Marsh', 'Sam Petty', 'Noor Vale', 'Pat Quinn',
+      'Dana Reyes', 'Lee Marino', 'Ash Cole', 'Remy Stone', 'Kit Lawson', 'Billie Park'];
+    H.fanRanks = H.fanRanks || {};
+    H.fanRanks[a.id] = names.map(function (n, i) {
+      return { userId: 'u-fan' + (i + 1), name: n, avatar: '', shows: Math.max(1, 40 - i * 3) };
+    });
+    emit();
+    return a.id;
+  };
+  try { if (/[?&]topfans\b/.test(String(location.search || ''))) window.__harness.topfans(); } catch (e) { /* no address to read */ }
   /* ---- BUS CHECK IN (0150): the button on Today, its sheet, the bus list ----
      Everyone joined on the crew list rides unless their row says ridesBus:
      false; each person's word for today sits in __harness.busStates
@@ -3229,6 +3272,60 @@ shim = r"""<script>
         var a = (H.acts || []).filter(function (x) { return x.id === id; })[0] || ghostList().filter(function (x) { return x.id === id; })[0] || {};
         return { artistId: id, artist: a.name || 'Artist', handle: a.handle || '', avatar: a.avatar || '', n: by[id] };
       }).sort(function (a, b) { return b.n - a.n; }) });
+    },
+    /* The fan round (0159), in memory: see THE FAN ROUND above for the
+       seeds. The Top 10s live in __harness.topTens ({ userId: [{ artistId,
+       rank, name, avatar }] }); an artist page's ranked fans in
+       __harness.fanRanks ({ artistId: [{ userId, name, avatar, shows }] }).
+       This phone's account is u-devin; every save is noted in
+       __harness.favCalls. Names and pictures are read from the acts the
+       harness knows, so a spot seeded by id alone still says its artist. */
+    favoritesOn: function () { return !window.__harness.favoritesOff; },
+    favoritesOf: function (uid) {
+      var H = window.__harness;
+      if (H.favoritesOff) return null;
+      return (((H.topTens || {})[uid]) || []).slice().sort(function (a, b) { return a.rank - b.rank; }).map(function (r) {
+        var a = (H.acts || []).filter(function (x) { return x.id === r.artistId; })[0]
+          || ghostList().filter(function (x) { return x.id === r.artistId; })[0] || {};
+        return { artistId: r.artistId, rank: r.rank, name: a.name || r.name || 'Artist',
+          handle: a.handle || '', avatar: a.avatar || r.avatar || '' };
+      });
+    },
+    favAdd: function (artistId, rank, info) {
+      var H = window.__harness;
+      (H.favCalls = H.favCalls || []).push({ fn: 'favAdd', args: [artistId, rank] });
+      if (H.favFail) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      var m = H.topTens = H.topTens || {}, rows = m['u-devin'] = m['u-devin'] || [];
+      // Already there, or the spot is taken: refused, as the live keys refuse it.
+      if (rows.some(function (r) { return r.artistId === artistId || r.rank === rank; })) {
+        return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      }
+      rows.push({ artistId: artistId, rank: rank, name: info && info.name, avatar: info && info.avatar });
+      return Promise.resolve();
+    },
+    favRemove: function (artistId) {
+      var H = window.__harness;
+      (H.favCalls = H.favCalls || []).push({ fn: 'favRemove', args: [artistId] });
+      if (H.favFail) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      var m = H.topTens = H.topTens || {};
+      m['u-devin'] = (m['u-devin'] || []).filter(function (r) { return r.artistId !== artistId; });
+      return Promise.resolve();
+    },
+    favSwap: function (aId, bId) {
+      var H = window.__harness;
+      (H.favCalls = H.favCalls || []).push({ fn: 'favSwap', args: [aId, bId] });
+      if (H.favFail) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      var rows = (H.topTens || {})['u-devin'] || [];
+      var a = rows.filter(function (r) { return r.artistId === aId; })[0];
+      var b = rows.filter(function (r) { return r.artistId === bId; })[0];
+      if (!a || !b) return Promise.reject(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+      var t = a.rank; a.rank = b.rank; b.rank = t;
+      return Promise.resolve();
+    },
+    topFans: function (artistId) {
+      var H = window.__harness;
+      if (H.favoritesOff) return null;
+      return (((H.fanRanks || {})[artistId]) || []).slice(0, 100);
     },
     /* A venue's or a festival's page (0134): the place as openVenue or
        openFestival made it (__harness.places), with pretend shows on record

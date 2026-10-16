@@ -67,6 +67,11 @@
   // Tour supplies (0155): each tour's shared list, and whether the table is
   // there at all (null until the first ask answers; the answer is the session's).
   var supplyCache = {}, supplyAsk = {}, supplyGen = {}, supplyKnown = null, supplyProbing = false;
+  // The fan round (0159): each person's Top 10 (by their account id), each
+  // artist page's ranked fans, and whether the table is there at all (null
+  // until the first ask answers; the answer is the session's).
+  var favCache = {}, favAsk = {}, favGen = {}, favKnown = null, favProbing = false;
+  var topFanCache = {}, topFanAsk = {}, topFanGen = {};
   // Also in town tonight (0157): whether the city_events functions are there
   // at all (null until the first ask answers; the answer is the session's).
   // The answers themselves live in the app, which polls the take function.
@@ -2271,6 +2276,83 @@
       });
       emit('tours');
     },
+    /* The fan round (0159). favoritesOn: is the table there (asked once per
+       session; false until it answers, so a build ahead of its migration
+       simply shows nothing). favoritesOf: anyone's Top 10, at once from what
+       this phone holds (null while it's first being fetched), each spot
+       { artistId, rank, name, handle, avatar }, rank 1 at the top. favAdd
+       puts an artist page on at a spot; favRemove takes one off; favSwap
+       trades two spots in one statement (0159's unique check on the spot
+       waits for the commit, which is what lets two ranks pass each other).
+       topFans: an artist page's ranked fans from artist_top_fans, most shows
+       attended first, at most 100. */
+    favoritesOn: function () {
+      if (favKnown === null) favProbe();
+      return favKnown === true;
+    },
+    favoritesOf: function (uid, fresh) {
+      if (favKnown !== true || !uid) return null;
+      var c = favCache[uid];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadFavs(uid);
+      return c ? c.data : null;
+    },
+    favAdd: async function (artistId, rank, info) {
+      if (!session) throw err('unavailable');
+      var uid = session.user.id, spot = Math.max(1, Math.min(10, Math.round(Number(rank) || 0)));
+      var q = await sb.from('fan_favorites').insert({ user_id: uid, artist_id: artistId, rank: spot });
+      if (q.error) {
+        if (tableMissing(q.error)) { favKnown = false; emit('tours'); throw err('unavailable'); }
+        // 23505: it is on the list already, or the spot was taken from
+        // another tab. The list is read back, and what the database holds is shown.
+        if (q.error.code === '23505') { loadFavs(uid); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      var c = favCache[uid];
+      if (c && c.data && !c.data.some(function (r) { return r.artistId === artistId; })) {
+        c.data.push({ artistId: artistId, rank: spot, name: (info && info.name) || '',
+          handle: (info && info.handle) || '', avatar: (info && info.avatar) || '' });
+        c.data.sort(function (a, b) { return a.rank - b.rank; });
+      }
+      emit('tours');
+    },
+    favRemove: async function (artistId) {
+      if (!session) throw err('unavailable');
+      var uid = session.user.id;
+      var q = await sb.from('fan_favorites').delete().eq('user_id', uid).eq('artist_id', artistId);
+      if (q.error) {
+        if (tableMissing(q.error)) { favKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      var c = favCache[uid];
+      if (c && c.data) c.data = c.data.filter(function (r) { return r.artistId !== artistId; });
+      emit('tours');
+    },
+    favSwap: async function (aId, bId) {
+      if (!session) throw err('unavailable');
+      var uid = session.user.id, c = favCache[uid];
+      var a = c && c.data ? c.data.filter(function (r) { return r.artistId === aId; })[0] : null;
+      var b = c && c.data ? c.data.filter(function (r) { return r.artistId === bId; })[0] : null;
+      // The list moved under the taps (another tab): read it back and show that.
+      if (!a || !b) { loadFavs(uid); throw err('unavailable'); }
+      var q = await sb.from('fan_favorites').upsert([
+        { user_id: uid, artist_id: aId, rank: b.rank },
+        { user_id: uid, artist_id: bId, rank: a.rank }
+      ], { onConflict: 'user_id,artist_id' });
+      if (q.error) {
+        if (tableMissing(q.error)) { favKnown = false; emit('tours'); throw err('unavailable'); }
+        if (q.error.code === '23505') { loadFavs(uid); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      var r = a.rank; a.rank = b.rank; b.rank = r;
+      c.data.sort(function (x, y) { return x.rank - y.rank; });
+      emit('tours');
+    },
+    topFans: function (artistId, fresh) {
+      if (favKnown !== true || !artistId) return null;
+      var c = topFanCache[artistId];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadTopFans(artistId);
+      return c ? c.data : null;
+    },
     /* To Do Lists (0152). todosOn: are the tables there (asked once per
        session; false until it answers, so a build ahead of its migration
        simply shows nothing). todoList: an artist's tasks, at once from what
@@ -3146,6 +3228,79 @@
       }, function () { if (supplyAsk[tourId] === p) delete supplyAsk[tourId]; });
     p.gen = gen;
     supplyAsk[tourId] = p;
+    return p;
+  }
+  /* ---- The fan round (0159): Top 10 lists, and an artist's Top Fans ---- */
+  // Is the table there? One ask per session. A build ahead of its migration
+  // finds none, and the whole feature stays out of sight (favoritesOn
+  // answers false, so the app draws nothing). No signal: unanswered, asked
+  // again the next time something draws.
+  function favProbe() {
+    if (favProbing || !session) return;
+    favProbing = true;
+    sb.from('fan_favorites').select('user_id').limit(1).then(function (q) {
+      favProbing = false;
+      if (!q.error) { favKnown = true; emit('tours'); }
+      else if (tableMissing(q.error)) favKnown = false;
+    }, function () { favProbing = false; });
+  }
+  /* One person's Top 10: the spots in rank order, each with its artist
+     page's name, handle and picture (the pages are read in a second ask, the
+     plain read any signed-in account has). Held a minute. */
+  function loadFavs(uid) {
+    var gen = favGen[uid] || 0, ask = favAsk[uid];
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.from('fan_favorites').select('artist_id, rank').eq('user_id', uid).order('rank')
+      .then(function (q) {
+        if (q.error) {
+          // Not there yet: the feature goes quiet. Anything else (no signal):
+          // what was held stands, and the next draw asks again.
+          if (tableMissing(q.error)) { favKnown = false; delete favCache[uid]; emit('tours'); }
+          return null;
+        }
+        var rows = q.data || [];
+        var ids = rows.map(function (r) { return r.artist_id; });
+        return (ids.length ? sb.from('artists').select('id, name, handle, avatar').in('id', ids)
+          : Promise.resolve({ data: [] })).then(function (aq) {
+          var by = {};
+          (aq.data || []).forEach(function (x) { by[x.id] = x; });
+          return rows.map(function (r) {
+            var a = by[r.artist_id] || {};
+            return { artistId: r.artist_id, rank: r.rank, name: a.name || '', handle: a.handle || '', avatar: a.avatar || '' };
+          });
+        });
+      }).then(function (data) {
+        if (data) favCache[uid] = { data: data, at: Date.now(), stale: gen !== (favGen[uid] || 0) };
+        if (favAsk[uid] === p) delete favAsk[uid];
+        if (data) emit('tours');
+      }, function () { if (favAsk[uid] === p) delete favAsk[uid]; });
+    p.gen = gen;
+    favAsk[uid] = p;
+    return p;
+  }
+  // An artist page's ranked fans, the server's own count of Attended ticks
+  // (artist_top_fans, 0159): at most 100, each { userId, name, avatar,
+  // shows }. Held a minute; the sheet asks afresh when it opens.
+  function loadTopFans(artistId) {
+    var gen = topFanGen[artistId] || 0, ask = topFanAsk[artistId];
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.rpc('artist_top_fans', { a_id: artistId }).then(function (q) {
+      if (q.error) {
+        // Not there yet: the feature goes quiet. Anything else (no signal):
+        // what was held stands, and the next draw asks again.
+        if (fnMissing(q.error)) { favKnown = false; delete topFanCache[artistId]; emit('tours'); }
+        return null;
+      }
+      return (Array.isArray(q.data) ? q.data : []).map(function (r) {
+        return { userId: r.userId, name: r.name || '', avatar: r.avatar || '', shows: Number(r.shows) || 0 };
+      });
+    }).then(function (data) {
+      if (data) topFanCache[artistId] = { data: data, at: Date.now(), stale: gen !== (topFanGen[artistId] || 0) };
+      if (topFanAsk[artistId] === p) delete topFanAsk[artistId];
+      if (data) emit('tours');
+    }, function () { if (topFanAsk[artistId] === p) delete topFanAsk[artistId]; });
+    p.gen = gen;
+    topFanAsk[artistId] = p;
     return p;
   }
   /* ---- To Do Lists (0152): each artist's tasks, and your own tab ---- */
