@@ -2900,6 +2900,9 @@ button.acct-row:active { background: var(--surface-2); }
 .pt-dr-date { margin: 0; font-size: 13px; font-weight: 500; color: var(--ink-2); }
 .pt-dr-city { margin: 2px 0 0; font-size: clamp(18px, 5vw, 22px); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; color: var(--ink); overflow-wrap: break-word; }
 .pt-dr-venue { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; }
+/* Today borrows the day sheet's glowing venue name (Devin, 2026-10-16). */
+.pt-dayrow .pt-dr-venue { color: var(--pos); animation: venueglow 2.2s ease-in-out infinite; }
+.pt-ds { margin-top: 6px; }
 .pt-dr-addr { display: inline-block; margin-top: 3px; font-size: 13px; line-height: 1.35; color: var(--pos); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
 /* Your profile's Guest list: the show on one card, then the list under a plain header. */
 .gl-show { position: relative; z-index: 1; display: flex; align-items: center; gap: 14px; margin: 2px 0 22px; padding: 14px 16px;

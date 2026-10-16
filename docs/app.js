@@ -10379,7 +10379,9 @@
         s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
         [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
-      sheet ? h('div', { class: 'pt-sheet' }, sheet) : null,
+      // The day sheet tab's own schedule style, word for word (Devin,
+      // 2026-10-16: "the entire day sheet text style under schedule").
+      sheet ? h('div', { class: 'ds-page pt-ds' }, sheet) : null,
       // Room at the end, so the last of the day sheet scrolls clear of Bus Check in.
       checkIn ? [h('div', { class: 'ci-room', 'aria-hidden': 'true' }), checkIn] : null
     ];
