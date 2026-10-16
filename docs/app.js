@@ -15670,10 +15670,12 @@
   function tourTabs(id, current, o) {
     // Everyone gets the Budget tab now (Devin, 2026-10-07): Crew open it to
     // MY PAY; the tour's own book inside stays for Managers only.
-    // His order (2026-10-15): Overview, Budget, Day sheet, Guest list, Chat.
-    // Crew Stats leaves the bar; its page still opens from the Overview.
+    // His order (2026-10-15, final): Overview, Budget, Day sheet, Guest
+    // list, Chat, Crew Stats - the photo leads and Search closes the bar.
     var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs' && t.view !== 'stats'; });
     tabs.splice(1, 0, BUDGET_TAB);
+    var statsTab = TOUR_TABS.filter(function (t) { return t.view === 'stats'; })[0];
+    if (statsTab) tabs.push(statsTab);
     var framed = !!(o && o.off);
     // away: the same bar worn by a page outside the tour (the profile, the
     // menu, Search). A tap opens that page of the tour exactly as the old
@@ -16907,10 +16909,7 @@
 
     return [
       h('div', { class: 'sec-head', style: 'margin-top:30px;text-align:center' },
-        h('h2', { class: 'sec-title hdr' }, 'Crew'),
-        // Crew Stats left the bottom bar (his tab order): its door lives here.
-        h('button', { class: 'btn quiet sm', type: 'button', style: 'margin-top:4px',
-          onclick: function () { go({ name: 'tour', id: tourId, view: 'stats' }); } }, 'Crew Stats')),
+        h('h2', { class: 'sec-title hdr' }, 'Crew')),
       list,
       manages ? h('div', { style: 'display:flex;justify-content:center;margin-top:14px' },
         h('button', { class: 'crew-invite', type: 'button',
