@@ -76,6 +76,11 @@
   // at all (null until the first ask answers; the answer is the session's).
   // The answers themselves live in the app, which polls the take function.
   var cityEvKnown = null, cityEvProbing = false;
+  // Venue history (0160): each show's answer (one per tour and show, kept
+  // with the venue and city it was asked about), and whether the function is
+  // there at all (null until the first ask answers; the answer is the session's).
+  var vhCache = {}, vhAsk = {}, vhKnown = null, vhProbing = false;
+  var VH_FRESH = 600e3, VH_RETRY = 60e3; // a room's past moves slowly: ten minutes between asks; a missed ask, one
   var FLOWERS_FRESH = 60e3; // asked again after a minute anyway: people join, phones sleep through changes
   var listeners = { tours: [], labels: [] };
   var refetchTimer = 0;
@@ -2126,6 +2131,28 @@
       }
       return isObj(q.data) ? q.data : null;
     },
+    /* Venue history (0160). venueHistoryOn: is the function there (asked
+       once per session; false until it answers, so a build ahead of its
+       migration simply shows nothing). venueHistory: the tour's artist's
+       played nights before one show in that show's room, at once from what
+       this phone holds; null while it's first being fetched, and null when
+       there is nothing to say (no artist page, no road history, no venue or
+       city typed). sig is the show's venue and city as this phone has them,
+       so a room typed in fresh is asked about afresh. An answer is
+       { artistId, artist, count, nights: [{ date, name, kind }] }: the
+       nights newest first, at most 100 of them; count is all of them; kind
+       is 'tour', 'festival' or 'shows'. */
+    venueHistoryOn: function () {
+      if (vhKnown === null) vhProbe();
+      return vhKnown === true;
+    },
+    venueHistory: function (tourId, showId, sig, fresh) {
+      if (vhKnown !== true || !session || !tourId || !showId) return null;
+      sig = String(sig || '');
+      var c = vhCache[tourId + '|' + showId], same = !!c && c.sig === sig;
+      if (!same || fresh || Date.now() - c.at > VH_FRESH) loadVenueHistory(tourId, showId, sig);
+      return same ? c.data : null;
+    },
     /* Tour flyers (0156). flyersOn: is the table there (asked once per
        session; false until it answers, so a build ahead of its migration
        simply shows nothing). tourFlyers: one artist page's flyers, keyed by
@@ -3072,6 +3099,63 @@
       if (q.error && fnMissing(q.error)) cityEvKnown = false;
       else { cityEvKnown = true; emit('tours'); }
     }, function () { cityEvProbing = false; });
+  }
+  /* ---- Venue history (0160): the tour's artist's nights in tonight's room ---- */
+  // Is the function there? One ask per session, with empty ids: a database
+  // that has it refuses them (not on that tour), which is itself the answer;
+  // one that does not says the function is missing, and the whole feature
+  // stays out of sight (venueHistoryOn answers false, so the app draws
+  // nothing). No signal: unanswered, asked again the next time something
+  // draws.
+  function vhProbe() {
+    if (vhProbing || !session) return;
+    vhProbing = true;
+    sb.rpc('venue_history', { t_id: '', s_id: '' }).then(function (q) {
+      vhProbing = false;
+      if (q.error && fnMissing(q.error)) vhKnown = false;
+      else { vhKnown = true; emit('tours'); }
+    }, function () { vhProbing = false; });
+  }
+  /* One show's answer from venue_history: the server reads the show's room
+     and date out of the tour's own document, so the phone only says which
+     show. Held ten minutes. A missed ask (no signal, refused) keeps what was
+     held and is asked again in a minute; only an answer that changed draws
+     the page again, so a quiet room never wakes it. */
+  function loadVenueHistory(tourId, showId, sig) {
+    var k = tourId + '|' + showId, ask = vhAsk[k];
+    if (ask && ask.sig === sig) return ask;
+    var p = sb.rpc('venue_history', { t_id: tourId, s_id: showId }).then(function (q) {
+      if (q.error) {
+        // Not there yet: the feature goes quiet. Anything else: what was held stands.
+        if (fnMissing(q.error)) { vhKnown = false; delete vhCache[k]; emit('tours'); return null; }
+        var held = vhCache[k];
+        vhCache[k] = { data: held && held.sig === sig ? held.data : null, sig: sig, at: Date.now() - VH_FRESH + VH_RETRY };
+        return null;
+      }
+      var a = q.data;
+      if (!isObj(a) || a.none || !a.artistId) return { data: null };
+      var nights = (Array.isArray(a.nights) ? a.nights : []).filter(function (n) {
+        return isObj(n) && /^\d{4}-\d{2}-\d{2}$/.test(String(n.date || ''));
+      }).slice(0, 100).map(function (n) {
+        return { date: String(n.date), name: String(n.name || '').trim(),
+          kind: n.kind === 'festival' || n.kind === 'shows' ? n.kind : 'tour' };
+      });
+      return { data: { artistId: String(a.artistId), artist: String(a.artist || '').trim(),
+        count: Math.max(nights.length, Math.round(Number(a.count)) || 0), nights: nights } };
+    }).then(function (got) {
+      if (vhAsk[k] === p) delete vhAsk[k];
+      if (!got) return;
+      var was = vhCache[k];
+      vhCache[k] = { data: got.data, sig: sig, at: Date.now() };
+      if (!was || was.sig !== sig || JSON.stringify(was.data) !== JSON.stringify(got.data)) emit('tours');
+    }, function () {
+      if (vhAsk[k] === p) delete vhAsk[k];
+      var held = vhCache[k];
+      vhCache[k] = { data: held && held.sig === sig ? held.data : null, sig: sig, at: Date.now() - VH_FRESH + VH_RETRY };
+    });
+    p.sig = sig;
+    vhAsk[k] = p;
+    return p;
   }
   /* ---- Buyout ticks (0151): who has been handed their buyout ---- */
   // Is the table there? One ask per session. A build ahead of its migration

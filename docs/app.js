@@ -4727,6 +4727,62 @@
       h('p', { class: 'hist-credit' }, 'Listings: ',
         h('a', { class: 'hist-src', target: '_blank', rel: 'noopener', href: 'https://www.ticketmaster.com' }, 'Ticketmaster')));
   }
+  /* ---- VENUE HISTORY (0160, Devin's idea 23: "when you are at a venue it
+     can tell you how many times you've played that venue and which tours").
+     On a show day, one quiet line under the venue on Today and on the day
+     sheet: "Your 4th time at Mohawk", or "Your first time at Mohawk". The
+     server counts the tour's artist page's played nights in that room (one
+     show per date, the room matched by name and city the way venue pages
+     match it), plus this tour's own earlier nights there that the page has
+     not caught up with yet; a tap lists the nights before tonight. Nothing
+     renders before migration 0160 is live, for a tour with no artist page,
+     or for a page with no road history. ---- */
+  function venueHistOn() {
+    var B = window.GR_BACKEND;
+    return S.mode === 'db' && !!(B && B.venueHistoryOn && B.venueHistory && B.venueHistoryOn());
+  }
+  // 2nd, 3rd, 4th, 11th, 21st.
+  function ordinalNum(n) {
+    var a = n % 100, b = n % 10;
+    return n + (a >= 11 && a <= 13 ? 'th' : b === 1 ? 'st' : b === 2 ? 'nd' : b === 3 ? 'rd' : 'th');
+  }
+  /* The line itself, for tonight's show only. inSheet: it sits inside the
+     day sheet's glowing venue block, whose big type it must not take on. */
+  function venueHistLine(tourId, s, inSheet) {
+    if (!s || !s.id || s.date !== G.tourToday() || !venueHistOn()) return null;
+    var venue = String(s.venue || '').trim();
+    if (!venue || !String(s.city || '').trim()) return null;
+    var sig = venue.toLowerCase() + '|' + String(s.city).trim().toLowerCase();
+    var a = window.GR_BACKEND.venueHistory(tourId, s.id, sig);
+    if (!G.isObj(a) || !a.artistId) return null;
+    var n = Math.max(0, Math.round(G.num(a.count))), nights = Array.isArray(a.nights) ? a.nights : [];
+    var words = n > 0 ? 'Your ' + ordinalNum(n + 1) + ' time at ' + venue : 'Your first time at ' + venue;
+    return h('p', { class: 'hist-fans', style: inSheet ? 'font-weight:500;letter-spacing:0;line-height:1.35' : null },
+      n > 0 && nights.length
+        ? h('button', { class: 'hf-btn', type: 'button', 'aria-label': words + '. See the nights before tonight',
+            onclick: function () { openVenueHistory(venue, a); } }, words)
+        : words);
+  }
+  // The nights before tonight in this room: date, then the tour or festival (or shows outside a tour), newest first.
+  function openVenueHistory(venue, a) {
+    var nights = Array.isArray(a.nights) ? a.nights : [], n = Math.max(nights.length, Math.round(G.num(a.count)));
+    var times = n === 1 ? 'once' : n === 2 ? 'twice' : n + ' times';
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, venue),
+        h('p', { class: 'sh-sub' }, (a.artist || 'The band') + ' played here ' + times + ' before tonight.'),
+        h('ul', { class: 'shows cal-list tn-list' }, nights.map(function (x) {
+          var name = String(x.name || '').trim() || (x.kind === 'shows' ? 'Shows outside a tour' : 'A tour');
+          return h('li', { class: 'tn-row att-row' },
+            h('span', { class: 'tn-date' }, dayMD(x.date) + ', ' + String(x.date).slice(0, 4)),
+            h('span', { class: 'tn-where' }, name, x.kind === 'festival' ? h('span', { class: 'tn-tag tn-kind' }, 'festival') : null));
+        })),
+        nights.length < n ? h('p', { class: 'note' }, 'The latest ' + nights.length + ' are listed here.') : null,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close'))
+      ];
+    }, { label: 'Your nights at ' + venue });
+  }
   /* ---- Endorsing, and the role that goes with it. The artist's page says
      what this person IS to it — the title the public sees there (Brent is
      "Guitar" on the band's page, whatever he does behind the scenes) — and
@@ -10376,7 +10432,9 @@
     return [
       h('div', { class: 'pt-headrow' }, pfLeftChip(t), pfTourBar(id, t, count, 'details'), pfOffChip(t)),
       dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, s ? '' : city, place, address,
-        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null),
+        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null,
+        // Tonight's room in the band's own history, under the venue (0160; nothing before it is live).
+        s && isToday ? venueHistLine(id, s) : null),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
         [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
       // The day sheet tab's own schedule style, word for word (Devin,
@@ -10408,8 +10466,9 @@
   }
   /* A day in three columns: what and where in the left corner (the tag, the
      date, the city), the venue and its address in the middle, and corner
-     (Today's days until a day off) in the right corner. */
-  function dayRow(chip, date, city, place, address, extra, corner) {
+     (Today's days until a day off) in the right corner. under: one more
+     line in the middle, below the venue and its address (the venue history). */
+  function dayRow(chip, date, city, place, address, extra, corner, under) {
     return h('div', { class: 'pt-dayrow' },
       h('div', { class: 'pt-dayrow-l' },
         chip || extra ? h('p', { class: 'pt-dr-chips' }, chip, extra) : null,
@@ -10417,7 +10476,8 @@
         city ? h('p', { class: 'pt-dr-city' }, city) : null),
       h('div', { class: 'pt-dayrow-c' },
         place ? h('p', { class: 'pt-dr-venue' }, place) : null,
-        address ? h('a', { class: 'pt-dr-addr', href: mapsHref(address), target: '_blank', rel: 'noopener' }, address) : null),
+        address ? h('a', { class: 'pt-dr-addr', href: mapsHref(address), target: '_blank', rel: 'noopener' }, address) : null,
+        place ? under || null : null),
       h('div', { class: 'pt-dayrow-r' }, corner || null));
   }
   /* STATS: your flowers. The three numbers from every tour you've been on
@@ -19234,7 +19294,9 @@
     var placeEl = placeName || trashBtn || editBtn ? h('div', { class: 'ds-venue-row' },
       editBtn, placeName ? h('div', { class: 'ds-venue glow' }, h('span', { class: 'ds-venue-name' }, placeName),
         // The address right under the name (Devin, 2026-10-15), never its own section.
-        dsAddr ? h('a', { class: 'vh-addr', href: mapsHref(dsAddr), target: '_blank', rel: 'noopener' }, dsAddr) : null) : null,
+        dsAddr ? h('a', { class: 'vh-addr', href: mapsHref(dsAddr), target: '_blank', rel: 'noopener' }, dsAddr) : null,
+        // And under both, tonight only, this room in the band's own history (0160; nothing before it is live).
+        s && entry.date === today ? venueHistLine(id, s, true) : null) : null,
       trashBtn) : null;
 
     // A day off with nothing decided yet: the same poll as the Calendar,

@@ -1082,6 +1082,48 @@ shim = r"""<script>
     return H.cityEventRows.s1.length + ' concerts seeded for tonight';
   };
   try { if (/[?&]cityevents\b/.test(String(location.search || ''))) window.__harness.cityEvents(); } catch (e) { /* no address to read */ }
+  /* ---- VENUE HISTORY (0160): "Your 4th time at Mohawk" under tonight's venue ----
+     The database's venue_history is played by __harness.venueHistoryRows here
+     ({ showId: { artistId, artist, count, nights: [{ date, name, kind }] } }).
+     A show with no row answers nothing, the way the server answers a tour
+     with no artist page or a page with no road history: no line at all. The
+     probe answers true here. The line sits under the venue (and its address)
+     on Today and on the day sheet, only on the day being played; a tap opens
+     the sheet of the nights before tonight, newest first.
+     HOOKS:
+       __harness.venueHistory()   seeds five earlier nights at Mohawk for tonight's
+                            Austin show (s1): two tours, a festival, a third tour and
+                            a year's shows outside a tour, so Today and the day sheet
+                            read "Your 6th time at Mohawk". Answers the words. Or open
+                            the page with ?venuehistory.
+       __harness.venueHistoryFirst()   tonight's row with no nights before it: the
+                            line reads "Your first time at Mohawk" and is not a button.
+       __harness.venueHistoryRows   every seeded answer, by show id. Change it, then
+                            redraw (switch tabs); delete s1's row and the line goes.
+       __harness.venueHistoryLast   the last ask the app made: { tourId, showId, sig }
+                            (sig is the venue and city the phone holds, lower-cased).
+       __harness.venueHistoryOff = true   the probe answers false, as before migration
+                            0160: no line on Today or the day sheet. */
+  window.__harness.venueHistory = function () {
+    var H = window.__harness, a = creditIss();
+    H.venueHistoryRows = H.venueHistoryRows || {};
+    H.venueHistoryRows.s1 = { artistId: a ? a.id : 'act-iss', artist: 'I See Stars', count: 5, nights: [
+      { date: '2026-03-07', name: 'Spin the Wheel', kind: 'tour' },
+      { date: '2019-03-15', name: 'SXSW 2019', kind: 'festival' },
+      { date: '2017-03-14', name: 'Treehouse Tour', kind: 'tour' },
+      { date: '2012-03-04', name: 'Digital Renegade', kind: 'tour' },
+      { date: '2010-08-21', name: 'Shows outside a tour', kind: 'shows' }] };
+    emit();   // (open pages draw again, as when the real answer lands)
+    return 'Your 6th time at Mohawk';
+  };
+  window.__harness.venueHistoryFirst = function () {
+    var H = window.__harness, a = creditIss();
+    H.venueHistoryRows = H.venueHistoryRows || {};
+    H.venueHistoryRows.s1 = { artistId: a ? a.id : 'act-iss', artist: 'I See Stars', count: 0, nights: [] };
+    emit();
+    return 'Your first time at Mohawk';
+  };
+  try { if (/[?&]venuehistory\b/.test(String(location.search || ''))) window.__harness.venueHistory(); } catch (e) { /* no address to read */ }
   /* ---- ARTIST PICTURES (0158): a bare page's picture from Wikimedia Commons ----
      The worker that walks MusicBrainz to Wikidata to Commons never runs
      here; what it leaves behind does: an unclaimed page whose avatar came
@@ -2276,6 +2318,19 @@ shim = r"""<script>
       if (H.cityEventsDark) return Promise.resolve({ off: true });
       if (H.cityEventsWait > 0) { H.cityEventsWait -= 1; return Promise.resolve({ wait: reqId }); }
       return Promise.resolve({ events: (H.cityEventRows || {})[showId] || [] });
+    },
+    /* Venue history (0160), in memory: see VENUE HISTORY near ALSO IN TOWN
+       TONIGHT. The answer is __harness.venueHistoryRows[showId] (a copy), or
+       null for a show with no row, as the real backend answers a tour with
+       no artist page or no road history. The last ask is kept in
+       __harness.venueHistoryLast. */
+    venueHistoryOn: function () { return !window.__harness.venueHistoryOff; },
+    venueHistory: function (tourId, showId, sig) {
+      var H = window.__harness;
+      if (H.venueHistoryOff) return null;
+      H.venueHistoryLast = { tourId: tourId, showId: showId, sig: String(sig || '') };
+      var r = (H.venueHistoryRows || {})[showId];
+      return r ? JSON.parse(JSON.stringify(r)) : null;
     },
     /* Supplies (0155), in memory: see SUPPLIES near LIVE WITHOUT A RESTART.
        The rows live in __harness.supplyRows; anyone ticks, but the words and
