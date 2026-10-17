@@ -2,16 +2,26 @@
 // a tour ("guests added", "we're in the green", "merch milestone", "sold
 // out", and since 2026-10-15 Devin's event kinds: a day-off poll vote, flowers
 // given, a chat message, a payment logged, a day sheet posted, a buyout
-// tracked; since 2026-10-17 a buyout asked for); this looks up everyone on
-// that tour the kind is for who opted into that kind of news and web-pushes
-// them. Senders never notify themselves.
+// tracked; since 2026-10-17 a buyout asked for, and a paid back ask); this
+// looks up everyone on that tour the kind is for who opted into that kind of
+// news and web-pushes them. Senders never notify themselves.
+//
+// Since 2026-10-17 three kinds are about a person, not a tour: a page claim
+// (for Greenroom's admins, who decide it), an ask to join an artist page (for
+// whoever runs the page), and a direct message (for the person it was sent
+// to). For those the phone sends only the kind and the row's id; this reads
+// the row itself, checks the sender made it moments ago, and works out who
+// hears it from the database. Nothing about who hears it comes from the phone.
 //
 // Each kind's pref key on push_subs.prefs, and what a phone that never saved
 // the key counts as: vote and chat are OFF until asked for (brand new, and
 // chatty); flowers, payment, buyout (each about you alone) and sheet (the day
 // sheet everyone already got) are ON unless switched off; green stays with
 // the Managers and is ON unless switched off; requests honor prefs.requests
-// the same way. soldout and merchnums stay opt-in as stored.
+// the same way (and since 2026-10-17 reach everyone on the tour); reimburse
+// (Managers), claims, joinreqs and dms are ON unless switched off; guests
+// decides the guest list once saved, and before that the phone's group says
+// (ALL only, as it always was). soldout and merchnums stay opt-in as stored.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import webpush from "npm:web-push@3.6.7";
 
@@ -62,7 +72,8 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
       return text ? { title: `\u{1F6A8} ${tourName}`, body: text } : null;
     }
     case "request": {
-      // A special request on the calendar, for the tour manager to answer.
+      // A special request on the calendar, for everyone on the tour (Devin,
+      // 2026-10-17: "This can be everyone").
       const text = String(d.text ?? "").trim().slice(0, 140);
       const who = String(d.who ?? "Someone");
       return text ? { title: tourName, body: `${who} has a special request${city ? " for " + city : ""}: "${text}"` } : null;
@@ -103,9 +114,242 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
       const who = String(d.who ?? "Someone");
       return { title: tourName, body: `Give ${who} their buyout${city ? " for " + city : ""}` };
     }
+    case "reimburse":
+      // Someone asked to be paid back, for the tour's Managers. The amount and
+      // the words are the ask's own, read from the database.
+      return { title: tourName, body: paidBackWords(d) };
     default:
       return null;
   }
+}
+
+// ---- pure: words, recipients and gates (tools check these with fake rows) ----
+type Prefs = Record<string, unknown>;
+type Row = Record<string, unknown> | null | undefined;
+
+// The words for a person-scoped kind. The title is the app's name: these are
+// not about a tour. A message's own text is never shown (lock screens).
+function personMessage(type: string, d: Prefs): { title: string; body: string } | null {
+  const who = cut(d.who, 60) || "Someone";
+  const artist = cut(d.artist, 80);
+  if (type === "claim") return { title: "Greenroom", body: artist ? `${who} asked to run ${artist}\u2019s page.` : `${who} asked to run a page.` };
+  if (type === "joinreq") return { title: "Greenroom", body: `${who} asked to join ${artist || "your page"} as ${d.kind === "band" ? "a Member" : "crew"}.` };
+  if (type === "dm") return { title: "Greenroom", body: `${who} sent you a message.` };
+  return null;
+}
+
+// "$42.17", or "$1,200" when there are no cents.
+function moneyCents(n: number): string {
+  const c = Math.round(n * 100) / 100;
+  const whole = Math.abs(c - Math.round(c)) < 0.005;
+  return "$" + c.toLocaleString("en-US", { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 });
+}
+
+// "<Name> asked to be paid back <$amount> for <what>."
+function paidBackWords(d: Prefs): string {
+  const who = cut(d.who, 60) || "Someone";
+  const amount = Math.max(0, Math.min(1e5, Number(d.amount) || 0));
+  const what = cut(d.what, 80).replace(/[\s.]+$/, "");
+  return `${who} asked to be paid back${amount > 0 ? " " + moneyCents(amount) : ""}${what ? " for " + what : ""}.`;
+}
+
+// A row made in the last ten minutes (a minute of clock slack ahead).
+function fresh(at: unknown, now: number): boolean {
+  const t = Date.parse(String(at ?? ""));
+  return Number.isFinite(t) && t <= now + 60000 && now - t <= 10 * 60 * 1000;
+}
+
+function othersThan(ids: string[], senderId: string): string[] {
+  return [...new Set(ids.map((x) => String(x ?? "")))].filter((x) => x && x !== senderId);
+}
+
+// B1: a claim the sender just filed and still waiting is decided by
+// Greenroom's admins (platform_admins, the rule claim_queue and decide_claim
+// use).
+function claimTargets(claim: Row, admins: string[], senderId: string, now: number): string[] {
+  if (!claim || String(claim.user_id) !== senderId || claim.status !== "pending" || !fresh(claim.created_at, now)) return [];
+  return othersThan(admins, senderId);
+}
+
+// B2: an ask to be listed, still waiting, is answered by whoever runs the
+// page (runs_artist: the page's owner, the rule artist_request_queue and
+// decide_artist_request use). A page nobody runs has nobody to tell.
+function joinTargets(req: Row, artist: Row, senderId: string, now: number): string[] {
+  if (!req || !artist || String(req.user_id) !== senderId || String(req.artist_id) !== String(artist.id)) return [];
+  if (req.status !== "pending" || !fresh(req.created_at, now)) return [];
+  return othersThan([String(artist.owner_id ?? "")], senderId);
+}
+
+// B3: a message the sender just sent, not read yet, is for its recipient.
+function dmTargets(dm: Row, senderId: string, now: number): string[] {
+  if (!dm || String(dm.sender) !== senderId || dm.read_at || !fresh(dm.created_at, now)) return [];
+  return othersThan([String(dm.recipient ?? "")], senderId);
+}
+
+// D: a paid back ask the sender just made on this tour, still open.
+function reimburseOk(row: Row, tourId: string, senderId: string, now: number): boolean {
+  return !!row && String(row.user_id) === senderId && String(row.tour_id) === tourId &&
+    row.status === "open" && fresh(row.created_at, now);
+}
+
+// News about the tour's money is for its Managers (Devin, 2026-10-10: "In the
+// green notifications and any notifications that are pertaining to the
+// managers should only be available to managers of the tour"). A special
+// request left this list on 2026-10-17: everyone hears it now.
+const FOR_MANAGERS = ["green", "merch"];
+
+// Who hears a kind that goes to the whole tour: everyone on it but the
+// sender, or only its Managers for money news.
+function broadTargets(type: string, memberIds: string[], managers: string[], senderId: string): string[] {
+  const lead = new Set(managers);
+  return othersThan(memberIds, senderId).filter((id) => !FOR_MANAGERS.includes(type) || lead.has(id));
+}
+
+// Does this phone's prefs let a tour kind through?
+function tourGate(type: string, prefs: Prefs): boolean {
+  // Each phone picks CREW, ARTIST or ALL, plus SOLD OUT and MERCH NUMBERS.
+  // A phone set up before those choices counts as ALL.
+  const group = String(prefs.group ?? "all");
+  // An alert ignores preferences: it is the Managers' siren.
+  if (type === "alert") return true;
+  // A special request: on unless the phone said no.
+  if (type === "request") return prefs.requests !== false;
+  if (type === "soldout") return prefs.soldout === true;
+  if (type === "merch") return prefs.merchnums === true;
+  // Only the tour's Managers get it: on unless their phone said no.
+  if (type === "green") return prefs.green !== false;
+  // Brand new, and chatty: off until the phone asks for it.
+  if (type === "vote" || type === "chat") return prefs[type] === true;
+  // It reaches only the person driving, whose job it answers: on unless
+  // their phone said no.
+  if (type === "wearebus") return prefs.wearebus !== false;
+  // Rides the phone's buyout switch: on unless it said no.
+  if (type === "buyoutask") return prefs.buyout !== false;
+  // About you alone (or the day sheet everyone already got): on unless the
+  // phone switched it off.
+  if (type === "flowers" || type === "payment" || type === "buyout" || type === "sheet") return prefs[type] !== false;
+  // A paid back ask, for the Managers: on unless their phone said no.
+  if (type === "reimburse") return prefs.reimburse !== false;
+  // The guest list: its own switch once the phone has saved one; before
+  // that, ALL only, as it always was.
+  if (type === "guest" && typeof prefs.guests === "boolean") return prefs.guests;
+  return group === "all";
+}
+
+// Does this phone's prefs let a person kind through? On unless it said no.
+function personGate(type: string, prefs: Prefs): boolean {
+  if (type === "claim") return prefs.claims !== false;
+  if (type === "joinreq") return prefs.joinreqs !== false;
+  if (type === "dm") return prefs.dms !== false;
+  return false;
+}
+// ---- end pure ----
+
+const TOUR_KINDS = ["guest", "green", "merch", "soldout", "alert", "request",
+  "vote", "flowers", "chat", "payment", "sheet", "buyout", "buyoutask", "wearebus", "reimburse"];
+const PERSON_KINDS = ["claim", "joinreq", "dm"];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/* Each person-scoped event, and each paid back ask, goes out once: the first
+   call to write its key wins. The keys live in Ari's ari_sent under the tour
+   id "_notify", which no tour has, so Ari's rows never meet them. */
+async function firstTime(key: string): Promise<boolean> {
+  const { data, error } = await admin.from("ari_sent")
+    .upsert({ tour_id: "_notify", show_id: key.slice(0, 200), kind: "once" },
+      { onConflict: "tour_id,show_id,kind", ignoreDuplicates: true })
+    .select("kind");
+  return !error && Array.isArray(data) && data.length > 0;
+}
+
+/* Now and then, the keys nobody can need again (every one is checked against
+   a row made in the last ten minutes, or a day's key) are cleared away. */
+async function tidyKeys(): Promise<void> {
+  if (Math.random() > 0.02) return;
+  try {
+    const old = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+    await admin.from("ari_sent").delete().eq("tour_id", "_notify").eq("kind", "once").lt("sent_at", old);
+  } catch { /* next time */ }
+}
+
+/* A person's name as the app shows it: their full name, else first and last,
+   else their username. */
+async function whoIs(uid: string): Promise<string> {
+  const { data: p } = await admin.from("profiles").select("full_name, first_name, last_name, username")
+    .eq("user_id", uid).maybeSingle();
+  const both = [p?.first_name, p?.last_name].map((x) => String(x ?? "").trim()).filter(Boolean).join(" ");
+  return cut(String(p?.full_name ?? "").trim() || both || String(p?.username ?? "").trim(), 60) || "Someone";
+}
+
+/* Push one message to every phone of these people that lets it through, and
+   forget the phones that are gone. */
+async function deliver(targets: string[], allow: (prefs: Prefs) => boolean, payload: Record<string, unknown>): Promise<number> {
+  if (!targets.length) return 0;
+  const { data: subs } = await admin.from("push_subs")
+    .select("endpoint, p256dh, auth, prefs, user_id")
+    .in("user_id", targets);
+  let sent = 0;
+  const dead: string[] = [];
+  for (const sub of subs ?? []) {
+    if (!allow((sub.prefs ?? {}) as Prefs)) continue;
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        JSON.stringify(payload),
+      );
+      sent += 1;
+    } catch (e) {
+      const code = (e as { statusCode?: number }).statusCode ?? 0;
+      if (code === 404 || code === 410) dead.push(sub.endpoint); // device gone
+    }
+  }
+  if (dead.length) await admin.from("push_subs").delete().in("endpoint", dead);
+  return sent;
+}
+
+/* A claim, an ask to join a page, or a direct message. data.id is the
+   artist's id for a claim or an ask (the row is the sender's own on that
+   page), and the message's id for a message. */
+async function personScoped(senderId: string, type: string, data: Prefs): Promise<Response> {
+  const id = cut(data.id, 40);
+  if (!UUID.test(id)) return reply(400, { error: "invalid" });
+  const now = Date.now();
+  const day = new Date(now).toISOString().slice(0, 10);
+  let targets: string[] = [];
+  let words: Prefs = {};
+  let keys: string[] = [];
+  if (type === "claim") {
+    const { data: c } = await admin.from("artist_claims").select("id, artist_id, user_id, status, created_at")
+      .eq("artist_id", id).eq("user_id", senderId).maybeSingle();
+    const { data: ad } = await admin.from("platform_admins").select("user_id");
+    targets = claimTargets(c, (ad ?? []).map((r) => String(r.user_id)), senderId, now);
+    if (targets.length) {
+      const { data: a } = await admin.from("artists").select("name").eq("id", id).maybeSingle();
+      words = { artist: a?.name };
+    }
+    // One a day for one person and one page, however often it is withdrawn and sent again.
+    keys = [`claim:${id}:${senderId}:${day}`];
+  } else if (type === "joinreq") {
+    const { data: r } = await admin.from("artist_requests").select("artist_id, user_id, kind, status, created_at")
+      .eq("artist_id", id).eq("user_id", senderId).maybeSingle();
+    const { data: a } = await admin.from("artists").select("id, name, owner_id").eq("id", id).maybeSingle();
+    targets = joinTargets(r, a, senderId, now);
+    words = { artist: a?.name, kind: r?.kind };
+    keys = [`joinreq:${id}:${senderId}:${day}`];
+  } else if (type === "dm") {
+    const { data: m } = await admin.from("dms").select("id, sender, recipient, created_at, read_at")
+      .eq("id", id).maybeSingle();
+    targets = dmTargets(m, senderId, now);
+    // Each message once, and one buzz a minute from one person to another
+    // (the words never carry the text, so a run of messages is one buzz).
+    keys = [`dm:${id}`, `dmpair:${senderId}:${targets[0] ?? ""}:${Math.floor(now / 60000)}`];
+  }
+  if (!targets.length) return reply(200, { sent: 0 });
+  const msg = personMessage(type, { ...words, who: await whoIs(senderId) });
+  if (!msg) return reply(400, { error: "invalid" });
+  for (const k of keys) if (!(await firstTime(k))) return reply(200, { sent: 0, said: true });
+  await tidyKeys();
+  const sent = await deliver(targets, (p) => personGate(type, p), { title: msg.title, body: msg.body });
+  return reply(200, { sent });
 }
 
 /* The tour's Tour Manager: ALL ACCESS on it, with that role (their own
@@ -175,11 +419,6 @@ async function managersOf(tourId: string, ownerId: string): Promise<Set<string>>
   } catch { /* the creator alone */ }
   return out;
 }
-/* News about the tour's money, and a request waiting on an answer, are for
-   its Managers (Devin, 2026-10-10: "In the green notifications and any
-   notifications that are pertaining to the managers should only be available
-   to managers of the tour"). */
-const FOR_MANAGERS = ["green", "merch", "request"];
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -199,11 +438,15 @@ Deno.serve(async (req) => {
 
   let body: NotifyBody;
   try { body = await req.json(); } catch { return reply(400, { error: "invalid" }); }
-  const tourId = String(body.tourId ?? "");
-  const type = String(body.type ?? "");
-  const data = body.data ?? {};
-  if (!tourId || !["guest", "green", "merch", "soldout", "alert", "request",
-    "vote", "flowers", "chat", "payment", "sheet", "buyout", "buyoutask", "wearebus"].includes(type)) {
+  const type = String(body?.type ?? "");
+  // A claim, an ask to join a page, a direct message: about a person, not a tour.
+  if (PERSON_KINDS.includes(type)) {
+    const pd = body?.data && typeof body.data === "object" ? body.data : {};
+    return await personScoped(senderId, type, pd);
+  }
+  const tourId = String(body?.tourId ?? "");
+  const data = body?.data ?? {};
+  if (!tourId || !TOUR_KINDS.includes(type)) {
     return reply(400, { error: "invalid" });
   }
 
@@ -241,6 +484,23 @@ Deno.serve(async (req) => {
     data.city = String(shows?.[showId]?.city ?? "").split(",")[0];
   }
 
+  // A paid back ask goes out only for one the sender just made on this tour,
+  // still open, and says the ask's own amount and words, never ones sent
+  // along with it.
+  let reimbKey = "";
+  if (type === "reimburse") {
+    const rid = cut(data.id, 40);
+    const { data: row } = /^[A-Za-z0-9_-]{6,40}$/.test(rid)
+      ? await admin.from("reimbursements").select("id, tour_id, user_id, requester_name, amount, what, status, created_at")
+        .eq("id", rid).maybeSingle()
+      : { data: null };
+    if (!reimburseOk(row, tourId, senderId, Date.now())) return reply(403, { error: "no_ask" });
+    data.who = cut(row?.requester_name, 60) || await whoIs(senderId);
+    data.amount = Number(row?.amount) || 0;
+    data.what = String(row?.what ?? "");
+    reimbKey = `reimburse:${rid}`;
+  }
+
   const tourName = cut((tour.doc as Record<string, unknown>)?.name, 80) || "Greenroom";
   if (["request", "vote", "chat", "flowers", "buyoutask"].includes(type)) {
     // The sender's own name, never one sent along with the event.
@@ -263,13 +523,13 @@ Deno.serve(async (req) => {
   const msg = message(type, data, tourName);
   if (!msg) return reply(400, { error: "invalid" });
 
-  // Who hears it: money news, special requests and poll votes go to the
-  // tour's Managers; flowers, a payment and a buyout go to the one person
-  // they are about (who must be on the tour); everything else goes to
-  // everyone on the tour. Senders never notify themselves.
+  // Who hears it: money news, poll votes and paid back asks go to the tour's
+  // Managers; flowers, a payment and a buyout go to the one person they are
+  // about (who must be on the tour); everything else, a special request
+  // included, goes to everyone on the tour. Senders never notify themselves.
   const PERSONAL = ["flowers", "payment", "buyout"];
   let targets: string[];
-  if (type === "vote") {
+  if (type === "vote" || type === "reimburse") {
     targets = [...managers].filter((id) => id !== senderId);
   } else if (PERSONAL.includes(type)) {
     const to = String(data.to ?? "");
@@ -286,58 +546,14 @@ Deno.serve(async (req) => {
       .map(([id]) => id)
       .filter((id) => id && id !== senderId);
   } else {
-    targets = [...memberIds].filter((id) => id !== senderId && (!FOR_MANAGERS.includes(type) || managers.has(id)));
+    targets = broadTargets(type, [...memberIds], [...managers], senderId);
   }
   if (!targets.length) return reply(200, { sent: 0 });
-  const { data: subs } = await admin.from("push_subs")
-    .select("endpoint, p256dh, auth, prefs, user_id")
-    .in("user_id", targets);
-
-  let sent = 0;
-  const dead: string[] = [];
-  for (const sub of subs ?? []) {
-    const prefs = (sub.prefs ?? {}) as Record<string, unknown>;
-    // Each phone picks CREW, ARTIST or ALL, plus SOLD OUT and MERCH NUMBERS.
-    // A phone set up before those choices counts as ALL.
-    const group = String(prefs.group ?? "all");
-    if (type === "alert") {
-      // An alert ignores preferences: it is the Managers' siren.
-    } else if (type === "request") {
-      // A request waiting on an answer: on unless the Manager's phone said no.
-      if (prefs.requests === false) continue;
-    } else if (type === "soldout") {
-      if (prefs.soldout !== true) continue;
-    } else if (type === "merch") {
-      if (prefs.merchnums !== true) continue;
-    } else if (type === "green") {
-      // Only the tour's Managers get it (above): on unless their phone said no.
-      if (prefs.green === false) continue;
-    } else if (type === "vote" || type === "chat") {
-      // Brand new, and chatty: off until the phone asks for it.
-      if (prefs[type] !== true) continue;
-    } else if (type === "wearebus") {
-      // It reaches only the person driving, whose job it answers: on
-      // unless their phone said no.
-      if (prefs.wearebus === false) continue;
-    } else if (type === "buyoutask") {
-      // Rides the phone's buyout switch: on unless it said no.
-      if (prefs.buyout === false) continue;
-    } else if (type === "flowers" || type === "payment" || type === "buyout" || type === "sheet") {
-      // About you alone (or the day sheet everyone already got): on unless
-      // the phone switched it off.
-      if (prefs[type] === false) continue;
-    } else if (group !== "all") continue;   // guest list: ALL only
-    try {
-      await webpush.sendNotification(
-        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-        JSON.stringify({ title: msg.title, body: msg.body, tourId }),
-      );
-      sent += 1;
-    } catch (e) {
-      const code = (e as { statusCode?: number }).statusCode ?? 0;
-      if (code === 404 || code === 410) dead.push(sub.endpoint); // device gone
-    }
+  // (Each paid back ask once, however often the phone says it.)
+  if (reimbKey) {
+    if (!(await firstTime(reimbKey))) return reply(200, { sent: 0, said: true });
+    await tidyKeys();
   }
-  if (dead.length) await admin.from("push_subs").delete().in("endpoint", dead);
+  const sent = await deliver(targets, (p) => tourGate(type, p), { title: msg.title, body: msg.body, tourId });
   return reply(200, { sent });
 });

@@ -5123,8 +5123,10 @@ shim = r"""<script>
     dmSend: function (uid, body) {
       var H = window.__harness; if (!H.dms) window.GR_BACKEND.dmThreads();
       if (H.dmFail) return Promise.reject(new Error('offline'));
-      H.dms.push({ id: 'm' + Date.now(), from: 'u-devin', to: uid, body: body, at: new Date().toISOString(), read: false });
-      return Promise.resolve();
+      var mid = 'm' + Date.now();
+      H.dms.push({ id: mid, from: 'u-devin', to: uid, body: body, at: new Date().toISOString(), read: false });
+      // (As live: the new message's id, which the app hands to notify as ['dm', { id }].)
+      return Promise.resolve(mid);
     },
     dmRead: function (uid) { var H = window.__harness; (H.dms || []).forEach(function (m) { if (m.from === uid) m.read = true; }); H.dmReads = (H.dmReads || 0) + 1; return Promise.resolve(); },
     dmWatch: function (fn) { window.__harness.dmPoke = fn; },
@@ -5221,12 +5223,24 @@ shim = r"""<script>
                                 kind's key (loadin, soundcheck, vip, lastcall,
                                 stage, stage30, loadout, buscall, sheet,
                                 soldout, requests, vote, flowers, chat,
-                                payment, buyout, green, received, merchnums)
-                                beside the old group.
+                                payment, buyout, wearebus, claims, joinreqs,
+                                dms, guests, green, received, merchnums,
+                                reimburse) beside the old group.
          __harness.pushOn       whether this phone is signed up.
          __harness.notified     every sendNotify the app fired: [type, data],
                                 now including vote, flowers, chat, payment,
-                                sheet and buyout.
+                                sheet and buyout; and since 2026-10-17
+                                ['claim', { id: <artist id> }] after a claim
+                                is sent, ['joinreq', { id: <artist id> }]
+                                after an ask to be listed that waits on an
+                                answer (not one listed at once) and ['dm',
+                                { id: <message id> }] after a message (those
+                                three sent with no tour), and ['reimburse',
+                                { id: <ask id> }] after a paid back ask.
+         __harness.pushPrefs = { group: 'crew' }   a phone saved before the
+                                guest list had its own switch: the sheet
+                                opens with Guest list Off (ALL only, as the
+                                server reads it); { group: 'all' } opens it On.
          __harness.pushSupported = false   the browser cannot (an iPhone
                                 Safari tab): the sign-up screen stays away and
                                 the sheet explains the home screen. */
