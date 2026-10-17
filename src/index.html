@@ -2120,9 +2120,14 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .cl-list .venue { font-size: 12px; }
 .cl-list .amt { font-family: var(--font); font-size: 13px; font-weight: 600; }
 .cl-done .show-row { opacity: .6; }
+/* A merch cash category suggested from the details typed. */
+.cl-sug { margin: -6px 0 14px; }
+.cl-sug .rv-flag { margin-right: 6px; font-size: 11px; padding: 1px 7px; }
 .sel-wrap { position: relative; }
 .sel-wrap select.input { padding-right: 38px; }
 .sel-wrap > .ic { position: absolute; right: 14px; top: 50%; transform: translateY(-50%) rotate(90deg); pointer-events: none; color: var(--ink-2); display: inline-flex; }
+/* (The picker's chevron goes while "Add someone new" is open in its place.) */
+.sel-wrap:has(.cw-new) > .ic { display: none; }
 .cal-past { gap: 6px; }
 .cal-past > .ic { display: inline-flex; transform: rotate(90deg); transition: transform .2s; }
 .cal-past-wrap.open .cal-past > .ic { transform: rotate(-90deg); }
@@ -3603,6 +3608,15 @@ button.fl-row { cursor: pointer; }
 /* Card charges under Crew: which crew member. Band and Crew headings in the crew sheets. */
 .rv-who { margin-top: 6px; }
 .rv-who select { width: 100%; }
+.cwpick { display: block; }
+.rv-who-n .rv-flag { margin-right: 6px; }
+/* "Add someone new" in a crew picker: their name, what they do, Add. */
+.cw-new { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.cw-new-t { margin: 0; font-size: 12px; color: var(--ink-3); }
+.cw-new .input { width: 100%; }
+.cw-new-acts { display: flex; align-items: center; gap: 8px; }
+.rv-sheet .cw-new .input.sm { height: 34px; font-size: 13px; padding: 0 9px; border-radius: 9px; }
+.rv-sheet .cw-new-acts .btn.sm { min-height: 34px; padding: 0 12px; font-size: 12.5px; border-radius: 9px; }
 .cw-head { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
 .iv-part { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 8px; }
 .iv-part-q { margin: 0; font-size: 13px; font-weight: 700; color: var(--ink); }

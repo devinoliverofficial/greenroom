@@ -1055,6 +1055,154 @@
     var p = x && x.crewId && tour && isObj(tour.crew) ? tour.crew[x.crewId] : null;
     return isObj(p) ? p : null;
   }
+  /* Someone the band pays who is not on the tour (Devin, 2026-10-17: "people
+     we are paying that are not on tour but help us on tour from time to
+     time"). They sit in doc.crew like anyone paid, so a payment to them counts
+     on the Crew line by the same rules, with helper: true. They plan no pay,
+     and the tour's own lists (its crew list, its buyouts) leave them out. */
+  function isHelper(p) { return !!(p && p.helper === true); }
+
+  /* ---------------- Who a Crew line paid ----------------
+     Devin, 2026-10-17: "MOST of the time there is either a last name
+     associated with last 4 digits of card number ... not just suggest crew
+     but also suggest which crew member". A bank's pay line reads like "Online
+     transfer to CHK 2264 ; Mora" or "Zelle payment to Jeff Mora for "week 2";
+     Conf# a3x9". Its clues: the four digits of the account it went to (d:),
+     the name words (w:), and the last four of the card or account it came
+     from (c:). The memo in quotes and the confirmation code say nothing about
+     who. These only ever suggest: nothing is filed by them. */
+  var WHO_STOP = {};
+  ('zelle venmo paypal cashapp cash app square sqc payment payments pmt paid pay transfer transfers xfer trnsfr trf ' +
+   'online banking bank mobile web internet ach wire direct instant sent send to from for the and chk chkg checking ' +
+   'sav savings acct account card crd debit credit purchase pos ref conf confirmation des indn ppd ccd inc llc ltd corp ' +
+   'company america bofa boa amex chase wells fargo visa mastercard express american business gold deposit withdrawal ' +
+   'fee fees request money apple google recurring memo week weeks tour per diem diems rent merch refund return ' +
+   'reversal via with your you our new misc other jr sr ii iii').split(' ').forEach(function (w) { WHO_STOP[w] = true; });
+  // A person's name as it is matched: lower case, single spaces.
+  function whoKey(name) { return String(name == null ? '' : name).trim().toLowerCase().replace(/\s+/g, ' '); }
+  // A line with its memo and its confirmation code taken out.
+  function whoText(text) {
+    return String(text == null ? '' : text)
+      .replace(/["“”][^"“”]*(["“”]|$)/g, ' ')
+      .replace(/\b(conf(irmation)?|ref)\b\s*(#|no\.?)?\s*:?\s*\S*/gi, ' ');
+  }
+  // The words of a line that can be a name: letters only, three or more, none of the bank's own words.
+  function nameWords(text) {
+    var out = [];
+    whoText(text).split(/[\s;,|\/()*&+]+/).forEach(function (tok) {
+      if (/[0-9]/.test(tok)) return;
+      tok.toLowerCase().replace(/['’.]/g, '').replace(/[^a-z-]/g, '').split('-').forEach(function (w) {
+        if (w.length >= 3 && !WHO_STOP[w] && out.indexOf(w) < 0) out.push(w);
+      });
+    });
+    return out.slice(0, 8);
+  }
+  // line: { merchant, account }. ['d:2264', 'w:mora', 'c:5370'].
+  function lineClues(line) {
+    var l = isObj(line) ? line : {}, out = [], m;
+    var digits = /(?:^|[^a-z0-9])(\d{4})(?![a-z0-9])/gi, text = whoText(l.merchant);
+    while ((m = digits.exec(text))) { if (out.indexOf('d:' + m[1]) < 0) out.push('d:' + m[1]); }
+    nameWords(l.merchant).forEach(function (w) { out.push('w:' + w); });
+    var card = /(\d{4})\D*$/.exec(String(l.account == null ? '' : l.account));
+    if (card) out.push('c:' + card[1]);
+    return out;
+  }
+  /* What a line taught about who it paid. mem: { clues: { <clue>: { who, name,
+     id, n, off, at } } }; person: { id, name } when it was filed under Crew for
+     them, null when it was filed any other way. A person's clue counts up
+     each time; a different person takes the clue over (a correction is what
+     is learned); a line filed any other way counts against the clues it
+     already has (off), and starts none. Kept to the newest 400 clues. */
+  function learnWho(mem, clues, person, now) {
+    var out = { clues: {} }, had = isObj(mem) && isObj(mem.clues) ? mem.clues : {};
+    Object.keys(isObj(mem) ? mem : {}).forEach(function (k) { if (k !== 'clues') out[k] = mem[k]; });
+    Object.keys(had).forEach(function (k) { if (isObj(had[k])) out.clues[k] = Object.assign({}, had[k]); });
+    var who = person ? whoKey(person.name) : '', at = num(now);
+    (clues || []).forEach(function (c) {
+      var rec = out.clues[c];
+      if (!who) { if (rec) { rec.off = num(rec.off) + 1; rec.at = at; } return; }
+      if (rec && rec.who === who) {
+        rec.n = num(rec.n) + 1; rec.at = at;
+        if (person.id) rec.id = String(person.id);
+        rec.name = String(person.name).trim();
+      } else {
+        out.clues[c] = { who: who, name: String(person.name).trim(), id: String(person.id || ''), n: 1, off: rec ? num(rec.off) : 0, at: at };
+      }
+    });
+    var keys = Object.keys(out.clues);
+    if (keys.length > 400) {
+      keys.sort(function (a, b) { return num(out.clues[b].at) - num(out.clues[a].at); })
+        .slice(400).forEach(function (k) { delete out.clues[k]; });
+    }
+    return out;
+  }
+  /* The person the clues point to: { key, name, id }, or null. Digits of the
+     account it went to say who on their own. The card it came from counts
+     only where cardOk(last4, key) says that card pays that person and nothing
+     else. Name words count for a person whose words are more than half of the
+     line's name words (so "John" alone never picks John Smith for John Doe).
+     Clues that point to two people suggest nobody. */
+  function whoFromClues(mem, clues, cardOk) {
+    var all = isObj(mem) && isObj(mem.clues) ? mem.clues : {};
+    var live = function (c) { var r = all[c]; return isObj(r) && r.who && num(r.n) > num(r.off) ? r : null; };
+    var votes = [], words = [], byWho = {};
+    (clues || []).forEach(function (c) {
+      var r = live(c), kind = c.slice(0, 2);
+      if (kind === 'w:') words.push(c);
+      if (!r) return;
+      if (kind === 'd:') votes.push(r);
+      else if (kind === 'c:') { if (cardOk && cardOk(c.slice(2), r.who)) votes.push(r); }
+      else if (kind === 'w:') (byWho[r.who] = byWho[r.who] || { r: r, k: 0 }).k += 1;
+    });
+    Object.keys(byWho).forEach(function (w) { if (byWho[w].k * 2 > words.length) votes.push(byWho[w].r); });
+    if (!votes.length) return null;
+    var key = votes[0].who;
+    if (votes.some(function (r) { return r.who !== key; })) return null;
+    var best = votes.reduce(function (a, b) { return num(b.at) > num(a.at) ? b : a; });
+    return { key: key, name: best.name, id: best.id };
+  }
+  /* Does a line read like money sent to a person (a Zelle, a Venmo, a
+     transfer, a wire, an account number)? Only such a line is matched to a
+     last name with nothing learned: "King Soopers" is groceries, whoever on
+     the crew is called King. */
+  function looksLikePay(text) {
+    var s = whoText(text);
+    return /\b(zelle|venmo|paypal|cash ?app|transfer|xfer|trnsfr|wire|payment to|pmt to|sent to|chk)\b/i.test(s) ||
+      /(?:^|[^a-z0-9])\d{4}(?![a-z0-9])/i.test(s);
+  }
+  /* With nothing learned: the one person on the list whose last name is a word
+     of the line (people: rows with a name). A name of one word has no last
+     name to go by; two people with that last name suggest nobody. */
+  function whoByLastName(words, people) {
+    var hits = [];
+    (people || []).forEach(function (p) {
+      var parts = String(p && p.name || '').toLowerCase().replace(/['’.]/g, '').split(/[^a-z-]+/).filter(Boolean);
+      while (parts.length > 1 && /^(jr|sr|ii|iii|iv)$/.test(parts[parts.length - 1])) parts.pop();
+      if (parts.length < 2) return;
+      var last = parts[parts.length - 1].split('-').filter(function (x) { return x.length >= 3 && !WHO_STOP[x]; });
+      if (last.length && last.every(function (x) { return (words || []).indexOf(x) >= 0; }) &&
+        !hits.some(function (q) { return whoKey(q.name) === whoKey(p.name); })) hits.push(p);
+    });
+    return hits.length === 1 ? hits[0] : null;
+  }
+  /* The cards whose every charge on these books was Crew pay to one person:
+     { <last four>: <that person's whoKey> }. A card that paid for anything
+     else, or for two people, is ''. (The card a line came from says who only
+     when the books say that card is that person's.) */
+  function cardPayees(tours) {
+    var out = {};
+    (tours || []).forEach(function (t) {
+      rows(t && t.charges).forEach(function (ch) {
+        if (ch.accounted) return;
+        var m = /(\d{4})\D*$/.exec(String(ch.account == null ? '' : ch.account));
+        if (!m) return;
+        var p = ch.category === 'crew' ? crewOf(t, ch) : null, who = p ? whoKey(p.name) : '';
+        if (!(m[1] in out)) out[m[1]] = who;
+        else if (out[m[1]] !== who) out[m[1]] = '';
+      });
+    });
+    return out;
+  }
 
   /* ---------------- My Pay (a crew member's own book) ---------------- */
 
@@ -2742,7 +2890,7 @@
     emptyExpenses: emptyExpenses, emptyCommission: emptyCommission, emptyIncome: emptyIncome,
     normExpenses: normExpenses, normCommission: normCommission,
     vendorNorm: vendorNorm, vendorOf: vendorOf, vendorGroups: vendorGroups,
-    showIncomeTotal: showIncomeTotal, merchTips: merchTips, merchTipsOwed: merchTipsOwed, merchTipsPaidCash: merchTipsPaidCash, isDerived: isDerived, DERIVED: DERIVED, crewProjection: crewProjection, isMember: isMember, crewSplit: crewSplit, chargeLine: chargeLine, crewOf: crewOf, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
+    showIncomeTotal: showIncomeTotal, merchTips: merchTips, merchTipsOwed: merchTipsOwed, merchTipsPaidCash: merchTipsPaidCash, isDerived: isDerived, DERIVED: DERIVED, crewProjection: crewProjection, isMember: isMember, crewSplit: crewSplit, chargeLine: chargeLine, crewOf: crewOf, isHelper: isHelper, whoKey: whoKey, nameWords: nameWords, lineClues: lineClues, learnWho: learnWho, whoFromClues: whoFromClues, whoByLastName: whoByLastName, looksLikePay: looksLikePay, cardPayees: cardPayees, newestFirst: newestFirst, spentOf: spentOf, crewPay: crewPay, payPeriods: payPeriods, payBook: payBook, payStanding: payStanding, MY_PAY_CATS: MY_PAY_CATS, payIncome: payIncome, MY_PAY_INCOME: MY_PAY_INCOME, payBalanceSeries: payBalanceSeries, tourKeyLoose: tourKeyLoose, mergeTourCandidates: mergeTourCandidates, tourKnown: tourKnown, paragraphsAbout: paragraphsAbout, etaText: etaText, wikiCut: wikiCut, parseCsv: parseCsv, readDay: readDay, concertRows: concertRows, concertItems: concertItems, tourDays: tourDays, agencyAdvance: agencyAdvance,
     commissionLine: commissionLine, commissionTotal: commissionTotal,
     commissionBase: commissionBase, commissionBaseLabel: commissionBaseLabel,
 

@@ -144,6 +144,43 @@ shim = r"""<script>
        it offers; for a deposit: words that name no night). __harness.infoFail
        rejects with that code; __harness.infoSlow waits that many ms first.
        A stopped question rejects 'cancelled', as the real reader does. */
+    /* The category for each line of a sorting sheet, asked by itself as the
+       sheet opens (askLineCats). Every prompt is kept in __harness.catAsks.
+       The answer is __harness.catAnswer when set (an object from line number
+       to key, or a function (lines) -> that object); else each line by its
+       name: a travel stop or a gas station is 'gas', a hotel 'hotels', a bus
+       'bus', a music shop 'supplies', when the prompt offers that key, and
+       anything else null. __harness.catSlow (or ?catslow=1500) waits that
+       many ms first, default 700, so the Suggested mark is seen arriving;
+       __harness.catFail rejects with that code. */
+    if (/^CHARGE CATEGORIES\./.test(String(prompt))) {
+      var Hc = window.__harness, oc = arguments[1] || {}, ctext = String(prompt);
+      Hc.catAsks = (Hc.catAsks || []).concat([{ prompt: ctext, opts: oc }]);
+      var coffered = {};
+      ((ctext.split('CATEGORIES (key: label)')[1] || '').split('WHAT TO DO')[0]).split('\n').forEach(function (ln) {
+        var mk = /^([a-z0-9-]+): /.exec(ln); if (mk) coffered[mk[1]] = true;
+      });
+      var clines = ((ctext.split('THE LINES')[1] || '').split('About the names')[0]).split('\n').slice(1).filter(Boolean)
+        .map(function (ln) { var parts = ln.split(' | '); return { n: parts[0], name: parts[1] || '' }; });
+      var guess = function (name) {
+        var k = /buc|shell|exxon|love’s|fuel|gas/i.test(name) ? 'gas' : /hotel|marriott|inn\b/i.test(name) ? 'hotels'
+          : /\bbus\b|nightliner/i.test(name) ? 'bus' : /guitar|sweetwater|music/i.test(name) ? 'supplies' : null;
+        return k && coffered[k] ? k : null;
+      };
+      var cans = typeof Hc.catAnswer === 'function' ? Hc.catAnswer(clines) : Hc.catAnswer;
+      if (!cans) { cans = {}; clines.forEach(function (l) { cans[l.n] = guess(l.name); }); }
+      var cslowQ = null; try { cslowQ = /[?&]catslow=(\d{1,5})\b/.exec(String(location.search || '')); } catch (e) { cslowQ = null; }
+      var cwait = Hc.catSlow != null ? Number(Hc.catSlow) : cslowQ ? Number(cslowQ[1]) : 700;
+      return new Promise(function (res, rej) {
+        var stopped = function () { rej(Object.assign(new Error('cancelled'), { code: 'cancelled' })); };
+        if (oc.signal && oc.signal.aborted) { stopped(); return; }
+        var timer = setTimeout(function () {
+          if (Hc.catFail) rej(Object.assign(new Error(String(Hc.catFail)), { code: Hc.catFail }));
+          else res(JSON.parse(JSON.stringify(cans)));
+        }, cwait || 0);
+        if (oc.signal && oc.signal.addEventListener) oc.signal.addEventListener('abort', function () { clearTimeout(timer); stopped(); });
+      });
+    }
     if (/^CHARGE INFO\./.test(String(prompt))) {
       var H = window.__harness, o = arguments[1] || {}, text = String(prompt);
       H.infoAsks = (H.infoAsks || []).concat([{ prompt: text, opts: o }]);
@@ -2432,6 +2469,49 @@ shim = r"""<script>
     ]);
     emit(); H.feedPush();
   };
+  /* WHO A CREW LINE PAID, and the category asked by itself (src/app.js hintWho, askLineCats).
+       payLines()       adds three bank lines on Business Adv Relationship – 5370, the way his real pay lines read:
+                        "Online transfer to CHK 2264 ; Mora" (Jeff Mora's last name: opens under Crew with Jeff
+                        picked, both marked Suggested), "Online transfer to CHK 2264" (no name: suggested only once
+                        the 2264 has been learned, by adding the first under Crew for Jeff and opening the card
+                        again, or by whoSeed() before it is opened), and
+                        "Zelle payment to Sam Okafor" (nobody by that name: the place to try + Add someone new).
+                        Or open the page with ?paylines.
+       whoSeed()        writes the memory as if the first line had been added for Jeff (account 2264, the word mora).
+       whoMemory()      the memory as it is now (labels 'who:i-see-stars').
+       learn(name, key) a merchant learned under a category, as filing one teaches it: learn('Shell', 'gas'), then the
+                        merch cash log's Spent form suggests Gas when Shell is typed in Expense details.
+       tourDoc(id)      a copy of a tour as the fake database holds it (a helper's row, a charge's crewId).
+       catForget()      forgets every category asked about on this browser (and the day's count), so the next sheet
+                        asks again and the Suggested marks are seen arriving.
+     A helper added from a picker sits in tours.t1.crew with helper: true; __harness.tourDoc('t1') shows it. */
+  window.__harness.payLines = function () {
+    var H = window.__harness, F = H.feed, acct = F.accounts[2].name;
+    if (F.items.some(function (x) { return x.id === 'pl1'; })) return;
+    F.items = F.items.concat([
+      { id: 'pl1', tour_id: 't1', date: daysAgo(1), merchant: 'Online transfer to CHK 2264 ; Mora', amount: 750, category: null, account: acct, why: 'Transfer' },
+      { id: 'pl2', tour_id: 't1', date: daysAgo(2), merchant: 'Online transfer to CHK 2264', amount: 650, category: null, account: acct, why: 'Transfer' },
+      { id: 'pl3', tour_id: 't1', date: daysAgo(2), merchant: 'Zelle payment to Sam Okafor', amount: 300, category: null, account: acct, why: 'Zelle' }
+    ]);
+    emit(); H.feedPush();
+  };
+  window.__harness.whoSeed = function () {
+    var now = Date.now(), jeff = { who: 'jeff mora', name: 'Jeff Mora', id: 'jm', n: 1, off: 0, at: now };
+    labels['who:i-see-stars'] = { kind: 'crewClues', artist: 'I See Stars',
+      clues: { 'd:2264': Object.assign({}, jeff), 'w:mora': Object.assign({}, jeff) } };
+    setTimeout(emitLabels, 0);
+  };
+  window.__harness.learn = function (merchant, category) {
+    var key = window.GRS.normMerchant(merchant), had = labels[key] || { merchant: merchant, cats: {} };
+    had.cats[category] = (had.cats[category] || 0) + 1; labels[key] = had;
+    setTimeout(emitLabels, 0);
+  };
+  window.__harness.whoMemory = function () { return labels['who:i-see-stars'] ? JSON.parse(JSON.stringify(labels['who:i-see-stars'])) : null; };
+  window.__harness.tourDoc = function (id) { return tours[id] ? JSON.parse(JSON.stringify(tours[id])) : null; };
+  window.__harness.catForget = function () {
+    try { localStorage.removeItem('gr-ci-cat'); localStorage.removeItem('gr-ci-cat-day'); } catch (e) { /* nothing kept */ }
+  };
+  try { if (/[?&]paylines\b/.test(String(location.search || ''))) setTimeout(function () { window.__harness.payLines(); }, 0); } catch (e) { /* no address to read */ }
   window.__harness.goneTour = function () {
     var H = window.__harness, F = H.feed;
     tours.t9 = { name: 'Cancelled run', artist: tours.t1.artist, setupDone: true, createdAt: 4, deletedAt: Date.now() - 864e5, expenses: {}, charges: {}, shows: {} };

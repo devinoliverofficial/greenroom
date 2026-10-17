@@ -2590,6 +2590,94 @@
       var hired = { crew: { a: { name: 'A', title: 'Artist', pay: 1000 }, d: { name: 'Connor', title: 'Band', pay: 800 } }, charges: { h: { amount: 300, category: 'crew', crewId: 'd' } } };
       eq(line(G.calc(hired), 'crew').projected, 800); eq(line(G.calc(hired), 'crew').paid, 300); eq(line(G.calc(hired), 'members').projected, 1000); eq(G.chargeLine(hired, hired.charges.h), 'crew');
     });
+    test('a helper not on the tour: their pay counts on Crew like anyone, and adding one changes no number', function () {
+      var line = function (c, k) { return c.lines.filter(function (l) { return l.key === k; })[0]; };
+      var t = { crew: { a: { name: 'Ann Lee', title: 'Artist', pay: 1000 }, c: { name: 'Cal Ruiz', title: 'FOH', pay: 600 } },
+        charges: { x: { amount: 200, category: 'crew', crewId: 'c' }, y: { amount: 75, category: 'gas' } } };
+      var before = G.calc(t);
+      var t2 = JSON.parse(JSON.stringify(t));
+      t2.crew.h = { name: 'Mo Diaz', title: 'Merch help', member: false, helper: true, createdAt: 5 };
+      var after = G.calc(t2);
+      eq(typeof before.out, 'number');
+      eq(after.out, before.out, 'a helper plans no pay: the total does not move');
+      eq(after.net, before.net);
+      eq(line(after, 'crew').projected, line(before, 'crew').projected);
+      eq(G.crewProjection(t2), G.crewProjection(t));
+      t2.charges.z = { amount: 150, category: 'crew', crewId: 'h' };
+      eq(G.chargeLine(t2, t2.charges.z), 'crew', 'pay to a helper is on the Crew line');
+      eq(G.crewOf(t2, t2.charges.z).name, 'Mo Diaz', 'and has a name on it');
+      eq(line(G.calc(t2), 'crew').paid, 350);
+      eq(G.isHelper(t2.crew.h), true); eq(G.isHelper(t2.crew.c), false); eq(G.isHelper({ helper: 'yes' }), false); eq(G.isHelper(null), false);
+    });
+    test('lineClues: the account digits, the name words and the card, never the memo or the code', function () {
+      eq(G.lineClues({ merchant: 'Online transfer to CHK 2264 ; Mora', account: 'Business Adv Relationship – 5370' }).join(','),
+        'd:2264,w:mora,c:5370');
+      eq(G.lineClues({ merchant: 'Zelle payment to Jeff Mora for "WEEK 2 PAYMENT $1620"; Conf# a3aa706aa' }).join(','), 'w:jeff,w:mora',
+        'the memo and the confirmation code are left out');
+      eq(G.lineClues({ merchant: 'Zelle payment to O’Brien-Hale', account: 'Amex Business Gold ··1008' }).join(','), 'w:obrien,w:hale,c:1008');
+      eq(G.lineClues({ merchant: 'AMAZON MKTPL*2X4Y67ZQ3' }).join(','), 'w:amazon,w:mktpl', 'digits inside a code are no account');
+      eq(G.lineClues(null).length, 0);
+      eq(G.nameWords('Venmo payment to Smith Jr').join(','), 'smith');
+    });
+    test('learnWho and whoFromClues: learned digits and names pick the person; a correction is what is learned', function () {
+      var jeff = { id: 'jm', name: 'Jeff Mora' }, sam = { id: 's1', name: 'Sam Ortiz' };
+      var a = G.lineClues({ merchant: 'Online transfer to CHK 2264 ; Mora' });
+      var m = G.learnWho(null, a, jeff, 10);
+      var hit = G.whoFromClues(m, G.lineClues({ merchant: 'Online transfer to CHK 2264' }));
+      eq(hit && hit.name, 'Jeff Mora', 'the account digits alone');
+      eq(hit.id, 'jm');
+      eq(G.whoFromClues(m, G.lineClues({ merchant: 'Zelle to Mora' })).key, 'jeff mora', 'the last name alone');
+      eq(G.whoFromClues(m, G.lineClues({ merchant: 'Zelle to Jim Mora Jones' })), null, 'one name word of three is not enough');
+      eq(G.whoFromClues(m, G.lineClues({ merchant: 'Shell Oil 57444' })), null, 'nothing learned, nothing said');
+      // Corrected: the same clues filed for Sam now point to Sam.
+      var m2 = G.learnWho(m, a, sam, 20);
+      eq(G.whoFromClues(m2, G.lineClues({ merchant: 'Online transfer to CHK 2264' })).name, 'Sam Ortiz', 'the correction wins');
+      eq(m.clues['d:2264'].who, 'jeff mora', 'the memory handed in is not changed');
+      // Filed some other way: the clue counts against itself and stops suggesting.
+      var m3 = G.learnWho(m, G.lineClues({ merchant: 'Mora Hardware' }), null, 30);
+      eq(m3.clues['w:mora'].off, 1); eq(m3.clues['w:hardware'], undefined, 'a line filed elsewhere starts no clue');
+      eq(G.whoFromClues(m3, G.lineClues({ merchant: 'Zelle to Mora' })), null, 'once as often filed elsewhere: no guess');
+      // Two clues that disagree suggest nobody.
+      var m4 = G.learnWho(m, G.lineClues({ merchant: 'Transfer to CHK 7777' }), sam, 40);
+      eq(G.whoFromClues(m4, G.lineClues({ merchant: 'Transfer to CHK 7777 ; Mora' })), null);
+      eq(G.learnWho({ kind: 'crewClues', artist: 'X' }, [], null, 1).artist, 'X', 'what else the memory holds is kept');
+    });
+    test('whoFromClues: the card it came from counts only where the books say that card pays that person', function () {
+      var jeff = { id: 'jm', name: 'Jeff Mora' };
+      var m = G.learnWho(null, ['c:1008'], jeff, 1);
+      eq(G.whoFromClues(m, ['c:1008']), null, 'no word from the books, no guess');
+      eq(G.whoFromClues(m, ['c:1008'], function (d, who) { return d === '1008' && who === 'jeff mora'; }).name, 'Jeff Mora');
+      var books = [{ crew: { jm: { name: 'Jeff Mora' } }, charges: {
+        a: { account: 'Card – 4444', category: 'crew', crewId: 'jm', amount: 50 },
+        b: { account: 'Card – 4444', category: 'crew', crewId: 'jm', amount: 60 },
+        c: { account: 'Amex ··1008', category: 'crew', crewId: 'jm', amount: 70 },
+        d: { account: 'Amex ··1008', category: 'gas', amount: 30 },
+        e: { account: 'Card – 5555', category: 'crew', amount: 30 } } }];
+      var pay = G.cardPayees(books);
+      eq(pay['4444'], 'jeff mora', 'every charge on it was his pay');
+      eq(pay['1008'], '', 'the main card pays for gas too');
+      eq(pay['5555'], '', 'pay with no name says nobody');
+    });
+    test('whoByLastName: the one person whose last name is in the line', function () {
+      var people = [{ id: 'jm', name: 'Jeff Mora' }, { id: 'c', name: 'Connor' }, { id: 'a', name: 'Ann Lee' }, { id: 'b', name: 'Bo Lee' },
+        { id: 'r', name: 'Rae Smith-Jones' }, { id: 'j', name: 'Al Day Jr.' }];
+      eq((G.whoByLastName(G.nameWords('Online transfer to CHK 2264 ; Mora'), people) || {}).id, 'jm');
+      eq(G.whoByLastName(G.nameWords('Zelle payment to Connor'), people), null, 'a one-word name has no last name');
+      eq(G.whoByLastName(G.nameWords('Zelle payment to Lee'), people), null, 'two people with that last name: nobody');
+      eq((G.whoByLastName(G.nameWords('Venmo Smith-Jones'), people) || {}).id, 'r');
+      eq(G.whoByLastName(G.nameWords('Smith Hardware'), people), null, 'half of a two-part last name is not it');
+      eq((G.whoByLastName(G.nameWords('Zelle payment to Al Day'), people) || {}).id, 'j', 'Jr. is not the last name');
+      eq(G.whoByLastName(['mora'], [{ id: 'x', name: 'Jeff Mora' }, { id: 'y', name: 'jeff  mora' }]).id, 'x', 'the same person listed twice is one');
+    });
+    test('looksLikePay: only a line that reads like money sent to a person goes by a last name', function () {
+      eq(G.looksLikePay('Online transfer to CHK 2264 ; Mora'), true);
+      eq(G.looksLikePay('Zelle payment to Jeff Mora for "rent"; Conf# a3x9'), true);
+      eq(G.looksLikePay('Venmo Smith-Jones'), true);
+      eq(G.looksLikePay('Mora ; 2264'), true, 'an account number');
+      eq(G.looksLikePay('King Soopers'), false, 'groceries, whoever on the crew is called King');
+      eq(G.looksLikePay('Home Depot "transfer"'), false, 'a word in the memo does not count');
+      eq(G.looksLikePay('AMAZON MKTPL*2X4Y67ZQ3'), false);
+    });
     test('etaText says the finder’s time left the way a person would', function () {
       eq(G.etaText(0), '', 'nothing left, nothing said');
       eq(G.etaText(45), 'Almost done.');
