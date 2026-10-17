@@ -4796,7 +4796,7 @@
     // so Montréal and montreal land together).
     var groups = [], slot = {};
     all.forEach(function (x) {
-      var k = G.roadCityKey(x.city);
+      var k = G.roadCityKey(String(x.city || '').split(',')[0]); // one fold per town, whatever the spelling (0171)
       var g = slot[k];
       if (!g) { g = slot[k] = { key: k, city: String(x.city || '').trim() || 'Somewhere', items: [], newest: '' }; groups.push(g); }
       g.items.push(x);
@@ -5003,7 +5003,8 @@
     var B = window.GR_BACKEND;
     city = String(city || '').trim();
     if (!city || !B.tourSpots) return null;
-    var rows = B.tourSpots(tourId, G.roadCityKey(city));
+    // Towns match as towns (0171): the ask carries the town before the comma.
+    var rows = B.tourSpots(tourId, G.roadCityKey(city.split(',')[0]));
     if (!rows || !rows.length) return null;
     return h('section', { class: 'ds-sec sp-rec' },
       h('h3', { class: 'ds-sec-h' }, 'PLACES RECOMMENDED BY TOUR'),

@@ -1231,7 +1231,7 @@ shim = r"""<script>
   // A row the way the real backend hands one over (the key worked out from
   // the city with the one rule, as the database's trigger keeps it).
   function spotOut(r) {
-    return { id: r.id, tourId: r.tourId || null, city: r.city, cityKey: window.GR.roadCityKey(r.city),
+    return { id: r.id, tourId: r.tourId || null, city: r.city, cityKey: window.GR.roadCityKey(String(r.city).split(',')[0]),
       name: r.name, kind: r.kind, note: r.note || '', createdAt: r.createdAt };
   }
   window.__harness.spots = function () {
@@ -2984,7 +2984,7 @@ shim = r"""<script>
       var H = window.__harness;
       if (H.spotsOff) return null;
       return (H.spotRows || []).filter(function (r) {
-        return r.tourId === tourId && window.GR.roadCityKey(r.city) === cityKey;
+        return r.tourId === tourId && window.GR.roadCityKey(String(r.city).split(',')[0]) === cityKey;
       }).map(function (r) {
         var it = spotOut(r);
         it.userId = r.userId;
@@ -3005,7 +3005,7 @@ shim = r"""<script>
       var k = window.GR.roadCityKey(String(near || '').split(',')[0]);
       if (!k) return [];
       return (H.followSpotRows || []).filter(function (r) {
-        return window.GR.roadCityKey(r.city) === k;
+        return window.GR.roadCityKey(String(r.city).split(',')[0]) === k;
       }).slice().sort(function (a, b) {
         return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
       }).map(function (r) {
