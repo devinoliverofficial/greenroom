@@ -2342,6 +2342,8 @@ shim = r"""<script>
                         Or open the page with ?paylines.
        whoSeed()        writes the memory as if the first line had been added for Jeff (account 2264, the word mora).
        whoMemory()      the memory as it is now (labels 'who:i-see-stars').
+       learn(name, key) a merchant learned under a category, as filing one teaches it: learn('Shell', 'gas'), then the
+                        merch cash log's Spent form suggests Gas when Shell is typed in Expense details.
        tourDoc(id)      a copy of a tour as the fake database holds it (a helper's row, a charge's crewId).
        catForget()      forgets every category asked about on this browser (and the day's count), so the next sheet
                         asks again and the Suggested marks are seen arriving.
@@ -2360,6 +2362,11 @@ shim = r"""<script>
     var now = Date.now(), jeff = { who: 'jeff mora', name: 'Jeff Mora', id: 'jm', n: 1, off: 0, at: now };
     labels['who:i-see-stars'] = { kind: 'crewClues', artist: 'I See Stars',
       clues: { 'd:2264': Object.assign({}, jeff), 'w:mora': Object.assign({}, jeff) } };
+    setTimeout(emitLabels, 0);
+  };
+  window.__harness.learn = function (merchant, category) {
+    var key = window.GRS.normMerchant(merchant), had = labels[key] || { merchant: merchant, cats: {} };
+    had.cats[category] = (had.cats[category] || 0) + 1; labels[key] = had;
     setTimeout(emitLabels, 0);
   };
   window.__harness.whoMemory = function () { return labels['who:i-see-stars'] ? JSON.parse(JSON.stringify(labels['who:i-see-stars'])) : null; };
