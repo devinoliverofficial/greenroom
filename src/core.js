@@ -567,6 +567,45 @@
     var artists = Object.keys(paid).filter(function (k) { return isObj(paid[k]) && paid[k].artist; }).length;
     return Math.min(total, round(num(tr.perHead) * artists * 100) / 100);
   }
+  /* Buyouts start fresh on 2026-10-16 (Devin, that day: "our tour is
+     playing catch up these can go for now and start fresh on today"). A
+     fixed day, not a rolling today: a buyout logged yesterday and still not
+     handed out keeps counting until it is. */
+  var BUYOUT_FROM = '2026-10-16';
+  // The shows whose buyout money is logged, from the fresh start on, oldest first.
+  function buyoutShows(t) {
+    return rows(t && t.shows).filter(function (sh) {
+      return !!parseDay(sh.date) && sh.date >= BUYOUT_FROM && num(isObj(sh.income) ? sh.income.buyouts : 0) > 0;
+    }).sort(byDate);
+  }
+  // A job title that says Tour manager: any one of its comma-separated roles, capitals aside.
+  function tourManagerTitle(title) {
+    return String(title || '').split(',').some(function (r) { return r.trim().toLowerCase() === 'tour manager'; });
+  }
+  /* Who keeps a tour's buyout track (Devin, 2026-10-17: "The only person
+     who sees the track in the buyout alert button is the tour manager"):
+     the accounts on the crew list that may write the ticks (the tour's
+     creator, or a Manager) whose title, wherever a title is kept, says Tour
+     manager. When nobody is titled so, the creator and the Managers keep
+     it, or nobody could. list: the crew list as the backend reads it. */
+  function buyoutTrackers(list) {
+    var leads = (Array.isArray(list) ? list : []).filter(function (m) {
+      return !!(m && m.userId && (m.owner || (m.role === 'editor' && m.manager)));
+    });
+    var titled = leads.filter(function (m) {
+      return [m.tourRole, isObj(m.base) ? m.base.tourRole : null].concat(Array.isArray(m.titles) ? m.titles : [])
+        .some(tourManagerTitle);
+    });
+    var seen = {};
+    var ids = (titled.length ? titled : leads).map(function (m) { return m.userId; })
+      .filter(function (u) { if (seen[u]) return false; seen[u] = true; return true; });
+    return { titled: titled.length > 0, ids: ids };
+  }
+  // The buyout shows one person is still waiting on. got: { 'showId|userId': true }.
+  function buyoutOwedTo(shows, got, userId) {
+    var g = isObj(got) ? got : {};
+    return (shows || []).filter(function (sh) { return !g[sh.id + '|' + userId]; });
+  }
   // One income stream of a show, as it counts. (The part of a guarantee a
   // venue or a bank kept never arrives, so it's not the show's money.)
   function incomeOf(show, key) {
@@ -2528,6 +2567,8 @@
     TYPED_CATEGORIES: TYPED_CATEGORIES,
     COMMISSION_LINES: COMMISSION_LINES, commissionLines: commissionLines,
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
+    BUYOUT_FROM: BUYOUT_FROM, buyoutShows: buyoutShows, tourManagerTitle: tourManagerTitle,
+    buyoutTrackers: buyoutTrackers, buyoutOwedTo: buyoutOwedTo,
     yearSlice: yearSlice, bookYears: bookYears,
     OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
     OTHER_NOTE_MAX: OTHER_NOTE_MAX, otherNote: otherNote, otherEntryLabel: otherEntryLabel,

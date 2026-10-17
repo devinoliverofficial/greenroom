@@ -40,6 +40,8 @@
   // Buyout ticks (0151): each tour's rows from buyout_tracks, and whether the
   // table is there at all (null until the first ask answers; the answer is the session's).
   var buyoutCache = {}, buyoutAsk = {}, buyoutGen = {}, buyoutKnown = null, buyoutProbing = false;
+  // Buyout pings (0176): the same for buyout_asks, "get me my buyout".
+  var boAskCache = {}, boAskAsk = {}, boAskGen = {}, boAskKnown = null, boAskProbing = false;
   // To Do Lists (0152): each artist's tasks and invited people, and whether
   // the tables are there at all (null until the first ask answers; the
   // answer is the session's). myTodoCache is the profile tab's own read.
@@ -1804,6 +1806,10 @@
           phone: ov.phone || base.phone,
           tourRole: ov.tourRole || base.tourRole,
           base: base,
+          // Every place a title is kept (the edit, their own card, the
+          // invite): the buyout track goes by any of them saying Tour
+          // manager, the way 0176's buyout_trackers does.
+          titles: [ov.tourRole, pr.tour_role, r.tour_role].filter(Boolean).map(roleName),
           joined: !!r.user_id
         });
       });
@@ -2143,6 +2149,35 @@
       }
       var c = buyoutCache[tourId];
       if (c && c.data) c.data = c.data.filter(function (r) { return !(r.showId === showId && r.userId === userId); });
+      emit('tours');
+    },
+    /* Buyout pings (0176). buyoutAsksOn: is buyout_asks there (asked once
+       per session, false until it answers, so the Ping button stays away
+       until the migration is live). buyoutAsks: the pings this account may
+       read on a tour (its own; the Managers read them all), null while
+       first fetched. buyoutAskSend: "get me my buyout" for one show. The
+       database fills in who and when, lets it in only while this account is
+       still untracked on a show with a buyout, keeps one an hour, and pokes
+       the Tour Manager. */
+    buyoutAsksOn: function () {
+      if (boAskKnown === null) boAskProbe();
+      return boAskKnown === true;
+    },
+    buyoutAsks: function (tourId, fresh) {
+      if (boAskKnown !== true) return null;
+      var c = boAskCache[tourId];
+      if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadBoAsks(tourId);
+      return c ? c.data : null;
+    },
+    buyoutAskSend: async function (tourId, showId) {
+      if (!session) throw err('unavailable');
+      var q = await sb.from('buyout_asks').insert({ tour_id: tourId, show_id: showId });
+      if (q.error) {
+        if (tableMissing(q.error)) { boAskKnown = false; emit('tours'); throw err('unavailable'); }
+        throw mapError(q.error);
+      }
+      var c = boAskCache[tourId], me = session.user.id;
+      if (c && c.data) c.data.push({ showId: showId, userId: me, at: new Date().toISOString() });
       emit('tours');
     },
     /* Also in town tonight (0157). cityEventsOn: are the functions there
@@ -3491,8 +3526,40 @@
       else if (tableMissing(q.error)) buyoutKnown = false;
     }, function () { buyoutProbing = false; });
   }
+  // (A 'buyout' poke says the pings moved too: a ping landed for the Tour
+  // Manager, or a tick settled the asker's.)
   function buyoutStale() {
     Object.keys(buyoutCache).forEach(function (k) { buyoutGen[k] = (buyoutGen[k] || 0) + 1; if (buyoutCache[k]) buyoutCache[k].stale = true; });
+    Object.keys(boAskCache).forEach(function (k) { boAskGen[k] = (boAskGen[k] || 0) + 1; if (boAskCache[k]) boAskCache[k].stale = true; });
+  }
+  function boAskProbe() {
+    if (boAskProbing || !session) return;
+    boAskProbing = true;
+    sb.from('buyout_asks').select('tour_id').limit(1).then(function (q) {
+      boAskProbing = false;
+      if (!q.error) { boAskKnown = true; emit('tours'); }
+      else if (tableMissing(q.error)) boAskKnown = false;
+    }, function () { boAskProbing = false; });
+  }
+  function loadBoAsks(tourId) {
+    var gen = boAskGen[tourId] || 0, ask = boAskAsk[tourId];
+    if (ask && ask.gen === gen) return ask;
+    var p = sb.from('buyout_asks').select('show_id, user_id, asked_at').eq('tour_id', tourId)
+      .order('asked_at', { ascending: false }).limit(500)
+      .then(function (q) {
+        if (q.error) {
+          if (tableMissing(q.error)) { boAskKnown = false; delete boAskCache[tourId]; emit('tours'); }
+          return null;
+        }
+        return (q.data || []).map(function (r) { return { showId: r.show_id, userId: r.user_id, at: r.asked_at }; });
+      }).then(function (data) {
+        if (data) boAskCache[tourId] = { data: data, at: Date.now(), stale: gen !== (boAskGen[tourId] || 0) };
+        if (boAskAsk[tourId] === p) delete boAskAsk[tourId];
+        if (data) emit('tours');
+      }, function () { if (boAskAsk[tourId] === p) delete boAskAsk[tourId]; });
+    p.gen = gen;
+    boAskAsk[tourId] = p;
+    return p;
   }
   // A tour's ticks, every row this account may read (the policy cuts them:
   // a Manager sees them all, everyone else their own). Held a minute, asked

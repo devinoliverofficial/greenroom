@@ -3147,22 +3147,33 @@ button.fl-row { cursor: pointer; }
 .pop.on .pop-card { transform: none; opacity: 1; }
 .bo-row { gap: 12px; cursor: pointer; }
 .bo-row .rv-check { margin: 0; }
+/* A ping from someone still waiting, by their name on the Tour Manager's list. */
+.bo-asked { flex: none; padding: 3px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  background: var(--pos-soft); color: var(--pos); }
+/* Your own buyouts: Ping the TM sits small between the show and its word. */
+.bo-mine { gap: 10px; }
+.bo-ping.btn.sm { flex: none; min-height: 32px; padding: 0 10px; font-size: 12.5px; border-radius: 9px; white-space: nowrap; }
+.td-who { margin: 12px 0 4px; text-align: left; }
 .bo-foot { margin: 12px 2px 0; font-size: 14px; color: var(--ink-2); }
 .bo-track { flex: none; }
-/* BUYOUT ALERT: quiet until someone from an earlier show is still owed,
-   then it glows and pulses. */
+/* BUYOUT ALERT: quiet until a buyout is waiting (on the Tour Manager's,
+   anyone's; on everyone else's, their own), then it glows green and pulses. */
 /* Top-left of the Overview's black area, centred on the pencil's line. */
 .bo-wrap { position: absolute; top: 6px; left: 0; z-index: 1; }
 .bo-alert { background: var(--surface-2); color: var(--ink-3); letter-spacing: .06em; }
 .bo-alert.btn.sm { min-height: 24px; padding: 0 9px; gap: 4px; font-size: 10px; font-weight: 700; letter-spacing: .03em; border-radius: 999px; }
 .bo-alert .icon { width: 12px; height: 12px; }
 @media (max-width: 359px) { .bo-alert .icon { display: none; } .bo-alert.btn.sm { padding: 0 7px; font-size: 9px; } }
-.bo-alert.on { background: var(--brand); color: var(--on-brand);
-  box-shadow: 0 0 18px color-mix(in oklab, var(--brand), transparent 35%);
-  animation: bopulse 1.4s ease-in-out infinite; }
+.bo-alert.on { background: var(--pos); color: var(--on-brand);
+  box-shadow: 0 0 18px color-mix(in oklab, var(--pos), transparent 35%);
+  animation: bogreen 1.4s ease-in-out infinite; }
 @keyframes bopulse {
   0%, 100% { transform: scale(1); box-shadow: 0 0 10px color-mix(in oklab, var(--brand), transparent 55%); }
   50% { transform: scale(1.025); box-shadow: 0 0 28px color-mix(in oklab, var(--brand), transparent 15%); }
+}
+@keyframes bogreen {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 10px color-mix(in oklab, var(--pos), transparent 55%); }
+  50% { transform: scale(1.025); box-shadow: 0 0 28px color-mix(in oklab, var(--pos), transparent 15%); }
 }
 @media (prefers-reduced-motion: reduce) { .bo-alert.on { animation: none; } }
 /* Where each logged dollar came from. UNKNOWN is a bug and says so loudly. */
@@ -3401,6 +3412,9 @@ button.fl-row { cursor: pointer; }
 .pay-sum-tab { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; appearance: none; border: 0; border-bottom: 2px solid transparent;
   background: none; padding: 4px 2px 8px; margin: 0; font: inherit; color: var(--ink-2); text-align: left; cursor: pointer; }
 .pay-sum-tab.on { color: var(--ink); border-bottom-color: var(--pos); }
+/* BUYOUTS while your own buyout is waiting: green, glowing, until you are tracked. */
+.pay-sum-tab.bo-lit { color: var(--pos); animation: venueglow 2.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .pay-sum-tab.bo-lit { animation: none; text-shadow: 0 0 10px color-mix(in oklab, var(--pos), transparent 50%); } }
 .pay-sum-k { font-size: 11.5px; font-weight: 800; letter-spacing: .08em; }
 .pay-sum-v { font-size: 20px; font-weight: 700; letter-spacing: -.01em; line-height: 1.15; color: inherit; }
 .pay-page .xs-card { margin-top: 0; overflow: hidden; }

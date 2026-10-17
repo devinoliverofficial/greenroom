@@ -420,6 +420,49 @@
     eq(G.calc(t).incomeBy.buyouts, 40, 'the tour counts the same');
   });
 
+  test('buyouts start fresh on 2026-10-16, and stay owed until each person is tracked', function () {
+    var t = { shows: {
+      a: { date: '2026-10-15', city: 'Oklahoma City, OK', income: { buyouts: 320 } },
+      b: { date: '2026-10-16', city: 'Houston, TX', income: { buyouts: 140 } },
+      c: { date: '2026-10-18', city: 'Austin, TX', income: { buyouts: 0 } },
+      d: { date: '2026-10-17', city: 'Dallas, TX', income: { buyouts: '200' } },
+      e: { date: 'TBA', income: { buyouts: 90 } } } };
+    var shows = G.buyoutShows(t);
+    eq(shows.map(function (s) { return s.id; }).join(','), 'b,d', 'the fresh start day counts, the day before never does, no money no show');
+    eq(G.BUYOUT_FROM, '2026-10-16', 'a fixed day, not a rolling today');
+    var got = { 'b|u1': true, 'd|u2': true };
+    eq(G.buyoutOwedTo(shows, got, 'u1').map(function (s) { return s.id; }).join(','), 'd', 'u1 still waits on Dallas');
+    eq(G.buyoutOwedTo(shows, got, 'u2').map(function (s) { return s.id; }).join(','), 'b', 'u2 still waits on Houston');
+    eq(G.buyoutOwedTo(shows, got, 'u3').length, 2, 'nobody tracked: waits on both');
+    eq(G.buyoutOwedTo(shows, { 'b|u1': true, 'd|u1': true }, 'u1').length, 0, 'tracked everywhere: the glow stops');
+  });
+
+  test('the Tour Manager keeps the buyout track; nobody titled, the creator and Managers do', function () {
+    eq(G.tourManagerTitle('Tour manager'), true, 'his CREW_ROLES spelling');
+    eq(G.tourManagerTitle(' TOUR MANAGER '), true, 'capitals and spaces aside');
+    eq(G.tourManagerTitle('Driver, Tour Manager'), true, 'any of up to six roles');
+    eq(G.tourManagerTitle('Assistant TM / production coordinator'), false, 'an assistant is not the Tour Manager');
+    eq(G.tourManagerTitle('Production manager'), false, 'another manager title');
+    eq(G.tourManagerTitle(null), false, 'no title');
+    var rows = [
+      { owner: true, role: 'owner', userId: 'dev', tourRole: 'Artist' },
+      { owner: false, role: 'editor', manager: true, userId: 'brent', tourRole: 'Artist', base: { tourRole: 'Tour Manager' } },
+      { owner: false, role: 'editor', manager: true, userId: 'jeff', tourRole: 'Artist' },
+      { owner: false, role: 'viewer', manager: false, userId: 'tm2', tourRole: 'Tour manager' },
+      { owner: false, role: 'editor', manager: true, userId: null, tourRole: 'Tour manager' }];
+    var r = G.buyoutTrackers(rows);
+    eq(r.titled, true, 'a Manager whose own card says Tour Manager counts, whatever the list was edited to');
+    eq(r.ids.join(','), 'brent', 'only him: not the creator, not another Manager, not Crew titled so, not an empty seat');
+    rows[1].base.tourRole = 'Artist';
+    rows[2].titles = ['Artist', 'Bass, Tour manager'];
+    eq(G.buyoutTrackers(rows).ids.join(','), 'jeff', 'a title kept on the seat itself counts too');
+    rows[2].titles = null;
+    var f = G.buyoutTrackers(rows);
+    eq(f.titled, false, 'nobody who can write ticks is titled Tour manager');
+    eq(f.ids.join(','), 'dev,brent,jeff', 'the creator and the Managers keep it, Crew never');
+    eq(G.buyoutTrackers(null).ids.length, 0, 'no list yet: nobody');
+  });
+
   test('card logging dates follow the tour, rehearsals or a chosen day', function () {
     var t = { shows: keyed([{ date: '2026-05-10', city: 'A' }, { date: '2026-05-20', city: 'B' }]) };
     eq(G.cardWindow(t), null, 'no dates chosen: nothing is logged');
