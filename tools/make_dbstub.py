@@ -1048,6 +1048,36 @@ shim = r"""<script>
       if (n < 40) setTimeout(function () { openIt(n + 1); }, 250);
     })(0);
   } } catch (e) { /* no address to read */ }
+  /* ---- FOUR SHEETS, MORE SPACIOUS (2026-10-17) ----
+     Devin: "more spacious and clean", with Budget's Expenses rows and the
+     Overview crew list as the yardstick. Each flag opens its sheet itself,
+     the way ?bus does, once the app lends its opener:
+       ?look=spot            Add a spot: City, Name (the place search drops
+                            the card's full width), Kind, Note on one card
+                            of rows, Share with my tour on a card of its own.
+       ?spots&look=spotedit  the first of the test person's spots in the
+                            same sheet, with Delete spot.
+       ?todos&look=todo      I See Stars's To Do List page (what a profile To
+                            Do row opens): each category a card of tall rows
+                            under a quiet heading, the folds quiet.
+       ?supplies&look=supplies   the Harness run's Supplies: open lines on
+                            one card, the ticked ones on their own under
+                            Done, the add bar level at the bottom.
+       ?look=guest           Add a guest for tonight's Austin show: who,
+                            how to reach them and their ticket, each a card.
+     By hand: __harness.openLook('spot') / ('spotedit') /
+     ('todo', artistId, name) / ('supplies', 't1') / ('guest', 't1', 's1'). */
+  try {
+    var lookQ = /[?&]look=(spot|spotedit|todo|supplies|guest)\b/.exec(String(location.search || ''));
+    if (lookQ) (function openLook(n) {
+      if (window.__harness.openLook) {
+        var iss = lookQ[1] === 'todo' ? issPage(false) : null;
+        window.__harness.openLook(lookQ[1], iss ? iss.id : 't1', iss ? iss.name : 's1');
+        return;
+      }
+      if (n < 40) setTimeout(function () { openLook(n + 1); }, 250);
+    })(0);
+  } catch (e) { /* no address to read */ }
   /* ---- BUYOUTS (0151 + 0176): the BUYOUT ALERT, defined (Devin, 2026-10-17) ----
      The database table buyout_tracks is __harness.buyoutTicks here
      ([{ tourId, showId, userId, at }]): one row = this person received the

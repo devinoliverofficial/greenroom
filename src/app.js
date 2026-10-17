@@ -389,6 +389,13 @@
       h('span', { class: 'field-label' }, label), control,
       hint ? h('span', { class: 'hint' }, hint) : null);
   }
+  // The same, as one row of a card (.lf-card): the label in its column on
+  // the left, the field beside it. Only for a single field: a label hands a
+  // tap on its words to its first button, so a row of chips is a plain div.
+  function rowField(label, control, cls) {
+    return h('label', { class: 'row lf-row' + (cls ? ' ' + cls : '') },
+      h('span', { class: 'lf-k' }, label), control);
+  }
   function emptyState(title, body) {
     return h('div', { class: 'empty' }, h('h3', null, title), body ? h('p', null, body) : null);
   }
@@ -4639,9 +4646,9 @@
     }
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, name || 'To Do List'),
+        h('h2', { class: 'sh-title clean' }, name || 'To Do List'),
         box,
-        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+        h('button', { class: 'btn plain block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
       ];
     }, { label: (name || 'The artist') + ' To Do List', cls: 'td-sheet',
       onClose: function () { if (todoSheetLive === draw) todoSheetLive = null; } });
@@ -4880,7 +4887,7 @@
          can land). Nothing shows while an answer is on its way; an empty
          answer shows nothing. Without the search functions the sheet is
          exactly as it always was. */
-      var nameField = field('Name', nameIn);
+      var nameField = rowField('Name', nameIn);
       // The found place last picked (0175): where it is rides the save while
       // the Name still reads the picked name.
       var picked = null;
@@ -4964,12 +4971,13 @@
         nameIn.onkeydown = function (e) {
           if (e.key === 'Escape' && !drop.hidden) { e.preventDefault(); e.stopPropagation(); closeDrop(); }
         };
-        nameField = field('Name', h('div', { class: 'sp-find' }, nameIn, drop));
+        // (The row holds the list, so it drops the card's full width.)
+        nameField = rowField('Name', [nameIn, drop], 'sp-find');
       }
       var noteIn = h('textarea', { class: 'input td-in', rows: 2, maxlength: 240, value: item ? item.note : '',
         placeholder: 'Why it’s worth the walk (optional)', 'aria-label': 'A note' });
-      var shareRow = shareTour ? h('div', { class: 'bus-ask' },
-        h('span', { class: 'bus-ask-l' }, 'Share with my tour'),
+      var shareRow = shareTour ? h('div', { class: 'row lf-row lf-split' },
+        h('span', { class: 'lf-k' }, 'Share with my tour'),
         segmented(['ON', 'OFF'], f.share ? 0 : 1, function (i) { f.share = i === 0; }, 'Share with my tour')) : null;
       async function save(btn) {
         var city = cityIn.value.trim(), name = nameIn.value.trim();
@@ -5000,17 +5008,20 @@
         } catch (x) { busy = false; btn.disabled = false; saveFailed('spot', x); return; }
         closeSheet(); render(true);
       }
+      // Laid out like the Expenses list (Devin, 2026-10-17: "more spacious
+      // and clean"): the place on one card of rows, sharing on its own.
       return [
-        h('h2', { class: 'sh-title' }, item ? 'Edit spot' : 'Add a spot'),
-        h('p', { class: 'sh-sub' }, 'A place worth coming back to next time the run is in town.'),
-        field('City', cityIn),
-        nameField,
-        h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Kind'), kindWrap),
-        field('Note (optional)', noteIn),
-        shareRow,
-        shareRow ? h('p', { class: 'note' }, 'On, everyone on ' + ((tour && tour.name) || 'your tour') +
+        h('h2', { class: 'sh-title clean' }, item ? 'Edit spot' : 'Add a spot'),
+        h('p', { class: 'sh-sub clean' }, 'A place worth coming back to next time the run is in town.'),
+        h('div', { class: 'ledger lf-card lf-short' },
+          rowField('City', cityIn),
+          nameField,
+          h('div', { class: 'row lf-row lf-top lf-chips' }, h('span', { class: 'lf-k' }, 'Kind'), kindWrap),
+          rowField('Note', noteIn, 'lf-top')),
+        shareRow ? h('div', { class: 'ledger lf-card' }, shareRow) : null,
+        shareRow ? h('p', { class: 'note lf-note' }, 'On, everyone on ' + ((tour && tour.name) || 'your tour') +
           ' sees it on the day sheet when the run is in that city. Off, it stays yours alone.') : null,
-        h('div', { class: 'stack', style: 'margin-top:14px' },
+        h('div', { class: 'stack lf-acts' },
           h('button', { class: 'btn primary block', type: 'button', onclick: function (e) { save(e.currentTarget); } }, item ? 'Save' : 'Add spot'),
           item && B.spotDrop ? h('button', { class: 'linkbtn rv-aside td-del', type: 'button',
             onclick: async function (e) {
@@ -5022,7 +5033,7 @@
               catch (x) { busy = false; btn.disabled = false; saveFailed('spot', x); return; }
               closeSheet(); toast('Spot deleted'); render(true);
             } }, 'Delete spot') : null,
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
+          h('button', { class: 'btn plain block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))
       ];
     }, { label: item ? 'Edit spot' : 'Add a spot' });
   }
@@ -18608,7 +18619,7 @@
     var edit = null;   // the line whose words are being changed: { id, text }
     var pend = {};     // a tick on its way: what the circle shows meanwhile
     var busy = false;
-    var box = h('div', { class: 'ledger' });
+    var box = h('div', { class: 'su-box' });
     // The server refuses what it refuses: its plain words when it wrote
     // some, the usual line otherwise.
     function refused(e, fallback) {
@@ -18630,7 +18641,7 @@
         var words = h('input', { class: 'input', type: 'text', maxlength: 120, value: edit.text,
           'aria-label': 'The line’s words', autocomplete: 'off', autofocus: true,
           oninput: function (e) { edit.text = e.target.value; } });
-        return h('form', { class: 'row', style: 'gap:8px', novalidate: true, onsubmit: async function (e) {
+        return h('form', { class: 'row su-row su-edit', novalidate: true, onsubmit: async function (e) {
           e.preventDefault();
           blurActive();
           var next = String(edit.text || '').trim();
@@ -18645,12 +18656,12 @@
             onclick: function () { edit = null; draw(); } }, 'Cancel'));
       }
       var on = pend[r.id] != null ? pend[r.id] : !!r.doneAt;
-      var face = h('button', { class: 'row rowbtn', type: 'button', style: 'gap:12px',
+      // (The To Do List's tick circle, so the two lists tick alike.)
+      var face = h('button', { class: 'row rowbtn su-row', type: 'button',
         'aria-label': (on ? 'Put back on the list: ' : 'Tick off: ') + r.body,
         onclick: function () { tick(r, !on); } },
-        h('span', { class: 'poll-dot', style: on ? 'background:var(--brand);box-shadow:none' : null },
-          on ? icon('check', 14) : null),
-        h('div', { class: 'row-label', style: on ? 'text-decoration:line-through;opacity:.6' : null }, r.body));
+        h('span', { class: 'td-tick' + (on ? ' on' : '') }, on ? icon('check', 14) : null),
+        h('div', { class: 'row-label' + (on ? ' su-off' : '') }, r.body));
       // Your own line slides to Edit and Delete; a Manager's slide works on
       // all of them. The database holds the same rule, whatever is tried.
       var mine = B.uid && B.uid() === r.addedBy;
@@ -18674,20 +18685,22 @@
       if (!rows) { box.replaceChildren(h('p', { class: 'note' }, 'Loading…')); return; }
       var open = rows.filter(function (r) { return !r.doneAt; });
       var done = rows.filter(function (r) { return !!r.doneAt; });
+      // Laid out like the Expenses list (Devin, 2026-10-17: "more spacious
+      // and clean"): what is still to get on one card, the ticked-off lines
+      // on their own card under a quiet Done.
       var kids = [];
-      if (!rows.length) kids.push(h('div', { class: 'row' },
-        h('span', { class: 'hint' }, 'Nothing on the list yet. Add the first thing below.')));
-      open.forEach(function (r) { kids.push(lineRow(r)); });
+      if (!rows.length) kids.push(h('p', { class: 'note su-none' }, 'Nothing on the list yet. Add the first thing below.'));
+      if (open.length) kids.push(h('div', { class: 'ledger' }, open.map(lineRow)));
       if (done.length) {
-        kids.push(h('div', { class: 'row head' }, h('span', { class: 'lg-name' }, 'Done')));
-        done.forEach(function (r) { kids.push(lineRow(r)); });
+        kids.push(h('h3', { class: 'mn-h su-h' }, 'Done'));
+        kids.push(h('div', { class: 'ledger' }, done.map(lineRow)));
       }
       box.replaceChildren.apply(box, kids);
     }
     var addIn = h('input', { class: 'input', type: 'text', maxlength: 120, placeholder: 'Add to the list',
       'aria-label': 'Add to the list', autocomplete: 'off', enterkeyhint: 'done' });
     // The add field rides the bottom of the sheet, over its bottom padding.
-    var addForm = h('form', { class: 'tc-foot', style: 'display:flex;gap:8px;align-items:center', novalidate: true,
+    var addForm = h('form', { class: 'tc-foot su-add', novalidate: true,
       onsubmit: async function (e) {
         e.preventDefault();
         var words = String(addIn.value || '').trim();
@@ -18700,12 +18713,12 @@
         draw();
       } },
       addIn,
-      h('button', { class: 'btn sm primary', type: 'submit', style: 'flex:none' }, 'Add'));
+      h('button', { class: 'btn primary', type: 'submit' }, 'Add'));
     draw();
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, 'Supplies'),
-        h('p', { class: 'sh-sub' }, 'One list for the whole tour. Anyone on the run can add a line and tick it off.'),
+        h('h2', { class: 'sh-title clean' }, 'Supplies'),
+        h('p', { class: 'sh-sub clean' }, 'One list for the whole tour. Anyone on the run can add a line and tick it off.'),
         box,
         addForm
       ];
@@ -20771,6 +20784,30 @@
     }
     openBusSheet(id, busCall);
   };
+  /* Dev harness only, like the line above: its ?look= flag opens one of the
+     four sheets restyled on 2026-10-17 once the fake backend is up.
+     what: 'spot' (Add a spot), 'spotedit' (your first spot, with Delete),
+     'todo' (artist id a, name b), 'supplies' (tour a), 'guest' (tour a,
+     show b). */
+  if (window.__harness) window.__harness.openLook = function (what, a, b, tries) {
+    var B = window.GR_BACKEND;
+    var t = what === 'supplies' || what === 'guest' ? getTour(a) : null;
+    var show = what === 'guest' && t ? G.rows(t.shows).filter(function (x) { return x.id === b; })[0] : null;
+    var ready = S.loaded && (what === 'spot' ? spotsOn()
+      : what === 'spotedit' ? spotsOn() && (B.mySpots() || []).length > 0
+      : what === 'todo' ? todosOn()
+      : what === 'supplies' ? suppliesOn() && !!t
+      : what === 'guest' ? !!show : false);
+    if (!ready) {
+      if ((tries || 0) < 40) setTimeout(function () { window.__harness.openLook(what, a, b, (tries || 0) + 1); }, 250);
+      return;
+    }
+    if (what === 'spot') openSpotEdit(null);
+    else if (what === 'spotedit') openSpotEdit(B.mySpots()[0]);
+    else if (what === 'todo') openTodoSheet(a, b);
+    else if (what === 'supplies') openSupplies(a);
+    else openGuestForm(a, b, show, S.mode === 'db', function () { closeSheet(); render(true); });
+  };
   // Flowers given to you that you'd rather not keep (and their note) come off.
   function removeGotFlowers(g) {
     var B = window.GR_BACKEND;
@@ -22281,9 +22318,16 @@
     var passSel = h('select', { class: 'input', 'aria-label': 'Pass type',
       onchange: function (e) { f.passType = e.target.value; } });
     G.GUEST_PASSES.forEach(function (ptype) { passSel.append(h('option', { value: ptype }, ptype)); });
+    // A picker in a row: its value, and a quiet chevron saying it opens.
+    function pick(sel) { return h('span', { class: 'lf-pick' }, sel, icon('chevron', 14)); }
+    var city = String(show.city || '').trim();
+    // Laid out like the Expenses list (Devin, 2026-10-17: "more spacious and
+    // clean"): who they are, how to reach them and their ticket, each on a
+    // card of rows, the night's city under the heading.
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, 'Add a guest \u2014 ' + (show.city || 'Show')),
+        h('h2', { class: 'sh-title clean' }, 'Add a guest'),
+        city ? h('p', { class: 'sh-sub clean' }, city) : null,
         h('form', { class: 'sh-form', novalidate: true,
           onsubmit: async function (e) {
             e.preventDefault();
@@ -22304,19 +22348,19 @@
               setTimeout(done, backend ? 500 : 150); // let the refetch land
             } catch (e2) { toast('Couldn\u2019t add them. Try again.'); }
           } },
-          h('div', { class: 'field-row' },
-            field('First name', textIn('firstName', 'Devin')),
-            field('Last name', textIn('lastName', 'Oliver'))),
-          field('Affiliation', textIn('affiliation', 'Label, press, family\u2026')),
-          h('div', { class: 'field-row' },
-            field('Contact email', textIn('email', 'Optional', { type: 'email', inputmode: 'email' })),
-            field('Contact phone', textIn('phone', 'Optional', { type: 'tel', inputmode: 'tel' }))),
-          h('div', { class: 'field-row' },
-            field('Brings', qtySel),
-            field('Pass type', passSel)),
-          h('div', { class: 'stack' },
+          h('div', { class: 'ledger lf-card' },
+            rowField('First name', textIn('firstName', 'Devin')),
+            rowField('Last name', textIn('lastName', 'Oliver')),
+            rowField('Affiliation', textIn('affiliation', 'Label, press, family\u2026'))),
+          h('div', { class: 'ledger lf-card' },
+            rowField('Email', textIn('email', 'Optional', { type: 'email', inputmode: 'email' })),
+            rowField('Phone', textIn('phone', 'Optional', { type: 'tel', inputmode: 'tel' }))),
+          h('div', { class: 'ledger lf-card' },
+            rowField('Brings', pick(qtySel)),
+            rowField('Pass type', pick(passSel))),
+          h('div', { class: 'stack lf-acts' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Add to the list'),
-            h('button', { class: 'btn ghost block', type: 'button',
+            h('button', { class: 'btn plain block', type: 'button',
               onclick: function () { done(); } }, 'Back to the list')))
       ];
     }, { label: 'Add a guest' });
