@@ -2265,6 +2265,31 @@
   }
   function cleanTime(v) { var p = splitTime(v); return joinTime(p.main, p.ampm); }
 
+  /* A show night's clock, in minutes from the show day's midnight. The night
+     runs on past midnight to the 5 AM day line (ROLLOVER_HOURS), so a day
+     sheet time before noon ("1:30AM" bus call, "12:40AM" set end) is the
+     small hours after the show: 1:30 AM reads 1530, not 90. nightMins is
+     null for anything that isn't a time ("TBA", blank, "1:30" with no AM or
+     PM). nightNow reads the phone's clock the same way: before 5 AM it is
+     still last night, so 1:05 AM reads 1505. busCallLeft is the minutes
+     from now until tonight's bus call, negative once it has passed. */
+  function nightMins(v) {
+    var p = splitTime(v);
+    if (!p.ampm || !/^\d{1,2}:\d{2}$/.test(p.main)) return null;
+    var hm = p.main.split(':');
+    var mins = ((+hm[0]) % 12 + (p.ampm === 'PM' ? 12 : 0)) * 60 + (+hm[1]);
+    return mins < 12 * 60 ? mins + 24 * 60 : mins;
+  }
+  function nightNow(now) {
+    var d = now == null ? new Date() : new Date(+now);
+    var at = d.getHours() * 60 + d.getMinutes();
+    return d.getHours() < ROLLOVER_HOURS ? at + 24 * 60 : at;
+  }
+  function busCallLeft(v, now) {
+    var m = nightMins(v);
+    return m == null ? null : m - nightNow(now);
+  }
+
   /* A printed range ("1 PM - 1:45 PM") keeps both ends, a plain hyphen
      between them; with no end it reads exactly as it always did. */
   function timeSpan(start, end) {
@@ -2981,6 +3006,7 @@
     normalizeSettlement: normalizeSettlement, pickBandNumber: pickBandNumber,
     DS_AMENITIES: DS_AMENITIES, daySheetSections: daySheetSections, daySheetLines: daySheetLines, daySheetText: daySheetText,
     splitTime: splitTime, joinTime: joinTime, cleanTime: cleanTime, timeSpan: timeSpan, dsExtras: dsExtras,
+    nightMins: nightMins, nightNow: nightNow, busCallLeft: busCallLeft,
     toCSV: toCSV, closeoutCSVs: closeoutCSVs,
     offDayLines: offDayLines, offDayText: offDayText,
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,

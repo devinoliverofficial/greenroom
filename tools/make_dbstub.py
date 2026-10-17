@@ -1037,6 +1037,10 @@ shim = r"""<script>
                             head, buttons, rows and line show at 375px
                             without walking to the Overview. Two of four
                             riders are on, so the head reads MISSING CREW in red.
+                            The bus call sits 30 minutes out, so once the
+                            sheet is closed the BUS CALL 30MIN. splash rises
+                            within 20 seconds (in the afternoon or evening;
+                            see A SET CLOCK, AND THE BUS CALL SPLASH below).
        __harness.busAllOn() every rider says On bus now and a 'bus' poke
                             lands: an open sheet's head turns to WE ARE A
                             BUS in the house green by itself.
@@ -1085,6 +1089,102 @@ shim = r"""<script>
       if (n < 40) setTimeout(function () { openIt(n + 1); }, 250);
     })(0);
   } } catch (e) { /* no address to read */ }
+  /* ---- A SET CLOCK, AND THE BUS CALL SPLASH (2026-10-17) ----
+     Devin: "30min before bus call their needs to be a splash effect that
+     happens when you open the app that says 'BUS CALL 30MIN. CHECK IN?' -
+     This also happens at bus call if someone didn't already check in." The
+     app's clock is set against tonight's bus call, so every state shows at
+     any hour of the real day.
+       __harness.clockAt(when)   the app's clock reads 'when' (a Date or a
+                            number) and runs on from there: the page's Date
+                            is swapped for one that adds the gap, so every
+                            new Date() and Date.now() moves together. The
+                            seeded tours keep the real day, so set it inside
+                            tonight's show night (this evening, or before
+                            5 AM tomorrow). clockAt(null): the real clock.
+       ?busask=-25          tonight's Austin bus call is 11:45PM and the
+                            clock reads 11:20PM, 25 minutes before: over the
+                            app rises BUS CALL 30MIN. / CHECK IN? with Check
+                            in and Not yet. Check in says On bus, as the bus
+                            sheet's On Bus does (the Overview's Bus Check in
+                            stops glowing, "You're on the bus"); Dana has
+                            said nothing, so no WE ARE A BUS goes out. Not
+                            yet just closes it. Either way it never comes
+                            back tonight on this phone.
+       ?busask=5            five minutes past bus call, nothing said yet:
+                            BUS CALL. / CHECK IN?
+       ?busask=-45          45 minutes before: no splash yet (the Overview's
+                            button glows already, by its hour-before rule).
+       ?busask=-25&smallhours   the bus call is 1:30AM and the clock reads
+                            1:05AM the next calendar morning, still tonight's
+                            tour day: the 30MIN splash rises. ?busask=5&smallhours
+                            for the at-bus-call one.
+       __harness.busAsk(minutes, o)   the same, live (no reload): minutes
+                            from bus call, negative before it; o.small for
+                            the 1:30AM bus call; o.aboard: this account said
+                            On bus already (no splash at all); o.notRider:
+                            its row says ridesBus false (no splash, and
+                            the Overview's button never glows); o.othersOn: every other rider is on, so
+                            Check in completes the bus and 'wearebus' lands
+                            in __harness.notified. Each call clears this
+                            phone's asked-marks for tonight, then looks at
+                            once (in the app, a look runs every 20 seconds,
+                            and on coming back to the front).
+     Riders are seeded as __harness.bus() seeds them (Jeff and Dana join;
+     Brent and Jeff are on). */
+  var RealDate = Date, clockGap = 0;
+  window.__harness.clockAt = function (when) {
+    if (when == null) { clockGap = 0; return 'real clock'; }
+    clockGap = +when - RealDate.now();
+    if (window.Date === RealDate) {
+      var Shifted = function (a, b, c, d, e, f, g) {
+        var n = arguments.length;
+        if (!(this instanceof Shifted)) return new RealDate(RealDate.now() + clockGap).toString();
+        if (n === 0) return new RealDate(RealDate.now() + clockGap);
+        if (n === 1) return new RealDate(a);
+        return new RealDate(a, b, n > 2 ? c : 1, n > 3 ? d : 0, n > 4 ? e : 0, n > 5 ? f : 0, n > 6 ? g : 0);
+      };
+      Shifted.prototype = RealDate.prototype;
+      Shifted.now = function () { return RealDate.now() + clockGap; };
+      Shifted.parse = RealDate.parse;
+      Shifted.UTC = RealDate.UTC;
+      window.Date = Shifted;
+    }
+    return new RealDate(RealDate.now() + clockGap).toString();
+  };
+  // Forget what this phone was asked tonight (and the WE ARE A BUS it sent), then look at once.
+  function nightAskAfresh(keys) {
+    var day = ymd(new Date(Date.now() - 5 * 36e5));
+    try { keys.forEach(function (k) { localStorage.removeItem(k.indexOf('gr-rateask:') === 0 ? k : k + day); }); } catch (e) { /* the phone forgets on its own */ }
+    (function look(n) {
+      if (window.__harness.nightAskTick) { window.__harness.nightAskTick(); return; }
+      if (n < 40) setTimeout(function () { look(n + 1); }, 250);
+    })(0);
+  }
+  window.__harness.busAsk = function (minutes, o) {
+    var H = window.__harness;
+    o = o || {};
+    H.bus();
+    var call = new RealDate(today.getFullYear(), today.getMonth(), today.getDate() + (o.small ? 1 : 0), o.small ? 1 : 23, o.small ? 30 : 45);
+    tours.t1.shows.s1.daySheet.busCall = o.small ? '1:30AM' : '11:45PM';
+    H.clockAt(call.getTime() + (+minutes || 0) * 60e3);
+    var now = new Date().toISOString();
+    H.busStates = { 'u-brent': { state: 'on', at: now }, 'u-jeff': { state: 'on', at: now } };
+    if (o.aboard) H.busStates['u-devin'] = { state: 'on', at: now };
+    if (o.othersOn) H.busStates['u-dana'] = { state: 'on', at: now };
+    H.crew.forEach(function (m) {
+      if (m.userId !== 'u-devin') return;
+      if (o.notRider) m.ridesBus = false; else delete m.ridesBus;
+    });
+    H.poke('bus');
+    nightAskAfresh(['gr-busask30:t1:', 'gr-busask:t1:', 'gr-wearebus:t1:']);
+    return 'bus call ' + tours.t1.shows.s1.daySheet.busCall + ', the clock reads ' +
+      new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  };
+  try {
+    var busAskAt = /[?&]busask=(-?\d+)/.exec(String(location.search || ''));
+    if (busAskAt) window.__harness.busAsk(+busAskAt[1], { small: /[?&]smallhours\b/.test(String(location.search || '')) });
+  } catch (e) { /* no address to read */ }
   /* ---- FOUR SHEETS, MORE SPACIOUS (2026-10-17) ----
      Devin: "more spacious and clean", with Budget's Expenses rows and the
      Overview crew list as the yardstick. Each flag opens its sheet itself,
@@ -2075,8 +2175,10 @@ shim = r"""<script>
      played show's day sheet (the set-times row naming the tour's "your
      band", or the only set row; small-hours ends belong to that night) and
      this account hasn't rated that show, opening the profile's Today tab
-     or the tour's Overview brings up a small sheet - the city and venue,
-     "How was the show?", Rate the show (the wizard) and Not now. A sheet
+     or the tour's Overview (or the app open anywhere, within 20 seconds)
+     brings up the RATE THE SHOW? splash since 2026-10-17 - the city and
+     venue under it, Rate (the wizard) and Not now; ?rateask walks it on a
+     set clock (THE RATE-THE-SHOW SPLASH below). A sheet
      with no readable set end for the band falls back to the OLD bus-call
      rule, so show nights without set times still ask. The phone remembers
      it asked (localStorage, per tour and show), so it never nags twice;
@@ -2123,9 +2225,9 @@ shim = r"""<script>
                             the fallback at any hour. This phone's
                             asked-mark for tonight is cleared and its own
                             rating taken off. Then open the profile's Today
-                            tab or the tour's Overview: the sheet rises
+                            tab or the tour's Overview: the splash rises
                             after the intro (and the countdown splash, when
-                            one fires). Rate the show or Not now both mark
+                            one fires). Rate or Not now both mark
                             the phone asked; run ratePrompt() again to see
                             it again.
        __harness.rated()    this phone's own rating lands on Dallas (played)
@@ -2238,6 +2340,62 @@ shim = r"""<script>
   };
   try { if (/[?&]venue\b/.test(String(location.search || ''))) window.__harness.venue(); } catch (e) { /* no address to read */ }
   try { if (/[?&]rate\b/.test(String(location.search || ''))) window.__harness.rate(); } catch (e) { /* no address to read */ }
+  /* ---- THE RATE-THE-SHOW SPLASH (2026-10-17) ----
+     Devin: "a splash effect to be prompted an hour after set time to rate
+     the show". The clock (__harness.clockAt, see A SET CLOCK) is set
+     against the band's own set end tonight: I See Stars, the tour's "your
+     band", plays 9:00PM to 10:30PM after Opener Band (7:45PM to 8:15PM, so
+     the band's own row is the one read). Tonight has no bus call, so the
+     bus splash stays out of it.
+       ?rateask=65          the clock reads 11:35PM, 65 minutes after the
+                            band's set ended: RATE THE SHOW? rises over
+                            "Austin, TX · Mohawk", with Rate (the wizard,
+                            opening under the splash as it fades) and Not
+                            now. Either way it never comes back for this
+                            show on this phone.
+       ?rateask=50          50 minutes after: nothing yet.
+       ?rateask=65&smallhours   the band plays 11:10PM to 12:40AM and the
+                            clock reads 1:45AM the next calendar morning,
+                            still tonight's tour day: the splash rises.
+       __harness.rateAsk(minutes, o)   the same, live: minutes from the set
+                            end; o.small for the 12:40AM end; o.rated: this
+                            phone's account rated tonight already (no
+                            splash); o.noEnd: the band's end reads TBA and
+                            the bus call is 12:30AM, so the older bus-call
+                            rule decides (an hour before bus call), and
+                            minutes count from the bus call instead
+                            (rateAsk(-55, { noEnd: true }) rises; -65 does
+                            not). Each call takes this phone's own rating on
+                            tonight off (unless o.rated) and clears its
+                            asked-mark, then looks at once. */
+  window.__harness.rateAsk = function (minutes, o) {
+    var H = window.__harness;
+    o = o || {};
+    var s1 = tours.t1.shows.s1;
+    tours.t1.ourBand = 'I See Stars';
+    s1.daySheet.setTimes = [
+      { band: 'Opener Band', time: '7:45PM', end: '8:15PM' },
+      { band: 'I See Stars', time: o.small ? '11:10PM' : '9:00PM', end: o.noEnd ? 'TBA' : o.small ? '12:40AM' : '10:30PM' }];
+    s1.daySheet.busCall = o.noEnd ? '12:30AM' : '';
+    var small = o.small || o.noEnd;
+    var at = new RealDate(today.getFullYear(), today.getMonth(), today.getDate() + (small ? 1 : 0),
+      o.noEnd ? 0 : o.small ? 0 : 22, o.noEnd ? 30 : o.small ? 40 : 30);
+    H.clockAt(at.getTime() + (+minutes || 0) * 60e3);
+    H.ratingsLoading = false;
+    H.showStars = (H.showStars || []).filter(function (r) { return !(r.tourId === 't1' && r.showId === 's1' && r.userId === 'u-devin'); });
+    if (o.rated) {
+      H.showStars.push({ tourId: 't1', showId: 's1', userId: 'u-devin', crowd: 8, venue: 8, city: 8,
+        review: { crowd: { stars: 4 }, venue: { stars: 4 }, area: { stars: 4 } }, at: new Date().toISOString() });
+    }
+    emit();
+    nightAskAfresh(['gr-rateask:t1:s1']);
+    return 'set end ' + s1.daySheet.setTimes[1].end + (o.noEnd ? ', bus call 12:30AM' : '') + ', the clock reads ' +
+      new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  };
+  try {
+    var rateAskAt = /[?&]rateask=(-?\d+)/.exec(String(location.search || ''));
+    if (rateAskAt) window.__harness.rateAsk(+rateAskAt[1], { small: /[?&]smallhours\b/.test(String(location.search || '')) });
+  } catch (e) { /* no address to read */ }
   /* ---- TONIGHT'S QUICK GUARANTEE, AND THE ONE MENU (2026-10-16) ----
      The Tonight card asks the guarantee with the SAME three numbers Log
      income keeps. To see it: open the profile's Today tab, tap Tasks, swipe
