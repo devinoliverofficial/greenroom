@@ -568,6 +568,10 @@ a.btn { text-decoration: none; }
 .ds-trash { position: absolute; right: -8px; top: 50%; transform: translateY(-50%); color: var(--ink-3); }
 .ds-trash:active { color: var(--neg); }
 .ds-pencil { position: absolute; left: -8px; top: 50%; transform: translateY(-50%); color: var(--pos); }
+/* The copy icon right under the pencil, on the Schedule heading's line. */
+.ds-sec-hrow { position: relative; }
+.ds-sec-hrow .ds-copy { position: absolute; left: -8px; top: 50%; transform: translateY(-50%); color: var(--pos); }
+.ds-sec-hrow.ds-copy-only { min-height: 40px; margin-top: 8px; }
 .ds-sec { margin-top: 24px; }
 .ds-sec-h { margin: 0 2px 10px; font-size: 17px; font-weight: 600; letter-spacing: -.015em; color: var(--ink); }
 .ledger .row.ds-sub { min-height: 0; padding: 14px 16px 2px; font-size: 13px; font-weight: 500; color: var(--ink-2); border-bottom: 0; }
@@ -2248,7 +2252,8 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .pt-hist .ds-sec { margin-top: 0; }
 .pt-hist .hist-fans { margin: 4px 0 0; }
 .pt-hist .ds-notes .hist-fans { margin: 0; }
-.pt-hist-stars { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+/* The stars as a schedule row's value (2026-10-16 night). */
+.pt-hist-stars { display: inline-flex; align-items: center; gap: 6px; }
 .plc-h { position: relative; z-index: 1; margin: 0 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
 .plc-artists { position: relative; z-index: 1; }
 .pf-btn.plc-still { cursor: default; }

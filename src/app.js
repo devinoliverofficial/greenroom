@@ -5103,19 +5103,31 @@
     var a = n % 100, b = n % 10;
     return n + (a >= 11 && a <= 13 ? 'th' : b === 1 ? 'st' : b === 2 ? 'nd' : b === 3 ? 'rd' : 'th');
   }
-  /* The line itself, for tonight's show only. inSheet: it sits inside the
-     day sheet's glowing venue block, whose big type it must not take on. */
-  function venueHistLine(tourId, s, inSheet) {
+  // The server's answer for tonight's show, or null (not tonight, no venue or city, nothing to say).
+  function venueHistFor(tourId, s) {
     if (!s || !s.id || s.date !== G.tourToday() || !venueHistOn()) return null;
     var venue = String(s.venue || '').trim();
     if (!venue || !String(s.city || '').trim()) return null;
     var sig = venue.toLowerCase() + '|' + String(s.city).trim().toLowerCase();
     var a = window.GR_BACKEND.venueHistory(tourId, s.id, sig);
-    if (!G.isObj(a) || !a.artistId) return null;
-    var n = Math.max(0, Math.round(G.num(a.count))), nights = Array.isArray(a.nights) ? a.nights : [];
-    var words = n > 0 ? 'Your ' + ordinalNum(n + 1) + ' time at ' + venue : 'Your first time at ' + venue;
+    return G.isObj(a) && a.artistId ? a : null;
+  }
+  function venueHistWords(venue, a) {
+    var n = Math.max(0, Math.round(G.num(a.count)));
+    return n > 0 ? 'Your ' + ordinalNum(n + 1) + ' time at ' + venue : 'Your first time at ' + venue;
+  }
+  // Earlier nights to list: a tap on the line opens them.
+  function venueHistTaps(a) {
+    return Math.round(G.num(a.count)) > 0 && Array.isArray(a.nights) && a.nights.length > 0;
+  }
+  /* The line itself, for tonight's show only. inSheet: it sits inside the
+     day sheet's glowing venue block, whose big type it must not take on. */
+  function venueHistLine(tourId, s, inSheet) {
+    var a = venueHistFor(tourId, s);
+    if (!a) return null;
+    var venue = String(s.venue).trim(), words = venueHistWords(venue, a);
     return h('p', { class: 'hist-fans', style: inSheet ? 'font-weight:500;letter-spacing:0;line-height:1.35' : null },
-      n > 0 && nights.length
+      venueHistTaps(a)
         ? h('button', { class: 'hf-btn', type: 'button', 'aria-label': words + '. See the nights before tonight',
             onclick: function () { openVenueHistory(venue, a); } }, words)
         : words);
@@ -5142,30 +5154,49 @@
   }
   /* THE TODAY HISTORY SECTION (Devin, 2026-10-16: "there should just be a
      history section at the bottom of the 'today' tab that says how many
-     times we've played this venue, what the rating was"; later the same
-     day: "'History' should look a lot like 'Notes'"). The same lines as
-     before, now in the day sheet's Notes dress: the same centred ds-sec-h
-     heading and the same ds-notes card around the lines, at the foot of the
-     profile's Today tab. Under the times-played line, when the server's
-     answer carries the band's stars (0165 hands them to the band alone),
-     the stars drawn small with how many ratings they stand on. Absent keys,
-     no stars line: a crew phone sees the history alone, and before 0165
-     nothing changes. */
+     times we've played this venue, what the rating was"; that night: "give
+     the information the same look as the rest of the schedule. put history
+     above notes", and Notes went). Dressed as the schedule is: the same
+     centred heading, one card of label-and-value rows. The venue line (a
+     tap lists the nights before tonight), then from 0174 the town: how
+     many nights there before tonight, the last of them with its tour, and
+     the averages Greenroom's own books hold for that town, merch for the
+     tour, the guarantee for the band alone; then the band's stars (0165).
+     A key the server did not send is a row that is not there, so a crew
+     phone sees no guarantee and no stars, and before 0174 is live the card
+     holds the venue line and the stars alone. */
   function todayHistory(tourId, s) {
-    var line = venueHistLine(tourId, s);
-    if (!line) return null;
-    var venue = String(s.venue || '').trim();
-    var sig = venue.toLowerCase() + '|' + String(s.city).trim().toLowerCase();
-    var a = window.GR_BACKEND.venueHistory(tourId, s.id, sig);
-    var st = G.isObj(a) ? G.num(a.stars) : 0, rn = G.isObj(a) ? Math.round(G.num(a.ratings)) : 0;
-    return h('section', { class: 'ds-page pt-hist', 'aria-label': 'History' },
+    var a = venueHistFor(tourId, s);
+    if (!a) return null;
+    var venue = String(s.venue).trim(), words = venueHistWords(venue, a);
+    var town = String(s.city).split(',')[0].trim();
+    var row = function (label, val) {
+      return h('div', { class: 'row ds-row' }, h('span', { class: 'row-label' }, label), val);
+    };
+    var val = function (v) { return h('span', { class: 'ds-val' }, v); };
+    var over = function (n) { return ' (over ' + plural(n, 'show') + ')'; };
+    var cn = a.cityCount == null ? null : Math.max(0, Math.round(G.num(a.cityCount)));
+    var last = G.isObj(a.cityLast) && cn > 0 ? a.cityLast : null;
+    var mn = Math.round(G.num(a.merchN)), gn = Math.round(G.num(a.guaranteeN));
+    var st = G.num(a.stars), rn = Math.round(G.num(a.ratings));
+    return h('section', { class: 'ds-page pt-history', 'aria-label': 'History' },
       h('section', { class: 'ds-sec' },
         h('h3', { class: 'ds-sec-h' }, 'History'),
-        h('div', { class: 'ds-notes pt-hist-box' },
-          line,
-          st > 0 && rn > 0 ? h('p', { class: 'pt-hist-stars', 'aria-label': st + ' stars from ' + plural(rn, 'rating') },
-            rwStarRow(Math.round(st * 2) / 2, 15),
-            h('span', { class: 'pt-hist-n' }, 'from ' + plural(rn, 'rating'))) : null)));
+        h('div', { class: 'ledger ds-block' },
+          venueHistTaps(a)
+            ? h('button', { class: 'row ds-row rowbtn', type: 'button', 'aria-label': words + '. See the nights before tonight',
+                onclick: function () { openVenueHistory(venue, a); } },
+                h('span', { class: 'row-label' }, words), icon('chevron', 16))
+            : row(words, null),
+          town && cn != null ? row('Times in ' + town, val(cn > 0 ? cn + ' before tonight' : 'First time')) : null,
+          town && last ? row('Last time in ' + town, val(
+            (String(last.name || '').trim() || (last.kind === 'shows' ? 'Shows outside a tour' : 'A tour')) +
+            ' \u00b7 ' + dayMD(last.date) + ', ' + String(last.date).slice(0, 4))) : null,
+          mn > 0 && G.num(a.merchAvg) > 0 ? row('Average merch', val(G.money(a.merchAvg) + over(mn))) : null,
+          gn > 0 && G.num(a.guaranteeAvg) > 0 ? row('Average guarantee', val(G.money(a.guaranteeAvg) + over(gn))) : null,
+          st > 0 && rn > 0 ? row('Rating', h('span', { class: 'ds-val pt-hist-stars', 'aria-label': st + ' stars from ' + plural(rn, 'rating') },
+            rwStarRow(Math.round(st * 2) / 2, 14),
+            h('span', { class: 'pt-hist-n' }, 'from ' + plural(rn, 'rating')))) : null)));
   }
   /* SPOTS FROM PEOPLE YOU FOLLOW (0169, Devin, 2026-10-16: "if someone
      follows another person outside the tour it will show up at the bottom of
@@ -11000,9 +11031,9 @@
       // The day sheet tab's own schedule style, word for word (Devin,
       // 2026-10-16: "the entire day sheet text style under schedule").
       sheet ? h('div', { class: 'ds-page pt-ds' }, sheet) : null,
-      // HISTORY (Devin, 2026-10-16): tonight's room in the band's own story,
-      // in its own quiet section at the bottom of the tab, with what the
-      // rating was under it when the server says (the band alone hears it).
+      // HISTORY (Devin, 2026-10-16): tonight's room and town in the band's
+      // own story, right under the schedule where Notes was ("put history
+      // above notes. Honestly just get rid of notes").
       s && isToday ? todayHistory(id, s) : null,
       // SPOTS (0169): tonight's town through the people you follow, the
       // viewer's own quiet section under History (and above the Bus Check in
@@ -20578,9 +20609,17 @@
      the profile's Today, which has the address above it already: only what
      someone filled in counts (the address and phone the app looks up by
      itself don't make a sheet), the address isn't said twice, and the
-     amenities nobody answered are left out instead of a row of dashes. */
+     amenities nobody answered are left out instead of a row of dashes.
+     A show's Notes are not shown anywhere (Devin, 2026-10-16 night: "just
+     get rid of notes on both main day sheet and the today tab"); the text
+     stays in the sheet's data, and a sheet holding notes alone reads as no
+     sheet. */
+  function sheetLinesShown(s) {
+    return G.daySheetSections(s).filter(function (x) { return x.key !== 'notes'; })
+      .reduce(function (all, x) { return all.concat(x.lines); }, []);
+  }
   function daySheetNodes(s, off, o) {
-    var lines = s ? G.daySheetLines(s) : G.offDayLines(off || {});
+    var lines = s ? sheetLinesShown(s) : G.offDayLines(off || {});
     if (o && o.onlySet && s) lines = lines.filter(function (x) { return !/^(Address|Venue phone): /.test(x); });
     if (!lines.length) return null;
     var d = s && G.isObj(s.daySheet) ? s.daySheet : {};
@@ -20690,9 +20729,7 @@
         cliff ? null : section('More from the sheet', G.dsExtras(d.extras).map(function (r) {
           return dsRow(r.label || r.value,
             r.label && r.value ? h('span', { class: 'ds-val' }, r.value) : null);
-        })),
-        String(d.notes || '').trim() ? h('section', { class: 'ds-sec' },
-          h('h3', { class: 'ds-sec-h' }, 'Notes'), h('p', { class: 'ds-notes' }, String(d.notes).trim())) : null
+        }))
       ];
     } else {
       // An off day: the hotel and the plans.
@@ -20749,7 +20786,7 @@
     var s = entry.show;
     var today = G.tourToday();
     var off = s ? null : offDayFor(t, entry.date);
-    var lines = s ? G.daySheetLines(s) : G.offDayLines(off);
+    var lines = s ? sheetLinesShown(s) : G.offDayLines(off);
     var d = s && G.isObj(s.daySheet) ? s.daySheet : {};
 
     // The centerpiece: where you are, when.
@@ -20784,11 +20821,17 @@
       body.classList.add('ds-empty');
     }
 
-    var copyBtn = null;
+    /* Copy is an icon now (Devin, 2026-10-16 night: "Get rid of 'copy day
+       sheet' and just put the copy icon underneath the pencil icon but
+       paralell with the 'schedule' text"): under the pencil, on the line of
+       the Schedule heading (the sheet's first heading when it has no
+       schedule; a line of its own when it has no heading at all). The
+       Notes nobody sees any more stay out of what it copies. */
     if (lines.length) {
-      var copyText2 = s ? G.daySheetText(s) : G.offDayText(entry.date, off);
-      copyBtn = h('button', {
-        class: 'btn ghost block', type: 'button', style: 'margin-top:14px',
+      var copyText2 = s ? G.daySheetText(Object.assign({}, s, { daySheet: Object.assign({}, d, { notes: '' }) }))
+        : G.offDayText(entry.date, off);
+      var copyIcon = h('button', {
+        class: 'iconbtn sm ds-copy', type: 'button', 'aria-label': 'Copy this day sheet',
         onclick: async function () {
           var ta = h('textarea', { class: 'sr', readonly: true, value: copyText2 });
           document.body.appendChild(ta);
@@ -20796,7 +20839,18 @@
           ta.remove();
           toast(ok ? 'Copied \u2014 paste it in the group chat' : 'Press and hold to copy');
         }
-      }, icon('copy', 18), 'Copy day sheet');
+      }, icon('copy', 18));
+      // A show's sheet is built sections, each under its heading; an off day's has no Schedule.
+      var heads = s ? [].concat(body).map(function (n) { return n && n.querySelector ? n.querySelector('h3.ds-sec-h') : null; })
+        .filter(function (x) { return x && x.textContent.trim(); }) : [];
+      var head = heads.filter(function (x) { return x.textContent.trim() === 'Schedule'; })[0] || heads[0];
+      if (head) {
+        var headRow = h('div', { class: 'ds-sec-hrow' });
+        head.parentNode.insertBefore(headRow, head);
+        headRow.append(head, copyIcon);
+      } else {
+        body = [h('div', { class: 'ds-sec-hrow ds-copy-only' }, copyIcon)].concat(body);
+      }
     }
 
     var guestBtn = null;
@@ -20834,14 +20888,19 @@
       if (sel && sel.scrollIntoView) sel.scrollIntoView({ inline: 'center', block: 'nearest' });
     });
 
-    var editRow = canEditTour(id) ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
+    // The big button only while there is no sheet yet (Devin, 2026-10-16
+    // night: "get rid of 'edit day sheet' button at the bottom if the day
+    // sheet is already added"); once there is one, the pencil edits it.
+    var editRow = canEditTour(id) && !lines.length ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
       s
         ? h('button', { class: 'btn quiet glow', type: 'button',
             onclick: function () { openDaySheetEditor(id, s.id); } },
-            icon('edit', 18), lines.length ? 'Edit day sheet' : 'Fill in the day sheet')
+            icon('edit', 18), 'Fill in the day sheet')
         : h('button', { class: 'btn quiet glow', type: 'button',
             onclick: function () { openOffDaySheet(id, entry.date); } },
-            icon('edit', 18), lines.length ? 'Edit the off day' : 'Fill in the off day'),
+            icon('edit', 18), 'Fill in the off day')) : null;
+    // Import from Master Tour, at the foot of the sheet under the spots ("put that under the spots and notes").
+    var importRow = canEditTour(id) ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
       tourImportControl(id)) : null;
 
     // The night's venue, filled in from the show, centred over its day sheet.
@@ -20879,19 +20938,19 @@
     // the day being played, only when there are rows (and never before
     // migration 0157 is live).
     var alsoTonight = s ? cityTonight(id, s) : null;
-    // PLACES RECOMMENDED BY TOUR, the day sheet's last word (Devin,
-    // 2026-10-16: "At the bottom of the daysheet, it should show everyone on
-    // the crews 'spots' for that city"): the places shared with this tour
-    // for the day's city, after Notes and every other section, only when
-    // there are any (and never before migration 0153 is live).
+    // PLACES RECOMMENDED BY TOUR (Devin, 2026-10-16: "At the bottom of the
+    // daysheet, it should show everyone on the crews 'spots' for that
+    // city"; that night: "Also put this above the notes"): the places shared
+    // with this tour for the day's city, right under the sheet where Notes
+    // was, only when there are any (and never before migration 0153 is live).
     var spotsRec = spotsRecommended(id, s ? s.city : off.city);
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
     // Check In sits right under the venue's name.
-    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, copyBtn, alsoTonight, spotsRec];
+    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, spotsRec, alsoTonight, importRow];
 
-    return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn, alsoTonight, spotsRec];
+    return [hero, rail, placeEl, body, pollRow, editRow, guestBtn, spotsRec, alsoTonight, importRow];
   }
 
   function clearDaySheet(tourId, show, date, off) {
@@ -21969,7 +22028,7 @@
           h('h3', { class: 'ds-sec-h' }, 'More from the sheet'),
           // Lines of the sheet the boxes above don't cover, in its own words.
           h('div', { class: 'field' }, extrasHost),
-          field('Anything else', textIn('notes', 'Optional')),
+          // No Notes box (2026-10-16 night): notes already saved ride along untouched in f.notes.
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Post day sheet'),
             h('button', { class: 'btn ghost block', type: 'button',
