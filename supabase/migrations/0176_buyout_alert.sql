@@ -7,8 +7,19 @@
 -- status.). In the buyout alert button you can ping the TM to get you your
 -- buyout."
 --
--- The glow and the two views are the app's. This file holds what the
--- database must:
+-- And later the same day, the button moved to the Today tab and became
+-- "Buyout": "Everyday this button is automatically glowing. This button is
+-- glowing for everyone until they are marked as received ... if a
+-- crew/member doesn't receive a buyout that button glows and when they
+-- click it that can see the dates they haven't received a buyout and next
+-- to the date can click (bump) which prompts a slash effect to the tour
+-- manager only that says give X their buyout." So a buyout day no longer
+-- waits on a buyout amount being logged: every show day from the fresh
+-- start (2026-10-16) through today is one, for everyone on the tour, until
+-- the Tour Manager marks them received.
+--
+-- The glow, the two views and the splash are the app's. This file holds
+-- what the database must:
 --
 --   1. buyout_trackers: who keeps the track. The accounts that can write
 --      ticks (the tour's creator, or a Manager: money_lead's own people)
@@ -18,22 +29,27 @@
 --      creator and the Managers, as tour_managers says, or nobody could.
 --      Service only, like tour_managers: the notify function asks it.
 --
---   2. buyout_asks: "get me my buyout". A row says one thing: this person
---      asked the Tour Manager for their buyout for this show, at this time.
---      No amount, no words. A person writes only their own, only on a tour
---      they are on, only for a show from the fresh start (2026-10-16) on
---      whose buyout money is logged, and only while their own tick for it
---      is not in. One an hour per show: a second one inside the hour is
---      quietly not kept. Each one pokes the Tour Manager ('buyout'), so the
---      tick list shows Asked by that name at once; a tick settles the asks
---      it answers.
+--   2. buyout_asks: a bump, "give me my buyout". A row says one thing: this
+--      person asked the Tour Manager for their buyout for this show, at this
+--      time. No amount, no words. A person writes only their own, only on a
+--      tour they are on, only for a show dated from the fresh start
+--      (2026-10-16) through today (public.road_today(), never a day still to
+--      come), and only while their own tick for it is not in. One an hour
+--      per show: a second one inside the hour is quietly not kept. Each one
+--      pokes the Tour Manager ('buyout'), so the list shows Bumped by that
+--      name and the splash comes up at once; a tick settles the asks it
+--      answers.
 --
 --   3. The ticks the shows already hold for the fresh start's shows (the
 --      old tracker's show.buyoutTrack.paid, written by the Today card and
 --      Log income's Track) become rows in buyout_tracks, so the glow does
---      not ask for buyouts that were handed out and marked. Nothing is
+--      not ask for buyouts that were handed out and marked (Houston's four
+--      band Members, marked on the show but never in the table). Nothing is
 --      guessed: a mark becomes a row only when it names exactly one account
 --      on the tour.
+--
+-- (The crew copy of the tour is not touched: with no amount needed, a crew
+-- phone knows a buyout day from the show's date alone.)
 --
 -- NO MONEY MOVES HERE AND NO AMOUNTS ARE STORED.
 
@@ -79,7 +95,7 @@ create table if not exists public.buyout_asks (
   tour_id text not null references public.tours (id) on delete cascade,
   -- the show's key in the tour document (the same cap as buyout_tracks)
   show_id text not null check (char_length(show_id) between 1 and 80),
-  -- the asker. The database fills it in (default, no grant): a ping can
+  -- the asker. The database fills it in (default, no grant): a bump can
   -- never carry another account's name.
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   asked_at timestamptz not null default now()
@@ -90,8 +106,10 @@ create index if not exists buyout_asks_user on public.buyout_asks (user_id);
 alter table public.buyout_asks enable row level security;
 
 -- May this account ask, for this show? On the tour (a seat or its
--- creator), the show from the fresh start on with buyout money logged, and
--- this account's own tick for it not in. Answers about the caller alone.
+-- creator), the show dated from the fresh start through today (the road's
+-- day, public.road_today(): never one still to come), and this account's own
+-- tick for it not in. No buyout amount is asked for: every show day is a
+-- buyout day. Answers about the caller alone.
 create or replace function public.buyout_ask_ok(t_id text, s_id text)
 returns boolean
 language sql stable security definer set search_path = public as $$
@@ -101,15 +119,11 @@ language sql stable security definer set search_path = public as $$
      and exists (
        select 1 from tours t
         cross join lateral (select t.doc -> 'shows' -> s_id as sh) x
-        cross join lateral (select x.sh -> 'income' -> 'buyouts' as b) y
         where t.id = t_id
           and jsonb_typeof(x.sh) = 'object'
           and coalesce(x.sh ->> 'date', '') ~ '^\d{4}-\d{2}-\d{2}$'
           and x.sh ->> 'date' >= '2026-10-16'
-          and case when jsonb_typeof(y.b) = 'number' then (y.b #>> '{}')::numeric > 0
-                   when jsonb_typeof(y.b) = 'string' and btrim(y.b #>> '{}') ~ '^\d+(\.\d+)?$'
-                     then btrim(y.b #>> '{}')::numeric > 0
-                   else false end)
+          and x.sh ->> 'date' <= to_char(public.road_today(), 'YYYY-MM-DD'))
      and not exists (select 1 from buyout_tracks b
                       where b.tour_id = t_id and b.show_id = s_id and b.user_id = auth.uid())
 $$;
@@ -125,7 +139,7 @@ create policy buyout_asks_select on public.buyout_asks for select
 drop policy if exists buyout_asks_insert on public.buyout_asks;
 create policy buyout_asks_insert on public.buyout_asks for insert
   with check (user_id = auth.uid() and public.buyout_ask_ok(tour_id, show_id));
--- No update and no delete for anyone: a ping is said, never edited. The
+-- No update and no delete for anyone: a bump is said, never edited. The
 -- tick that answers it settles it (below).
 
 revoke all on public.buyout_asks from public, anon, authenticated;
@@ -133,7 +147,7 @@ grant select on public.buyout_asks to authenticated;
 grant insert (tour_id, show_id) on public.buyout_asks to authenticated;
 
 -- One an hour per person per show: a second inside the hour is quietly not
--- kept (the phone already says Sent).
+-- kept (the phone already says Bumped).
 create or replace function public.buyout_asks_once()
 returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -150,9 +164,9 @@ drop trigger if exists buyout_asks_once on public.buyout_asks;
 create trigger buyout_asks_once before insert on public.buyout_asks
   for each row execute function public.buyout_asks_once();
 
--- The Tour Manager's tick list updates live: a ping pokes whoever keeps the
+-- The Tour Manager's list and splash update live: a bump pokes whoever keeps the
 -- track with 'buyout' (the 0144 row that says only "look again"). It never
--- raises: a poke must never be the reason a ping fails.
+-- raises: a poke must never be the reason a bump fails.
 create or replace function public.poke_on_buyout_ask()
 returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -169,8 +183,8 @@ drop trigger if exists buyout_asks_poke on public.buyout_asks;
 create trigger buyout_asks_poke after insert on public.buyout_asks
   for each row execute function public.poke_on_buyout_ask();
 
--- A tick answers the pings it settles. It never raises: a tick must never
--- fail over a ping.
+-- A tick answers the bumps it settles. It never raises: a tick must never
+-- fail over a bump.
 create or replace function public.buyout_asks_settle()
 returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -255,43 +269,6 @@ begin
   end loop;
 end $$;
 
--- 4. Crew's copy of the tour (tour_public, 0028) holds no money, so a crew
--- phone could never see that a show has a buyout and its BUYOUTS tab could
--- never glow. The copy gains one yes-only mark per show, buyoutLogged, when
--- the show's buyouts are above zero: no amount, nothing else. The number is
--- read the way the app reads it (anything not a digit, dot or minus set
--- aside), and a value that still is not a number is simply no mark, so the
--- tour-save trigger can never fail on it. Everything else is 0028's text.
-create or replace function public.tour_for_ga(d jsonb)
-returns jsonb
-language sql immutable set search_path = public as $$
-  with doc as (select case when jsonb_typeof(d) = 'object' then d else '{}'::jsonb end as d),
-  shows as (
-    select case when jsonb_typeof(doc.d -> 'shows') = 'object' then doc.d -> 'shows' else '{}'::jsonb end as s from doc
-  )
-  select coalesce((
-    select jsonb_object_agg(k, v) from doc, jsonb_each(doc.d) e(k, v)
-    where k = any (array['artist', 'bands', 'createdAt', 'deletedAt', 'name', 'ourBand', 'rehearsalStart',
-      'rehearsalEnd', 'setupDone', 'setupStep', 'spanStart', 'spanEnd', 'offDays', 'dayNotes', 'updateSentOn'])
-  ), '{}'::jsonb)
-  || jsonb_build_object('shows', coalesce((
-    select jsonb_object_agg(sid, (
-      select coalesce(jsonb_object_agg(k, v), '{}'::jsonb)
-      from jsonb_each(case when jsonb_typeof(sv) = 'object' then sv else '{}'::jsonb end) f(k, v)
-      where k = any (array['id', 'date', 'city', 'venue', 'createdAt', 'daySheet', 'soldOut'])
-    ) || case when coalesce(substring(regexp_replace(coalesce(sv -> 'income' ->> 'buyouts', ''), '[^0-9.-]', '', 'g')
-                    from '^-?[0-9]*\.?[0-9]+')::numeric, 0) > 0
-              then '{"buyoutLogged": true}'::jsonb else '{}'::jsonb end)
-    from shows, jsonb_each(shows.s) g(sid, sv)
-  ), '{}'::jsonb))
-$$;
-
--- Every crew copy meets the new rule once (only the rows it changes).
-update public.tour_public p
-   set doc = public.tour_for_ga(t.doc), updated_at = now()
-  from public.tours t
- where t.id = p.id and p.doc is distinct from public.tour_for_ga(t.doc);
-
 notify pgrst, 'reload schema';
 
 -- ============================== To roll back ==============================
@@ -303,8 +280,6 @@ notify pgrst, 'reload schema';
 --   drop function if exists public.buyout_ask_ok(text, text);
 --   drop function if exists public.buyout_trackers(text);
 --   drop function if exists public.tour_manager_title(text);
---   put back 0028's tour_for_ga (its text is in that file) and run part 4's
---   update again, which takes the buyoutLogged marks out of crew copies;
 --   notify pgrst, 'reload schema';
 -- The ticks written by part 3 stay (each is a mark a show already held);
 -- to take exactly those back, delete the buyout_tracks rows of shows dated

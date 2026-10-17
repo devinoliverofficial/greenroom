@@ -437,15 +437,56 @@
     eq(G.buyoutOwedTo(shows, { 'b|u1': true, 'd|u1': true }, 'u1').length, 0, 'tracked everywhere: the glow stops');
   });
 
-  test('a crew copy of the tour shows its buyout nights by a mark alone, no money', function () {
+  test('every show day from the fresh start through today is a buyout day, money or not', function () {
     var t = { shows: {
-      a: { date: '2026-10-15', city: 'Oklahoma City, OK', buyoutLogged: true },
-      b: { date: '2026-10-16', city: 'Houston, TX', buyoutLogged: true },
+      a: { date: '2026-10-15', city: 'Oklahoma City, OK', income: { buyouts: 320 } },
+      b: { date: '2026-10-16', city: 'Houston, TX', income: { buyouts: 140 } },
       c: { date: '2026-10-17', city: 'Dallas, TX' },
-      d: { date: '2026-10-18', city: 'Austin, TX', buyoutLogged: 'yes' } } };
-    eq(G.buyoutShows(t).map(function (s) { return s.id; }).join(','), 'b',
-      'the mark counts from the fresh start on, only as true, and no mark is no buyout');
-    eq(G.buyoutOwedTo(G.buyoutShows(t), {}, 'u1').length, 1, 'so crew glow until they are tracked');
+      d: { date: '2026-10-18', city: 'Austin, TX', income: { buyouts: 200 } },
+      e: { date: 'TBA', city: 'Somewhere' } } };
+    eq(G.buyoutDays(t, '2026-10-17').map(function (s) { return s.id; }).join(','), 'b,c',
+      'Houston and Dallas (no money logged) count; the day before the fresh start and a show still to come do not');
+    eq(G.buyoutDays(t, '2026-10-18').map(function (s) { return s.id; }).join(','), 'b,c,d', 'the next morning Austin joins');
+    eq(G.buyoutDays(t, '2026-10-15').length, 0, 'before the fresh start nothing is owed');
+    eq(G.buyoutDays({ shows: {} }, '2026-10-17').length, 0, 'a book with no shows owes nothing');
+    var now = new Date(2026, 9, 18, 3, 0).getTime();   // 3 AM: still the 17th's tour day
+    eq(G.buyoutDays(t, G.tourToday(now)).map(function (s) { return s.id; }).join(','), 'b,c', 'the small hours belong to the night before');
+    eq(G.buyoutOwedTo(G.buyoutDays(t, '2026-10-17'), { 'b|u1': true }, 'u1').map(function (s) { return s.id; }).join(','), 'c',
+      'received in Houston, still owed Dallas');
+  });
+
+  test('a show’s own buyout marks count for the one person they name', function () {
+    var people = [
+      { userId: 'dev', name: 'Devin Oliver', email: 'devin@x.com' },
+      { userId: 'brent', name: 'Brent Allen', email: 'brent@x.com', invitedEmail: 'brent.tm@x.com' },
+      { userId: 'jeff', name: 'Jeff Valentine', email: '' },
+      { userId: 'sam1', name: 'Sam Lee', email: 's1@x.com' },
+      { userId: 'sam2', name: 'Sam Lee', email: 's2@x.com' }];
+    var crew = { c1: { name: 'Jeff Valentine' }, c2: { name: 'Someone Else', email: 'brent.tm@x.com' }, c3: { name: 'Spencer Carlisle' } };
+    var show = { buyoutTrack: { perHead: 15, paid: {
+      'n:devin oliver': { name: 'Devin Oliver', artist: true },
+      'e:brent@x.com': { name: 'Brent Allen', artist: true },
+      c1: { name: 'Jeff Valentine', artist: true },
+      'n:sam lee': { name: 'Sam Lee', artist: false },
+      'n:spencer carlisle': { name: 'Spencer Carlisle', artist: false },
+      c3: { name: 'Spencer Carlisle', artist: false } } } };
+    var got = G.buyoutDocGot(show, crew, people);
+    eq(Object.keys(got).sort().join(','), 'brent,dev,jeff', 'a name, an email and a crew entry each name one account');
+    show.buyoutTrack.paid['e:brent@x.com'] = null;
+    eq(!!G.buyoutDocGot(show, crew, people).brent, false, 'an untick (null) is no mark');
+    show.buyoutTrack.paid.c2 = { name: 'Someone Else', artist: false };
+    eq(!!G.buyoutDocGot(show, crew, people).brent, true, 'a crew entry goes by its email first, the invite’s included');
+    eq(Object.keys(G.buyoutDocGot({}, crew, people)).length, 0, 'no marks, nobody');
+    eq(Object.keys(G.buyoutDocGot(show, crew, null)).length, 0, 'no list yet, nobody');
+  });
+
+  test('the bump splash names who is waiting, first names unless two share one', function () {
+    eq(G.buyoutBumpLine(['Connor Allen']), 'Give Connor their buyout', 'one person');
+    eq(G.buyoutBumpLine(['Connor Allen', 'Serra Calvert']), 'Give Connor & Serra their buyout', 'two people');
+    eq(G.buyoutBumpLine(['Connor Allen', 'Serra Calvert', 'Ryne Jones']), 'Give Connor, Serra & Ryne their buyout', 'three people');
+    eq(G.buyoutBumpLine(['Sam Lee', 'Sam Ortiz', 'Ryne Jones']), 'Give Sam Lee, Sam Ortiz & Ryne their buyout', 'two Sams in full');
+    eq(G.buyoutBumpLine(['Connor Allen', ' Connor  Allen ']), 'Give Connor their buyout', 'the same person once');
+    eq(G.buyoutBumpLine([]), '', 'nobody, no words');
   });
 
   test('the Tour Manager keeps the buyout track; nobody titled, the creator and Managers do', function () {

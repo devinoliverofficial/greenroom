@@ -98,10 +98,10 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
       // A buyout was marked tracked, for the one person it was handed to.
       return { title: tourName, body: `Your buyout${city ? " for " + city : ""} is marked received` };
     case "buyoutask": {
-      // Someone still waiting on their buyout pinged the Tour Manager
-      // (Devin, 2026-10-17: "you can ping the TM to get you your buyout").
+      // Someone still waiting on their buyout bumped the Tour Manager, in the
+      // splash's own words (Devin, 2026-10-17: "give X their buyout").
       const who = String(d.who ?? "Someone");
-      return { title: tourName, body: `${who} is asking for their buyout${city ? " for " + city : ""}` };
+      return { title: tourName, body: `Give ${who} their buyout${city ? " for " + city : ""}` };
     }
     default:
       return null;
@@ -225,10 +225,10 @@ Deno.serve(async (req) => {
     return reply(403, { error: "not_manager" });
   }
 
-  // A buyout ask goes out only for a ping the database just kept (0176's
+  // A buyout bump goes out only for one the database just kept (0176's
   // buyout_asks lets one in only while the asker is still untracked on a
-  // show with a buyout, and one an hour), and names the show's own town,
-  // never one sent along with it.
+  // show day from the fresh start through today, and one an hour), and
+  // names the show's own town, never one sent along with it.
   if (type === "buyoutask") {
     const showId = cut(data.showId, 80);
     const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
@@ -246,6 +246,19 @@ Deno.serve(async (req) => {
     // The sender's own name, never one sent along with the event.
     const { data: prof } = await admin.from("profiles").select("full_name, username").eq("user_id", senderId).maybeSingle();
     data.who = String(prof?.full_name || prof?.username || "Someone");
+  }
+  if (type === "buyoutask" && data.who !== "Someone") {
+    // The splash's words: a first name, in full where someone else on the
+    // tour shares it.
+    const full = String(data.who).trim().replace(/\s+/g, " ");
+    const first = full.split(" ")[0];
+    const others = [...memberIds].filter((id) => id && id !== senderId);
+    let shared = false;
+    if (others.length) {
+      const { data: profs } = await admin.from("profiles").select("full_name").in("user_id", others);
+      shared = (profs ?? []).some((x) => String(x.full_name ?? "").trim().split(/\s+/)[0].toLowerCase() === first.toLowerCase());
+    }
+    data.who = shared ? full : first;
   }
   const msg = message(type, data, tourName);
   if (!msg) return reply(400, { error: "invalid" });

@@ -40,7 +40,7 @@
   // Buyout ticks (0151): each tour's rows from buyout_tracks, and whether the
   // table is there at all (null until the first ask answers; the answer is the session's).
   var buyoutCache = {}, buyoutAsk = {}, buyoutGen = {}, buyoutKnown = null, buyoutProbing = false;
-  // Buyout pings (0176): the same for buyout_asks, "get me my buyout".
+  // Buyout bumps (0176): the same for buyout_asks, "give me my buyout".
   var boAskCache = {}, boAskAsk = {}, boAskGen = {}, boAskKnown = null, boAskProbing = false;
   // To Do Lists (0152): each artist's tasks and invited people, and whether
   // the tables are there at all (null until the first ask answers; the
@@ -2172,14 +2172,14 @@
       if (c && c.data) c.data = c.data.filter(function (r) { return !(r.showId === showId && r.userId === userId); });
       emit('tours');
     },
-    /* Buyout pings (0176). buyoutAsksOn: is buyout_asks there (asked once
-       per session, false until it answers, so the Ping button stays away
-       until the migration is live). buyoutAsks: the pings this account may
-       read on a tour (its own; the Managers read them all), null while
-       first fetched. buyoutAskSend: "get me my buyout" for one show. The
-       database fills in who and when, lets it in only while this account is
-       still untracked on a show with a buyout, keeps one an hour, and pokes
-       the Tour Manager. */
+    /* Buyout bumps (0176). buyoutAsksOn: is buyout_asks there (asked once
+       per session, false until it answers, so Bump stays away until the
+       migration is live). buyoutAsks: the bumps this account may read on a
+       tour (its own; the Managers read them all), null while first fetched.
+       buyoutAskSend: "give me my buyout" for one show. The database fills in
+       who and when, lets it in only while this account is still untracked
+       on a show day from the fresh start through today, keeps one an hour,
+       and pokes the Tour Manager. */
     buyoutAsksOn: function () {
       if (boAskKnown === null) boAskProbe();
       return boAskKnown === true;
@@ -3659,7 +3659,7 @@
       else if (tableMissing(q.error)) buyoutKnown = false;
     }, function () { buyoutProbing = false; });
   }
-  // (A 'buyout' poke says the pings moved too: a ping landed for the Tour
+  // (A 'buyout' poke says the bumps moved too: a bump landed for the Tour
   // Manager, or a tick settled the asker's.)
   function buyoutStale() {
     Object.keys(buyoutCache).forEach(function (k) { buyoutGen[k] = (buyoutGen[k] || 0) + 1; if (buyoutCache[k]) buyoutCache[k].stale = true; });

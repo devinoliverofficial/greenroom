@@ -1161,6 +1161,11 @@ button.row.wn-row { appearance: none; width: 100%; border: 0; background: none; 
   text-shadow: 0 0 18px color-mix(in srgb, var(--pos) 55%, transparent); }
 .sn-sub { font-size: 16px; font-weight: 600; color: var(--ink); }
 @media (prefers-reduced-motion: reduce) { .sn-card { transition: opacity .2s ease; transform: none; } }
+/* The Tour Manager's bump splash: the same look, but it waits for an answer. */
+.splash-note.bo-bump { pointer-events: auto; padding: 0 16px; }
+.splash-note.bo-bump .sn-card { width: 100%; max-width: 340px; text-align: center; }
+.splash-note.bo-bump .sn-big { font-size: 26px; line-height: 1.2; letter-spacing: .02em; overflow-wrap: anywhere; }
+.sn-acts { display: grid; gap: 8px; width: 100%; margin-top: 10px; }
 /* Guest rows borrow the crew layout; the name is a quiet button (tap to remove). */
 button.row-label.gl-name { appearance: none; border: 0; background: none; padding: 0; margin: 0;
   color: inherit; font: inherit; font-size: 16px; font-weight: 600; text-align: left; cursor: pointer; }
@@ -3314,26 +3319,36 @@ button.fl-row { cursor: pointer; }
 .pop.on .pop-card { transform: none; opacity: 1; }
 .bo-row { gap: 12px; cursor: pointer; }
 .bo-row .rv-check { margin: 0; }
-/* A ping from someone still waiting, by their name on the Tour Manager's list. */
+/* The Buyout list (Devin, 2026-10-17): each day under a small heading, a
+   person's Mark received in the calendar's Rate pill, and Received in its
+   Rated look, check and all. */
+.bo-day { margin: 18px 2px 8px; font-size: 13px; font-weight: 700; color: var(--ink-2); }
+.bo-days > .bo-day:first-child { margin-top: 4px; }
+.bo-day.on { color: var(--pos); }
+.bo-person { gap: 10px; }
+.bo-person .cal-btn, .bo-mine .cal-btn { min-height: 30px; }
+.bo-person .cal-btn.cal-rated.bo-got { cursor: pointer; }
+.cal-btn.bo-take { background: none; box-shadow: inset 0 0 0 1px var(--neg); color: var(--neg); }
+/* Bumped: someone still waiting asked, quiet by their name. */
 .bo-asked { flex: none; padding: 3px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em;
-  background: var(--pos-soft); color: var(--pos); }
-/* Your own buyouts: Ping the TM sits small between the show and its word. */
+  background: var(--surface-2); color: var(--ink-2); }
+/* Your own days: Bump on the right, Bumped for the hour after. */
 .bo-mine { gap: 10px; }
-.bo-ping.btn.sm { flex: none; min-height: 32px; padding: 0 10px; font-size: 12.5px; border-radius: 9px; white-space: nowrap; }
+.cal-btn.bo-bump:disabled { opacity: .6; cursor: default; }
 .td-who { margin: 12px 0 4px; text-align: left; }
 .bo-foot { margin: 12px 2px 0; font-size: 14px; color: var(--ink-2); }
 .bo-track { flex: none; }
-/* BUYOUT ALERT: quiet until a buyout is waiting (on the Tour Manager's,
-   anyone's; on everyone else's, their own), then it glows green and pulses. */
-/* Top-left of the Overview's black area, centred on the pencil's line. */
-.bo-wrap { position: absolute; top: 6px; left: 0; z-index: 1; }
-.bo-alert { background: var(--surface-2); color: var(--ink-3); letter-spacing: .06em; }
-.bo-alert.btn.sm { min-height: 24px; padding: 0 9px; gap: 4px; font-size: 10px; font-weight: 700; letter-spacing: .03em; border-radius: 999px; }
-.bo-alert .icon { width: 12px; height: 12px; }
-@media (max-width: 359px) { .bo-alert .icon { display: none; } .bo-alert.btn.sm { padding: 0 7px; font-size: 9px; } }
-.bo-alert.on { background: var(--pos); color: var(--on-brand);
-  box-shadow: 0 0 18px color-mix(in oklab, var(--pos), transparent 35%);
-  animation: bogreen 1.4s ease-in-out infinite; }
+/* Buyout on the Today tab, across from Tonight in its size and type: green
+   and glowing while a buyout waits; once in, the calendar's Rated look. The
+   corner carries the left corner's lines unseen, so the two line up. */
+.bo-corner { width: 100%; min-width: 0; text-align: right; }
+.bo-corner .pt-dr-chips { position: relative; justify-content: flex-end; }
+.bo-corner .bo-ghost { visibility: hidden; }
+.pt-chip.bo-chip { position: absolute; top: 0; right: 0; appearance: none; border: 0; margin: 0; font: inherit;
+  font-size: 11.5px; font-weight: 700; letter-spacing: .02em; line-height: inherit; white-space: nowrap; cursor: pointer; }
+.pt-chip.bo-chip.lit { background: var(--pos); color: var(--on-brand); animation: bogreen 1.4s ease-in-out infinite; }
+.pt-chip.bo-chip.done { display: inline-flex; align-items: center; gap: 2px; padding: 3px 0; background: none; color: var(--ink-2); }
+.pt-chip.bo-chip.done .ic { display: inline-flex; color: var(--pos); }
 @keyframes bopulse {
   0%, 100% { transform: scale(1); box-shadow: 0 0 10px color-mix(in oklab, var(--brand), transparent 55%); }
   50% { transform: scale(1.025); box-shadow: 0 0 28px color-mix(in oklab, var(--brand), transparent 15%); }
@@ -3342,7 +3357,9 @@ button.fl-row { cursor: pointer; }
   0%, 100% { transform: scale(1); box-shadow: 0 0 10px color-mix(in oklab, var(--pos), transparent 55%); }
   50% { transform: scale(1.025); box-shadow: 0 0 28px color-mix(in oklab, var(--pos), transparent 15%); }
 }
-@media (prefers-reduced-motion: reduce) { .bo-alert.on { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .pt-chip.bo-chip.lit { animation: none; box-shadow: 0 0 14px color-mix(in oklab, var(--pos), transparent 40%); }
+}
 /* Where each logged dollar came from. UNKNOWN is a bug and says so loudly. */
 .logged .row { gap: 10px; }
 .src-tag { flex: none; padding: 3px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em;
@@ -3589,9 +3606,6 @@ button.fl-row { cursor: pointer; }
 .pay-sum-tab { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; appearance: none; border: 0; border-bottom: 2px solid transparent;
   background: none; padding: 4px 2px 8px; margin: 0; font: inherit; color: var(--ink-2); text-align: left; cursor: pointer; }
 .pay-sum-tab.on { color: var(--ink); border-bottom-color: var(--pos); }
-/* BUYOUTS while your own buyout is waiting: green, glowing, until you are tracked. */
-.pay-sum-tab.bo-lit { color: var(--pos); animation: venueglow 2.2s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .pay-sum-tab.bo-lit { animation: none; text-shadow: 0 0 10px color-mix(in oklab, var(--pos), transparent 50%); } }
 .pay-sum-k { font-size: 11.5px; font-weight: 800; letter-spacing: .08em; }
 .pay-sum-v { font-size: 20px; font-weight: 700; letter-spacing: -.01em; line-height: 1.15; color: inherit; }
 .pay-page .xs-card { margin-top: 0; overflow: hidden; }

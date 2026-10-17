@@ -1115,90 +1115,137 @@ shim = r"""<script>
       if (n < 40) setTimeout(function () { openLook(n + 1); }, 250);
     })(0);
   } catch (e) { /* no address to read */ }
-  /* ---- BUYOUTS (0151 + 0176): the BUYOUT ALERT, defined (Devin, 2026-10-17) ----
+  /* ---- BUYOUTS (0151 + 0176): the Buyout button on Today (Devin, 2026-10-17) ----
      The database table buyout_tracks is __harness.buyoutTicks here
-     ([{ tourId, showId, userId, at }]): one row = this person received the
-     buyout that show logged. buyout_asks (0176, "ping the TM") is
+     ([{ tourId, showId, userId, at }]): one row = this person received their
+     buyout for that show. buyout_asks (0176, a bump) is
      __harness.buyoutAskRows ([{ tourId, showId, userId, at }]). This phone's
-     account is u-devin; a tick, an undo or a ping pokes 'buyout', the way
+     account is u-devin; a mark, an undo or a bump pokes 'buyout', the way
      the database does.
-     THE RULES THE APP NOW FOLLOWS: only shows dated 2026-10-16 or later
-     count (G.BUYOUT_FROM, a fixed day). From the moment a buyout is logged
-     on such a show until a person is tracked on it, THEIR BUYOUTS tab head
-     (MY PAY: INCOME / EXPENSES / BUYOUTS) and their BUYOUT ALERT glow green.
-     Only the Tour Manager (a creator or Manager whose title says Tour
-     manager) sees the tick list; everyone else's BUYOUT ALERT opens their own
-     status, Received or Not yet per show, with Ping the TM on a Not yet. No
-     one titled Tour manager: the creator and the Managers see the tick list.
-       __harness.buyouts()  puts buyout money on Dallas (4 days ago, $1,200),
-                            Houston (2 days ago, $900) and tonight's Austin
-                            ($800), ticks everyone joined on Dallas, and has
-                            Brent ping for Austin. Dallas and Houston are
-                            before the fresh start, so ONLY Austin counts,
-                            anywhere. Or open the page with ?buyouts.
-                            Then Budget > MY PAY > BUYOUTS:
+     THE RULES THE APP NOW FOLLOWS: every SHOW day from 2026-10-16
+     (G.BUYOUT_FROM) through today is a buyout day for everyone on the tour,
+     money logged or not, until the Tour Manager marks them received. A mark
+     is a tick in the table, or a mark on the show itself (buyoutTrack.paid)
+     naming exactly one person. The Buyout button sits on the profile's Today
+     tab, in the day row's right corner across from Tonight: green and
+     glowing while a day is waiting, "Received" with the calendar's Rated
+     check once tonight is in and nothing is waiting, gone on a day with no
+     show and nothing waiting. The Tour Manager (a creator or Manager whose
+     title says Tour manager; nobody titled: the creator and the Managers)
+     gets the list, Mark received on each person; everyone else gets their
+     own days, Bump on each one still waiting. Bumps bring a splash up on the
+     Tour Manager's phone only. MY PAY's BUYOUTS tab is the plain record.
+     NO CLOCK TO SET: every date here is seeded from the real day the page
+     opens (yesterday and today); nothing reads the hour except Bumped (an
+     hour) and the 5 AM day line. The fixed-clock proofs live in the jsc
+     check (scratchpad r14/check_buyouts.js).
+       __harness.buyouts()  adds Fort Worth YESTERDAY (show sby) and three crew
+                            with accounts (Connor, Serra, Ryne); yesterday
+                            Serra is ticked and Brent is marked on the show
+                            only (the Houston case: no row in the table,
+                            still Received); tonight (Austin, s1) Brent is
+                            ticked; Connor bumped yesterday 20 minutes ago.
+                            No buyout money anywhere: none is needed. Best
+                            opened with ?buyouts (called by hand later, the
+                            crew list the app already holds lacks the three
+                            until the page is opened again). Then the
+                            profile, Today.
        ?buyouts             (this phone the creator; nobody titled Tour
-                            manager) THE FALLBACK: the tab glows (Devin's own
-                            Austin buyout is not in), and BUYOUT ALERT opens
-                            the tick list: Austin, "0 of 2 tracked · 1
-                            asked", Brent marked Asked. Tick everyone and
-                            both glows stop.
-       ?buyouts=tm          Brent becomes the tour's Tour manager: this phone
-                            (the creator) now sees ITS OWN status in BUYOUT
-                            ALERT: Austin, Not yet, Ping the TM. Tap it: it
-                            says Sent, and __harness.notified ends with
-                            ['buyoutask', { showId: 's1' }].
-       ?buyouts&manager     this phone is an editor Manager titled Tour
-                            Manager on someone else's tour: the tick list,
-                            three people, Brent Asked.
-       ?buyouts&crew        Crew: the tab and the button glow; the button
-                            opens Austin, Not yet, Ping the TM.
-       __harness.buyoutGive('u-devin')   ticks that person on tonight's show
-                            as the Tour Manager would from another phone,
-                            and pokes: on ?buyouts=tm or ?crew the glow stops.
+                            manager) THE FALLBACK, the list: Buyout glows; the
+                            splash "Give Connor their buyout" comes up once
+                            (Open the list / Later). The list: "Fort Worth ·
+                            <yesterday>" with Devin, Connor (Bumped) and Ryne,
+                            then "Tonight · Austin · <today>" with everyone,
+                            Brent Received. Mark received; tap Received, then
+                            Take back.
+       ?buyouts=tm          Brent becomes the Tour Manager: this phone (the
+                            creator) sees ITS OWN days: Buyout glows; two days,
+                            each with Bump. Tap one: Bumped, and
+                            __harness.notified ends with ['buyoutask', ...].
+                            No splash here.
+       ?buyouts&crew        a Crew phone: glowing, two days with Bump. No splash.
+       ?buyouts&manager     this phone an editor Manager titled Tour Manager on
+                            someone else's tour: the list and the splash.
+       __harness.buyoutGive('u-devin')   marks that person received on every
+                            buyout day, as the Tour Manager would from another
+                            phone, and pokes: on ?buyouts=tm or ?crew the
+                            button turns to Received with the check.
+                            buyoutGive('u-devin', 's1') marks tonight only.
+                            buyoutGive('all') marks everyone everywhere: the
+                            list's own button turns to Received too.
+       __harness.buyoutBump(1 | 2 | 3)   Connor; Connor and Serra; Connor,
+                            Serra and Ryne bump, and the splash on the list's
+                            phone says "Give Connor their buyout", "Give
+                            Connor & Serra their buyout", "Give Connor, Serra &
+                            Ryne their buyout". It forgets what it showed, so
+                            each call brings it up again.
        __harness.buyoutTicks  every tick; empty it ([]) then poke 'buyout'
-                            and nobody has theirs.
-       __harness.buyoutAsksOff = true   as before 0176: no Ping the TM, no
-                            Asked marks; everything else stays.
+                            and nobody has theirs (Brent's show mark still
+                            counts for yesterday).
+       __harness.buyoutAsksOff = true   as before 0176: no Bump, no Bumped,
+                            no splash; everything else stays.
        __harness.buyoutsOff = true   the probe answers as with no table (a
-                            build ahead of its migration): MY PAY shows no
-                            third tab, and the Today card's "Who received?"
-                            uses the show's own marks.
+                            build ahead of its migration): no Buyout button,
+                            MY PAY shows no third tab, and the Today card's
+                            "Who received?" uses the show's own marks.
      THE TODAY CARD (Tasks, on a show day) reads the same truth: with
-     ?buyouts as the tracker, "Who received?" lists tonight's people with the
-     same ticks; ticking all of them clears it here AND the BUYOUT ALERT's
-     glow. "Log in buyouts" also takes "No buyouts tonight". */
+     ?buyouts as the list's keeper, "Who received?" lists tonight's people
+     with Mark received; marking all of them clears it here AND turns the
+     Buyout button to Received once yesterday is in too. "Log in buyouts"
+     still takes "No buyouts tonight", which passes "Who received?" over. */
+  var boYesterday = function () { return ymd(new Date(today.getTime() - 864e5)); };
   window.__harness.buyouts = function () {
-    var H = window.__harness;
-    tours.t1.shows.s0.income = Object.assign({}, tours.t1.shows.s0.income, { buyouts: 1200 });
-    tours.t1.shows.s0.loggedAt = tours.t1.shows.s0.loggedAt || 1;
-    tours.t1.shows.s00.income = Object.assign({}, tours.t1.shows.s00.income, { buyouts: 900 });
-    tours.t1.shows.s00.loggedAt = tours.t1.shows.s00.loggedAt || 1;
-    tours.t1.shows.s1.income = Object.assign({}, tours.t1.shows.s1.income, { buyouts: 800 });
-    tours.t1.shows.s1.loggedAt = tours.t1.shows.s1.loggedAt || 1;
-    var now = new Date().toISOString();
-    var joined = (H.crew || []).filter(function (m) { return m.joined && m.userId; });
-    H.buyoutTicks = joined.map(function (m) { return { tourId: 't1', showId: 's0', userId: m.userId, at: now }; });
-    H.buyoutAskRows = [{ tourId: 't1', showId: 's1', userId: 'u-brent', at: new Date(Date.now() - 20 * 60e3).toISOString() }];
+    var H = window.__harness, now = new Date().toISOString();
+    if (!tours.t1.shows.sby && boYesterday() >= '2026-10-16') {
+      tours.t1.shows.sby = { id: 'sby', date: boYesterday(), city: 'Fort Worth, TX', venue: 'Tannahill’s',
+        // The show's own mark, with no row in the table: Brent still reads Received.
+        buyoutTrack: { perHead: null, paid: { 'n:brent allen': { name: 'Brent Allen', artist: false } } } };
+    }
+    [['u-connor', 'Connor Allen', 'Drums'], ['u-serra', 'Serra Calvert', 'Merch manager'], ['u-ryne', 'Ryne Jones', 'Production manager']].forEach(function (p) {
+      if (H.crew.some(function (m) { return m.userId === p[0]; })) return;
+      var mail = p[1].split(' ')[0].toLowerCase() + '@example.com';
+      H.crew = H.crew.concat([{ owner: false, role: 'viewer', userId: p[0], name: p[1], email: mail, invitedEmail: mail, phone: '', tourRole: p[2], joined: true }]);
+    });
+    H.buyoutTicks = [{ tourId: 't1', showId: 'sby', userId: 'u-serra', at: now }, { tourId: 't1', showId: 's1', userId: 'u-brent', at: now }];
+    H.buyoutAskRows = [{ tourId: 't1', showId: 'sby', userId: 'u-connor', at: new Date(Date.now() - 20 * 60e3).toISOString() }];
+    try { localStorage.removeItem('gr-bobump:t1'); } catch (e) { /* the phone forgets on its own */ }
     H.poke('buyout');
-    return 'Only tonight counts (Austin): nobody tracked, Brent asked';
+    return 'Yesterday (Fort Worth) and tonight (Austin) are buyout days; Connor bumped yesterday';
   };
-  // Brent (an editor Manager) titled Tour manager: the creator sees their own status.
+  // Brent (an editor Manager) titled Tour manager: the creator sees their own days.
   window.__harness.buyoutTM = function () {
     var H = window.__harness;
     H.crew = H.crew.map(function (m) { return m.userId === 'u-brent' ? Object.assign({}, m, { tourRole: 'Tour manager' }) : m; });
     H.poke('buyout');
-    return 'Brent keeps the track';
+    return 'Brent keeps the list';
   };
   window.__harness.buyoutGive = function (userId, showId) {
     var H = window.__harness, ticks = H.buyoutTicks || (H.buyoutTicks = []);
-    var sid = showId || 's1', uid = userId || 'u-devin';
-    if (!ticks.some(function (r) { return r.tourId === 't1' && r.showId === sid && r.userId === uid; })) {
-      ticks.push({ tourId: 't1', showId: sid, userId: uid, at: new Date().toISOString() });
-    }
-    H.buyoutAskRows = (H.buyoutAskRows || []).filter(function (r) { return !(r.showId === sid && r.userId === uid); });
+    var day = ymd(new Date(Date.now() - 5 * 3600e3));
+    var shows = showId ? [showId] : Object.keys(tours.t1.shows).filter(function (k) {
+      var d = tours.t1.shows[k].date; return d >= '2026-10-16' && d <= day;
+    });
+    var who = userId === 'all' ? H.crew.filter(function (m) { return m.joined && m.userId; }).map(function (m) { return m.userId; }) : [userId || 'u-devin'];
+    shows.forEach(function (sid) {
+      who.forEach(function (uid) {
+        if (!ticks.some(function (r) { return r.tourId === 't1' && r.showId === sid && r.userId === uid; })) {
+          ticks.push({ tourId: 't1', showId: sid, userId: uid, at: new Date().toISOString() });
+        }
+        H.buyoutAskRows = (H.buyoutAskRows || []).filter(function (r) { return !(r.showId === sid && r.userId === uid); });
+      });
+    });
     H.poke('buyout');
-    return uid + ' tracked on ' + sid;
+    return who.join(', ') + ' received on ' + shows.join(', ');
+  };
+  window.__harness.buyoutBump = function (n) {
+    var H = window.__harness, at = function (m) { return new Date(Date.now() - m * 60e3).toISOString(); };
+    var rows = [{ tourId: 't1', showId: 'sby', userId: 'u-connor', at: at(30) },
+      { tourId: 't1', showId: 's1', userId: 'u-serra', at: at(10) },
+      { tourId: 't1', showId: 's1', userId: 'u-ryne', at: at(2) }];
+    H.buyoutAskRows = rows.slice(0, Math.max(1, Math.min(3, Number(n) || 1)));
+    try { localStorage.removeItem('gr-bobump:t1'); } catch (e) { /* the phone forgets on its own */ }
+    H.poke('buyout');
+    return ['Give Connor their buyout', 'Give Connor & Serra their buyout', 'Give Connor, Serra & Ryne their buyout'][H.buyoutAskRows.length - 1];
   };
   try {
     var boq = String(location.search || '');
@@ -3347,9 +3394,10 @@ shim = r"""<script>
       window.__harness.poke('buyout');
       return Promise.resolve();
     },
-    // Buyout pings (0176), in memory: __harness.buyoutAskRows. A Crew phone
-    // reads only its own; a ping is kept only while this account is still
-    // untracked on a show with a buyout, and one an hour per show.
+    // Buyout bumps (0176), in memory: __harness.buyoutAskRows. A Crew phone
+    // reads only its own; a bump is kept only while this account is still
+    // untracked on a show day from the fresh start through today, and one
+    // an hour per show.
     buyoutAsksOn: function () { var H = window.__harness; return !H.buyoutsOff && !H.buyoutAsksOff; },
     buyoutAsks: function (tourId) {
       var H = window.__harness;
@@ -3360,7 +3408,7 @@ shim = r"""<script>
     buyoutAskSend: function (tourId, showId) {
       var H = window.__harness, rows = H.buyoutAskRows || (H.buyoutAskRows = []);
       var sh = tours[tourId] && tours[tourId].shows ? tours[tourId].shows[showId] : null;
-      var owed = sh && sh.date >= '2026-10-16' && Number(sh.income && sh.income.buyouts) > 0 &&
+      var owed = sh && sh.date >= '2026-10-16' && sh.date <= ymd(new Date(Date.now() - 5 * 3600e3)) &&
         !(H.buyoutTicks || []).some(function (r) { return r.tourId === tourId && r.showId === showId && r.userId === 'u-devin'; });
       if (!owed) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
       var recent = rows.some(function (r) {
