@@ -501,6 +501,24 @@ Deno.serve(async (req) => {
     reimbKey = `reimburse:${rid}`;
   }
 
+  // A special request reaches the whole tour now, so it goes out only for one
+  // the sender just filed on this tour, in its own words and its day's own
+  // town, and once, never with words sent along with it.
+  let requestKey = "";
+  if (type === "request") {
+    const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { data: rows } = await admin.from("day_requests").select("id, date, body, created_at")
+      .eq("tour_id", tourId).eq("added_by", senderId).gte("created_at", since)
+      .order("created_at", { ascending: false }).limit(1);
+    const row = rows && rows.length ? rows[0] : null;
+    if (!row) return reply(403, { error: "no_ask" });
+    data.text = String(row.body ?? "");
+    const shows = ((tour.doc as Record<string, unknown>)?.shows ?? {}) as Record<string, Record<string, unknown>>;
+    const sh = Object.values(shows).find((x) => x && String(x.date ?? "") === String(row.date ?? ""));
+    data.city = String(sh?.city ?? "");
+    requestKey = `request:${String(row.id)}`;
+  }
+
   const tourName = cut((tour.doc as Record<string, unknown>)?.name, 80) || "Greenroom";
   if (["request", "vote", "chat", "flowers", "buyoutask"].includes(type)) {
     // The sender's own name, never one sent along with the event.
@@ -549,9 +567,10 @@ Deno.serve(async (req) => {
     targets = broadTargets(type, [...memberIds], [...managers], senderId);
   }
   if (!targets.length) return reply(200, { sent: 0 });
-  // (Each paid back ask once, however often the phone says it.)
-  if (reimbKey) {
-    if (!(await firstTime(reimbKey))) return reply(200, { sent: 0, said: true });
+  // (Each paid back ask and each special request once, however often the phone says it.)
+  const onceKey = reimbKey || requestKey;
+  if (onceKey) {
+    if (!(await firstTime(onceKey))) return reply(200, { sent: 0, said: true });
     await tidyKeys();
   }
   const sent = await deliver(targets, (p) => tourGate(type, p), { title: msg.title, body: msg.body, tourId });

@@ -3443,8 +3443,10 @@
       S.dmJump = true;
       render(true);
       try {
-        await B.dmSend(uid, body);
+        var dmId = await B.dmSend(uid, body);
         mine.sending = false;
+        // Their phone buzzes ("<you> sent you a message.", never the words), by its own choice.
+        if (dmId) sendNotify(null, 'dm', { id: dmId });
         loadThread(uid, true); loadThreads(true);
       } catch (x) {
         th.msgs = th.msgs.filter(function (m) { return m !== mine; });
@@ -5890,6 +5892,8 @@
             }
             if (r && r.ok) {
               card.myClaim = 'pending'; card.myClaimCode = r.code || card.myClaimCode || null; after();
+              // Whoever decides claims hears of it (the server works out who).
+              sendNotify(null, 'claim', { id: id });
               toast('Claim sent');
               // Straight on to the code: it is what Greenroom looks for.
               openClaimPage(id); render(true);
@@ -6407,7 +6411,11 @@
       // crew (0147): you are listed now, and whoever claims the page keeps you or takes you off.)
       if (r.listed && r.unclaimed) { myActs(true); staleCards(); toast(unclaimedListedLine(artist), 7000); }
       else if (r.listed) { myActs(true); staleCards(); toast('You are on ' + artist + '’s page.'); }
-      else toast('Request sent. It waits on ' + artist + '’s page for an answer.');
+      else {
+        toast('Request sent. It waits on ' + artist + '’s page for an answer.');
+        // Whoever runs the page hears of it (the server works out who).
+        sendNotify(null, 'joinreq', { id: artistId });
+      }
       return 'sent';
     }
     toast(why === 'listed' ? 'You are already on ' + artist + '’s page.'
@@ -10814,7 +10822,9 @@
     if (r && r.ok) {
       frStale(p.id);
       keepCardRole(role);
+      // (Still waiting on an answer: whoever runs the page hears of it.)
       if (r.listed) myActs(true);
+      else sendNotify(null, 'joinreq', { id: p.id });
       // (The roles they ticked are said back whole; this line wraps.)
       frSent(r.listed && r.unclaimed ? { title: 'You’re listed', sub: unclaimedListedLine(p.name) }
         : r.listed ? { title: 'You’re listed', sub: 'You’re listed on ' + p.name + ' as ' + role + '.' }
@@ -10892,6 +10902,8 @@
     if (r && r.ok) {
       frStale(p.id); S.claimQ = null;
       keepCardRole(frRoleValue());
+      // Whoever decides claims hears of it (the server works out who).
+      sendNotify(null, 'claim', { id: p.id });
       var code = String(r.code || '');
       // (True for everyone: the pending row is handed only to the claimant and to Greenroom.)
       var shown = 'You show as a Member, pending. Only you and Greenroom see that until the claim is approved.';
@@ -16950,6 +16962,8 @@
         if (out && out.why === 'id') { st.rid = null; st.ridFor = ''; }
         toast(reimbWhy(out && out.why, 'ask'), 5200); draw(); return;
       }
+      // The tour's Managers hear of it, once (the server reads the ask itself).
+      if (out.id) sendNotify(id, 'reimburse', { id: out.id });
       st.rid = null; st.ridFor = '';
       toast(G.moneyCents(amount) + ' logged. The tour’s Managers can see it.', 4200);
       st.amount = null; st.what = ''; amountEl.value = ''; whatEl.value = '';
@@ -21762,7 +21776,7 @@
           if (!body) { input.focus(); return; }
           try { await B.addRequest(id, s.date, body); }
           catch (x) { toast('Couldn’t add that. Try again.'); return; }
-          // The tour manager and Managers hear about it on their phones.
+          // Everyone on the tour hears about it on their phones (Devin, 2026-10-17: "This can be everyone").
           sendNotify(id, 'request', { city: s.city || '', date: s.date, text: body });
           text = ''; input.value = '';
           toast('Request added'); draw(); render(true);
@@ -26189,8 +26203,9 @@
      prefs, grouped plainly. The fourth word says what a phone that saved
      before these keys existed counts as: today's behavior where one exists
      ('crewish': ON unless the phone chose ARTIST; 'artistish': ON unless it
-     chose CREW; 'on': it always went out), 'off' for a brand-new kind,
-     'stored' for the two switches that already lived on the row. The new
+     chose CREW; 'allonly': ON only for a phone that chose ALL; 'on': it
+     always went out), 'off' for a brand-new kind, 'stored' for the two
+     switches that already lived on the row. The new
      notify and ari functions read the same keys with the same fallbacks. */
   var NOTIF_GROUPS = [
     ['The day\u2019s times', [
@@ -26211,12 +26226,20 @@
       ['chat', 'Greenroom chat', 'A message lands in the tour chat', 'off'],
       ['payment', 'Payment notification', 'The band logs a payment to you', 'on'],
       ['buyout', 'Buyout marked tracked', 'Your buyout is marked received', 'on'],
-      ['wearebus', 'WE ARE A BUS', 'Everyone is on the bus, for drivers', 'on']]],
+      ['wearebus', 'WE ARE A BUS', 'Everyone is on the bus, for drivers', 'on'],
+      // Devin's answers (2026-10-17): page claims, asks to join a page and
+      // direct messages buzz now, each with its own switch, and the guest
+      // list has its own ('allonly': it went to ALL phones alone before).
+      ['claims', 'Page claims', 'Someone asks to run a page you approve', 'on'],
+      ['joinreqs', 'Join requests', 'Someone asks to join an artist page you run', 'on'],
+      ['dms', 'Direct messages', 'Someone sends you a message', 'on'],
+      ['guests', 'Guest list', 'Someone adds a name to the guest list', 'allonly']]],
     // Money news: only for people who can see the tour's money.
     ['Money', [
       ['green', 'In the green', 'The tour\u2019s net turns positive', 'on'],
       ['received', 'Money received', 'A show\u2019s guarantee or merch is marked received', 'on'],
-      ['merchnums', 'MERCH NUMBERS', 'A night\u2019s merch numbers come in', 'stored']]]
+      ['merchnums', 'MERCH NUMBERS', 'A night\u2019s merch numbers come in', 'stored'],
+      ['reimburse', 'Paid back requests', 'Someone asks to be paid back', 'on']]]
   ];
   // What a key starts as on this phone: the saved choice, else what the old
   // behavior already did for it.
@@ -26225,6 +26248,7 @@
     var g = saved.group === 'crew' || saved.group === 'artist' ? saved.group : 'all';
     if (was === 'crewish') return g !== 'artist';
     if (was === 'artistish') return g !== 'crew';
+    if (was === 'allonly') return g === 'all';
     if (was === 'on') return true;
     if (was === 'stored') return saved[key] === true;
     return false;
@@ -26240,7 +26264,7 @@
     NOTIF_GROUPS.forEach(function (grp) {
       grp[1].forEach(function (k) { out[k[0]] = st[k[0]] === true; });
     });
-    if (!seesMoney) { out.green = false; out.received = false; out.merchnums = false; }
+    if (!seesMoney) { out.green = false; out.received = false; out.merchnums = false; out.reimburse = false; }
     var artistish = out.stage || out.stage30;
     out.group = out.loadin && artistish ? 'all' : artistish ? 'artist' : 'crew';
     return out;
@@ -26270,7 +26294,7 @@
       NOTIF_GROUPS.forEach(function (grp) {
         grp[1].forEach(function (k) { st[k[0]] = notifStart(k[0], k[3], saved); });
       });
-      if (!seesMoney) { st.green = false; st.received = false; st.merchnums = false; }
+      if (!seesMoney) { st.green = false; st.received = false; st.merchnums = false; st.reimburse = false; }
       openSheet(function () {
         var segs = {}, keysShown = [];
         // Flip one segmented control where it stands, without a redraw.

@@ -1774,9 +1774,12 @@
         return { id: m.id, mine: m.sender === me, body: m.body, at: m.created_at, read: !!m.read_at };
       });
     },
+    // Answers the new message's id (for the buzz to its recipient), or null.
     dmSend: async function (otherId, body) {
-      var q = await sb.from('dms').insert({ sender: session.user.id, recipient: otherId, body: String(body || '').trim().slice(0, 2000) });
+      var q = await sb.from('dms').insert({ sender: session.user.id, recipient: otherId, body: String(body || '').trim().slice(0, 2000) })
+        .select('id');
       if (q.error) throw mapError(q.error);
+      return (Array.isArray(q.data) && q.data[0] && q.data[0].id) || null;
     },
     dmRead: async function (otherId) {
       var q = await sb.rpc('dm_read', { other: otherId });
@@ -3047,11 +3050,14 @@
     },
     /* ---- notifications ---- */
     // Resolves with how many phones it reached (null if unknown); never throws,
-    // so callers that don't care can fire and forget.
+    // so callers that don't care can fire and forget. With no tourId it is about
+    // a person, not a tour (a page claim, an ask to join a page, a direct
+    // message: data.id names the row), and the server works out who hears it.
     notify: function (tourId, type, data) {
+      var say = tourId ? { tourId: tourId, type: type, data: data || {} } : { type: type, data: data || {} };
       return callFn('notify', {
         method: 'POST',
-        body: JSON.stringify({ tourId: tourId, type: type, data: data || {} })
+        body: JSON.stringify(say)
       }).then(function (r) { return r.ok ? r.json() : null; })
         .then(function (out) { return out && typeof out.sent === 'number' ? out.sent : null; })
         .catch(function () { return null; });
