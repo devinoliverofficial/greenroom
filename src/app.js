@@ -17273,6 +17273,7 @@
     // Stats, Chat - the photo leads and Search closes the bar.
     var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
     tabs.splice(1, 0, BUDGET_TAB);
+    crewWarm(id);
     var framed = !!(o && o.off);
     // away: the same bar worn by a page outside the tour (the profile, the
     // menu, Search). A tap opens that page of the tour exactly as the old
@@ -17509,16 +17510,8 @@
      signed-up rows), else whoever has written in it. Never you. */
   function chatPeople(id, list, myUid, faces) {
     var B = window.GR_BACKEND, c = S.crewCache && S.crewCache[id];
-    if (!c && S.mode === 'db' && B && B.crew) {
-      S.crewCache = S.crewCache || {};
-      S.crewAsk = S.crewAsk || {};
-      if (!S.crewAsk[id]) {
-        S.crewAsk[id] = true;
-        // (Not forced: a redraw waits while someone is typing a message.)
-        B.crew(id).then(function (rows) { S.crewCache[id] = { rows: rows, at: Date.now() }; render(); })
-          .catch(function () { delete S.crewAsk[id]; });
-      }
-    }
+    // (Not forced: a redraw waits while someone is typing a message.)
+    if (!c && S.mode === 'db' && B && B.crew && crewAskDue(id)) crewAskOnce(id, 1).catch(function () { /* asked again next time */ });
     var out = [], seen = {};
     var add = function (uid, name) {
       name = String(name || '').trim();
@@ -18677,7 +18670,9 @@
       // night (Devin: "move the 'Buyout Alert' Button to the buyout tab...
       // but only located on the buyouts tab"), so nothing sits between the
       // pairs anymore. Supplies lives in the grid, so every button wears
-      // the same size.
+      // the same size. Bus Check in and Supplies each hold their cell while
+      // their answer is still out (ovButtonHold), so the four never land in
+      // a different order.
       h('div', { class: 'cal-open cal-grid cal-four' },
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
@@ -18685,11 +18680,34 @@
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { openSetlist(id); } },
           icon('music', 14), 'View Setlist'),
-        ovBusBtn(id, t),
-        suppliesBtn(id)),
+        ovBusBtn(id, t) || ovButtonHold(t, 'bus'),
+        suppliesBtn(id) || ovButtonHold(t, 'supplies')),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
+  }
+  /* Devin, 2026-10-17: "The buttons on the top kind appear in random
+     order". Bus Check in and Supplies each wait on their own table's first
+     answer of the session, and whichever answered first took the free cell
+     under View calendar, then moved right when the other came. Now a quiet
+     blank the size of a button holds the cell while that answer is out; a
+     button that turns out to be off leaves its cell as before. An answer
+     still out after 10 seconds lets the cell go. */
+  var OV_HOLD_MS = 10e3;
+  function ovButtonHold(t, which) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || typeof B.ovProbeAnswered !== 'function') return null;
+    // (The bus button is only ever there while the run is on.)
+    if (which === 'bus' && !(t && tourIsLive(t) && typeof B.busOn === 'function')) return null;
+    if (which === 'supplies' && typeof B.suppliesOn !== 'function') return null;
+    if (B.ovProbeAnswered(which)) return null;
+    S.ovHoldSince = S.ovHoldSince || {};
+    var since = S.ovHoldSince[which] || (S.ovHoldSince[which] = Date.now());
+    if (Date.now() - since > OV_HOLD_MS) return null;
+    // (An answer of "no table" draws nothing by itself: the page is drawn again when the hold runs out.)
+    S.ovHoldRedraw = S.ovHoldRedraw || {};
+    if (!S.ovHoldRedraw[which]) S.ovHoldRedraw[which] = setTimeout(function () { render(); }, since + OV_HOLD_MS + 50 - Date.now());
+    return h('span', { class: 'btn quiet sm cal-hold', 'aria-hidden': 'true' });
   }
 
   /* One set list for the whole run, opened from the Overview beside the
@@ -18913,8 +18931,124 @@
   function forgetCrew(tourId) {
     // Asked for again next time it's needed (who manages may have changed).
     if (S.crewAsk) { if (tourId) delete S.crewAsk[tourId]; else S.crewAsk = {}; }
+    // An ask already out may bring the list as it stood before the change:
+    // its answer is not kept, and the next need asks afresh.
+    if (S.crewOut) { if (tourId) delete S.crewOut[tourId]; else S.crewOut = {}; }
+    S.crewGen = S.crewGen || {};
+    if (tourId) S.crewGen[tourId] = (S.crewGen[tourId] || 0) + 1; else S.crewGenAll = (S.crewGenAll || 0) + 1;
     if (!S.crewCache) return;
     if (tourId) delete S.crewCache[tourId]; else S.crewCache = {};
+  }
+  function crewAskGen(tourId) {
+    return (S.crewGenAll || 0) + ':' + ((S.crewGen && S.crewGen[tourId]) || 0);
+  }
+  /* One ask for a tour's crew list at a time, whoever needs it (the
+     Overview's list, the chat, who manages): they share one answer instead
+     of each sending their own on every redraw (Devin, 2026-10-17: "the crew
+     is always loading"). An ask with no answer in 10 seconds is given up,
+     since an iPhone back from sleep can hold a request that never returns,
+     so the next ask can go; its answer still counts if it lands later.
+     redraw: 1 draws the page again when the list lands, 2 even while
+     someone is typing. Every Overview list on screen for the tour paints
+     itself from the answer, or from the failure (crewRepaint). */
+  var CREW_WAIT = 10e3;
+  function crewAskOnce(tourId, redraw) {
+    var B = window.GR_BACKEND;
+    S.crewCache = S.crewCache || {}; S.crewAsk = S.crewAsk || {}; S.crewOut = S.crewOut || {};
+    var out = S.crewOut[tourId];
+    if (out && Date.now() - out.at < CREW_WAIT) {
+      out.redraw = Math.max(out.redraw, redraw || 0);
+      return out.p;
+    }
+    if (S.mode !== 'db' || !B || typeof B.crew !== 'function') return Promise.reject(new Error('unavailable'));
+    var ask = { at: Date.now(), gen: crewAskGen(tourId), redraw: redraw || 0 };
+    S.crewOut[tourId] = ask;
+    S.crewAsk[tourId] = true;
+    var answer = Promise.resolve().then(function () { return B.crew(tourId); }).then(function (rows) {
+      // Asked before the list changed: asked again, and that answer is the one.
+      if (ask.gen !== crewAskGen(tourId)) return crewAskOnce(tourId, ask.redraw);
+      S.crewCache = S.crewCache || {};
+      S.crewCache[tourId] = { rows: Array.isArray(rows) ? rows : [], at: Date.now() };
+      if (S.crewMiss) delete S.crewMiss[tourId];
+      if (S.crewOut[tourId] === ask) delete S.crewOut[tourId];
+      if (ask.redraw === 2) render(true); else if (ask.redraw) render();
+      crewRepaint(tourId);
+      return S.crewCache[tourId].rows;
+    });
+    var late = sleep(CREW_WAIT).then(function () { throw Object.assign(new Error('timeout'), { code: 'timeout' }); });
+    ask.p = Promise.race([answer, late]).catch(function (e) {
+      if (S.crewOut[tourId] === ask) { delete S.crewOut[tourId]; delete S.crewAsk[tourId]; }
+      if (ask.gen === crewAskGen(tourId)) {
+        S.crewMiss = S.crewMiss || {};
+        S.crewMiss[tourId] = { n: ((S.crewMiss[tourId] && S.crewMiss[tourId].n) || 0) + 1, at: Date.now() };
+      }
+      crewRepaint(tourId);
+      throw e;
+    });
+    return ask.p;
+  }
+  // After one failed ask the next goes at once; after more, 4, 8 and 16
+  // seconds later, then every 30.
+  function crewAskWait(tourId) {
+    var m = S.crewMiss && S.crewMiss[tourId];
+    return !m || m.n < 2 ? 0 : Math.min(30e3, 2e3 * Math.pow(2, m.n - 1));
+  }
+  function crewAskDue(tourId) {
+    var m = S.crewMiss && S.crewMiss[tourId];
+    return !m || Date.now() - m.at >= crewAskWait(tourId);
+  }
+  // The Overview crew lists on screen for this tour.
+  function crewListsOn(tourId) {
+    return Array.prototype.filter.call(document.querySelectorAll('.crew-list'), function (el) {
+      return typeof el.crewPaint === 'function' && el.getAttribute('data-tour') === String(tourId);
+    });
+  }
+  // Each list on screen draws what this phone now holds. One still waiting
+  // with nothing to show, and no ask out, is asked for again by itself, for
+  // as long as it is on screen.
+  function crewRepaint(tourId) {
+    var lists = crewListsOn(tourId);
+    lists.forEach(function (el) { el.crewPaint(); });
+    if (!lists.length || (S.crewCache && S.crewCache[tourId]) || (S.crewOut && S.crewOut[tourId])) return;
+    S.crewRetry = S.crewRetry || {};
+    if (S.crewRetry[tourId]) return;
+    var m = S.crewMiss && S.crewMiss[tourId];
+    S.crewRetry[tourId] = setTimeout(function () {
+      delete S.crewRetry[tourId];
+      if (!crewListsOn(tourId).length || (S.crewCache && S.crewCache[tourId])) return;
+      crewAskOnce(tourId).catch(function () { /* painted as it stands, and asked again */ });
+    }, m ? Math.max(0, m.at + crewAskWait(tourId) - Date.now()) : 0);
+  }
+  // The crew list of the tour a bar belongs to, asked for in the background
+  // once, so the Overview has it the moment it opens.
+  function crewWarm(tourId) {
+    var B = window.GR_BACKEND;
+    if (!tourId || S.mode !== 'db' || !B || typeof B.crew !== 'function') return;
+    if ((S.crewCache && S.crewCache[tourId]) || (S.crewOut && S.crewOut[tourId]) || !crewAskDue(tourId)) return;
+    crewAskOnce(tourId).catch(function () { /* the Overview asks again when it opens */ });
+  }
+  /* How many rows each tour's crew list had when it was last drawn (the
+     count alone, kept on this phone under this account), so the list's
+     Loading place is drawn the size the list will be and nothing under it
+     moves when the crew lands. */
+  function crewCountKept(tourId, n) {
+    var B = window.GR_BACKEND, uid = S.mode === 'db' && B && B.uid ? B.uid() : '';
+    var key = 'gr-crewn' + (uid ? ':' + uid : '');
+    if (!S.crewCount || S.crewCount.key !== key) {
+      var got = null;
+      try { got = JSON.parse(lsGet(key) || 'null'); } catch (e) { got = null; }
+      S.crewCount = { key: key, all: G.isObj(got) ? got : {} };
+    }
+    var all = S.crewCount.all;
+    if (n == null) return Math.max(0, Math.min(30, Math.round(G.num(all[tourId]))));
+    n = Math.max(1, n);
+    if (all[tourId] === n) return n;
+    delete all[tourId];
+    all[tourId] = n;
+    var ks = Object.keys(all);
+    ks.slice(0, Math.max(0, ks.length - 40)).forEach(function (k) { delete all[k]; });
+    lsSet(key, JSON.stringify(all));
+    return n;
   }
 
   /* The name column is sized to the widest name, so the badges stand in one
@@ -18977,10 +19111,8 @@
     // The tour manager and Managers can edit someone or kick them off.
     var manages = owns || tourRole(tourId) === 'editor';
     S.crewCache = S.crewCache || {};
-    var cached = S.crewCache[tourId] || null;
     var faces = (S.mode === 'db' && B.facesFor && B.facesFor(tourId)) || {};
-    var list = h('div', { class: 'ledger crew-list crew-sym' },
-      cached ? null : h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading\u2026')));
+    var list = h('div', { class: 'ledger crew-list crew-sym', 'data-tour': tourId });
 
     /* The badge column sits centred in the gap between the names and the
        icons: the name column is sized to the widest name (so the gap is the
@@ -19001,6 +19133,9 @@
     }
 
     function draw(rows) {
+      S.crewShown = S.crewShown || {};
+      S.crewShown[tourId] = rows;
+      crewCountKept(tourId, rows.length);
       if (!rows.length) {
         list.replaceChildren(h('div', { class: 'row' },
           h('span', { class: 'hint' }, 'Nobody else on the run yet.')));
@@ -19061,17 +19196,52 @@
               'aria-label': 'Call ' + title }, icon('phone', 17))
               : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }))));
     }
-    if (cached) draw(cached.rows);
-    if (!cached || Date.now() - cached.at > 60e3) {
-      B.crew(tourId).then(function (rows) {
-        var same = !!cached && JSON.stringify(cached.rows) === JSON.stringify(rows);
-        S.crewCache[tourId] = { rows: rows, at: Date.now() };
-        if (!same) draw(rows);
-      }).catch(function () {
-        if (cached) return; // keep showing what we had
+    /* What the list shows, from what this phone holds, painted again into
+       whichever list is on screen whenever an ask for this tour lands or
+       fails (crewRepaint): the crew; else the rows it last showed, while a
+       fresh list is asked for after a change; else Loading, in a place the
+       size the list was last time; else, after two failed asks in a row,
+       the plain words with Try again (it also tries again by itself).
+       Only a change is drawn. */
+    var showing = null;
+    function paint() {
+      var c = S.crewCache && S.crewCache[tourId];
+      var rows = c ? c.rows : (S.crewShown && S.crewShown[tourId]) || null;
+      var miss = S.crewMiss && S.crewMiss[tourId];
+      var now = rows ? JSON.stringify(rows) : miss && miss.n >= 2 ? 'failed' : 'loading';
+      if (now === showing) return;
+      showing = now;
+      if (rows) {
+        // (A row that can't be drawn still leaves the names, never Loading.)
+        try { draw(rows); } catch (e) {
+          list.replaceChildren.apply(list, rows.map(function (m) {
+            return h('div', { class: 'row crew-row' }, h('span', { class: 'row-label' }, m.name || m.username || m.email || 'Someone'));
+          }));
+        }
+        return;
+      }
+      if (now === 'failed') {
         list.replaceChildren(h('div', { class: 'row' },
-          h('span', { class: 'hint' }, 'Couldn\u2019t load the crew.')));
-      });
+          h('span', { class: 'hint', style: 'flex:1' }, 'Couldn\u2019t load the crew.'),
+          h('button', { class: 'mn-change', type: 'button', onclick: function () {
+            if (S.crewMiss) delete S.crewMiss[tourId];
+            crewAskOnce(tourId).catch(function () { /* painted as it stands */ });
+            crewRepaint(tourId);
+          } }, 'Try again')));
+        return;
+      }
+      var n = crewCountKept(tourId);
+      list.replaceChildren(h('div', { class: 'row', style: n > 1 ? 'min-height:' + n * 62 + 'px' : null },
+        h('span', { class: 'hint' }, 'Loading\u2026')));
+    }
+    list.crewPaint = paint;
+    paint();
+    // Asked for when it isn't held, or was last asked over a minute ago (one ask shared with every screen).
+    var held = S.crewCache[tourId];
+    if (!held || Date.now() - held.at > 60e3) {
+      if (crewAskDue(tourId)) crewAskOnce(tourId).catch(function () { /* painted as it stands, and asked again */ });
+      // (Not due yet after failed asks: once the list is on screen it asks by itself when it is.)
+      else if (!held) setTimeout(function () { crewRepaint(tourId); }, 0);
     }
 
     return [
@@ -19232,13 +19402,8 @@
     if (B && B.ownsTour && B.ownsTour(tourId)) return true;
     var cached = S.crewCache && S.crewCache[tourId];
     if (!cached) {
-      S.crewCache = S.crewCache || {};
-      S.crewAsk = S.crewAsk || {};
-      if (!S.crewAsk[tourId] && B && B.crew) {
-        S.crewAsk[tourId] = true;
-        B.crew(tourId).then(function (rows) { S.crewCache[tourId] = { rows: rows, at: Date.now() }; render(true); })
-          .catch(function () { delete S.crewAsk[tourId]; /* asked again next time */ });
-      }
+      // (The one ask the Overview and the chat share: never held up by an ask some other screen left hanging.)
+      if (B && B.crew && crewAskDue(tourId)) crewAskOnce(tourId, 2).catch(function () { /* asked again next time */ });
       return false;
     }
     return cached.rows.some(function (m) { return !m.owner && m.role === 'editor' && m.manager && isMe(m); });
@@ -20955,6 +21120,17 @@
       return;
     }
     openBusSheet(id, busCall);
+  };
+  /* Dev harness only, like the line above: its ?ovslow flag opens the
+     tour's Overview the moment the fake backend is up, so the first frames
+     are seen (the four buttons holding their cells, the crew list's
+     Loading and how it ends). */
+  if (window.__harness) window.__harness.openOverview = function (id, tries) {
+    if (!S.loaded || !getTour(id)) {
+      if ((tries || 0) < 40) setTimeout(function () { window.__harness.openOverview(id, (tries || 0) + 1); }, 100);
+      return;
+    }
+    go({ name: 'tour', id: id, view: 'details' });
   };
   /* Dev harness only, like the line above: its ?look= flag opens one of the
      four sheets restyled on 2026-10-17 once the fake backend is up.

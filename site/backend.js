@@ -1783,6 +1783,9 @@
     },
     /* The tour's phone book: everyone invited, plus the manager who owns it. */
     crew: async function (tourId) {
+      // (Asked before the sign-in is in hand it would come back short, and be held as the list: it fails instead,
+      // and the app asks again.)
+      if (!session) throw err('unavailable');
       var mq = await sb.from('members')
         .select('invited_email, role, user_id, display_name, phone, tour_role, overrides, manager')
         .eq('tour_id', tourId).order('created_at');
@@ -1835,6 +1838,13 @@
         });
       });
       return out;
+    },
+    // Has the session's first ask about a table behind an Overview button answered yet, either way ('bus': 0150,
+    // 'supplies': 0155)? Until it has, the Overview holds that button's place.
+    ovProbeAnswered: function (which) {
+      if (which === 'bus') return busKnown !== null;
+      if (which === 'supplies') return supplyKnown !== null;
+      return true;
     },
     setUsername: async function (name) {
       var clean = String(name || '').trim().slice(0, 24);
