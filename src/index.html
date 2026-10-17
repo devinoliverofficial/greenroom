@@ -1879,6 +1879,8 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
   min-height: 28px; padding: 0 2px; cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--pos), transparent 55%); text-underline-offset: 3px; }
 /* The data credit: one quiet line at the foot of a page that shows it. */
 .hist-credit { margin: 26px 0 0; text-align: center; font-size: 11px; color: var(--ink-3); opacity: .75; }
+/* On an artist page's Tours tab, under the gear: quieter still. */
+.hist-credit.tf-credit { margin-top: 14px; font-size: 10px; opacity: .5; }
 /* Fans / followers line under the headline stats; tappable where it opens a list. */
 .hist-fans { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-3); }
 .hf-btn { appearance: none; background: none; border: 0; padding: 0; margin: 0;
@@ -3639,7 +3641,19 @@ button.fl-row { cursor: pointer; }
 .tf-added-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .tf-added-row .row-label { flex: 1; min-width: 0; }
 .tf-again { margin-top: 12px; }
-.tf-rescan { margin: 14px 0 4px; }
+/* The Tours tab's foot (Devin, 2026-10-17): one quiet gear under the list,
+   with a green dot while something waits on the owner's answer. */
+.tf-gear-row { position: relative; z-index: 1; display: flex; justify-content: center; margin: 12px 0 0; }
+.iconbtn.tf-gear { position: relative; color: var(--ink-3); }
+.iconbtn.tf-gear .ic svg { stroke-width: 1.8; }
+.tf-gear-dot { position: absolute; top: 9px; right: 8px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--pos); box-shadow: 0 0 0 2px var(--bg, #000); }
+/* Its sheet wears Settings' rows (st-sheet); a row that can't be used yet is dimmed. */
+.tf-sheet .mn-row:disabled { opacity: .42; cursor: default; }
+.tf-sheet .mn-row:disabled:active { background: none; }
+.tf-gear-say { margin: 4px 0 6px; }
+.tf-gear-say .tf-wait { padding-top: 10px; }
+.tf-sheet .tf-more { margin-top: 0; }
 /* The search in progress: the van from the opening screen, driving in place,
    with how long is left. Devin: "Greenroom is searching. Come back in 15min". */
 .tf-wait { display: grid; justify-items: center; gap: 6px; padding: 18px 0 14px; text-align: center; }

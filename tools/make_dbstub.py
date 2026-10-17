@@ -822,6 +822,60 @@ shim = r"""<script>
     emit();
     return a.id;
   };
+  /* ---- THE TOURS TAB'S GEAR (Devin, 2026-10-17: "Get rid of all that text") ----
+     Under an artist page's tour list there is now one gear (centred) and the quiet setlist.fm credit, and
+     nothing else. The gear is drawn for the page's runner (a verified page with a road story) and, on a page
+     nobody runs, for a Greenroom admin, the same people the old Rescan button and Tour search block were
+     drawn for. A green dot sits on it while runs of nights with no tour name wait on the owner. Tapping it
+     opens Tour settings: Add tour (opens From a flyer / By hand), Refresh, the search's own words under
+     them, and Waiting for you (the runs, folded, each with Name this run).
+     HOOKS:
+       __harness.tourGear(waiting, sheet)   the pretend I See Stars page is the test person's (artistSide),
+                                   with a search Greenroom finished by itself two days ago and, unless waiting
+                                   is false, two runs waiting. It lands on the page's Tours tab as its runner
+                                   (the gear with its dot, the credit under it) and, with sheet true, opens
+                                   Tour settings too. Answers the page's id. Or open the page with ?tourgear
+                                   (?tourgear=sheet opens the sheet as well, ?tourgear=none has nothing waiting).
+       Refresh: tap it. The row dims to "Searching now" and the van drives under it ("Reading tour
+                                   announcements: 0 articles, 6 to go", then 3 and 3), then the phone reads
+                                   with the pretend reader ("Sorting out the tours") and the search settles
+                                   ("Searched on <today>. Read 2 articles: ..."; two runs wait again).
+                                   __harness.rescans counts forced searches, __harness.freshNudges the
+                                   setlist.fm re-reads asked for. __harness.tfBrain = true before tapping
+                                   makes it the server's read instead ("Sorting out the tours: 2 of 4 batches").
+       Add tour, From a flyer: the photo picker. With no real photo to hand, from the console:
+                                   var i = document.querySelector('.tf-sheet input[type=file]'),
+                                   dt = new DataTransfer(); dt.items.add(new File(['x'], 'flyer.png',
+                                   { type: 'image/png' })); i.files = dt.files; i.dispatchEvent(new Event('change'));
+                                   Tour settings comes back, the pretend reader answers at once, and the toast
+                                   says what was added from that poster.
+       Add tour, By hand: the saved-page sheet, now titled "Add a missing tour"; Read it (and Cancel) come
+                                   back to Tour settings, where the reading shows. __harness.proposed holds
+                                   what was handed over.
+       Waiting for you: open the fold, Name this run, Name it: back on Tour settings with the toast "3 shows
+                                   named ...", the fold still open and that run gone from it (the dot on the
+                                   page goes once none are left). Cancel comes back the same way.
+                                   __harness.namedRuns holds each one named.
+       A visitor sees no gear: __harness.visitorOf(), then Search, I See Stars, Tours. */
+  window.__harness.tourGear = function (waiting, sheet) {
+    var H = window.__harness, id = H.artistSide();
+    var ago = new Date(Date.now() - 2 * 864e5).toISOString();
+    H.tf = H.tf || {};
+    H.tf[id] = { status: 'done', detail: 'Read 343 articles: 33 tours found, 31 new, 31 added to the page', day: ago.slice(0, 10),
+      pages: 0, waiting: 0, brain: !!H.tfBrain, eta: 0, unread: 0, batches: { total: 0, done: 0 }, sources: {}, finishedAt: ago, auto: true,
+      candidates: [], runs: waiting === false ? [] : [
+        { first: '2018-05-26', last: '2018-06-21', n: 15, countries: 'CA, US', nights: [{ date: '2018-05-26', city: 'San Antonio', state: 'TX', country: 'US', venue: 'Aztec Theatre' }, { date: '2018-06-21', city: 'Houston', state: 'TX', country: 'US', venue: 'Warehouse Live' }] },
+        { first: '2017-07-15', last: '2017-08-04', n: 11, countries: 'US', nights: [{ date: '2017-07-15', city: 'St. Louis', state: 'MO', country: 'US', venue: 'Pop’s' }] }] };
+    (function openIt(n) {
+      if (H.openTourGear) { H.openTourGear(id, !!sheet); return; }
+      if (n < 40) setTimeout(function () { openIt(n + 1); }, 250);
+    })(0);
+    return id;
+  };
+  try {
+    var gearAsk = /[?&]tourgear(?:=(sheet|none))?\b/.exec(String(location.search || ''));
+    if (gearAsk) window.__harness.tourGear(gearAsk[1] !== 'none', gearAsk[1] === 'sheet');
+  } catch (e) { /* no address to read */ }
   // A brand-new Crew account (see LIVE WITHOUT A RESTART above): set up before the app starts.
   var held = {};
   window.__harness.newCrew = function () {
@@ -2572,7 +2626,7 @@ shim = r"""<script>
         // The server's own read: four batches, then the finds land and the sure one fills in.
         st.batches.done += 2; st.eta = Math.max(0, (st.batches.total - st.batches.done) * 12);
         if (st.batches.done >= st.batches.total) {
-          st.status = 'done'; st.eta = 0; st.detail = 'Read 6 articles: 2 tours found, 2 new, 1 added to the page';
+          st.status = 'done'; st.eta = 0; st.detail = 'Read 6 articles: 2 tours found, 2 new, 1 added to the page'; st.finishedAt = new Date().toISOString();
           st.candidates.push({ id: 'auto1', name: 'Let Light Overcome the Darkness Tour', role: 'support', first: '2019-11-05', last: '2019-12-08', region: 'US', lineup: 'Our Last Night, The Word Alive',
             n: 2, sources: [], status: 'added', auto: true, decidedAt: new Date().toISOString(), matched: 0, have: 2, named: 2, toAdd: 0, fill: false });
           st.candidates.push({ id: 'tie1', name: 'Tie One', role: 'support', first: '2018-05-26', last: '2018-06-21', region: 'US', lineup: 'Dance Gavin Dance', n: 0, sources: [], status: 'new', auto: false, matched: 15, have: 15, toAdd: 0, fill: false });
@@ -2606,7 +2660,7 @@ shim = r"""<script>
       // And one tour the page already has, with dates the page lacks.
       st.candidates.push({ id: 'candfill', name: 'The Godmode', role: 'support', first: '2024-05-07', last: '2024-05-25', region: 'US', lineup: 'In This Moment, Kim Dracula',
         n: 13, sources: ['https://www.theprp.com/2024/02/13/x/'], status: 'new', matched: 0, have: 2, toAdd: 11, fill: true });
-      st.status = 'done'; st.eta = 0; st.added = (cands || []).length;
+      st.status = 'done'; st.eta = 0; st.added = (cands || []).length; st.finishedAt = new Date().toISOString(); st.auto = false;
       st.detail = 'Read 2 articles: ' + (cands || []).length + ' tours found, ' + (cands || []).length + ' new, ' + filled + ' added to the page';
       return Promise.resolve(JSON.parse(JSON.stringify(st)));
     },
@@ -3729,6 +3783,8 @@ shim = r"""<script>
     historyNudge: function (artistId, fresh) {
       var H = window.__harness;
       H.nudges = (H.nudges || 0) + 1;
+      // (A fresh one is a Refresh from the Tours tab's gear: see THE TOURS TAB'S GEAR.)
+      if (fresh) H.freshNudges = (H.freshNudges || 0) + 1;
       return window.GR_BACKEND.artistHistory(artistId).then(function (plain) {
         // (The stored row itself: a nudge moves it along.)
         var row = (H.histories || {})[artistId];

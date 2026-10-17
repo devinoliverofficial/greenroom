@@ -4304,9 +4304,8 @@
             : emptyState('No tours yet', manage ? 'Tours you file under ' + card.name + ' show up here.'
                 : histBusy(hc0.row) ? (histWaiting(hc0.row) ? 'The rest of ' + card.name + '\u2019s road history comes in tomorrow.' : 'Reading ' + card.name + '\u2019s road history\u2026')
                 : card.name + ' has no tours on Greenroom yet.'),
-           // Under the tours, for whoever runs the page: a rescan any time, and the search's own status.
-           manage && card.verified && hc0.row ? rescanButton(id) : null,
-           tourFinderBlock(id, card, manage, unclaimed)],
+           // Under the tours: one gear, for whoever runs the page (tourGear).
+           tourGear(id)],
       // Tour data's credit, under the Tours tab alone (Devin, 2026-10-17:
       // "get rid of setlist.fm tag on EVERYTHING besides the tour tab").
       tab === 'tours' ? historyCredit(id) : null,
@@ -8309,7 +8308,7 @@
     try {
       c.state = await B.tourFindStart(id, !!force); c.failed = false; c.at = Date.now(); c.since = Date.now();
       // Asked while a search is running, the server hands that search back.
-      if (before.status && c.state && before.status === c.state.status && c.state.status !== 'reading') toast(force ? 'A search is already running' : 'Already read today — look again tomorrow');
+      if (before.status && c.state && before.status === c.state.status && c.state.status !== 'reading') toast(force ? 'A search is already running' : 'Already read today. Look again tomorrow.');
     } catch (e) { saveFailed('tours', e); }
     c.busy = false; c.phase = '';
     tfAfter(id); render(true);
@@ -8541,12 +8540,13 @@
             var B = window.GR_BACKEND, c = tfOf(id);
             try {
               var res = await B.tourRunName(id, run.first, run.last, nm);
-              c.state = res; closeSheet();
+              // (A run is named from the gear's sheet: back to it, with the rest still waiting.)
+              c.state = res; openTourGear(id);
               toast(plural(G.num(res && res.named), 'show') + ' named ' + nm);
               histOf(id, true); render(true);
             } catch (x) { b.disabled = false; saveFailed('tours', x); }
           } }, 'Name it'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openTourGear(id); } }, 'Cancel'))];
     }, { label: 'Name this run' });
   }
   // Posters and flyers (Devin: "every flyer"): the one source that always
@@ -8608,12 +8608,6 @@
     }
     c.busy = false; c.phase = ''; c.progress = ''; render(true);
   }
-  function tfPosterButton(id, busy) {
-    if (!S.sample) return null;
-    return fileControl({ accept: imageAccept(), multiple: true, cls: 'btn ghost block', icon: 'plus',
-      label: 'Add from posters', ariaLabel: 'Add tours from poster photos',
-      onFiles: function (files) { tfPosters(id, files.slice(0, 20)); } });
-  }
   // A saved page (Devin, 2026-10-08: Concert Archives "shows all the info on
   // each show including the tour name, the bands that were on the tour, the
   // venue, and the city"). That site turns automated readers away, so the
@@ -8653,7 +8647,7 @@
         try { var got = await pdfToText(parts[i], 200); body += '\n' + String(got && got.text || ''); } catch (e) { /* a PDF with no text layer: nothing to add */ }
       }
       body = body.replace(/[ \t]+\n/g, '\n').trim();
-      if (body.length > 300000) { toast('That\u2019s a lot of text \u2014 reading the first 300,000 characters'); body = body.slice(0, 300000); }
+      if (body.length > 300000) { toast('That\u2019s a lot of text. Reading the first 300,000 characters.'); body = body.slice(0, 300000); }
       // Long lists go in slices (the reader answers a few hundred shows at a time).
       var slices = [];
       body = body.trim();
@@ -8691,8 +8685,8 @@
         return h('button', { class: 'pf-btn' + (st.source === o[0] ? ' on' : ''), type: 'button', 'aria-pressed': st.source === o[0] ? 'true' : 'false',
           onclick: function () { st.source = o[0]; Array.prototype.forEach.call(srcRow.children, function (ch, i) { ch.classList.toggle('on', TF_SOURCES[i][0] === o[0]); ch.setAttribute('aria-pressed', TF_SOURCES[i][0] === o[0] ? 'true' : 'false'); }); } }, o[1]);
       }));
-      return [h('h2', { class: 'sh-title' }, 'Add from a saved page'),
-        h('p', { class: 'sh-sub' }, 'The best door is a spreadsheet: on Concert Archives, a verified band account can export the band’s whole concert list (date, tour title, bands, venue, city). Hand that file over here and every show lands — tours by name, one-off nights as nights. A copied page, a saved PDF or screenshots work too, a page at a time.'),
+      return [h('h2', { class: 'sh-title' }, 'Add a missing tour'),
+        h('p', { class: 'sh-sub' }, 'The best door is a spreadsheet: on Concert Archives, a verified band account can export the band’s whole concert list (date, tour title, bands, venue, city). Hand that file over here and every show lands: tours by name, one-off nights as nights. A copied page, a saved PDF or screenshots work too, a page at a time.'),
         h('p', { class: 'note tf-p' }, 'Where is it from?'),
         srcRow,
         h('div', { class: 'stack', style: 'margin-top:10px' },
@@ -8702,10 +8696,11 @@
           ta,
           h('button', { class: 'btn primary block', type: 'button', onclick: function () {
             if (!st.text.trim() && !st.files.length) { toast('Pick a file, or paste the list'); return; }
-            closeSheet(); tfPage(id, st.text, st.files, st.source);
+            // (Back to the gear's sheet, where the reading shows.)
+            openTourGear(id); tfPage(id, st.text, st.files, st.source);
           } }, 'Read it'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Cancel'))];
-    }, { label: 'Add from a saved page' });
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openTourGear(id); } }, 'Cancel'))];
+    }, { label: 'Add a missing tour' });
   }
   function tfCandCard(id, x, busy) {
     var what = [TF_ROLE[x.role] || null, x.lineup ? 'with ' + x.lineup : null].filter(Boolean).join(' · ');
@@ -8726,14 +8721,6 @@
   }
   // A find with no name is one-off shows: nights, no tour.
   function tfName(x) { return String(x && x.name || '').trim() || 'One-off shows'; }
-  // Rescan, at the bottom of the tour list (Devin): asks the archives for what's
-  // new and reads what's unread, any time — never while a search is running.
-  function rescanButton(id) {
-    var c = tfOf(id), st = c.state || {};
-    var running = c.busy || ['reading', 'thinking', 'ready', 'extracting'].indexOf(st.status) >= 0;
-    return h('button', { class: 'btn ghost block tf-rescan', type: 'button', disabled: running || null,
-      onclick: function () { tfStart(id, true); } }, icon('search', 18), running ? 'Searching…' : 'Rescan for tours');
-  }
   // Does a find add anything to the page? (Ties are asked about; the rest
   // of what's left over is only listed.)
   function tfUseful(x) { return G.num(x.matched) > 0 || G.num(x.toAdd) > 0 || !!x.fill; }
@@ -8742,12 +8729,12 @@
     var doing;
     if (st.status === 'reading') {
       var srcs = st.sources || {};
-      doing = 'Reading tour announcements — ' + plural(G.num(st.pages), 'article') +
+      doing = 'Reading tour announcements: ' + plural(G.num(st.pages), 'article') +
         (G.num(srcs.sites) ? ' from ' + G.num(srcs.sitesWithNews) + ' of ' + (G.num(srcs.sites) + 2) + ' sites so far' : '') +
         (G.num(st.waiting) > 0 ? ', ' + st.waiting + ' to go' : '');
     } else if (st.status === 'thinking') {
       var bt = st.batches || {};
-      doing = 'Sorting out the tours' + (G.num(bt.total) ? ' — ' + G.num(bt.done) + ' of ' + G.num(bt.total) + ' batches of articles read' : '…');
+      doing = 'Sorting out the tours' + (G.num(bt.total) ? ': ' + G.num(bt.done) + ' of ' + G.num(bt.total) + ' batches of articles read' : '…');
     } else {
       doing = (c.phase || 'Sorting out the tours…') + (c.progress ? ' ' + c.progress : '');
     }
@@ -8756,50 +8743,169 @@
       h('p', { class: 'tf-wait-t' }, 'Greenroom is searching.'),
       h('p', { class: 'tf-eta' }, G.etaText(st.eta) || 'Almost done.'),
       h('p', { class: 'tf-status' }, h('span', { class: 'tf-dot', 'aria-hidden': 'true' }), doing),
-      h('p', { class: 'tf-wait-sub' }, phone ? 'Keep this page open while the tours are sorted out.' : 'You can close the app — the search keeps going, and the page fills in by itself.'));
+      h('p', { class: 'tf-wait-sub' }, phone ? 'Keep this page open while the tours are sorted out.' : 'You can close the app. The search keeps going, and the page fills in by itself.'));
   }
-  function tourFinderBlock(id, card, manage, unclaimed) {
-    if (!manage && !(unclaimed && claimQ().list)) return null;
-    if (!(manage ? card.verified : true) || !histOf(id).row) return null;
+  /* The foot of an artist page's Tours tab (Devin, 2026-10-17: "Get rid of
+     all that text. The only thing that should be here is a settings gear icon
+     and it can have 'add tour' where you can add a flyer or manually add a
+     tour that is missing and 'Refresh'"). The gear is drawn for exactly whom
+     the rescan button and the tour search were drawn (tfWho), it carries a
+     dot while something waits on the owner, and everything the search says
+     lives in its sheet (openTourGear). */
+  // 'runner': the page you run, verified, with a road story. 'admin': a
+  // Greenroom admin on a page nobody runs, with a road story. Else null.
+  function tfWho(id) {
+    var card = S.actCards && S.actCards[id] && S.actCards[id].card;
+    if (!card || !(S.route && S.route.name === 'act' && S.route.id === id)) return null;
+    var manage = !!(S.route.manage && card.mine);
+    if (!(manage ? card.verified : card.unclaimed && claimQ().list)) return null;
+    if (!histOf(id).row || tfOf(id).none) return null;
+    return manage ? 'runner' : 'admin';
+  }
+  // A search under way, or the phone reading for one: Refresh and the add doors wait.
+  function tfRunning(c) {
+    var st = c.state || {};
+    return !!c.busy || ['reading', 'thinking', 'ready', 'extracting'].indexOf(st.status) >= 0;
+  }
+  // What waits on the owner's answer: runs of nights setlist.fm has with no tour name.
+  function tfWaiting(c) {
+    var st = c.state || {};
+    return Array.isArray(st.runs) ? st.runs : [];
+  }
+  var tfGearLive = null;
+  function tourGear(id) {
+    if (!tfWho(id)) return null;
     var c = tfOf(id);
-    if (c.none) return null;
-    var st = c.state || {}, status = c.state ? (st.status || 'idle') : (c.failed ? 'failed' : 'loading');
+    // (Each look keeps a search moving, as the tour search's did.)
     if (c.state && !c.timer && !c.asking && !c.busy) tfAfter(id);
-    var cands = Array.isArray(st.candidates) ? st.candidates : [];
-    var runs = Array.isArray(st.runs) ? st.runs : [];
-    var findBtn = function (label) {
-      return h('button', { class: 'btn ghost block', type: 'button', disabled: c.busy, onclick: function () { tfStart(id); } }, icon('search', 18), label);
-    };
-    var pageBtn = S.sample ? h('button', { class: 'btn ghost block', type: 'button', disabled: c.busy, onclick: function () { openTfPage(id); } }, icon('plus', 18), 'Add from a saved page') : null;
-    var runsBlock = runs.length ? h('details', { class: 'tf-more' },
-      h('summary', null, plural(runs.length, 'run') + ' of nights with no tour name'),
-      h('p', { class: 'note tf-p' }, 'setlist.fm has these shows but nobody named the tour. Name a run and every night in it is filed under it.'),
-      runs.map(function (r) { return tfRunCard(id, r, cands, c.busy); })) : null;
-    var body;
-    if (status === 'loading') body = h('p', { class: 'note tf-status' }, 'Looking…');
-    else if (status === 'failed') body = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { tfOf(id, true); render(true); } }, 'Try again');
-    else if (c.busy && c.phase && status !== 'reading' && status !== 'thinking') body = tfWaitBlock(st, c, true);
-    else if (status === 'reading' || status === 'thinking' || (status === 'ready' && st.brain)) body = tfWaitBlock(st, c, !st.brain);
+    if (tfGearLive) tfGearLive();
+    var waiting = tfWaiting(c).length;
+    return h('div', { class: 'tf-gear-row' },
+      h('button', { class: 'iconbtn tf-gear', type: 'button',
+        'aria-label': 'Tour settings' + (waiting ? ', ' + plural(waiting, 'run') + ' of nights waiting for you' : ''),
+        onclick: function () { openTourGear(id); } },
+        icon('gear', 22), waiting ? h('span', { class: 'tf-gear-dot', 'aria-hidden': 'true' }) : null));
+  }
+  // The gear's sheet. It is drawn again with the page (tourGear), and only
+  // when something in it changed, so the van keeps driving; an open fold
+  // stays open, also when the sheet comes back after a run is named.
+  function openTourGear(id) {
+    var box = h('div', { class: 'tf-gear-box' });
+    S.tfGearUi = S.tfGearUi || {};
+    var mine = null, drawn = null, ui = S.tfGearUi[id] || (S.tfGearUi[id] = { runsOpen: false });
+    function draw() {
+      if (sheet !== mine || !box.isConnected) { if (tfGearLive === draw) tfGearLive = null; return; }
+      var c = tfOf(id), st = c.state || {}, row = histOf(id).row || {};
+      var sig = JSON.stringify([tfWho(id), !!S.sample, c.busy, c.phase, c.progress, c.error, c.failed, !!c.state,
+        st.status, st.pages, st.waiting, st.eta, st.batches, st.sources, st.detail, st.finishedAt, st.auto, st.brain,
+        (st.candidates || []).length, tfWaiting(c).map(function (r) { return [r.first, r.last, r.n]; }),
+        row.status, row.next_page, row.pages, row.waiting]);
+      if (sig === drawn) return;
+      drawn = sig;
+      fillEl(box, tfGearBody(id, ui));
+    }
+    openSheet(function () { return [h('h2', { class: 'sh-title' }, 'Tour settings'), box]; },
+      { label: 'Tour settings', cls: 'st-sheet tf-sheet', onClose: function () { if (tfGearLive === draw) tfGearLive = null; } });
+    mine = sheet;
+    tfGearLive = draw;
+    draw();
+  }
+  function tfGearBody(id, ui) {
+    var who = tfWho(id), c = tfOf(id), st = c.state || {};
+    var status = c.state ? (st.status || 'idle') : (c.failed ? 'failed' : 'loading');
+    var running = tfRunning(c), row = histOf(id).row;
+    var runs = tfWaiting(c), cands = Array.isArray(st.candidates) ? st.candidates : [];
+    // (The add doors were there once a search had settled, and only with the reader.)
+    var canAdd = !!S.sample && !running && status !== 'loading' && status !== 'failed';
+    var add = stRow('plus', 'Add tour', function () { openTfAdd(id); },
+      { sub: !S.sample ? 'Reading isn’t available right now' : running ? 'Once the search is done' : 'From a flyer, or by hand' });
+    add.disabled = !canAdd;
+    var refresh = stRow('refresh', 'Refresh', function () { tfRefresh(id); },
+      { sub: running ? 'Searching now' : who === 'runner' ? 'setlist.fm, music news sites, Wikipedia and the band’s old pages'
+        : 'Music news sites, Wikipedia and the band’s old pages' });
+    refresh.disabled = running || !who;
+    var say;
+    if (status === 'loading') say = h('p', { class: 'note tf-status' }, 'Looking…');
+    else if (status === 'failed') say = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { tfOf(id, true); render(true); } }, 'Try again');
+    else if (c.busy && c.phase && status !== 'reading' && status !== 'thinking') say = tfWaitBlock(st, c, true);
+    else if (status === 'reading' || status === 'thinking' || (status === 'ready' && st.brain)) say = tfWaitBlock(st, c, !st.brain);
     else if (status === 'ready' || status === 'extracting') {
-      body = S.sample && !c.error ? tfWaitBlock(st, c, true)
+      say = S.sample && !c.error ? tfWaitBlock(st, c, true)
         : status === 'extracting' ? [tfWaitBlock(st, c, true), h('p', { class: 'note' }, 'Another phone is sorting the tours right now.')]
         : [h('p', { class: 'note bad' }, c.error || 'Reading isn’t available right now.'),
            h('button', { class: 'btn ghost block', type: 'button', onclick: function () { c.error = ''; tfExtract(id); } }, 'Try again')];
     } else {
-      body = [
+      var told = String(st.detail || '').replace(/\.\s*$/, '');
+      say = [
         c.error ? h('p', { class: 'note bad' }, c.error) : null,
         status === 'error' ? h('p', { class: 'note bad' }, st.detail || 'That read didn’t finish.') : null,
-        status === 'done' && st.finishedAt ? h('p', { class: 'note tf-p' }, (st.auto ? 'Greenroom searched by itself on ' : 'Searched on ') + dayMD(String(st.finishedAt).slice(0, 10)) + (st.detail ? ' — ' + st.detail.replace(/^Read /, 'read ') : '') + '. It looks again every month; slide a tour left to correct it.') : null,
-        pageBtn, tfPosterButton(id, c.busy),
-        runsBlock,
-        status === 'idle' || status === 'error' || (st.day && st.today && st.day !== st.today) ? findBtn(status === 'error' ? 'Try again' : 'Look again now') : null
+        status === 'done' && st.finishedAt ? h('p', { class: 'note' }, (st.auto ? 'Greenroom searched by itself on ' : 'Searched on ') +
+          dayMD(String(st.finishedAt).slice(0, 10)) + (told ? '. ' + told : '') + '. It looks again every month; slide a tour left to correct it.') : null
       ];
     }
-    return h('section', { class: 'tf-block', 'aria-label': 'Tour search' },
-      h('h3', { class: 'mn-h mn-over tf-h' }, 'Tour search'),
-      h('p', { class: 'note tf-p' }, 'Greenroom reads the music press and the open archives for ' + ((card || {}).name || 'the act') + '’s tour announcements and puts every tour it finds on the page — name, dates, venues where the article had them. It does this by itself. Wrong one? Slide it left on the Tours list and fix it.'),
-      body);
+    // setlist.fm reading the road history again (after a Refresh, say).
+    var reading = row && /^(finding|checking|syncing)$/.test(String(row.status)) ? h('p', { class: 'note' }, histStatusLine(row)) : null;
+    var words = flatten([say, reading]).filter(Boolean);
+    return [
+      h('section', { class: 'mn-group' }, add, refresh),
+      words.length ? h('div', { class: 'tf-gear-say' }, words) : null,
+      runs.length ? h('section', { class: 'mn-group' },
+        h('h3', { class: 'mn-h' }, 'Waiting for you'),
+        h('details', { class: 'tf-more', open: ui.runsOpen || null, ontoggle: function (e) { ui.runsOpen = e.currentTarget.open; } },
+          h('summary', null, plural(runs.length, 'run') + ' of nights with no tour name'),
+          h('p', { class: 'note tf-p' }, 'setlist.fm has these shows but nobody named the tour. Name a run and every night in it is filed under it.'),
+          runs.map(function (r) { return tfRunCard(id, r, cands, c.busy); }))) : null
+    ];
   }
+  // Refresh (Devin: it "should search all the data bases"): every road to the
+  // artist's history in one tap, each through its own door and at its own
+  // pace. The tour search starts again (the music news sites and Wikipedia;
+  // with the reading key on the server, the band's own old pages through the
+  // Wayback Machine too), a rescan for the runner as the old button was; and
+  // for the runner, setlist.fm reads the road history again from its first
+  // page (the fresh nudge: the server restarts it only for the page's owner
+  // or an admin, and never while it is reading).
+  function tfRefresh(id) {
+    var B = window.GR_BACKEND, who = tfWho(id);
+    if (!who || tfRunning(tfOf(id))) return;
+    if (who === 'runner' && B && B.historyNudge) {
+      B.historyNudge(id, true).then(function () { histOf(id, true); }, function (e) { saveFailed('history', e); });
+    }
+    tfStart(id, who === 'runner');
+  }
+  // Add tour: the two doors the tour search had. A flyer goes to the reader
+  // (tfPosters); by hand is the saved-page sheet, where the shows are typed,
+  // pasted or picked as a file (openTfPage). The reading shows in the gear's sheet.
+  function openTfAdd(id) {
+    var pick = fileControl({ accept: imageAccept(), multiple: true, onFiles: function (files) {
+      openTourGear(id); tfPosters(id, files.slice(0, 20));
+    } })[1];
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'Add tour'),
+        h('section', { class: 'mn-group' },
+          stRow('flyer', 'From a flyer', function () { pick.click(); }, { sub: 'A photo of the flyer or poster' }),
+          stRow('edit', 'By hand', function () { openTfPage(id); }, { sub: 'Type or paste the shows, or pick a spreadsheet, PDF or screenshots' }),
+          pick)
+      ];
+    }, { label: 'Add tour', cls: 'st-sheet tf-sheet' });
+  }
+  /* Dev harness only: __harness.tourGear() (make_dbstub.py) lands here once
+     the app is up: the Tours tab of the page the test person runs, and the
+     gear's sheet when asked. The live app has no __harness, so this line
+     never runs there. */
+  if (window.__harness) window.__harness.openTourGear = function (artistId, sheetToo, tries) {
+    var n = tries || 0;
+    var later = function () { if (n < 40) setTimeout(function () { window.__harness.openTourGear(artistId, sheetToo, n + 1); }, 250); };
+    if (!S.loaded || !socialOn()) { later(); return; }
+    if (!n || !(S.route && S.route.name === 'act' && S.route.id === artistId)) {
+      S.actTab = { id: artistId, tab: 'tours' };
+      tfOf(artistId, true);
+      openAct(artistId, true);
+    }
+    if (!sheetToo) return;
+    if (tfWho(artistId)) openTourGear(artistId); else later();
+  };
 
   function historyBlock(id, manage, tours) {
     var c = histOf(id);
@@ -8834,7 +8940,10 @@
     var c = histOf(id), row = c.row;
     var sum = row && G.isObj(row.summary) ? row.summary : null;
     if (!(sum && G.num(sum.shows) > 0)) return null;
-    return setlistCredit(row.mb_url, row.credits);
+    // (As quiet as it can be on the Tours tab, Devin 2026-10-17; their terms still ask for it.)
+    var line = setlistCredit(row.mb_url, row.credits);
+    line.classList.add('tf-credit');
+    return line;
   }
   // setlist.fm, and the sites the band handed pages over from (Concert Archives asks to be cited).
   var TF_CREDIT = { 'concertarchives.org': ['Concert Archives', 'https://www.concertarchives.org/'], 'songkick.com': ['Songkick', 'https://www.songkick.com/'], 'bandsintown.com': ['Bandsintown', 'https://www.bandsintown.com/'],
