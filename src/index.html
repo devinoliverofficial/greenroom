@@ -3675,6 +3675,59 @@ button.fl-row { cursor: pointer; }
 .sp-opt-sub { display: block; margin-top: 1px; font-size: 13px; font-weight: 450; color: var(--ink-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sp-credit { margin: 0; padding: 7px 14px 9px; border-top: 1px solid var(--line-2); }
+/* The Spots tab: the spots under an open city read smaller than the city
+   (Devin, 2026-10-17); the city head keeps its size. */
+.page.profile .sp-list .fl-row { min-height: 44px; }
+.page.profile .sp-list .lr-title { font-size: 13.5px; }
+.page.profile .sp-list .lr-sub { font-size: 12px; }
+.page.profile .sp-list .fw-cat { font-size: 10.5px; padding: 0 7px; }
+/* The day sheet's TOUR SPOTS: the heading green with the Spots tab's heart,
+   each row its recommender's photo, a tap to the spot's card. (Today's
+   spots from people you follow tap the same way.) */
+.ds-sec-h.sp-rec-h { color: var(--pos); }
+.ds-sec-h.sp-rec-h .ic { vertical-align: -3px; margin-right: 7px; }
+button.row.sp-row { width: 100%; appearance: none; border: 0; border-bottom: 1px solid var(--line-2); background: none;
+  color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+button.row.sp-row:last-child { border-bottom: 0; }
+button.row.sp-row:active { background: var(--surface-2); }
+button.row.sp-row > .ic { flex: none; color: var(--ink-3); }
+button.row.sp-row .pf-photo.sp-face { width: 32px; height: 32px; font-size: 13px; box-shadow: none; }
+/* Spot cards (0175): a map app's place card in the app's own dress. */
+.spc-sheet .sh-title.spc-name { margin-bottom: 4px; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+.spc-kind { margin: 0 0 16px; font-size: 15px; color: var(--ink-2); overflow-wrap: anywhere; }
+.spc-acts { display: flex; gap: 8px; margin: 0 0 14px; }
+.spc-act { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; min-height: 58px; padding: 8px 6px; border-radius: 13px; background: var(--surface-2); color: var(--pos);
+  font-size: 13px; font-weight: 600; text-decoration: none; }
+.spc-act.go { background: var(--brand); color: var(--on-brand); }
+.spc-act:active { transform: translateY(1px); }
+.spc-facts { display: flex; margin: 0 0 14px; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.spc-fact { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0 12px;
+  border: 0; border-left: 1px solid var(--line); background: none; font: inherit; text-align: left; color: var(--ink); }
+.spc-fact:first-child { border-left: 0; padding-left: 2px; }
+button.spc-fact { appearance: none; cursor: pointer; }
+.spc-fact-k { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+.spc-fact-v { font-size: 16px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+.spc-fact-v.pos { color: var(--pos); }
+.spc-fact-v.neg { color: var(--neg); }
+.spc-fact-s { font-size: 12px; color: var(--ink-2); }
+.spc-wait { margin: -4px 0 12px; }
+.spc-info { margin: 0 0 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.spc-line { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border-bottom: 1px solid var(--line-2); }
+.spc-line:last-child { border-bottom: 0; }
+.spc-k { font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.spc-v { font-size: 15px; color: var(--ink); overflow-wrap: anywhere; }
+a.spc-link { color: var(--pos); text-decoration: none; }
+.spc-week { display: flex; flex-direction: column; gap: 2px; }
+.spc-wk { display: flex; justify-content: space-between; gap: 12px; }
+.spc-wk > span:first-child { color: var(--ink-2); }
+.spc-rec { margin: 0 0 16px; }
+.spc-who { display: flex; align-items: flex-start; gap: 10px; margin-top: 8px; }
+.spc-who .pf-photo.spc-face { width: 36px; height: 36px; font-size: 14px; box-shadow: none; }
+.spc-who-t { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.spc-who-n { font-size: 15px; font-weight: 600; }
+.spc-note { font-size: 14px; line-height: 1.4; color: var(--ink-2); overflow-wrap: anywhere; }
+.spc-credit { margin: 14px 0 0; text-align: center; font-size: 11px; }
 /* Two tours over the same nights: the tag on both, the contested nights, the picker. */
 .tn-conflict { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; border: 1px solid #E0A020; background: rgba(224, 160, 32, .14); color: #E0A020; font-size: 11px; font-weight: 700; letter-spacing: .03em; cursor: pointer; vertical-align: 2px; font-family: inherit; }
 .tn-tag.warn { color: #E0A020; border-color: #E0A020; }

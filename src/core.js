@@ -2158,6 +2158,152 @@
       .replace(/^new york city$/, 'new york').replace(/^nyc$/, 'new york').replace(/^washington dc$/, 'washington');
   }
 
+  /* ---------------- Spot cards (0175) ---------------- */
+
+  // How far apart two points are, in meters (the great-circle way).
+  function geoMeters(aLat, aLon, bLat, bLon) {
+    var r = Math.PI / 180;
+    var dLat = (bLat - aLat) * r, dLon = (bLon - aLon) * r;
+    var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 6371008.8 * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+  }
+  // Miles where people count in miles (the US, the UK, Liberia, Myanmar, or
+  // plain English with no country said), kilometers everywhere else.
+  function usesMiles(lang) {
+    var parts = String(lang || '').trim().split(/[-_]/);
+    var region = parts.slice(1).filter(function (x) { return /^[a-z]{2}$/i.test(x); })[0];
+    if (!region) return !parts[0] || /^en$/i.test(parts[0]);
+    return ['US', 'GB', 'LR', 'MM'].indexOf(region.toUpperCase()) >= 0;
+  }
+  // "0.2 mi" / "12 mi", or "350 m" / "1.4 km" / "12 km".
+  function distanceText(m, miles) {
+    m = Number(m);
+    if (!isFinite(m) || m < 0) return '';
+    if (miles) {
+      var mi = m / 1609.344;
+      return (mi < 9.95 ? Math.max(0.1, Math.round(mi * 10) / 10).toFixed(1) : String(Math.round(mi))) + ' mi';
+    }
+    if (m < 950) return Math.max(50, Math.round(m / 50) * 50) + ' m';
+    var km = m / 1000;
+    return (km < 9.95 ? (Math.round(km * 10) / 10).toFixed(1) : String(Math.round(km))) + ' km';
+  }
+  // A walk guessed from the straight line: streets add about a quarter, and
+  // a person walks about 5 km an hour. Whole minutes, one at least.
+  function walkMinutes(m) {
+    m = Number(m);
+    if (!isFinite(m) || m < 0) return 0;
+    return Math.max(1, Math.round(m * 1.25 / (5000 / 60)));
+  }
+  // "about 5 min walk"; nothing past an hour and a half, which is a ride.
+  function walkText(m) {
+    var n = walkMinutes(m);
+    return n && n <= 90 ? 'about ' + n + ' min walk' : '';
+  }
+  var OH_DAYS = ['mo', 'tu', 'we', 'th', 'fr', 'sa', 'su'];
+  var OH_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var OH_D = '(?:mo|tu|we|th|fr|sa|su)';
+  var OH_DR = OH_D + '(?:\\s*-\\s*' + OH_D + ')?';
+  var OH_RULE = new RegExp('^(' + OH_DR + '(?:\\s*,\\s*' + OH_DR + ')*)(?:\\s+(.+))?$', 'i');
+  // "Mo-Fr,Su" as day numbers, Monday 0; a run past Sunday wraps (Sa-Mo).
+  function ohDays(spec) {
+    var out = [];
+    spec.split(',').forEach(function (part) {
+      var m = /^\s*(mo|tu|we|th|fr|sa|su)\s*(?:-\s*(mo|tu|we|th|fr|sa|su))?\s*$/i.exec(part);
+      if (!m) return;
+      var a = OH_DAYS.indexOf(m[1].toLowerCase()), b = m[2] ? OH_DAYS.indexOf(m[2].toLowerCase()) : a;
+      for (var i = a, n = 0; n < 7; i = (i + 1) % 7, n++) {
+        if (out.indexOf(i) < 0) out.push(i);
+        if (i === b) break;
+      }
+    });
+    return out;
+  }
+  // "07:00-12:00,13:00-18:00" as [open, close] minutes; "off" is none;
+  // null for anything else. A close past midnight ("18:00-02:00", or
+  // "18:00-26:00") is kept as the small number.
+  function ohTimes(spec) {
+    var s = String(spec).trim().toLowerCase();
+    if (s === 'off' || s === 'closed') return [];
+    if (s === '24/7') return [[0, 1440]];
+    var out = [];
+    var ok = s.split(',').every(function (part) {
+      var m = /^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$/.exec(part);
+      if (!m || +m[2] > 59 || +m[4] > 59) return false;
+      var a = +m[1] * 60 + +m[2], b = +m[3] * 60 + +m[4];
+      if (a >= 1440 || b > 2880) return false;
+      out.push([a, b > 1440 ? b - 1440 : b]);
+      return true;
+    });
+    return ok ? out : null;
+  }
+  /* OpenStreetMap's opening_hours, the common forms only ("Mo-Fr
+     07:00-18:00; Sa 08:00-17:00; Su off", "24/7", hours with no days for
+     every day, a night that runs past midnight): the week as seven lists
+     of [open, close] minutes, Monday first, or null for anything else
+     (months, comments, sunrise, open-ended "18:00+"). A later rule wins
+     for its days; days no rule names are closed. Holiday rules are passed
+     over: there is no holiday calendar here. */
+  function openingHours(text) {
+    var s = String(text == null ? '' : text).trim();
+    if (!s || s.length > 255) return null;
+    // "Mo-Fr 07:00-18:00, Sa 08:00-12:00": a comma before a new day starts a new rule.
+    s = s.replace(/(\d)\s*,\s*(?=(?:mo|tu|we|th|fr|sa|su|ph|sh)\b)/gi, '$1;');
+    var week = [[], [], [], [], [], [], []];
+    var rules = s.split(';');
+    for (var i = 0; i < rules.length; i++) {
+      var r = rules[i].trim();
+      if (!r || /^(ph|sh)\b/i.test(r)) continue;
+      var m = OH_RULE.exec(r);
+      var days = m ? ohDays(m[1]) : [0, 1, 2, 3, 4, 5, 6];
+      var times = m ? (m[2] == null ? [[0, 1440]] : ohTimes(m[2])) : ohTimes(r);
+      if (!times || !days.length) return null;
+      days.forEach(function (d) { week[d] = times.slice(); });
+    }
+    return week;
+  }
+  function hoursOpenAt(week, day, min) {
+    return week[day].some(function (iv) { return iv[1] > iv[0] ? min >= iv[0] && min < iv[1] : min >= iv[0]; }) ||
+      week[(day + 6) % 7].some(function (iv) { return iv[1] <= iv[0] && min < iv[1]; });
+  }
+  function clockWords(min) {
+    min = ((min % 1440) + 1440) % 1440;
+    if (min === 0) return 'midnight';
+    if (min === 720) return 'noon';
+    var hr = Math.floor(min / 60), mn = min % 60;
+    return (hr % 12 || 12) + (mn ? ':' + pad(mn) : '') + (hr < 12 ? ' AM' : ' PM');
+  }
+  function hoursSpan(list) {
+    if (!list.length) return 'Closed';
+    if (list.length === 1 && list[0][0] === 0 && (list[0][1] === 1440 || list[0][1] === 0)) return 'Open all day';
+    return list.map(function (iv) { return clockWords(iv[0]) + ' to ' + clockWords(iv[1]); }).join(', ');
+  }
+  // Open or closed at a moment by that clock, with the day's hours in
+  // words: { open, today }, or null when the hours aren't a form read here.
+  function hoursNow(text, now) {
+    var week = openingHours(text);
+    if (!week) return null;
+    var d = now instanceof Date ? now : new Date();
+    var day = (d.getDay() + 6) % 7, min = d.getHours() * 60 + d.getMinutes();
+    return { open: hoursOpenAt(week, day, min), today: hoursSpan(week[day]) };
+  }
+  // The week in words, days with the same hours run together:
+  // [{ days: 'Mon to Fri', hours: '7 AM to 3 PM' }, { days: 'Sat and Sun', ... }].
+  function hoursWeek(text) {
+    var week = openingHours(text);
+    if (!week) return [];
+    var out = [], same = function (a, b) { return JSON.stringify(a) === JSON.stringify(b); };
+    for (var i = 0; i < 7;) {
+      var j = i;
+      while (j + 1 < 7 && same(week[j + 1], week[i])) j++;
+      out.push({ days: i === 0 && j === 6 ? 'Every day' : j === i ? OH_NAMES[i]
+        : j === i + 1 ? OH_NAMES[i] + ' and ' + OH_NAMES[j] : OH_NAMES[i] + ' to ' + OH_NAMES[j],
+        hours: hoursSpan(week[i]) });
+      i = j + 1;
+    }
+    return out;
+  }
+
   /* ---------------- Guest list ---------------- */
 
   var GUEST_PASSES = ['GA', 'VIP', 'All Access', 'Photo Pass'];
@@ -2581,6 +2727,8 @@
     parseGuestList: parseGuestList,
     normalizeTourImport: normalizeTourImport, mergeDaySheet: mergeDaySheet,
     budgetFrom: budgetFrom, hasBudget: hasBudget, crewKey: crewKey, roadCityKey: roadCityKey,
+    geoMeters: geoMeters, usesMiles: usesMiles, distanceText: distanceText, walkMinutes: walkMinutes, walkText: walkText,
+    openingHours: openingHours, hoursNow: hoursNow, hoursWeek: hoursWeek,
     dailyUpdate: dailyUpdate
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

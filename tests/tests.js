@@ -1292,6 +1292,86 @@
     eq(G.roadCityKey(null), '', 'nothing in, nothing out');
   });
 
+  /* ============ Spot cards (0175) ============ */
+
+  test('spot card: how far, in the units the phone counts in', function () {
+    // Tenfold Coffee to a block away in downtown Houston: about a fifth of a mile.
+    var m = G.geoMeters(29.7604, -95.3698, 29.7633, -95.3698);
+    if (Math.abs(m - 322) > 3) throw new Error('distance: expected ~322 m, got ' + m);
+    eq(G.distanceText(m, true), '0.2 mi', 'a fifth of a mile');
+    eq(G.distanceText(m, false), '300 m', 'meters, to the nearest fifty');
+    eq(G.distanceText(10, true), '0.1 mi', 'never less than a tenth');
+    eq(G.distanceText(10, false), '50 m', 'never less than fifty meters');
+    eq(G.distanceText(1400, false), '1.4 km', 'kilometers with one decimal');
+    eq(G.distanceText(20000, true), '12 mi', 'whole miles past ten');
+    eq(G.distanceText(-1, true), '', 'nonsense in, nothing out');
+    eq(G.usesMiles('en-US'), true, 'the US counts miles');
+    eq(G.usesMiles('en-GB'), true, 'so does the UK');
+    eq(G.usesMiles('de-DE'), false, 'Germany counts kilometers');
+    eq(G.usesMiles('en-CA'), false, 'so does Canada');
+    eq(G.usesMiles('zh-Hant-TW'), false, 'a script tag is not a country');
+    eq(G.usesMiles('fr'), false, 'French with no country: kilometers');
+    eq(G.usesMiles('en'), true, 'English with no country: miles');
+  });
+
+  test('spot card: the walk is guessed from the straight line', function () {
+    eq(G.walkMinutes(322), 5, 'a fifth of a mile is about five minutes');
+    eq(G.walkMinutes(0), 1, 'never under a minute');
+    eq(G.walkText(322), 'about 5 min walk', 'said plainly');
+    eq(G.walkText(9000), '', 'past an hour and a half it is a ride, not a walk');
+  });
+
+  test('spot card: opening hours read for the common forms', function () {
+    var wk = G.openingHours('Mo-Fr 07:00-15:00; Sa,Su 08:00-15:00');
+    eq(JSON.stringify(wk[0]), '[[420,900]]', 'Monday');
+    eq(JSON.stringify(wk[6]), '[[480,900]]', 'Sunday');
+    eq(JSON.stringify(G.openingHours('Mo-Fr 08:00-17:00')[5]), '[]', 'a day no rule names is closed');
+    eq(JSON.stringify(G.openingHours('24/7')[3]), '[[0,1440]]', 'always open');
+    eq(JSON.stringify(G.openingHours('10:00-22:00')[2]), '[[600,1320]]', 'hours with no days are every day');
+    eq(JSON.stringify(G.openingHours('Mo-Su 10:00-22:00; Tu off')[1]), '[]', 'a later rule wins for its days');
+    eq(JSON.stringify(G.openingHours('Mo-Fr 07:00-11:00,13:00-18:00')[4]), '[[420,660],[780,1080]]', 'two spans in a day');
+    eq(JSON.stringify(G.openingHours('Mo-Fr 07:00-18:00, Sa 09:00-12:00')[5]), '[[540,720]]', 'a comma before a day is a new rule');
+    eq(JSON.stringify(G.openingHours('Sa-Mo 12:00-20:00')[0]), '[[720,1200]]', 'a run past Sunday wraps');
+    eq(JSON.stringify(G.openingHours('Mo-Fr 08:00-17:00; PH off')[0]), '[[480,1020]]', 'holiday rules passed over');
+    eq(G.openingHours('Mo-Fr 08:00-17:00 "call ahead"'), null, 'a comment is not read');
+    eq(G.openingHours('Jan-Mar Mo-Fr 09:00-17:00'), null, 'months are not read');
+    eq(G.openingHours('Mo-Fr 18:00+'), null, 'open-ended is not read');
+    eq(G.openingHours('sunrise-sunset'), null, 'sunrise is not read');
+    eq(G.openingHours(''), null, 'nothing is nothing');
+  });
+
+  test('spot card: open or closed, by the clock', function () {
+    var at = function (y, mo, d, h, mi) { return new Date(y, mo - 1, d, h, mi); };
+    // 2026-10-16 is a Friday, the 17th a Saturday.
+    var cafe = 'Mo-Fr 07:00-15:00; Sa,Su 08:00-15:00';
+    eq(G.hoursNow(cafe, at(2026, 10, 16, 9, 0)).open, true, 'Friday morning, open');
+    eq(G.hoursNow(cafe, at(2026, 10, 16, 15, 0)).open, false, 'closes at three sharp');
+    eq(G.hoursNow(cafe, at(2026, 10, 17, 7, 30)).open, false, 'Saturday opens later');
+    eq(G.hoursNow(cafe, at(2026, 10, 17, 7, 30)).today, '8 AM to 3 PM', 'the day in words');
+    var bar = 'Mo-Th 17:00-00:00; Fr,Sa 17:00-02:00; Su off';
+    eq(G.hoursNow(bar, at(2026, 10, 17, 1, 30)).open, true, 'Friday night runs into Saturday');
+    eq(G.hoursNow(bar, at(2026, 10, 18, 1, 30)).open, true, 'and Saturday night into Sunday');
+    eq(G.hoursNow(bar, at(2026, 10, 19, 1, 30)).open, false, 'Sunday closed, so Monday early is too');
+    eq(G.hoursNow(bar, at(2026, 10, 18, 12, 0)).today, 'Closed', 'Sunday in words');
+    eq(G.hoursNow(bar, at(2026, 10, 16, 20, 0)).today, '5 PM to 2 AM', 'past midnight in words');
+    eq(G.hoursNow('Mo-Fr 11:30-24:00', at(2026, 10, 16, 23, 59)).open, true, 'open until midnight');
+    eq(G.hoursNow('Mo-Fr 11:30-24:00', at(2026, 10, 16, 12, 0)).today, '11:30 AM to midnight', 'midnight said plainly');
+    eq(G.hoursNow('24/7', at(2026, 10, 16, 3, 0)).today, 'Open all day', 'always open said plainly');
+    eq(G.hoursNow('by appointment', at(2026, 10, 16, 3, 0)), null, 'a form not read gives no answer');
+  });
+
+  test('spot card: the week in words, alike days together', function () {
+    var w = G.hoursWeek('Mo-Fr 07:00-15:00; Sa,Su 08:00-15:00');
+    eq(w.length, 2, 'two runs');
+    eq(w[0].days + ': ' + w[0].hours, 'Mon to Fri: 7 AM to 3 PM', 'weekdays');
+    eq(w[1].days + ': ' + w[1].hours, 'Sat and Sun: 8 AM to 3 PM', 'the weekend');
+    eq(G.hoursWeek('Mo-Su 06:00-12:00')[0].days, 'Every day', 'every day');
+    eq(G.hoursWeek('Mo-Su 06:00-12:00')[0].hours, '6 AM to noon', 'noon said plainly');
+    eq(G.hoursWeek('Mo 09:00-17:00; We 09:00-17:00').map(function (x) { return x.days + ' ' + x.hours; }).join(' / '),
+      'Mon 9 AM to 5 PM / Tue Closed / Wed 9 AM to 5 PM / Thu to Sun Closed', 'gaps say closed');
+    eq(G.hoursWeek('sunrise-sunset').length, 0, 'a form not read gives no week');
+  });
+
   /* ============ Tour closeout ============ */
 
   test('CSV cells with commas, quotes and lines survive intact', function () {

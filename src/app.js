@@ -4697,8 +4697,8 @@
   /* ---- Favorite Local Spots (0153, Devin's name): the restaurants, coffee
      shops, bars, clubs and things to do people love in each city. Saved and
      kept on the profile's own tab; a place shared with a tour shows on that
-     tour's day sheet for its city under PLACES RECOMMENDED BY TOUR, read-only,
-     with who recommends it. Typed entries only in this first cut. Nothing
+     tour's day sheet for its city under TOUR SPOTS, with who recommends it,
+     and every spot opens its card (0175). Nothing
      here renders before migration 0153 is live: spotsOn() stays false until
      the backend finds the table. ---- */
   var SPOT_KINDS = [['food', 'Food'], ['coffee', 'Coffee'], ['bar', 'Bar'],
@@ -4750,6 +4750,15 @@
     var s = entry.show, off = s ? null : offDayFor(t, entry.date);
     return String((s ? s.city : off && off.city) || '').trim();
   }
+  // Where a picked place is (0175), while the Name still reads its name:
+  // { lat, lon, address, osmRef } for the save, or null.
+  function spotGeoFrom(p, nameNow) {
+    if (!p || String(p.name || '').trim().slice(0, 80) !== nameNow) return null;
+    if (typeof p.lat !== 'number' || typeof p.lon !== 'number' || !isFinite(p.lat) || !isFinite(p.lon)) return null;
+    return { lat: p.lat, lon: p.lon,
+      address: [String(p.street || '').trim(), String(p.postcode || '').trim()].filter(Boolean).join(', ').slice(0, 160),
+      osmRef: /^[NWR]\d{1,20}$/.test(String(p.osmRef || '')) ? String(p.osmRef) : '' };
+  }
   // What OpenStreetMap calls a place, turned into the Spots kinds. Only the
   // words that map cleanly; any other word leaves the picker as it stands.
   var SPOT_OSM_KINDS = { restaurant: 'food', fast_food: 'food', food_court: 'food',
@@ -4769,10 +4778,10 @@
     return country && country !== 'United States' ? city + ', ' + country : city;
   }
   // One place: the name, its kind as a small tag, the note under it. Tapping
-  // the row opens the edit sheet (your own rows are all this tab holds).
+  // the row opens its card (0175), where your own spot has its Edit button.
   function spotRowEl(x) {
     return h('li', { class: 'am-li td-li' },
-      h('button', { class: 'fl-row td-open', type: 'button', onclick: function () { openSpotEdit(x); } },
+      h('button', { class: 'fl-row td-open', type: 'button', onclick: function () { openSpotCard(x, { own: true }); } },
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title' }, x.name, h('span', { class: 'fw-cat' }, spotKindLabel(x.kind))),
           x.note ? h('span', { class: 'lr-sub' }, x.note) : null)));
@@ -4823,7 +4832,8 @@
               h('span', { class: 'lr-title' }, g.city),
               h('span', { class: 'lr-sub' }, plural(g.items.length, 'spot'))),
             icon('chevron', 16)),
-          open ? h('ul', { class: 'rows td-list' }, g.items.map(spotRowEl)) : null);
+          // (sp-list: the spots under a city read smaller than the city, Devin, 2026-10-17.)
+          open ? h('ul', { class: 'rows td-list sp-list' }, g.items.map(spotRowEl)) : null);
       }),
       addBtn
     ];
@@ -4864,6 +4874,9 @@
          answer shows nothing. Without the search functions the sheet is
          exactly as it always was. */
       var nameField = field('Name', nameIn);
+      // The found place last picked (0175): where it is rides the save while
+      // the Name still reads the picked name.
+      var picked = null;
       if (placeFindOn()) {
         var drop = h('div', { class: 'sp-drop', hidden: true, 'aria-label': 'Places found' });
         var findTimer = 0, findSeq = 0, dropAway = 0;
@@ -4871,6 +4884,7 @@
         var pick = function (p) {
           clearTimeout(dropAway);
           closeDrop();
+          picked = p;
           nameIn.value = String(p.name || '').trim().slice(0, 80);
           var where = spotPlaceCity(p);
           if (where) cityIn.value = where.slice(0, 60);
@@ -4956,6 +4970,7 @@
         if (busy) return;
         busy = true; btn.disabled = true;
         var wantTour = f.share && shareTour ? shareTour : null;
+        var geo = spotGeoFrom(picked, name);
         try {
           if (item) {
             var patch = {}; // only what changed rides the save
@@ -4964,9 +4979,16 @@
             if (f.kind !== item.kind) patch.kind = f.kind;
             if (noteIn.value.trim() !== (item.note || '')) patch.note = noteIn.value.trim();
             if (wantTour !== (item.tourId || null)) patch.tourId = wantTour;
+            var movedTown = 'city' in patch && G.roadCityKey(city.split(',')[0]) !== G.roadCityKey(String(item.city || '').split(',')[0]);
+            if (geo) {
+              if (geo.osmRef !== (item.osmRef || '') || geo.lat !== item.lat || geo.lon !== item.lon) Object.assign(patch, geo);
+            } else if (('name' in patch || movedTown) && (item.lat != null || item.osmRef)) {
+              // Renamed or moved by hand: where it was no longer holds, and the card looks it up again.
+              Object.assign(patch, { lat: null, lon: null, address: null, osmRef: null });
+            }
             if (Object.keys(patch).length) await B.spotSave(item.id, patch);
           } else {
-            await B.spotAdd({ city: city, name: name, kind: f.kind, note: noteIn.value.trim(), tourId: wantTour });
+            await B.spotAdd(Object.assign({ city: city, name: name, kind: f.kind, note: noteIn.value.trim(), tourId: wantTour }, geo || {}));
           }
         } catch (x) { busy = false; btn.disabled = false; saveFailed('spot', x); return; }
         closeSheet(); render(true);
@@ -4997,9 +5019,204 @@
       ];
     }, { label: item ? 'Edit spot' : 'Add a spot' });
   }
-  /* The day sheet's PLACES RECOMMENDED BY TOUR (Devin, 2026-10-15): the
-     places people on this tour shared for the day's city, each with its kind
-     and who recommends it, read-only, and only when there are any. */
+  /* ---- Spot cards (0175, Devin, 2026-10-17, with a photo of a map app's
+     place card: "after you log a spot if you click on it, it should show
+     information on the spot ... Ratings, how far it is from where we are,
+     website, number, etc"). A tap on a spot anywhere (the Spots tab, the day
+     sheet's TOUR SPOTS, Today's spots from people you follow) opens its card
+     at once from what the row carries, and the card fills in as the
+     server's details road answers: where the spot is (a spot saved before
+     0175 is looked up once by its name and town), then OpenStreetMap's
+     website, phone, hours and neighbourhood. How far it is comes from the
+     phone's own location: shown at once when the phone already allows it,
+     else a quiet How far? that asks on a tap; a card never asks on open.
+     Before 0175 is live a card shows what its row has. ---- */
+  ICONS.walk = '<circle cx="13" cy="4.2" r="1.9"/><path d="M12.4 7.6L11 13.4l-2.2 3.8L7 21"/>' +
+    '<path d="M11 13.4l2.6 3.2.6 4.4"/><path d="M12.1 8.6L9.1 10.6 8.2 13.2"/><path d="M12.1 8.6l2.3 2.7 2.6 1"/>';
+  ICONS.globe = '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
+    '<path d="M12 3a14 14 0 0 1 3.6 9A14 14 0 0 1 12 21a14 14 0 0 1-3.6-9A14 14 0 0 1 12 3z"/>';
+  // The phone's location for the cards, held five minutes. Read on open
+  // only when the phone already allows it; state is 'granted', 'prompt',
+  // 'denied', 'failed' or 'none' (a phone with no location at all).
+  function spotHereQuiet(cb) {
+    var was = S.spotHere;
+    if (was && Date.now() - was.at < 300e3) { cb(was, 'granted'); return; }
+    try {
+      if (!navigator.geolocation) { cb(null, 'none'); return; }
+      if (!navigator.permissions || !navigator.permissions.query) { cb(null, 'prompt'); return; }
+      navigator.permissions.query({ name: 'geolocation' }).then(function (r) {
+        var st = (r && r.state) || 'prompt';
+        if (st === 'granted') spotHereAsk(cb); else cb(null, st);
+      }, function () { cb(null, 'prompt'); });
+    } catch (e) { cb(null, 'prompt'); }
+  }
+  // Where the phone is, asked of the phone (the How far? tap, or a phone
+  // that already said yes).
+  function spotHereAsk(cb) {
+    try {
+      navigator.geolocation.getCurrentPosition(function (p) {
+        S.spotHere = { lat: p.coords.latitude, lon: p.coords.longitude, at: Date.now() };
+        cb(S.spotHere, 'granted');
+      }, function (e) { cb(null, e && e.code === 1 ? 'denied' : 'failed'); },
+      { enableHighAccuracy: false, maximumAge: 120000, timeout: 12000 });
+    } catch (e) { cb(null, 'failed'); }
+  }
+  // "Coffee shop" from the map's "coffee_shop"; two words at most ("Mexican, tex-mex").
+  function spotCuisine(c) {
+    var s = String(c || '').split(';').map(function (w) { return w.trim().replace(/_/g, ' '); })
+      .filter(Boolean).slice(0, 2).join(', ');
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  }
+  // Open or Closed is said only by a clock in the spot's own town: the
+  // phone within 150 km of it, or the spot in tonight's town on a live run.
+  // Anywhere else the card says the day's hours instead.
+  function spotIsLocal(st, pt, town) {
+    if (pt && st.here) return G.geoMeters(st.here.lat, st.here.lon, pt.lat, pt.lon) < 150000;
+    var near = placeNearNow();
+    return !!town && !!near && G.roadCityKey(town) === G.roadCityKey(near.split(',')[0]);
+  }
+  function spotFact(label, value, tone, sub) {
+    return h('div', { class: 'spc-fact' },
+      h('span', { class: 'spc-fact-k' }, label),
+      h('span', { class: 'spc-fact-v' + (tone ? ' ' + tone : '') }, value),
+      sub ? h('span', { class: 'spc-fact-s' }, sub) : null);
+  }
+  function spotLine(label, value) {
+    return h('div', { class: 'spc-line' }, h('span', { class: 'spc-k' }, label), value);
+  }
+  // RATINGS AND PHOTOS SLOT: Apple's own place card (MapKit JS PlaceDetail)
+  // goes here once the Apple Maps key is in, looked up by the spot's
+  // coordinates and name. Until then there is nothing to put in it.
+  function spotCardApple(st) { return null; }
+  /* The card itself, drawn again each time more is known. */
+  function spotCardParts(st, own, redraw) {
+    var B = window.GR_BACKEND, sp = st.spot, d = st.details || {};
+    var name = String(sp.name || '').trim() || 'Spot';
+    var city = String(sp.city || '').trim(), town = city.split(',')[0].trim();
+    var area = String(d.area || '').trim();
+    var where = area && town && area.toLowerCase() !== town.toLowerCase() ? area + ', ' + town : (area || city);
+    var pt = typeof sp.lat === 'number' && typeof sp.lon === 'number' && isFinite(sp.lat) && isFinite(sp.lon) ? sp : null;
+    var address = String(sp.address || '').trim() ||
+      [String(d.street || '').trim(), String(d.postcode || '').trim()].filter(Boolean).join(', ');
+    var far = pt && st.here ? G.geoMeters(st.here.lat, st.here.lon, pt.lat, pt.lon) : null;
+    var mins = far != null ? G.walkMinutes(far) : 0;
+    // Walk: Apple Maps' walking directions, to the spot's own point when it
+    // is known, else to its name and town.
+    var dest = pt ? pt.lat + ',' + pt.lon : encodeURIComponent([name, address, city].filter(Boolean).join(', '));
+    var web = /^https?:\/\/[^\s<>"]+$/i.test(String(d.website || '')) ? String(d.website) : '';
+    var tel = String(d.phone || '').replace(/[^0-9+]/g, '');
+    var acts = h('div', { class: 'spc-acts' },
+      h('a', { class: 'spc-act go', href: 'https://maps.apple.com/?daddr=' + dest + '&dirflg=w', target: '_blank', rel: 'noopener' },
+        icon('walk', 20), h('span', null, mins && mins <= 90 ? mins + ' min' : 'Walk')),
+      web ? h('a', { class: 'spc-act', href: web, target: '_blank', rel: 'noopener' }, icon('globe', 20), h('span', null, 'Website')) : null,
+      tel.length >= 5 ? h('a', { class: 'spc-act', href: 'tel:' + tel }, icon('phone', 20), h('span', null, 'Call')) : null);
+    var facts = [];
+    var hrs = d.hours ? G.hoursNow(d.hours, new Date()) : null;
+    if (hrs) {
+      facts.push(spotIsLocal(st, pt, town)
+        ? spotFact('Hours', hrs.open ? 'Open' : 'Closed', hrs.open ? 'pos' : 'neg', hrs.today === 'Closed' ? '' : hrs.today)
+        : spotFact('Hours today', hrs.today));
+    }
+    if (pt && far != null) {
+      facts.push(spotFact('Distance', G.distanceText(far, G.usesMiles(navigator.language)), '', G.walkText(far)));
+    } else if (pt && (st.hereState === 'prompt' || st.hereState === 'failed')) {
+      facts.push(h('button', { class: 'spc-fact spc-ask', type: 'button',
+        onclick: function () {
+          st.hereState = 'asking'; redraw();
+          spotHereAsk(function (here, state) { st.here = here; st.hereState = state; redraw(); });
+        } },
+        h('span', { class: 'spc-fact-k' }, 'Distance'),
+        h('span', { class: 'spc-fact-v pos' }, 'How far?')));
+    } else if (pt && st.hereState === 'asking') {
+      facts.push(spotFact('Distance', 'Finding you…'));
+    }
+    var week = d.hours ? G.hoursWeek(d.hours) : [];
+    var lines = [
+      address ? spotLine('Address', h('a', { class: 'spc-v spc-link', target: '_blank', rel: 'noopener',
+        href: pt ? 'https://maps.apple.com/?q=' + encodeURIComponent(name) + '&ll=' + pt.lat + ',' + pt.lon
+          : mapsHref([name, address, city].filter(Boolean).join(', ')) }, address)) : null,
+      d.hours ? spotLine('Hours', week.length
+        ? h('span', { class: 'spc-v spc-week' }, week.map(function (w) {
+            return h('span', { class: 'spc-wk' }, h('span', null, w.days), h('span', null, w.hours));
+          }))
+        : h('span', { class: 'spc-v' }, d.hours)) : null,
+      tel.length >= 5 ? spotLine('Phone', h('a', { class: 'spc-v spc-link', href: 'tel:' + tel }, String(d.phone).trim())) : null,
+      web ? spotLine('Website', h('a', { class: 'spc-v spc-link', href: web, target: '_blank', rel: 'noopener' },
+        web.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, ''))) : null
+    ].filter(Boolean);
+    var whoName = String(st.who || '').trim() || 'Someone';
+    var sdOn = !!(B && B.spotDetailsOn && B.spotDetailsOn());
+    return [
+      h('h2', { class: 'sh-title spc-name' }, name),
+      h('p', { class: 'spc-kind' }, [spotCuisine(d.cuisine) || spotKindLabel(sp.kind), where].filter(Boolean).join(' · ')),
+      acts,
+      facts.length ? h('div', { class: 'spc-facts' }, facts) : null,
+      st.waiting && sdOn ? h('p', { class: 'hint spc-wait' }, 'Looking up the details…') : null,
+      spotCardApple(st),
+      lines.length ? h('div', { class: 'spc-info' }, lines) : null,
+      h('div', { class: 'spc-rec' },
+        h('span', { class: 'spc-k' }, 'Recommended by'),
+        h('div', { class: 'spc-who' },
+          personPhoto({ name: whoName, avatar: st.avatar || '' }, 'xs spc-face'),
+          h('div', { class: 'spc-who-t' },
+            h('span', { class: 'spc-who-n' }, whoName),
+            sp.note ? h('span', { class: 'spc-note' }, sp.note) : null))),
+      own && sp.id != null && B && B.spotSave ? h('button', { class: 'btn ghost block spc-edit', type: 'button',
+        onclick: function () { openSpotEdit(st.spot); } }, 'Edit spot') : null,
+      pt || st.details ? h('p', { class: 'hint spc-credit' }, 'Map details © ',
+        h('a', { class: 'hist-src', href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener' }, 'OpenStreetMap contributors')) : null
+    ];
+  }
+  /* Open one spot's card. x is the row as its list holds it; o.own says it
+     is the account's own (the Spots tab), o.face is the recommender's photo
+     when the list already has it (the day sheet's crew photos). */
+  function openSpotCard(x, o) {
+    o = o || {};
+    var B = window.GR_BACKEND;
+    var me = B && B.uid ? B.uid() : null;
+    var own = !!o.own || (!!me && !!x.userId && x.userId === me);
+    var st = { spot: Object.assign({}, x), who: own ? (profileName() || x.who || '') : (x.who || ''),
+      avatar: own ? myCard().photo : (o.face || ''), details: null, waiting: false,
+      here: null, hereState: 'idle', alive: true };
+    var box = h('div', { class: 'spc' });
+    var redraw = function () {
+      if (st.alive) fillEl(box, spotCardParts(st, own, redraw));
+    };
+    openSheet(function () {
+      if (S.mode === 'db' && B && B.spotDetails && x.id != null) {
+        if (B.spotDetailsOn) B.spotDetailsOn();
+        st.waiting = true;
+        B.spotDetails(x.id, function (a) {
+          if (!st.alive) return;
+          if (a) {
+            var g = a.spot || {};
+            if (typeof g.lat === 'number' && typeof g.lon === 'number') { st.spot.lat = g.lat; st.spot.lon = g.lon; }
+            if (g.address && !st.spot.address) st.spot.address = g.address;
+            if (g.osmRef) st.spot.osmRef = g.osmRef;
+            // (A tour list says the first name; the card says the whole one.)
+            if (a.who && !own) st.who = a.who;
+            if (a.avatar && !st.avatar) st.avatar = a.avatar;
+            if (a.details) st.details = a.details;
+            st.waiting = !!a.waiting;
+          } else st.waiting = false;
+          redraw();
+        }, !own && !st.avatar);
+      }
+      spotHereQuiet(function (here, state) {
+        if (!st.alive) return;
+        st.here = here; st.hereState = state;
+        redraw();
+      });
+      redraw();
+      return [box];
+    }, { label: String(x.name || 'Spot'), cls: 'spc-sheet', onClose: function () { st.alive = false; } });
+  }
+  /* The day sheet's TOUR SPOTS (Devin, 2026-10-15; the name, the green and
+     the heart, 2026-10-17: "it should say "TOUR SPOTS" in green with the
+     heart icon that you have on the tab ... Put the persons profile picture
+     who recommended it"): the places people on this tour shared for the
+     day's city, each with its recommender's photo, its kind and who
+     recommends it, only when there are any. A tap opens the spot's card. */
   function spotsRecommended(tourId, city) {
     if (!spotsOn()) return null;
     var B = window.GR_BACKEND;
@@ -5008,12 +5225,18 @@
     // Towns match as towns (0171): the ask carries the town before the comma.
     var rows = B.tourSpots(tourId, G.roadCityKey(city.split(',')[0]));
     if (!rows || !rows.length) return null;
+    // The crew's photos, the ones the Overview's crew list wears.
+    var faces = (B.facesFor && B.facesFor(tourId)) || {};
     return h('section', { class: 'ds-sec sp-rec' },
-      h('h3', { class: 'ds-sec-h' }, 'PLACES RECOMMENDED BY TOUR'),
+      h('h3', { class: 'ds-sec-h sp-rec-h' }, icon('heart', 18), 'TOUR SPOTS'),
       h('div', { class: 'ledger' }, rows.map(function (x) {
-        return h('div', { class: 'row ds-row' },
+        var face = (x.userId && faces[x.userId]) || '';
+        return h('button', { class: 'row ds-row sp-row', type: 'button',
+          onclick: function () { openSpotCard(x, { face: face }); } },
+          personPhoto({ name: x.who || 'Someone', avatar: face }, 'xs sp-face'),
           h('div', { class: 'row-label' }, x.name,
-            h('span', { class: 'hint' }, spotKindLabel(x.kind) + ' · ' + (x.who || 'Someone') + ' recommends it')));
+            h('span', { class: 'hint' }, spotKindLabel(x.kind) + ' · ' + (x.who || 'Someone') + ' recommends it')),
+          icon('chevron', 16));
       })));
   }
   /* ---- ALSO IN TOWN TONIGHT (0157, Devin's ask): on a show day the day
@@ -5189,10 +5412,12 @@
       h('section', { class: 'ds-sec' },
         h('h3', { class: 'ds-sec-h' }, 'Spots'),
         h('div', { class: 'ledger' }, rows.slice(0, 8).map(function (x) {
-          return h('div', { class: 'row ds-row' },
+          // A tap opens the spot's card (0175); its id comes with the row once 0175 is live.
+          return h('button', { class: 'row ds-row sp-row', type: 'button', onclick: function () { openSpotCard(x); } },
             h('div', { class: 'row-label' }, x.name,
               h('span', { class: 'hint' }, spotKindLabel(x.kind) +
-                (x.note ? ' · ' + x.note : '') + ' · from ' + (x.who || 'Someone'))));
+                (x.note ? ' · ' + x.note : '') + ' · from ' + (x.who || 'Someone'))),
+            icon('chevron', 16));
         }))));
   }
   /* ---- Endorsing, and the role that goes with it. The artist's page says
