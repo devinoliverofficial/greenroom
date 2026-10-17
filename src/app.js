@@ -14907,6 +14907,12 @@
     return (await api.update(bookId, { crew: patch })) ? id : null;
   }
   // A helper on this book by that name: the row someone who joins the tour takes over, so their pay stays theirs.
+  // A helper's row taken over by someone joining the tour: no longer a helper,
+  // and the helper's forced "not a Member" goes too unless the joining row
+  // says which it is, so their title decides like anyone newly added.
+  function helperTakeover(row) {
+    return Object.assign(row, { helper: null }, typeof row.member === 'boolean' ? {} : { member: null });
+  }
   function helperNamed(t, name) {
     var nm = G.whoKey(name);
     return (nm && crewGroups(t, true).helpers.filter(function (p) { return G.whoKey(p.name) === nm; })[0]) || null;
@@ -15217,9 +15223,9 @@
             return h('button', { class: 'chip', type: 'button',
               onclick: async function () {
                 var patch = {}, was = helperNamed(getTour(id), r.name);
-                patch[was ? was.id : newId()] = Object.assign({ name: r.name, title: r.title || '', pay: G.num(r.pay), createdAt: Date.now() },
-                  r.member === true || r.member === false ? { member: r.member } : r.band === true || r.band === false ? { member: r.band } : {},
-                  was ? { helper: null } : {});
+                var benchRow = Object.assign({ name: r.name, title: r.title || '', pay: G.num(r.pay), createdAt: Date.now() },
+                  r.member === true || r.member === false ? { member: r.member } : r.band === true || r.band === false ? { member: r.band } : {});
+                patch[was ? was.id : newId()] = was ? helperTakeover(benchRow) : benchRow;
                 if (await api.update(id, { crew: patch })) {
                   delete S.drafts['exp:' + id];
                   toast(r.name + ' added' + (r.pay ? ' at ' + money(G.num(r.pay)) : ''));
@@ -15290,7 +15296,7 @@
           // (Someone who helped out off the tour and is now on it: the same row, so what they were paid stays theirs.)
           var was = helperNamed(getTour(id), name);
           row.createdAt = Date.now();
-          patch[was ? was.id : newId()] = was ? Object.assign({}, row, { helper: null }) : row;
+          patch[was ? was.id : newId()] = was ? helperTakeover(Object.assign({}, row)) : row;
         }
         if (await api.update(id, { crew: patch })) {
           delete S.drafts['exp:' + id];
@@ -25198,7 +25204,7 @@
     // (a build ahead of its migration) loses nothing.
     if (ridesBus === false) row.ridesBus = false;
     var was = helperNamed(t, nm);
-    patch.crew[was ? was.id : newId()] = was ? Object.assign(row, { helper: null }) : row;
+    patch.crew[was ? was.id : newId()] = was ? helperTakeover(row) : row;
     patch.crewSeen[crewSeenKey(nm, email)] = true;
     return api.update(tourId, patch);
   }
@@ -25230,8 +25236,9 @@
         patch.crewSeen[k] = true;
         if (crewListed(t, nm, em)) return;
         var was = helperNamed(t, nm);
-        patch.crew[was ? was.id : newId()] = Object.assign({ name: nm, title: String(m.tourRole || '').trim(), pay: 0,
-          email: String(em || '').trim().toLowerCase(), createdAt: Date.now() }, was ? { helper: null } : {});
+        var joinRow = { name: nm, title: String(m.tourRole || '').trim(), pay: 0,
+          email: String(em || '').trim().toLowerCase(), createdAt: Date.now() };
+        patch.crew[was ? was.id : newId()] = was ? helperTakeover(joinRow) : joinRow;
         added++;
       });
       if (!Object.keys(patch.crewSeen).length) return;
