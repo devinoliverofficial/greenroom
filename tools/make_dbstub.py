@@ -1533,6 +1533,77 @@ shim = r"""<script>
     return Promise.resolve(out);
   }
   window.__harness.members = []; window.__harness.invited = []; window.__harness.notified = []; window.__harness.notes = [];
+  /* ---- THE TASKS DECK: EVERY JOB DONE ONCE (2026-10-17) ----
+     Devin: "you should never do a task twice. Whether you've done it through
+     the task button or did it through the app." __harness.taskDeck() (or open
+     the page with ?taskdeck) puts one of each case on the harness tour. Then
+     the profile's Tasks button (or Tasks, List) shows:
+       Ari needs an answer, Dallas merch ($900 logged, the settlement says
+         $1,040). Open Budget, Income, Dallas, type 1040 for merch, Save:
+         the card is gone, nothing written by Ari (her Yes now answers that
+         the number moved). Leave merch at 900 and the card stays.
+       Special request: only Brent's waiting one. The one this phone asked
+         itself and the one already accepted never show.
+       New expenses: only Brent's Whataburger. The Guitar Center charge the
+         bank feed filed with this account's name never shows. Opening
+         Budget (Expenses) marks the rest seen. A charge you log yourself
+         is marked the moment it saves: log one (Budget, a category, Log),
+         then __harness.taskMemory().tour.done holds its exp:<id>.
+       Merch logged automatically, Houston: opening Log income for Houston
+         clears it.
+       Income not received yet, Houston guarantee and merch deposit: Handle
+         now opens the Say which show sheet for the parked $2,000 guarantee
+         (Guarantees to sort) and the parked $500 merch (Merch to sort), never
+         Log income. Sort them (or take the parked rows off) and the cards
+         go back to opening Log income.
+       New on the guest list, Austin: only Jordan Price, never Alex Rivera
+         (this phone put Alex on). Opening the guest list on Austin clears it.
+       Reimbursements and Merch cash: Mark paid on Brent's or Tasha's ask
+         offers Merch cash; one tap marks it paid AND writes its Handed off
+         line, so the Merch cash card's amount drops by the same money. Not
+         paid takes the line back off.
+       HANDLE NOW ON A STANDING CARD (Ari, a request, a guarantee, the day
+         off with no poll, Merch cash): swipe it right, back out without
+         doing the job, open Tasks again: it is still there. Later still
+         puts it at the back. A notice card (New expenses, guests, Merch
+         logged automatically) still goes for good once handled.
+     __harness.taskMemory() reads back this account's Tasks memory for the
+     harness tour and for every tour (its done, later and held keys). */
+  window.__harness.taskDeck = function () {
+    var H = window.__harness, now = Date.now(), iso = function (ms) { return new Date(ms).toISOString(); };
+    var day = function (n) { return ymd(new Date(today.getTime() + n * 864e5)); };
+    var t = tours.t1;
+    H.asks = (H.asks || []).filter(function (a) { return a.id !== 'ask-dallas'; }).concat([{ id: 'ask-dallas', tour_id: 't1', note_id: 'n-ask-dallas',
+      show_id: 's0', place: 'Dallas', was: 900, fix: 1040, status: 'open', created_at: iso(now - 2 * 36e5) }]);
+    H.notes = (H.notes || []).filter(function (n) { return n.id !== 'n-ask-dallas'; }).concat([{ id: 'n-ask-dallas', day: 'chat', author: 'Ari', at: now - 2 * 36e5,
+      body: 'atVenu settlement for Dallas: says $1,040 merch, but $900 is already logged. I left it as is. Check which one is right.\n\nWould you like me to correct this to $1,040? Tap Yes and I\'ll fix it.' }]);
+    H.requests = (H.requests || []).filter(function (r) { return !/^rq-tk-/.test(r.id); }).concat([
+      { id: 'rq-tk-brent', tour_id: 't1', date: day(0), body: 'Two extra wristbands for the openers', author: 'Brent Allen', added_by: 'u-brent', status: 'pending', created_at: iso(now - 3 * 36e5) },
+      { id: 'rq-tk-mine', tour_id: 't1', date: day(0), body: 'Hot tea in the green room', author: 'Devin Oliver', added_by: 'u-devin', status: 'pending', created_at: iso(now - 2 * 36e5) },
+      { id: 'rq-tk-done', tour_id: 't1', date: day(0), body: 'Parking pass for the van', author: 'Brent Allen', added_by: 'u-brent', status: 'accepted', created_at: iso(now - 36e5) }]);
+    t.charges['tk-mine'] = { id: 'tk-mine', date: day(0), merchant: 'Guitar Center', amount: 89.99, category: 'food', paid: true, by: 'Devin Oliver', createdAt: now - 36e5 };
+    t.charges['tk-brent'] = { id: 'tk-brent', date: day(0), merchant: 'Whataburger', amount: 42.6, category: 'food', paid: false, by: 'Brent Allen', createdAt: now - 54e5 };
+    var hou = t.shows.s00;
+    hou.income = { guarantee: 2000, merch: 700 }; hou.merchCash = 200; hou.loggedAt = now - 5 * 36e5;
+    hou.guaranteeReceived = false; hou.merchReceived = false;
+    t.imports['em-' + hou.date + '-tk'] = { createdAt: now - 36e5, count: 1, total: 700, source: 'atVenu email' };
+    t.otherIncome = Object.assign({}, t.otherIncome, { 'tk-ug': { date: day(-1), amount: 2000, kind: 'guarantee', unsorted: true, at: now } });
+    t.merchToSort = Object.assign({}, t.merchToSort, { 'tk-ms': { date: day(-1), amount: 500, at: now } });
+    H.guests = (H.guests || []).filter(function (g) { return !/^g-tk-/.test(g.id); }).concat([
+      { id: 'g-tk-mine', tour_id: 't1', show_id: 's1', first_name: 'Alex', last_name: 'Rivera', affiliation: '', email: '', phone: '', qty: 1,
+        pass_type: 'GA', added_by: 'u-devin', created_at: now - 30 * 6e4 },
+      { id: 'g-tk-brent', tour_id: 't1', show_id: 's1', first_name: 'Jordan', last_name: 'Price', affiliation: 'Opener', email: '', phone: '', qty: 2,
+        pass_type: 'VIP', added_by: 'u-brent', created_at: now - 20 * 6e4 }]);
+    emit();
+    return 'an open Ari ask on Dallas, three requests on Austin, two new charges, Houston owed with its money parked, ' +
+      'an atVenu import on Houston and two new guests on Austin';
+  };
+  window.__harness.taskMemory = function () {
+    var read = function (k) { return labels[k] ? JSON.parse(JSON.stringify(labels[k])) : null; };
+    return { tour: read('seen-wn-t1'), everywhere: read('seen-wn-everywhere') };
+  };
+  // (After the rest of this file has seeded the guest list, which taskDeck adds to.)
+  try { if (/[?&]taskdeck\b/.test(String(location.search || ''))) setTimeout(function () { window.__harness.taskDeck(); }, 0); } catch (e) { /* no address to read */ }
   /* ---- VENUE AND SHOW RATINGS (0154 + 0165): stars on a venue's page, and the band's word on a night ----
      A venue page shows its rating line ("8.3 from 3 ratings", or "No ratings
      yet") and a Rate this venue button once the card carries rating keys,
@@ -4348,21 +4419,26 @@ shim = r"""<script>
     // Ari's questions, in memory: Yes sets the night's merch, and she answers in the chat.
     asksFor: function (tourId) {
       return (window.__harness.asks || []).filter(function (a) { return a.tour_id === tourId; }).map(function (a) {
-        return { id: a.id, noteId: a.note_id, showId: a.show_id, place: a.place, was: a.was, fix: a.fix, status: a.status }; });
+        return { id: a.id, noteId: a.note_id, showId: a.show_id, place: a.place, was: a.was, fix: a.fix, status: a.status, at: a.created_at }; });
     },
+    // (As ari_answer does: a Yes on a night whose merch is no longer the number she asked about, or a night
+    // that is gone, changes nothing and answers 'moved'.)
     ariAnswer: async function (id, yes) {
       var H = window.__harness, a = (H.asks || []).filter(function (x) { return x.id === id; })[0];
       if (!a) return 'gone';
       if (a.status !== 'open') return a.status;
       H.answers = (H.answers || []).concat([[id, !!yes]]);
-      var said = 'Okay, leaving ' + a.place + ' at $' + a.was + '.';
-      if (yes) {
+      var said = 'Okay, leaving ' + a.place + ' at $' + a.was + '.', night = ((tours[a.tour_id] || {}).shows || {})[a.show_id];
+      var nowMerch = night && night.income && typeof night.income.merch === 'number' ? night.income.merch : 0;
+      var moved = yes && (!night || Math.round(nowMerch * 100) !== Math.round(Number(a.was) * 100));
+      if (moved) said = a.place + ' merch is $' + nowMerch + ' now, not the $' + a.was + ' I asked about, so I left it alone.';
+      else if (yes) {
         var db = await window.claude.use('db'), sh = {};
         sh[a.show_id] = { income: { merch: a.fix } };
         await db.doc('tours/' + a.tour_id).update({ shows: sh });
         said = 'Done. ' + a.place + ' merch is now $' + a.fix + ' (it was $' + a.was + ').';
       }
-      a.status = yes ? 'fixed' : 'left';
+      a.status = moved ? 'moved' : yes ? 'fixed' : 'left';
       H.notes.push({ id: 'n-ans-' + id, day: 'chat', body: said, author: 'Ari', at: Date.now() });
       return a.status;
     },

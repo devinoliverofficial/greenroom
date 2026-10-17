@@ -756,12 +756,13 @@
       if (S.mode === 'db') {
         try {
           await enqueue(id, function () { return withRetry(function () { return store.db.doc('tours/' + id).update(patch); }); });
+          tasksOwnWrite(id, patch);
           return true;
         } catch (e) { onWriteError(e); return false; }
       }
       var cur = store.local.tours[id];
       if (!cur) return false;
-      store.local.tours[id] = deepMerge(clone(cur), patch); saveLocal(); render(); return true;
+      store.local.tours[id] = deepMerge(clone(cur), patch); saveLocal(); tasksOwnWrite(id, patch); render(); return true;
     },
     async remove(id) {
       if (!canWrite()) { toast(VIEW_ONLY); return false; }
@@ -13330,6 +13331,8 @@
   function tabExpenses(id, t, c, o) {
     var off = !!(o && o.off), partsOnly = !!(o && o.parts), readOnly = !!(o && o.readOnly);
     if (!off && !partsOnly) syncCrew(id);
+    // Expenses open: the new charges counted on it have been seen, and leave Tasks' New expenses.
+    if (!partsOnly && !readOnly) tasksSeen(id, taskCharges(t).map(function (x) { return 'exp:' + x.ch.id; }));
     // (Money under an added category this book has no name for: the artist's name for it is written on, once.)
     if (!partsOnly) healCatNames(id);
     // The Off Tour book leaves out what only a tour has.
@@ -16448,6 +16451,35 @@
     reimbLive = draw;
   }
 
+  /* Paid back out of the merch cash: the merch cash log's line for it,
+     Handed off (G.CASH_MOVES: cash that moved, never a tour cost, since the
+     reimbursement already is one), tied to the ask (reimbId) so Not paid
+     takes the same line back. One payment, one tap, and the Merch cash card
+     in Tasks agrees with the Reimbursements card. */
+  function reimbHandoffLine(r, day) {
+    return { date: day, amount: Math.round(G.num(r.amount) * 100) / 100, label: 'Paid back to ' + (r.name || 'someone on the tour'),
+      category: 'handoff', reimbId: r.id, createdAt: Date.now() };
+  }
+  function reimbHandoffIds(t, rid) {
+    return G.rows(t && t.cashLog).filter(function (x) { return x.reimbId === rid; }).map(function (x) { return x.id; });
+  }
+  // Offered only while the log has that much merch cash still to account for: the log's own rule for any entry.
+  // (Its line already there, from a Not paid whose removal didn't save: paying again uses that line.)
+  function reimbFromMerchOk(tourId, r) {
+    var t = getTour(tourId);
+    if (!t || isOffTour(t) || !canEditTour(tourId)) return false;
+    return reimbHandoffIds(t, r.id).length > 0 || G.cashSummary(t).left + 0.004 >= G.num(r.amount);
+  }
+  // The line written (or already there): true. A save that failed has said so already.
+  async function reimbLogHandoff(tourId, r) {
+    var t = getTour(tourId);
+    if (!t) return false;
+    if (reimbHandoffIds(t, r.id).length) return true;
+    if (G.cashSummary(t).left + 0.004 < G.num(r.amount)) return false;
+    var patch = { cashLog: {} };
+    patch.cashLog[newId()] = reimbHandoffLine(r, G.tourToday());
+    return !!(await api.update(tourId, patch));
+  }
   // "Paid Oct 12 · cash · by Devin", for the Managers' list.
   function reimbPaidLine(r) {
     var day = rbDay(r.paidAt);
@@ -16466,7 +16498,7 @@
     var B = window.GR_BACKEND;
     // asking: the ask whose "How did you pay?" is open. arm: the one whose "Not a tour cost" is armed.
     // unpay: the paid one whose "Not paid" is armed.
-    // told: asks marked paid in this visit and how ('cash' or 'card'), which get the grey line about counting twice.
+    // told: asks marked paid in this visit and how ('cash', 'merch' or 'card'), which get the grey line about counting twice.
     var st = { asking: null, arm: null, unpay: null, busy: null, told: {} };
     var box = h('div', { class: 'rb-box' });
     var say = function (out, doing) { toast(reimbWhy(out && out.why, doing), 5200); };
@@ -16485,13 +16517,37 @@
         toast('Marked paid back');
       });
     };
+    // Paid out of the merch cash: marked paid in cash, then its Handed off line in the merch cash log, in one tap.
+    var markFromMerch = function (r) {
+      var logged = false;
+      run(r, async function () {
+        var out = await B.reimburseMark(r.id, true, 'cash', '');
+        if (out && out.ok) logged = await reimbLogHandoff(tourId, r);
+        return out;
+      }, function () {
+        st.told[r.id] = logged ? 'merch' : 'cash';
+        if (logged) toast('Marked paid back · taken out of the merch cash');
+        else toast('Marked paid back. It isn’t in the merch cash log yet: tap Not paid, then Merch cash again.', 6500);
+      });
+    };
     // Only from the "Yes" under "Mark it not paid?". (The card charge is read first, as it stands now: the mark clears it.)
+    // A Handed off line the merch cash tap wrote goes with it, so the cash is back to account for.
     var markNot = function (r) {
       var now = reimbRows(tourId).filter(function (x) { return x.id === r.id; })[0] || r;
-      var matched = !!now.feedId;
-      run(r, function () { return B.reimburseMark(r.id, false, '', ''); }, function () {
+      var matched = !!now.feedId, lines = reimbHandoffIds(getTour(tourId), r.id), unlogged = false;
+      run(r, async function () {
+        var out = await B.reimburseMark(r.id, false, '', '');
+        if (out && out.ok && lines.length) {
+          var patch = { cashLog: {} };
+          lines.forEach(function (k) { patch.cashLog[k] = null; });
+          unlogged = !!(await api.update(tourId, patch));
+        }
+        return out;
+      }, function () {
         delete st.told[r.id];
         if (matched) toast('Marked not paid. The card charge it was matched to stays set aside.', 6500);
+        else if (lines.length && !unlogged) toast('Back in To pay back. Its Handed off line is still in the merch cash log: remove it there.', 6500);
+        else if (lines.length) toast('Back in To pay back. The merch cash log has it to account for again.', 5200);
         else toast('Back in To pay back');
       });
     };
@@ -16511,6 +16567,7 @@
         under = h('div', { class: 'rb-how', role: 'group', 'aria-label': 'How did you pay ' + (r.name || 'them') + '?' },
           h('span', { class: 'rb-how-q' }, busy ? 'Saving…' : 'How did you pay?'),
           h('span', { class: 'rb-acts' },
+            reimbFromMerchOk(tourId, r) ? h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { markFromMerch(r); } }, 'Merch cash') : null,
             h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { markPaid(r, 'cash'); } }, 'Cash'),
             h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { markPaid(r, 'card'); } }, 'Card or bank'),
             h('button', { class: 'linkbtn rb-link', type: 'button', disabled: off, onclick: function () { st.asking = null; draw(); } }, 'Not yet')));
@@ -16521,10 +16578,11 @@
             busy ? 'Taking it off…' : st.arm === r.id ? 'Take it off the tour’s costs?' : 'Not a tour cost'));
       } else if (r.status === 'paid') {
         // The grey line, for this visit, after saying how: where the same money could be counted a second time.
+        // (Paid out of the merch cash, the one tap logged it there too: Merch cash.)
         var note = st.told[r.id] === 'card' && r.how === 'card' && !r.feedId
           ? 'If this payment shows up in this tour’s card charges for the same amount, the app offers to match it, so it is not counted twice.'
-          : st.told[r.id] === 'cash' && r.how === 'cash'
-            ? 'If the cash came out of the merch cash, log it there as Handed off, so it is not counted twice.' : '';
+          : st.told[r.id] === 'merch' && r.how === 'cash'
+            ? 'Also in the merch cash log as Handed off, so it is counted once.' : '';
         var unpay = st.unpay === r.id;
         under = [h('span', { class: 'rb-state' }, h('span', { class: 'hint done' }, reimbPaidLine(r)),
           unpay ? null : h('button', { class: 'linkbtn rb-link', type: 'button', disabled: off,
@@ -18323,10 +18381,14 @@
      app: swipe right to handle it now (it takes you there), left to deal with
      it later. Anything new stays in the deck until it's swiped right; things
      still open (a request with no answer, money still to land) stay until
-     they're done. The button glows green while something's new since you last
-     looked, or on a new day with tasks still waiting, and greys out once
-     you've looked. Each person's looks and "later" pile are their own, kept
-     with their account. */
+     they're done, whichever door they are done through. The button glows
+     green while something's new since you last looked, or on a new day with
+     tasks still waiting, and greys out once you've looked. Each person's
+     looks and "later" pile are their own, kept with their account.
+     Devin, 2026-10-17: "you should never do a task twice. Whether you've
+     done it through the task button or did it through the app." So the
+     doors that do a card's job tell the deck (tasksSeen), and a card about
+     money or an answer still owed reads the same data those doors write. */
   function seenKey() {
     var B = window.GR_BACKEND;
     var uid = S.mode === 'db' && B && B.uid ? B.uid() : '';
@@ -18358,6 +18420,92 @@
       Promise.resolve(store.db.doc('labels/' + wnKey(tourId)).set({ kind: 'seen', at: rec.at, held: rec.held, later: rec.later, done: rec.done }))
         .catch(function () { /* this phone still remembers */ });
     }
+  }
+  /* Cards about you rather than one tour (tours to confirm, credits to
+     approve, people who joined a page you run, page claims, your bank lines)
+     keep one memory for every tour's Tasks: what you did about one on this
+     tour's deck holds on every other. */
+  var TASKS_EVERY = 'everywhere';
+  function taskAnyKey(k) { return k === 'banklines' || /^(credit|creditq|joined|claim):/.test(String(k)); }
+  // The deck's memory for a tour: its own record, with the cards about you read from the one record they share.
+  // anyAt: when you last looked at any tour's Tasks.
+  function taskRec(tourId) {
+    var own = seenRec(tourId), any = seenRec(TASKS_EVERY), out = { at: own.at, anyAt: any.at, held: {}, later: {}, done: {} };
+    ['held', 'later', 'done'].forEach(function (k) {
+      // (One kept on a tour's own record before there was a shared one counts until the shared one has it: the next save moves it.)
+      Object.keys(own[k]).forEach(function (key) { if (!taskAnyKey(key) || any[k][key] == null) out[k][key] = own[k][key]; });
+      Object.keys(any[k]).forEach(function (key) { if (taskAnyKey(key)) out[k][key] = any[k][key]; });
+    });
+    return out;
+  }
+  function saveTaskRec(tourId, rec) {
+    var own = { at: rec.at, held: {}, later: {}, done: {} }, any = seenRec(TASKS_EVERY);
+    var anyNow = { at: Math.max(any.at, G.num(rec.anyAt)), held: {}, later: {}, done: {} }, wrote = false;
+    ['held', 'later', 'done'].forEach(function (k) {
+      Object.keys(rec[k]).forEach(function (key) { (taskAnyKey(key) ? anyNow : own)[k][key] = rec[k][key]; });
+      // (A record only rewritten when something in it changed: the shared one is written by every tour's deck.)
+      if (JSON.stringify(anyNow[k]) !== JSON.stringify(any[k])) wrote = true;
+    });
+    saveSeen(tourId, own);
+    if (wrote || anyNow.at !== any.at) saveSeen(TASKS_EVERY, anyNow);
+  }
+  // New enough for a notice card: logged in the last week.
+  var TASK_WEEK = 7 * 864e5;
+  function taskNew(at) { return G.num(at) > Date.now() - TASK_WEEK; }
+  // A stamp as a number: milliseconds as they are, a date's words read.
+  function taskWhen(v) { return typeof v === 'number' ? v : Date.parse(v) || 0; }
+  /* Another door did what a notice card is about (the guest list looked at,
+     Expenses opened, the night reviewed in Log income, a charge you logged
+     yourself): it leaves this account's Tasks, the same as Handle now.
+     Only what is new and not yet marked is written, so a second look
+     writes nothing. keys: the cards' item keys ('guest:<id>', 'exp:<id>',
+     'merch:<import>'). */
+  // (Run while pages draw and after money saves: the deck's memory never stops either.)
+  function tasksSeen(tourId, keys) {
+    try {
+      if (!tourId || !keys || !keys.length || !moneyLead(tourId)) return;
+      var rec = taskRec(tourId), now = Date.now(), n = 0;
+      keys.forEach(function (k) {
+        if (rec.done[k]) return;
+        delete rec.held[k]; delete rec.later[k]; rec.done[k] = now; n += 1;
+      });
+      if (n) saveTaskRec(tourId, rec);
+    } catch (e) { /* a convenience: the page and the save go on */ }
+  }
+  // The charges the New expenses card is about: still counting, not zero, logged in the last week.
+  function taskCharges(t) {
+    var imps = G.isObj(t && t.imports) ? t.imports : {};
+    return G.rows(t && t.charges).map(function (ch) {
+      var im = ch.importId ? imps[ch.importId] : null;
+      return { ch: ch, at: G.num(ch.createdAt) || G.num(im && im.createdAt) };
+    }).filter(function (x) { return !x.ch.accounted && G.num(x.ch.amount) !== 0 && taskNew(x.at); });
+  }
+  // Charges this account writes (logged by hand, a statement imported, one edited or sorted) are its own: never new to it.
+  // (Called after a save has landed: nothing here may make that save read as failed.)
+  function tasksOwnWrite(tourId, patch) {
+    try {
+      var add = patch && G.isObj(patch.charges) ? patch.charges : null;
+      if (!add) return;
+      var t = getTour(tourId) || {}, had = G.isObj(t.charges) ? t.charges : {};
+      tasksSeen(tourId, taskCharges({ imports: t.imports, charges: Object.keys(add).reduce(function (o, k) {
+        if (G.isObj(add[k])) o[k] = Object.assign({ id: k }, G.isObj(had[k]) ? had[k] : {}, add[k]);
+        return o;
+      }, {}) }).map(function (x) { return 'exp:' + x.ch.id; }));
+    } catch (e) { /* the deck's memory is a convenience */ }
+  }
+  /* The name the bank feed writes on a charge it filed for you ("sorted by"):
+     your profile's full name, else your username, as the server reads it. */
+  function mySortName() {
+    var B = window.GR_BACKEND, p = S.mode === 'db' && B && B.myProfile ? B.myProfile() : null;
+    return p ? String(p.fullName || p.username || '').trim().slice(0, 60).toLowerCase() : '';
+  }
+  // Ari's question about a night's merch that her Yes can no longer act on: the night has gone, or its merch
+  // is not the number she asked about (typed in Log income, say). The server's own rule ('moved' in ari_answer).
+  function ariAskMoved(t, a) {
+    var s = t && G.isObj(t.shows) && G.isObj(t.shows[a.showId]) ? t.shows[a.showId] : null;
+    if (!s) return true;
+    var m = G.isObj(s.income) && typeof s.income.merch === 'number' ? s.income.merch : 0;
+    return Math.round(m * 100) !== Math.round(G.num(a.was) * 100);
   }
   /* The tour's managers: the creator, and anyone the creator made a Manager
      (everything on the tour, plus the card refresh, the polls, Ari's questions, alerts
@@ -18418,12 +18566,12 @@
   function tourTasks(tourId, rec) {
     var t = getTour(tourId) || {};
     var B = window.GR_BACKEND, live = S.mode === 'db' && B;
-    var now = Date.now(), since = rec.at, week = now - 7 * 864e5;
+    var now = Date.now(), since = rec.at, week = now - TASK_WEEK;
     var shows = G.rows(t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
     var byDate = {};
     shows.forEach(function (x) { byDate[x.date] = x; });
     var imps = G.isObj(t.imports) ? t.imports : {};
-    var when = function (v) { return typeof v === 'number' ? v : Date.parse(v) || 0; };
+    var when = taskWhen;
     var place = function (x) { return dayMD(x.date) + ' · ' + (String(x.city || '').split(',')[0] || x.venue || 'Show'); };
     var view = function (v) { return function () { go({ name: 'tour', id: tourId, view: v }); }; };
     var onDay = function (v, date) {
@@ -18442,22 +18590,36 @@
     var incomeLog = function (showId) {
       return canEditTour(tourId) ? function () { openIncome(tourId, showId); } : view('money');
     };
+    /* Money still to land on a night, while deposits wait in Guarantees to
+       sort or Merch to sort: the card opens that list, never Log income,
+       where ticking Received would count the same money a second time.
+       Asked at the tap, so the card goes where the money stands then. */
+    var owedLog = function (showId, kind) {
+      return function () {
+        var tt = getTour(tourId), merch = kind === 'merch';
+        var parked = merch ? merchToSortRows(tourId).map(function (x) { return { id: x.id, date: x.date, amount: x.amount, of: x.of, kind: 'merch' }; })
+          : unsortedRows(G.calc(tt));
+        if (!parked.length) { incomeLog(showId)(); return; }
+        if (S.mode === 'db' && moneyLead(tourId) && B && (merch ? B.sortMerch : B.sortGuarantee)) openIncomeReview(tourId, { place: parked });
+        else view('money')();
+      };
+    };
     var tasks = [];
 
-    // Ari's questions, waiting on the tour manager.
+    // Ari's questions, waiting on the tour manager. (Not one whose night's merch was since changed by hand:
+    // the number she asked about is gone, so the answer is in. Nothing is written for it.)
     var asks = live && B.asksFor ? B.asksFor(tourId) : [];
-    asks.filter(function (a) { return a.status === 'open'; }).forEach(function (a) {
+    asks.filter(function (a) { return a.status === 'open' && !ariAskMoved(t, a); }).forEach(function (a) {
       tasks.push({ key: 'ask:' + a.id, standing: true, at: when(a.at), emoji: '🤖', title: 'Ari needs an answer',
         main: a.place + ' merch', sub: 'Logged ' + G.moneyCents(a.was) + ' · the settlement says ' + G.moneyCents(a.fix),
         open: function () { openAriSheet(tourId); } });
     });
-    // Special requests: waiting on an answer, or answered since you looked.
+    // Special requests waiting on an answer. (An answered one was the job; one you asked yourself is not yours to answer.)
     if (live && B.requestsFor) shows.forEach(function (x) {
       B.requestsFor(tourId, x.date).forEach(function (r) {
-        var at = when(r.at), open = r.status === 'pending', key = 'req:' + r.id;
-        if (!open && !pending(key, at)) return;
-        tasks.push({ key: key, standing: open, at: at, emoji: '🙋', title: 'Special request', main: r.body,
-          sub: [place(x), r.author, open ? 'Waiting for an answer' : r.status === 'accepted' ? 'Accepted' : 'Denied'].filter(Boolean).join(' · '),
+        if (r.status !== 'pending' || r.mine) return;
+        tasks.push({ key: 'req:' + r.id, standing: true, at: when(r.at), emoji: '🙋', title: 'Special request', main: r.body,
+          sub: [place(x), r.author, 'Waiting for an answer'].filter(Boolean).join(' · '),
           open: function () { openRequests(tourId, x); } });
       });
     });
@@ -18480,14 +18642,13 @@
     // until both are clear, on whichever tour these Tasks belong to.
     var bankCard = live ? bankTask(tourId) : null;
     if (bankCard) tasks.push(bankCard);
-    // New expenses: what was logged, whoever sorted it, for both of you to see.
+    // New expenses: what the other Managers and the linked cards logged, for both of you to see. Never
+    // your own: a charge the bank feed filed with your name on it, or one you logged (tasksOwnWrite).
     var cats = {};
     chargeCats(t).forEach(function (c) { cats[c.key] = c.label; });
-    var fresh = [];
-    G.rows(t.charges).forEach(function (ch) {
-      var im = ch.importId ? imps[ch.importId] : null;
-      var at = G.num(ch.createdAt) || G.num(im && im.createdAt);
-      if (!ch.accounted && G.num(ch.amount) !== 0 && pending('exp:' + ch.id, at)) fresh.push({ ch: ch, at: at });
+    var meSort = mySortName();
+    var fresh = taskCharges(t).filter(function (x) {
+      return pending('exp:' + x.ch.id, x.at) && !(meSort && String(x.ch.by || '').trim().toLowerCase() === meSort);
     });
     if (fresh.length) {
       fresh.sort(function (a, b) { return String(a.ch.date).localeCompare(String(b.ch.date)); });
@@ -18530,13 +18691,13 @@
       // (Not for a show still to come: its guarantee was set at the start of the
       // tour as what the promoter owes, and nothing is late until the night has happened.)
       if (g > 0 && x.guaranteeReceived === false && x.date <= G.tourToday()) tasks.push({ key: 'inc:' + x.id + ':g', standing: true, at: 0,
-        emoji: '⏳', title: 'Income not received yet', main: gd > 0 ? 'Guarantee deposit' : 'Guarantee', amount: gd > 0 ? gd : g, sub: place(x), open: incomeLog(x.id) });
+        emoji: '⏳', title: 'Income not received yet', main: gd > 0 ? 'Guarantee deposit' : 'Guarantee', amount: gd > 0 ? gd : g, sub: place(x), open: owedLog(x.id, 'guarantee') });
       // Deposited short, with the rest still owed by the promoter.
       else if (G.guaranteeOwed(x) > 0) tasks.push({ key: 'inc:' + x.id + ':go', standing: true, at: 0,
         emoji: '\u23f3', title: 'Income not received yet', main: 'Rest of the guarantee', amount: G.guaranteeOwed(x),
-        sub: place(x), open: incomeLog(x.id) });
+        sub: place(x), open: owedLog(x.id, 'guarantee') });
       if (md > 0 && x.merchReceived === false) tasks.push({ key: 'inc:' + x.id + ':m', standing: true, at: 0,
-        emoji: '⏳', title: 'Income not received yet', main: 'Merch deposit', amount: md, sub: place(x), open: incomeLog(x.id) });
+        emoji: '⏳', title: 'Income not received yet', main: 'Merch deposit', amount: md, sub: place(x), open: owedLog(x.id, 'merch') });
     });
     // Merch cash still not accounted for.
     var cs = G.cashSummary(t);
@@ -18554,18 +18715,21 @@
           open: moneyLead(tourId) ? function () { openPollEditor(tourId, x.date, null); } : view('calendar') });
       });
     }
-    // New names on the guest list, a card per night.
+    // New names on the guest list, a card per night (never one you put on yourself).
+    var meId = live && B.uid ? B.uid() : null;
     shows.forEach(function (x) {
       var names = [], keys = [], newest = 0;
       guestsFor(t, tourId, x.id).forEach(function (g) {
         var at = when(g.at || g.createdAt);
-        if (!pending('guest:' + g.id, at)) return;
+        if ((meId && g.addedBy === meId) || !pending('guest:' + g.id, at)) return;
         names.push([g.firstName, g.lastName].filter(Boolean).join(' ') + (G.num(g.qty) > 1 ? ' +' + (G.num(g.qty) - 1) : ''));
         keys.push('guest:' + g.id);
         newest = Math.max(newest, at);
       });
+      // (The guest list opens on that night, where looking at it counts as seeing them: guestRowsFor.)
       if (keys.length) tasks.push({ key: 'guests:' + x.id, keys: keys, at: newest, emoji: '🎟️',
-        title: 'New on the guest list', main: names.join(', '), sub: place(x), open: onDay('guests', x.date) });
+        title: 'New on the guest list', main: names.join(', '), sub: place(x),
+        open: function () { S.glTour = tourId; S.glShow = x.id; onDay('guests', x.date)(); } });
     });
     // Not this tour's, but yours: tours to confirm with an artist that endorsed
     // you, and (for an artist page you run) credits waiting on your yes.
@@ -18598,10 +18762,12 @@
       tasks.push({ key: 'claim:' + x.id + ':' + (x.at || ''), standing: true, at: when(x.at), emoji: '\ud83c\udfa4', title: 'Page claim',
         main: (x.name || 'Someone') + ' \u00b7 ' + x.artist, sub: 'Asking to run the page', open: function () { openClaimReview(x); } });
     });
-    tasks.forEach(function (c) { c.keys = c.keys || [c.key]; c.fresh = c.at > since; });
-    // Handled is handled. Then the ones you haven't decided on, in order;
+    // (A card about you, not this tour, is new since you last looked at any tour's Tasks.)
+    tasks.forEach(function (c) { c.keys = c.keys || [c.key]; c.fresh = c.at > (c.keys.every(taskAnyKey) ? G.num(rec.anyAt) : since); });
+    // Handled is handled. A standing card is only ever handled by doing its job, so no
+    // tap of the deck's hides it. Then the ones you haven't decided on, in order;
     // then the ones you put off, oldest "later" first.
-    tasks = tasks.filter(function (c) { return !c.keys.every(function (k) { return rec.done[k]; }); });
+    tasks = tasks.filter(function (c) { return c.standing || !c.keys.every(function (k) { return rec.done[k]; }); });
     var laterAt = function (c) { return Math.max.apply(null, c.keys.map(function (k) { return G.num(rec.later[k]); })); };
     var undecided = tasks.filter(function (c) { return !(laterAt(c) > 0); });
     var put = tasks.filter(function (c) { return laterAt(c) > 0; }).sort(function (a, b) { return laterAt(a) - laterAt(b); });
@@ -18622,7 +18788,7 @@
     return out;
   }
   function taskState(tourId) {
-    var rec = seenRec(tourId), tasks = tourTasks(tourId, rec);
+    var rec = taskRec(tourId), tasks = tourTasks(tourId, rec);
     var fresh = tasks.filter(function (c) { return c.fresh; }).length;
     // Green while something's new, or on a new day with tasks still waiting.
     var glow = fresh > 0 || (tasks.length > 0 && (!rec.at || G.ymd(new Date(rec.at)) < G.ymd(new Date())));
@@ -18632,21 +18798,26 @@
   /* The deck: one task at a time. Right (or "Handle now") goes there; left
      (or "Later") keeps it for later. Arrow keys work too. */
   function openTaskDeck(tourId) {
-    var rec = seenRec(tourId);
+    var rec = taskRec(tourId);
     var tasks = tourTasks(tourId, rec);
     // Everything new waits in the deck until you decide on it.
     tasks.forEach(function (c) {
       if (!c.standing) c.keys.forEach(function (k) { if (!rec.later[k]) rec.held[k] = c.at || Date.now(); });
     });
-    rec.at = Date.now();
-    saveSeen(tourId, rec);
+    rec.at = rec.anyAt = Date.now();
+    saveTaskRec(tourId, rec);
     var decided = function (c, how) {
-      var r2 = seenRec(tourId), now = Date.now();
+      var r2 = taskRec(tourId), now = Date.now();
       c.keys.forEach(function (k) {
         delete r2.held[k];
-        if (how === 'done') { delete r2.later[k]; r2.done[k] = now; } else r2.later[k] = now;
+        if (how !== 'done') r2.later[k] = now;
+        else {
+          delete r2.later[k];
+          // (A standing card leaves only when its job is done, by whichever door: going to it is not doing it.)
+          if (!c.standing) r2.done[k] = now;
+        }
       });
-      saveSeen(tourId, r2);
+      saveTaskRec(tourId, r2);
     };
 
     var i = 0, deferred = 0, busy = false;
@@ -18721,7 +18892,8 @@
         top.style.opacity = '0';
       }
       if (dir > 0) {
-        // Handled: gone from the deck for good, and off to it (today's list stays until it's all logged).
+        // Handled: off to it. A notice is gone from the deck for good; a standing card (and today's list)
+        // stays until its job is done.
         if (!c.keep) decided(c, 'done');
         setTimeout(function () { close(); setTimeout(c.open, 280); }, 240);
       } else {
@@ -18769,7 +18941,7 @@
 
   // The same tasks as a plain list, grouped, for a look at everything at once.
   function openTaskList(tourId) {
-    var tasks = tourTasks(tourId, seenRec(tourId));
+    var tasks = tourTasks(tourId, taskRec(tourId));
     var groups = [], byTitle = {};
     tasks.forEach(function (c) {
       if (!byTitle[c.title]) { byTitle[c.title] = { emoji: c.emoji, title: c.title, list: [] }; groups.push(byTitle[c.title]); }
@@ -18784,9 +18956,10 @@
             h('h3', { class: 'wn-h' }, h('span', { 'aria-hidden': 'true' }, g.emoji), g.title),
             h('div', { class: 'ledger' }, g.list.map(function (c) {
               return h('button', { class: 'row wn-row', type: 'button', onclick: function () {
-                var r2 = seenRec(tourId), now = Date.now();
-                if (!c.keep) c.keys.forEach(function (k) { delete r2.held[k]; delete r2.later[k]; r2.done[k] = now; });
-                saveSeen(tourId, r2);
+                var r2 = taskRec(tourId), now = Date.now();
+                // (As Handle now: a standing card stays until its job is done.)
+                if (!c.keep) c.keys.forEach(function (k) { delete r2.held[k]; delete r2.later[k]; if (!c.standing) r2.done[k] = now; });
+                saveTaskRec(tourId, r2);
                 closeSheet(); setTimeout(c.open, 320);
               } },
                 h('span', { class: 'row-label' }, c.main, c.fresh ? h('span', { class: 'wn-new' }, 'New') : null,
@@ -19312,6 +19485,8 @@
   // A night's guests as rows, by last name; yours (or anyone's, for the tour
   // manager) open with a tap to be changed or taken off.
   function guestRowsFor(id, s, list, backend, myUid, refresh) {
+    // The night's list on screen: its new names have been seen, and leave Tasks' New on the guest list.
+    tasksSeen(id, list.filter(function (g) { return taskNew(taskWhen(g.at || g.createdAt)); }).map(function (g) { return 'guest:' + g.id; }));
     return list.slice().sort(function (a, b) {
       return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
         String(a.firstName || '').localeCompare(String(b.firstName || ''));
@@ -22798,6 +22973,10 @@
     var t = getTour(id);
     var s = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : null;
     if (!s) return;
+    // The night open here has been reviewed: the atVenu settlement's "Merch logged automatically" card for it leaves Tasks.
+    tasksSeen(id, Object.keys(G.isObj(t.imports) ? t.imports : {}).filter(function (k) {
+      return s.date && k.indexOf('em-' + s.date + '-') === 0 && taskNew(G.num(t.imports[k] && t.imports[k].createdAt));
+    }).map(function (k) { return 'merch:' + k; }));
     var ini = incomeInit(s, t);
     if (carry) guaranteeQuickApply(ini, { gross: carry.gross, dep: carry.dep, tax: carry.tax, recv: carry.recv, show: s });
     var draft = ini.draft, tax = ini.tax, gross = ini.gross, why = ini.why, whyNote = ini.whyNote,
