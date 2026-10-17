@@ -28693,18 +28693,68 @@
      is connected": Add Card Info on an error would have him connect a bank
      that is already connected, and every charge would come back as new. What
      is on screen under it is the last pile that was read. */
-  function feedFailedLine() {
+  function feedFailedItem() {
     var B = window.GR_BACKEND;
-    var again = B && B.feedRead ? h('button', { class: 'linkbtn feed-catchup', type: 'button' }, 'Try again') : null;
-    if (again) again.addEventListener('click', async function () {
-      if (again.disabled) return;
-      again.disabled = true; again.textContent = 'Checking\u2026';
-      try { await B.feedRead(); } catch (e) { /* said below */ }
+    var again = B && B.feedRead ? fpAct('Try again', async function (e) {
+      var b = e.currentTarget;
+      if (b.disabled) return;
+      b.disabled = true; b.textContent = 'Checking\u2026';
+      try { await B.feedRead(); } catch (e2) { /* said below */ }
       // (Nothing on screen changes when it fails again, so it is said.)
       if (S.feed && S.feed.failed) toast('Still couldn\u2019t check the cards. Try again when you have signal.', 4200);
       render(true);
-    });
-    return h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' }, 'Couldn\u2019t check the cards.'), again);
+    }) : null;
+    return { tone: 'bad', text: 'Couldn\u2019t check the cards.', act: again };
+  }
+
+  /* What sits between Refresh Card and All New Card Activity (Devin,
+     2026-10-17: "I know this is all important info but it looks bad"): one
+     panel. On top, when the cards were last checked, with a dot: green when
+     all is well, red when a row under it needs him, grey while something is
+     still being checked or a tour has no card dates. Then a row for each
+     thing that needs him, with its button, and a row for each other pile
+     with lines waiting. Everything else is folded under Details (open or
+     shut is remembered on this phone).
+     o: { at, calm, busy, alerts, rows, more }. Each item: { text, sub, tone
+     ('bad', 'ask' or none), act (a button), go (the whole row opens it),
+     n (a count on the right of a row that opens) }. */
+  function fpAct(label, fn) {
+    return h('button', { class: 'btn quiet fp-act', type: 'button', onclick: fn }, label);
+  }
+  function fpRow(x) {
+    var dot = h('span', { class: 'fp-dot' + (x.tone ? ' ' + x.tone : ' none'), 'aria-hidden': 'true' });
+    var label = h('div', { class: 'row-label' }, x.text, x.sub ? h('span', { class: 'hint' }, x.sub) : null);
+    if (x.go) return h('button', { class: 'row rowbtn fp-row', type: 'button', onclick: x.go },
+      dot, label, x.n != null ? h('span', { class: 'fp-n' }, String(x.n)) : null, icon('chevron', 16));
+    return h('div', { class: 'row fp-row', role: x.tone === 'bad' ? 'status' : null }, dot, label, x.act || null);
+  }
+  function feedMoreOpen() {
+    if (S.feedMore === undefined) S.feedMore = lsGet('gr-feedmore') === '1';
+    return !!S.feedMore;
+  }
+  function feedPanel(o) {
+    var keep = function (list) { return (list || []).filter(Boolean); };
+    var alerts = keep(o.alerts), rows = keep(o.rows), more = keep(o.more);
+    var tone = alerts.some(function (x) { return x.tone === 'bad'; }) ? 'bad'
+      : o.busy || alerts.length || rows.some(function (x) { return x.tone === 'ask'; }) ? '' : 'ok';
+    var sum = null, open = false;
+    if (o.at) {
+      open = more.length > 0 && feedMoreOpen();
+      var inner = [h('span', { class: 'fp-dot' + (tone ? ' ' + tone : ''), 'aria-hidden': 'true' }),
+        h('div', { class: 'row-label' }, o.at, o.calm ? h('span', { class: 'hint' }, o.calm) : null)];
+      sum = more.length
+        ? h('button', { class: 'row rowbtn fp-row fp-sum' + (open ? ' open' : ''), type: 'button', 'aria-expanded': open ? 'true' : 'false',
+            onclick: function () { S.feedMore = !open; lsSet('gr-feedmore', open ? '' : '1'); render(true); } },
+            inner, h('span', { class: 'fp-more' }, 'Details', icon('chevron', 14)))
+        : h('div', { class: 'row fp-row fp-sum' }, inner);
+    }
+    if (!sum && !alerts.length && !rows.length) return null;
+    return h('div', { class: 'ledger feed-panel' }, sum, alerts.map(fpRow), rows.map(fpRow),
+      open ? h('div', { class: 'fp-details' }, more.map(fpRow)) : null);
+  }
+  function feedCheckedWords(iso) {
+    var ago = feedAgo(iso);
+    return ago === 'not yet' ? 'Not checked yet' : 'Last checked ' + ago;
   }
 
   function feedEntry(id) {
@@ -28712,7 +28762,7 @@
     if (!createdTour(id)) return tmFeedEntry(id);
     if (!S.feed) return null;
     // The cards could not be read and nothing is known from an earlier read: that is all there is to say.
-    if (S.feed.failed && !S.feed.row) return h('div', { class: 'feed-entry' }, feedFailedLine());
+    if (S.feed.failed && !S.feed.row) return h('div', { class: 'feed-entry' }, feedPanel({ alerts: [feedFailedItem()] }));
     // Only accounts on the approved list ever get this far without a feed.
     // Until a card is in (connected and set up), the one button adds it.
     var addCard = function (go_) {
@@ -28738,18 +28788,18 @@
     // deposits, behind one button (Devin: "All New Card Activity").
     if (incomeReady(id)) ensureIncomeNew(id);
     // The deposits could not be read: said too (no deposits shown is then not "no deposits").
-    var depositsLine = null;
+    var depositsItem = null;
     if (incomeReady(id) && S.incomeNew && S.incomeNew.failed && !S.incomeBusy) {
-      depositsLine = h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' }, 'Couldn\u2019t check the deposits.'),
-        h('button', { class: 'linkbtn feed-catchup', type: 'button', onclick: function () { S.incomeNew = null; ensureIncomeNew(id); render(true); } }, 'Try again'));
+      depositsItem = { tone: 'bad', text: 'Couldn\u2019t check the deposits.',
+        act: fpAct('Try again', function () { S.incomeNew = null; ensureIncomeNew(id); render(true); }) };
     }
+    var acct = acctParts(id);
     return h('div', { class: 'feed-entry' },
       h('div', { class: 'feed-bar' }, refreshBtn),
-      S.feed.failed ? feedFailedLine() : null,
-      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(row.last_run), ' \u00b7 ',
-        h('button', { class: 'linkbtn feed-catchup', type: 'button', onclick: function () { openCatchUp(id); } }, 'Catch up on missed payments')),
-      acctBlock(id),
-      depositsLine,
+      feedPanel({ at: feedCheckedWords(row.last_run), calm: acct.calm, busy: acct.busy,
+        alerts: [S.feed.failed ? feedFailedItem() : null].concat(acct.alerts, [depositsItem]),
+        rows: acct.rows,
+        more: acct.more.concat([{ text: 'Catch up on missed payments', go: function () { openCatchUp(id); } }]) }),
       cardActivityButton(id));
   }
 
@@ -28761,8 +28811,8 @@
      only decides where it waits. The database answers for the whole account
      in one go (feed_account): how many lines it holds and where each stands,
      what was left out and why, each bank's last good read, and the last full
-     check against the bank. The Cards tab says it in a few quiet lines above
-     the pile (acctBlock), and what is not in the pile is listed under "Left
+     check against the bank. The Cards tab says it in its panel above the
+     pile (acctParts), and what is not in the pile is listed under "Left
      out and set aside" (openLeftOut), where one tap returns a line to waiting.
      Nothing here files, sets aside or logs anything.
      It has to tell the truth in three states. Before the bank feed's own
@@ -28869,11 +28919,12 @@
     if (parts.length === 1) return head + '. ' + (n === 1 ? parts[0][2] : parts[0][3]) + '.';
     return head + ': ' + parts.map(function (x) { return x[0] + ' ' + (x[0] === 1 && x[1] === 'were left out' ? 'was left out' : x[1]); }).join(', ') + '.';
   }
-  function bankTroubleWords(x) {
-    var name = x.name || 'A bank', day = x.since ? rbDay(x.since) : '';
-    if (x.code === 'PENDING_EXPIRATION') return name + '’s connection is about to run out. Sign in again.';
-    if (LOGIN_CODES[x.code]) return day ? name + ' has not been read since ' + day + '. Sign in again.' : name + ' needs you to sign in again.';
-    return (day ? name + ' has not been read since ' + day + '.' : name + ' is not being read.') +
+  // What is wrong with a bank, said under its name.
+  function bankTroubleSub(x) {
+    var day = x.since ? rbDay(x.since) : '';
+    if (x.code === 'PENDING_EXPIRATION') return 'Its connection is about to run out. Sign in again.';
+    if (LOGIN_CODES[x.code]) return day ? 'Not read since ' + day + '. Sign in again.' : 'Needs you to sign in again.';
+    return (day ? 'Not read since ' + day + '.' : 'Not being read.') +
       (PASSING_CODES[x.code] ? ' It is not answering right now.' : ' It is having trouble.');
   }
   // Is an account (by the name the bank feed gives it) logging expenses right now? 'on', 'off', or '' when this phone has not heard.
@@ -28891,86 +28942,79 @@
     if (a) openAccountQuestions([a], 0, tourId); else openFeedSheet(tourId);
   }
 
-  /* The few lines above the pile (the feed's owner, on a tour he made or on
-     the Off Tour book). Red first: lines the bank feed could not store, a
-     read that could not be saved, a bank that is not being read, a read that
-     did not finish for some other reason. Then, quiet: a tour with no card
-     dates, the account of every line (the way in to "Left out and set
-     aside"), what waits on other tours, the last full check, a bank not
-     fully checked yet or with more history than one read takes, and accounts
-     that do not log expenses. */
-  function acctBlock(id) {
-    if (!acctOn() || !createdTour(id)) return null;
+  /* The account's lines for the Cards tab's panel (the feed's owner, on a
+     tour he made or on the Off Tour book), sorted three ways (feedPanel).
+     alerts, in red: lines the bank feed could not store, a read that could
+     not be saved, a bank that is not being read, a read that did not finish
+     for some other reason, the account that could not be read. rows: a tour
+     with no card dates, and what waits on other tours and books. more, under
+     Details: the last full check, the account of every line (the way in to
+     "Left out and set aside"), a bank not fully checked yet or with more
+     history than one read takes, accounts that do not log expenses, lines
+     from a tour that was taken down, a pile that was cut short.
+     calm: "Every line accounted for" beside the last check, once it is true;
+     busy: the account is still being read. */
+  function acctParts(id) {
+    var out = { alerts: [], rows: [], more: [], calm: '', busy: false };
+    if (!acctOn() || !createdTour(id)) return out;
     ensureAcct();
-    var t = getTour(id), d = acctData(), last = feedLastStatus(), kids = [];
-    var link = function (text, fn) { return h('button', { class: 'linkbtn feed-catchup', type: 'button', onclick: fn }, text); };
-    var quiet = function () { return h('p', { class: 'feed-checked' }, Array.prototype.slice.call(arguments)); };
-    var red = function (text, act) { return h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' }, text), act || null); };
+    var t = getTour(id), d = acctData(), last = feedLastStatus();
     var cardsSheet = function () { openFeedSheet(id); };
     var ck = d && G.isObj(d.check) ? d.check : null;
+    var bad = function (text, sub, act) { out.alerts.push({ tone: 'bad', text: text, sub: sub || '', act: act || null }); };
 
-    if (last === 'lines_missing' || (ck && G.num(ck.unexplained) > 0)) kids.push(red(feedProblemKnown('lines_missing')));
-    if (last === 'save_failed') kids.push(red('The last bank read could not be saved, so its lines are not in yet. Tap Refresh Card.'));
+    if (last === 'lines_missing' || (ck && G.num(ck.unexplained) > 0)) bad('Some bank lines could not be stored.', 'Nothing is lost. Tell Greenroom.');
+    if (last === 'save_failed') bad('The last bank read could not be saved.', 'Its lines are not in yet. Tap Refresh Card.');
     var troubles = bankTroubles();
-    troubles.forEach(function (x) { kids.push(red(bankTroubleWords(x), link('Open Linked Cards', cardsSheet))); });
+    troubles.forEach(function (x) { bad(x.name || 'A bank', bankTroubleSub(x), fpAct('Linked Cards', cardsSheet)); });
     // The read broke as a whole (the bank feed itself failed, or could not open the connections) while each
     // bank's own mark still says ok: no bank is named above, so it is said here. Otherwise the only sign
     // would be a "Last checked" that grows old.
     if (!feedOk(last) && last !== 'lines_missing' && last !== 'save_failed' && !troubles.length) {
-      kids.push(red('The last read of your banks did not finish. Tap Refresh Card.'));
+      bad('The last read of your banks did not finish.', 'Tap Refresh Card.');
     }
-
-    // Shows, but no card dates: nothing the banks send lands on this tour.
-    if (t && !isOffTour(t) && !feedLogs(id) && G.tourStart(t)) {
-      kids.push(quiet(acctNewFeed(d) ? 'This tour has no card dates yet, so its bank lines are waiting under Off Tour or are left out. '
-        : 'This tour has no card dates yet, so no bank lines come to it. ', link('Set card dates', cardsSheet)));
-    }
-
-    if (d) kids.push(quiet(acctSentence(d) + ' ', link('Left out and set aside', function () { openLeftOut(id); })));
-    else if (S.acct && S.acct.failed) {
-      var again = link('Try again', function () {
+    if (!d && S.acct && S.acct.failed) {
+      bad('Couldn’t check the bank lines.', '', fpAct('Try again', function (e) {
+        var b = e.currentTarget;
         if (S.acctBusy) return;
-        again.textContent = 'Checking…';
+        b.textContent = 'Checking…';
         loadAcct().then(function () {
           if (S.acct && S.acct.failed) toast('Still couldn’t check the bank lines. Try again when you have signal.', 4200);
           render(true);
         });
-      });
-      kids.push(red('Couldn’t check the bank lines.', again));
-    } else kids.push(quiet('Checking the bank lines…'));
+      }));
+    } else if (!d) out.busy = true;
+    if (!d) out.calm = out.busy ? 'Checking the bank lines…' : '';
+    else if (acctComplete(d)) out.calm = 'Every line accounted for';
 
+    // Shows, but no card dates: nothing the banks send lands on this tour.
+    if (t && !isOffTour(t) && !feedLogs(id) && G.tourStart(t)) {
+      out.rows.push({ tone: 'ask', text: 'No card dates yet',
+        sub: acctNewFeed(d) ? 'This tour’s bank lines are waiting under Off Tour or are left out.' : 'No bank lines come to this tour until they are set.',
+        act: fpAct('Set dates', cardsSheet) });
+    }
     // Waiting on other tours and Off Tour books: each a way to that pile.
     var where = feedWaitingWhere();
-    var others = where.filter(function (x) { return (x.kind === 'tour' || x.kind === 'offtour') && x.id !== id; });
-    if (others.length) {
-      var parts = [];
-      others.forEach(function (x, i) {
-        if (i) parts.push(', ');
-        parts.push(link(x.kind === 'offtour' ? x.n + ' ' + x.name : x.n + ' on ' + x.name, function () {
-          var ot = getTour(x.id);
-          if (x.kind === 'offtour') go(offRoute(artistOf(ot), 'cards'));
-          else go({ name: 'tour', id: x.id, view: 'cards' });
-        }));
-      });
-      kids.push(quiet('Also waiting: ', parts, '.'));
-    }
-    var lost = where.filter(function (x) { return x.kind === 'gone'; })[0];
-    if (lost) kids.push(quiet(lost.n === 1 ? '1 charge here was waiting on a tour that was taken down.'
-      : lost.n + ' charges here were waiting on a tour that was taken down.'));
-    // (Only if a read was ever cut short: the pile is then not all of it, and says so.)
-    var have = (S.feed.items || []).length, total = G.num(S.feed.total);
-    if (!S.feed.failed && total > have) kids.push(quiet('Showing the oldest ' + have + ' of ' + total + ' waiting charges.'));
+    where.forEach(function (x) {
+      if (!((x.kind === 'tour' || x.kind === 'offtour') && x.id !== id)) return;
+      out.rows.push({ text: 'Also waiting on ' + x.name, n: x.n, go: function () {
+        var ot = getTour(x.id);
+        if (x.kind === 'offtour') go(offRoute(artistOf(ot), 'cards'));
+        else go({ name: 'tour', id: x.id, view: 'cards' });
+      } });
+    });
 
     var ckDay = ck && ck.at ? rbDay(ck.at) : '';
-    if (ckDay) kids.push(quiet('Checked against the bank on ' + ckDay + '. ' + checkWords(ck)));
+    if (ckDay) out.more.push({ text: 'Checked against the bank on ' + ckDay, sub: checkWords(ck) });
+    if (d) out.more.push({ text: 'Left out and set aside', sub: acctSentence(d), go: function () { openLeftOut(id); } });
     // (Only once the bank feed's update is known to be running: before that, nothing about the next read is promised.)
     if (acctNewFeed(d)) acctBanks(d).forEach(function (b) {
-      // (A bank in trouble has its red line above; nothing is promised about its next read.)
+      // (A bank in trouble has its red row above; nothing is promised about its next read.)
       if (!feedOk(String(b.status || ''))) return;
       var bank = String(b.institution || '').trim() || 'A bank';
       // More history than one read takes: its check is not whole yet, and each read from here on carries on with it.
-      if (bankHasMore(b)) kids.push(quiet(bank + ' has more history than one read takes. The rest comes in on the next reads.'));
-      else if (!b.full_read) kids.push(quiet(bank + ' has not been fully checked yet. It will be on the next read.'));
+      if (bankHasMore(b)) out.more.push({ text: bank, sub: 'Has more history than one read takes. The rest comes in on the next reads.' });
+      else if (!b.full_read) out.more.push({ text: bank, sub: 'Not fully checked yet. It will be on the next read.' });
     });
     var off = d && G.isObj(d.not_kept) && Array.isArray(d.not_kept.off) ? d.not_kept.off : [];
     off.forEach(function (o) {
@@ -28978,14 +29022,20 @@
       if (!(n > 0) || !name) return;
       var now = acctModeNow(name), were = n === 1 ? ' was' : ' were';
       if (now === 'on') {
-        kids.push(quiet(plural(n, 'line') + ' on ' + name + were + ' not read while it did not log expenses. Catch up on missed payments brings ' +
-          (n === 1 ? 'it' : 'them') + ' in.'));
+        out.more.push({ text: name, sub: plural(n, 'line') + were + ' not read while it did not log expenses. Catch up on missed payments brings ' +
+          (n === 1 ? 'it' : 'them') + ' in.' });
       } else {
-        kids.push(quiet(name + (now === 'off' ? ' does not log expenses: ' : ' did not log expenses at the last full check: ') +
-          plural(n, 'line') + were + ' not read. ', link('Change', function () { openAccountByName(name, id); })));
+        out.more.push({ text: name, sub: (now === 'off' ? 'Does not log expenses: ' : 'Did not log expenses at the last full check: ') +
+          plural(n, 'line') + were + ' not read.', act: fpAct('Change', function () { openAccountByName(name, id); }) });
       }
     });
-    return kids.length ? h('div', { class: 'feed-acct' }, kids) : null;
+    var lost = where.filter(function (x) { return x.kind === 'gone'; })[0];
+    if (lost) out.more.push({ text: lost.n === 1 ? '1 charge here was waiting on a tour that was taken down.'
+      : lost.n + ' charges here were waiting on a tour that was taken down.' });
+    // (Only if a read was ever cut short: the pile is then not all of it, and says so.)
+    var have = (S.feed.items || []).length, total = G.num(S.feed.total);
+    if (!S.feed.failed && total > have) out.more.push({ text: 'Showing the oldest ' + have + ' of ' + total + ' waiting charges.' });
+    return out;
   }
 
   /* Tasks: one card for the feed's owner while bank lines wait to be sorted
@@ -30849,18 +30899,17 @@
     var P = S.pile && S.pile[id];
     // The pile could not be read: said (with the last one that was read under it, if there was one), never shown as nothing.
     var again = function () {
-      var b = h('button', { class: 'linkbtn feed-catchup', type: 'button' }, 'Try again');
-      b.addEventListener('click', function () {
+      return { tone: 'bad', text: 'Couldn\u2019t check the cards.', act: fpAct('Try again', function (e) {
+        var b = e.currentTarget;
         if (S.pileBusy && S.pileBusy[id]) return;
         b.textContent = 'Checking\u2026';
         loadPile(id).then(function (np) {
           if (np.failed) toast('Still couldn\u2019t check the cards. Try again when you have signal.', 4200);
           render(true);
         });
-      });
-      return h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' }, 'Couldn\u2019t check the cards.'), b);
+      }) };
     };
-    if (P && P.failed && !P.lead) return h('div', { class: 'feed-entry' }, again());
+    if (P && P.failed && !P.lead) return h('div', { class: 'feed-entry' }, feedPanel({ alerts: [again()] }));
     if (!P || !P.lead) return null;
     var t = getTour(id);
     var label = h('span', null, 'Refresh Card');
@@ -30873,17 +30922,16 @@
        carries how the last read ended; from an older bank feed it does not,
        and then nothing is said. */
     var fs = typeof P.feedStatus === 'string' ? P.feedStatus : '';
-    var feedLine = !fs || feedOk(fs) ? null : h('p', { class: 'feed-checked', role: 'status' }, h('span', { class: 'hint over' },
-      LOGIN_CODES[fs] === true ? 'A bank needs the tour’s creator to sign in again. New charges from that bank are not arriving until then.'
-        : 'The last read of the banks did not finish.'));
+    var feedItem = !fs || feedOk(fs) ? null : LOGIN_CODES[fs] === true
+      ? { tone: 'bad', text: 'A bank needs the tour\u2019s creator to sign in again.', sub: 'New charges from that bank are not arriving until then.' }
+      : { tone: 'bad', text: 'The last read of the banks did not finish.' };
     return h('div', { class: 'feed-entry' },
       h('div', { class: 'feed-bar' }, refreshBtn),
-      P.failed ? again() : null,
-      h('p', { class: 'feed-checked' }, 'Last checked ' + feedAgo(P.lastRun)),
-      feedLine,
-      // Shows, but no card dates: nothing the banks send lands on this tour. Its creator sets them (Card settings).
-      t && !isOffTour(t) && !feedLogs(id) && G.tourStart(t)
-        ? h('p', { class: 'feed-checked' }, 'This tour has no card dates yet, so no bank lines come to it. The tour\u2019s creator sets them in Card settings.') : null,
+      feedPanel({ at: feedCheckedWords(P.lastRun),
+        alerts: [P.failed ? again() : null, feedItem],
+        // Shows, but no card dates: nothing the banks send lands on this tour. Its creator sets them (Card settings).
+        rows: [t && !isOffTour(t) && !feedLogs(id) && G.tourStart(t)
+          ? { tone: 'ask', text: 'No card dates yet', sub: 'No bank lines come to this tour until its creator sets them in Card settings.' } : null] }),
       cardActivityButton(id));
   }
   async function tmRefresh(id, btn, label) {

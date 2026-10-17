@@ -2182,9 +2182,13 @@ shim = r"""<script>
      the Tasks card and the catch-up's ledger sentence, all in memory.
 
      TO SEE IT: in the console run  __harness.cardsOn()  (linked cards switched
-     on, live mode, and this tour given card dates), then open the tour's
-     Budget, Cards/Links. The lines sit under Refresh Card; "Left out and set
-     aside" opens the sheet; the Tasks button carries "Bank lines".
+     on, live mode, and this tour given card dates), or open the page with
+     ?cardson, then open the tour's Budget, Cards/Links. The lines sit in one
+     panel under Refresh Card: the last check with its dot, a red row for each
+     thing that needs you, "Also waiting" rows, and the rest under Details
+     (where "Left out and set aside" opens the sheet); the Tasks button
+     carries "Bank lines". ?cardsall (or __harness.cardsAll()) shows every
+     kind of row at once (see cardsAll below).
      After changing a switch below, run  __harness.feedPush()  to draw again.
 
      SWITCHES (all on window.__harness):
@@ -2408,6 +2412,21 @@ shim = r"""<script>
     ]);
     emit(); H.feedPush();
   };
+  /* cardsAll: the Cards tab's panel with every kind of row. Red: American Express needs a sign-in (Linked
+     Cards). Rows: lines also waiting on a second tour and on an Off Tour book. Under Details: the last full
+     check, Left out and set aside, Bank of America with more history than one read takes, Business Adv
+     Relationship not logging expenses (Change), the charges from a taken-down tour, Catch up on missed
+     payments. Then  __harness.accountFail = true; __harness.feedPush()  for "Couldn't check the bank lines". */
+  window.__harness.cardsAll = function () {
+    var H = window.__harness;
+    H.moreHistory = true;
+    H.feed.accounts[2].mode = 'off';
+    H.cardsOn(); H.elsewhere(); H.goneTour();
+  };
+  try {
+    if (/[?&]cardsall\b/.test(String(location.search || ''))) setTimeout(function () { window.__harness.cardsAll(); }, 0);
+    else if (/[?&]cardson\b/.test(String(location.search || ''))) setTimeout(function () { window.__harness.cardsOn(); }, 0);
+  } catch (e) { /* no address to read */ }
   /* The gate's own screens, as site/backend.js has them (lifted in by this
      script, not copied): the role list and its picker, the one-question
      screens, the pages for the documents and the markdown they are written
