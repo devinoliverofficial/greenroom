@@ -2,8 +2,9 @@
 // a tour ("guests added", "we're in the green", "merch milestone", "sold
 // out", and since 2026-10-15 Devin's event kinds: a day-off poll vote, flowers
 // given, a chat message, a payment logged, a day sheet posted, a buyout
-// tracked); this looks up everyone on that tour the kind is for who opted
-// into that kind of news and web-pushes them. Senders never notify themselves.
+// tracked; since 2026-10-17 a buyout asked for); this looks up everyone on
+// that tour the kind is for who opted into that kind of news and web-pushes
+// them. Senders never notify themselves.
 //
 // Each kind's pref key on push_subs.prefs, and what a phone that never saved
 // the key counts as: vote and chat are OFF until asked for (brand new, and
@@ -96,6 +97,12 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
     case "buyout":
       // A buyout was marked tracked, for the one person it was handed to.
       return { title: tourName, body: `Your buyout${city ? " for " + city : ""} is marked received` };
+    case "buyoutask": {
+      // Someone still waiting on their buyout pinged the Tour Manager
+      // (Devin, 2026-10-17: "you can ping the TM to get you your buyout").
+      const who = String(d.who ?? "Someone");
+      return { title: tourName, body: `${who} is asking for their buyout${city ? " for " + city : ""}` };
+    }
     default:
       return null;
   }
@@ -111,6 +118,49 @@ async function isTourManager(tourId: string, uid: string): Promise<boolean> {
   const { data: p } = await admin.from("profiles").select("tour_role").eq("user_id", uid).maybeSingle();
   const ov = (m.overrides ?? {}) as Record<string, unknown>;
   return String(ov.tourRole || p?.tour_role || m.tour_role || "").trim().toLowerCase() === "tour manager";
+}
+
+/* Every job title a seat carries, wherever it is kept (the crew list's edit,
+   their own card, the invite), each split into its up-to-six roles. */
+async function seatTitles(tourId: string): Promise<Map<string, { manager: boolean; roles: string[] }>> {
+  const out = new Map<string, { manager: boolean; roles: string[] }>();
+  const { data: ms } = await admin.from("members").select("user_id, role, manager, tour_role, overrides")
+    .eq("tour_id", tourId);
+  const ids = (ms ?? []).map((m) => m.user_id).filter(Boolean) as string[];
+  const { data: ps } = ids.length
+    ? await admin.from("profiles").select("user_id, tour_role").in("user_id", ids)
+    : { data: [] as { user_id: string; tour_role: string | null }[] };
+  const prof = new Map<string, string>((ps ?? []).map((p) => [String(p.user_id), String(p.tour_role ?? "")]));
+  for (const m of ms ?? []) {
+    if (!m.user_id) continue;
+    const ov = (m.overrides ?? {}) as Record<string, unknown>;
+    const roles = [ov.tourRole, prof.get(String(m.user_id)), m.tour_role]
+      .flatMap((v) => String(v ?? "").split(","))
+      .map((r) => r.trim().toLowerCase())
+      .filter(Boolean);
+    out.set(String(m.user_id), { manager: m.role === "editor" && !!m.manager, roles });
+  }
+  return out;
+}
+
+/* Who keeps the buyout track: the database says (buyout_trackers, migration
+   0176: a creator or Manager titled Tour manager, else the creator and the
+   Managers). Before 0176, the same rule here; and if nothing can be read,
+   the Managers. */
+async function buyoutTrackersOf(tourId: string, ownerId: string): Promise<string[]> {
+  try {
+    const { data, error } = await admin.rpc("buyout_trackers", { t_id: tourId });
+    if (!error && Array.isArray(data)) return (data as string[]).filter(Boolean).map(String);
+  } catch { /* the rule below */ }
+  try {
+    const seats = await seatTitles(tourId);
+    const { data: op } = await admin.from("profiles").select("tour_role").eq("user_id", ownerId).maybeSingle();
+    const isTM = (roles: string[]) => roles.includes("tour manager");
+    const titled = [...seats.entries()].filter(([, s]) => s.manager && isTM(s.roles)).map(([id]) => id);
+    if (isTM(String(op?.tour_role ?? "").split(",").map((r) => r.trim().toLowerCase()))) titled.push(ownerId);
+    if (titled.length) return titled;
+  } catch { /* the Managers */ }
+  return [...(await managersOf(tourId, ownerId))];
 }
 
 /* The tour's Managers: its creator, and whoever the database says manages it
@@ -153,7 +203,7 @@ Deno.serve(async (req) => {
   const type = String(body.type ?? "");
   const data = body.data ?? {};
   if (!tourId || !["guest", "green", "merch", "soldout", "alert", "request",
-    "vote", "flowers", "chat", "payment", "sheet", "buyout", "wearebus"].includes(type)) {
+    "vote", "flowers", "chat", "payment", "sheet", "buyout", "buyoutask", "wearebus"].includes(type)) {
     return reply(400, { error: "invalid" });
   }
 
@@ -175,8 +225,24 @@ Deno.serve(async (req) => {
     return reply(403, { error: "not_manager" });
   }
 
+  // A buyout ask goes out only for a ping the database just kept (0176's
+  // buyout_asks lets one in only while the asker is still untracked on a
+  // show with a buyout, and one an hour), and names the show's own town,
+  // never one sent along with it.
+  if (type === "buyoutask") {
+    const showId = cut(data.showId, 80);
+    const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { data: asks } = showId
+      ? await admin.from("buyout_asks").select("asked_at").eq("tour_id", tourId).eq("show_id", showId)
+        .eq("user_id", senderId).gte("asked_at", since).limit(1)
+      : { data: [] };
+    if (!asks || !asks.length) return reply(403, { error: "no_ask" });
+    const shows = ((tour.doc as Record<string, unknown>)?.shows ?? {}) as Record<string, Record<string, unknown>>;
+    data.city = String(shows?.[showId]?.city ?? "").split(",")[0];
+  }
+
   const tourName = cut((tour.doc as Record<string, unknown>)?.name, 80) || "Greenroom";
-  if (["request", "vote", "chat", "flowers"].includes(type)) {
+  if (["request", "vote", "chat", "flowers", "buyoutask"].includes(type)) {
     // The sender's own name, never one sent along with the event.
     const { data: prof } = await admin.from("profiles").select("full_name, username").eq("user_id", senderId).maybeSingle();
     data.who = String(prof?.full_name || prof?.username || "Someone");
@@ -195,11 +261,16 @@ Deno.serve(async (req) => {
   } else if (PERSONAL.includes(type)) {
     const to = String(data.to ?? "");
     targets = memberIds.has(to) && to !== senderId ? [to] : [];
+  } else if (type === "buyoutask") {
+    // Whoever keeps the buyout track: the Tour Manager.
+    targets = (await buyoutTrackersOf(tourId, tour.owner_id)).filter((id) => memberIds.has(id) && id !== senderId);
   } else if (type === "wearebus") {
-    // The wheel alone: tour crew whose role reads driver.
-    targets = (members ?? [])
-      .filter((m) => /driver/i.test(String(m.role ?? "")))
-      .map((m) => String(m.user_id))
+    // The wheel alone: tour crew whose job title reads driver. (The title,
+    // not members.role, which only ever says viewer or editor.)
+    const seats = await seatTitles(tourId);
+    targets = [...seats.entries()]
+      .filter(([, s]) => s.roles.some((r) => /driver/i.test(r)))
+      .map(([id]) => id)
       .filter((id) => id && id !== senderId);
   } else {
     targets = [...memberIds].filter((id) => id !== senderId && (!FOR_MANAGERS.includes(type) || managers.has(id)));
@@ -235,6 +306,9 @@ Deno.serve(async (req) => {
       // It reaches only the person driving, whose job it answers: on
       // unless their phone said no.
       if (prefs.wearebus === false) continue;
+    } else if (type === "buyoutask") {
+      // Rides the phone's buyout switch: on unless it said no.
+      if (prefs.buyout === false) continue;
     } else if (type === "flowers" || type === "payment" || type === "buyout" || type === "sheet") {
       // About you alone (or the day sheet everyone already got): on unless
       // the phone switched it off.

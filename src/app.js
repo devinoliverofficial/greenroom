@@ -16089,12 +16089,14 @@
     };
     /* BUYOUTS beside them (0151, Devin: everyone sees on MY PAY which days
        they received a buyout and which they did not). No money on the tab:
-       the days are the news, and the amounts are the tour's own book. */
+       the days are the news, and the amounts are the tour's own book. It
+       glows green from the moment a buyout is logged until this account is
+       tracked on it (Devin, 2026-10-17). */
     var bo = boOn ? myBuyoutDays(id, t) : null;
     var boTab = null;
     if (bo) {
       var boSel = tab === 'buyouts';
-      boTab = h('button', { class: 'pay-sum-tab' + (boSel ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': boSel ? 'true' : 'false',
+      boTab = h('button', { class: 'pay-sum-tab' + (boSel ? ' on' : '') + (bo.lit ? ' bo-lit' : ''), type: 'button', role: 'tab', 'aria-selected': boSel ? 'true' : 'false',
         onclick: function () { S.payTab[id] = 'buyouts'; render(true); } },
         h('span', { class: 'pay-sum-k' }, 'BUYOUTS'),
         h('strong', { class: 'pay-sum-v num' }, !bo.shows.length ? '\u2014' : bo.loading ? '\u2026' : bo.got + ' of ' + bo.shows.length));
@@ -16115,10 +16117,9 @@
       // BUYOUT ALERT lives at the top of this tab now, and only here - it
       // left the Overview's grid (Devin, 2026-10-16: "move the 'Buyout
       // Alert' Button to the buyout tab... but only located on the buyouts
-      // tab"). Same button, same ways: Managers and the tour's creator
-      // only (everyone else gets nothing), glowing while someone is still
-      // owed, opening the tick list. The words that used to describe the
-      // page are gone, his same note.
+      // tab"). The Tour Manager's opens the tick list; everyone else's
+      // opens their own buyouts (buyoutAlertBtn). The words that used to
+      // describe the page are gone, his same note.
       return [head,
         (function () { var b = buyoutAlertBtn(id, t); return b ? h('div', { class: 'bo-tab' }, b) : null; })(),
         h('h3', { class: 'mn-h mn-over' }, 'My buyouts'),
@@ -19280,22 +19281,43 @@
      right or left, or tap Skip. */
   var TODAY_ITEMS = [['sheet', 'Import Day Sheet'], ['buyouts', 'Log in buyouts'], ['who', 'Who received?'],
     ['guarantee', 'Log in Guarantees'], ['merch', 'Log In Merch']];
+  // (The show carries its tour's id as _tour, so todayState can read the ticks table.)
   function todayShow(tourId) {
     var t = getTour(tourId), today = G.tourToday();
-    return G.rows(t && t.shows).filter(function (x) { return x.date === today; })[0] || null;
+    var x = G.rows(t && t.shows).filter(function (r) { return r.date === today; })[0] || null;
+    if (x) x._tour = tourId;
+    return x;
   }
-  // Which of the five are in for this show. "who" is null while there are no buyouts to hand out.
-  function todayState(x) {
+  /* Which of the five are in for this show. "who" is null while there are
+     no buyouts to hand out, and for anyone who doesn't keep the buyout
+     track. "sheet" is in however the day sheet came (posted from the
+     editor, or filled by a Master Tour or photo import that never posts),
+     and "buyouts" by a total or by "No buyouts tonight". */
+  function todayState(x, tourId) {
     var inc = G.isObj(x.income) ? x.income : {};
     var total = G.num(inc.buyouts), tr = G.isObj(x.buyoutTrack) ? x.buyoutTrack : null;
     var per = tr ? G.num(tr.perHead) : 0, paid = buyoutPaidCount(tr);
+    var live = total > 0 ? todayWhoLive(tourId || x._tour, x.id) : undefined;
     return {
-      sheet: !!(G.isObj(x.daySheet) && x.daySheet.postedAt),
-      buyouts: total > 0,
-      who: total > 0 ? (paid > 0 && (!(per > 0) || paid >= Math.round(total / per))) : null,
+      sheet: !!(G.isObj(x.daySheet) && (x.daySheet.postedAt || G.daySheetLines(x).length > 0)),
+      buyouts: total > 0 || x.buyoutsNone === true,
+      who: !(total > 0) ? null : live !== undefined ? live : (paid > 0 && (!(per > 0) || paid >= Math.round(total / per))),
       guarantee: G.num(inc.guarantee) > 0 || x.guaranteeNone === true,
       merch: G.num(inc.merch) > 0 || x.merchNone === true
     };
+  }
+  /* "Who received?" read from the ticks table, the BUYOUT ALERT's own truth:
+     in when everyone owed a buyout is tracked on tonight's show, so a tick
+     in either place clears both. undefined before the table (the show's
+     own marks answer, as before); null for anyone who doesn't keep the
+     track (not theirs to do); false while the lists are on their way. */
+  function todayWhoLive(id, showId) {
+    if (!id || !buyoutsOn()) return undefined;
+    var role = buyoutRole(id);
+    if (role === 'own') return null;
+    var people = buyoutPeople(id), got = buyoutTicked(id);
+    if (!role || !people || !got) return false;
+    return people.every(function (p) { return !!got[showId + '|' + p.userId]; });
   }
   // Back from the day sheet (posted, or put down) to the question it was opened from.
   function todayBack(tourId, showId, posted) {
@@ -19312,7 +19334,7 @@
     var i = Math.max(0, G.num(startAt)), busy = false;
     var cur = function () {
       var t = getTour(tourId);
-      return t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? Object.assign({}, t.shows[showId], { id: showId }) : null;
+      return t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? Object.assign({}, t.shows[showId], { id: showId, _tour: tourId }) : null;
     };
     var s0 = cur();
     if (!s0) return;
@@ -19367,15 +19389,23 @@
         }
         if (kind === 'buyouts') {
           var v = G.num(G.isObj(s.income) ? s.income.buyouts : 0);
+          var none = !(v > 0) && s.buyoutsNone === true;
           return [
-            h('p', { class: 'td-note' }, st.buyouts ? '✓ Logged. Change the total here if it’s different.' : 'The total the venue paid in buyouts tonight.'),
+            h('p', { class: none ? 'td-done' : 'td-note' }, none ? '✓ No buyouts tonight'
+              : st.buyouts ? '✓ Logged. Change the total here if it’s different.' : 'The total the venue paid in buyouts tonight.'),
             moneyInput({ id: 'td-buyouts', value: v, label: 'Buyouts from the venue', last: true, big: true, onValue: function (n) { v = n; } }),
+            // A night with no buyouts is an answer too, kept on the show the
+            // way "nothing to wait for" is for the guarantee and the merch.
+            !(v > 0) && !none ? h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
+              save({ buyoutsNone: true }, 'No buyouts tonight');
+            } }, 'No buyouts tonight') : null,
             acts(st.buyouts ? 'Next' : 'Skip', function () {
               if (!(v > 0)) { toast('Type the buyouts total first'); return; }
-              save({ income: incomeWith(s, 'buyouts', v), loggedAt: Date.now() }, 'Buyouts · ' + money(v));
+              save({ income: incomeWith(s, 'buyouts', v), loggedAt: Date.now(), buyoutsNone: null }, 'Buyouts · ' + money(v));
             })
           ];
         }
+        if (kind === 'who' && st.who !== null && todayWhoLive(tourId, s.id) !== undefined) return whoLive(s, st);
         if (kind === 'who') {
           var total = G.num(G.isObj(s.income) ? s.income.buyouts : 0), paid = buyoutPaidCount(s.buyoutTrack);
           return [
@@ -19416,6 +19446,39 @@
             patch.merchReceived = !(due > 0); patch.merchNone = null;
             save(patch, 'Merch · ' + money(amt));
           })
+        ];
+      }
+      /* "Who received?" once the ticks table is on: tonight's people, ticked
+         right here through the same one tick the BUYOUT ALERT makes, so the
+         two never disagree. */
+      var whoPend = {};
+      function whoLive(s, st) {
+        var people = buyoutPeople(tourId), got = buyoutTicked(tourId), asked = buyoutAsked(tourId) || {};
+        var sh = buyoutShows(getTour(tourId) || {}).filter(function (x) { return x.id === s.id; })[0] ||
+          { id: s.id, city: s.city, income: s.income };
+        if (!people || !got) {
+          // (The lists are on their way: this question draws again once they land.)
+          setTimeout(function () { if (host.isConnected && TODAY_ITEMS[i] && TODAY_ITEMS[i][0] === 'who') draw(); }, 700);
+          return [h('p', { class: 'td-note' }, 'Loading…'), acts('Skip')];
+        }
+        var has = function (p) { var k = s.id + '|' + p.userId; return whoPend[k] != null ? whoPend[k] : !!got[k]; };
+        var n = people.filter(has).length;
+        return [
+          h('p', { class: st.who ? 'td-done' : 'td-note' }, st.who ? '✓ Everyone has theirs'
+            : money(G.num(G.isObj(s.income) ? s.income.buyouts : 0)) + ' from the venue. Tick each person as they get theirs.' +
+              (n ? ' ' + n + ' of ' + people.length + ' so far.' : '')),
+          people.length ? h('div', { class: 'ledger bo-list td-who' }, people.map(function (p) {
+            return buyoutPersonRow(sh, p, has(p), !!asked[s.id + '|' + p.userId], async function (want) {
+              var k = s.id + '|' + p.userId;
+              whoPend[k] = want; draw();
+              try { await buyoutTick(tourId, s.id, p.userId, want); }
+              catch (e) { if (buyoutsOn()) toast('Couldn’t save that. Try again.'); }
+              delete whoPend[k];
+              if (host.isConnected) draw();
+              render(true);
+            });
+          })) : h('p', { class: 'hint' }, 'Nobody on the crew list has signed up yet, so there is nobody to tick.'),
+          acts(st.who ? 'Next' : 'Skip')
         ];
       }
       /* Log in Guarantees with the SAME numbers Log income keeps (Devin,
@@ -22552,22 +22615,26 @@
     var p = G.isObj(track) && G.isObj(track.paid) ? track.paid : {};
     return Object.keys(p).filter(function (k) { return G.isObj(p[k]); }).length;
   }
-  // Shows before today whose buyouts aren't all handed out: nobody ticked
-  // yet, or fewer ticked than the venue paid for.
+  // Before the ticks table: the buyout shows from the fresh start on,
+  // tonight's included, whose buyouts aren't all handed out (nobody ticked
+  // yet, or fewer ticked than the venue paid for).
   function buyoutsOwed(t) {
-    var today = G.tourToday();
-    return G.rows(t && t.shows).filter(function (sh) {
-      var total = G.num(G.isObj(sh.income) ? sh.income.buyouts : 0);
-      if (!G.parseDay(sh.date) || sh.date >= today || !(total > 0)) return false;
+    return buyoutShows(t).filter(function (sh) {
+      var total = G.num(sh.income.buyouts);
       var per = G.isObj(sh.buyoutTrack) ? G.num(sh.buyoutTrack.perHead) : 0;
       var paid = buyoutPaidCount(sh.buyoutTrack);
       return !paid || (per > 0 && paid < Math.round(total / per));
-    }).sort(G.byDate);
+    });
   }
   function saveBuyouts(id, sh, next) {
     var patch = { shows: {} };
     patch.shows[sh.id] = { buyoutTrack: next };
-    api.update(id, patch).then(function (ok) { if (ok) { toast('Buyouts saved'); render(true); } });
+    var prev = sh.buyoutTrack;
+    api.update(id, patch).then(function (ok) {
+      if (!ok) return;
+      buyoutDbMirror(id, sh.id, prev, next);
+      toast('Buyouts saved'); render(true);
+    });
   }
   /* Buyout ticks (0151): once the table is there, the database remembers,
      person by person, who has been handed the buyout a show logged. The
@@ -22580,81 +22647,120 @@
     var B = window.GR_BACKEND;
     return S.mode === 'db' && !!(B && B.buyoutsOn && B.buyoutTracks && B.buyoutTrack && B.buyoutUntrack && B.buyoutsOn());
   }
-  // The shows whose buyout money is logged, oldest first.
-  function buyoutShows(t) {
-    return G.rows(t && t.shows).filter(function (sh) {
-      return G.parseDay(sh.date) && G.num(G.isObj(sh.income) ? sh.income.buyouts : 0) > 0;
-    }).sort(G.byDate);
+  // The shows whose buyout money is logged, oldest first, from the fresh
+  // start on (G.BUYOUT_FROM): nothing older counts anywhere in buyouts.
+  function buyoutShows(t) { return G.buyoutShows(t); }
+  /* Who sees what (Devin, 2026-10-17): the Tour Manager keeps the track,
+     "including me. I don't want to see the track I want to see my own
+     buyout status". 'track': this account keeps the tick list. 'own': it
+     sees its own buyouts, with a ping to the Tour Manager. null: not known
+     yet (the crew list is on its way). Crew never write ticks, so they
+     never wait on the list. */
+  function buyoutRole(id) {
+    if (!canEditTour(id)) return 'own';
+    var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
+    var c = S.crewCache && S.crewCache[id];
+    if (!c) { buyoutPeople(id); return null; }
+    var tr = G.buyoutTrackers(c.rows);
+    if (tr.titled) return me && tr.ids.indexOf(me) >= 0 ? 'track' : 'own';
+    return moneyLead(id) ? 'track' : 'own';
+  }
+  // The crew list, fetched if this phone doesn't hold it yet ([] when it can't be had).
+  function buyoutCrewRows(id) {
+    var c = S.crewCache && S.crewCache[id], B = window.GR_BACKEND;
+    if (c) return Promise.resolve(c.rows);
+    if (!B || !B.crew) return Promise.resolve([]);
+    return B.crew(id).then(function (rows) {
+      S.crewCache = S.crewCache || {};
+      S.crewCache[id] = { rows: rows, at: Date.now() };
+      return rows;
+    }, function () { return []; });
   }
   // Everyone with a seat: the crew list's signed-up rows, the owner among
   // them. null while the list is still being fetched (the ask is made here
   // too: the tour's creator never goes through moneyLead's own one).
-  /* One truth for buyouts (the reviewer's catch): a tick in the new list
-     also writes the money mark on the show - but ONLY when the show already
-     has a per-head figure from the old tracker, because inventing one would
-     invent income. The old tracker mirrors into the database the same way,
-     so the two can never drift apart. */
+  /* One truth for buyouts: a tick in the new list also writes the mark on
+     the show, so the Today card's "Who received?" and Log income's Track
+     agree with it. The per-head figure is never invented here: with none
+     set, a mark counts no income (G.buyoutIncome reads perHead), and the
+     Artists' share counts once one is set in Log income's Track. The old
+     tracker mirrors into the database the same way. */
   function buyoutDocMark(id, showId, userId, want) {
     var t = getTour(id); if (!t || !canEditTour(id)) return;
     var s = G.isObj(t.shows) ? t.shows[showId] : null; if (!s) return;
-    var tr = G.isObj(s.buyoutTrack) ? s.buyoutTrack : null;
-    if (!tr || !(G.num(tr.perHead) > 0)) return;
+    var tr = G.isObj(s.buyoutTrack) ? s.buyoutTrack : { perHead: null };
     var c = S.crewCache && S.crewCache[id];
     var row = c && c.rows.filter(function (m) { return m.userId === userId; })[0];
-    var email = row ? String(row.email || '').trim().toLowerCase() : '';
+    var low = function (v) { return String(v || '').trim().toLowerCase(); };
+    var email = row ? low(row.email) : '';
     // The old tracker keys people by the crew map's own key, else by
-    // 'n:' + the lowercased name: the mirror writes the SAME keys.
+    // 'e:' + email for a seat, else 'n:' + the lowercased name: the mirror
+    // looks under all three and writes the crew map's key when there is one.
     var ent = G.rows(t.crew).filter(function (e) {
-      return (email && String(e.email || '').trim().toLowerCase() === email) ||
+      return (email && low(e.email) === email) ||
         (row && row.name && e.name && String(e.name).trim() === String(row.name).trim());
     })[0];
-    var nk = 'n:' + String((row && row.name) || '').trim().toLowerCase();
-    var key = ent ? ent.id : nk;
+    var nk = 'n:' + low(row && row.name);
+    var ek = email ? 'e:' + email : '';
+    var key = ent ? ent.id : ek || nk;
+    if (key === 'n:') return;   // nobody this phone can name
     var paid = Object.assign({}, G.isObj(tr.paid) ? tr.paid : {});
-    var had = !!(G.isObj(paid[key]) || (nk !== 'n:' && G.isObj(paid[nk])));
+    var keys = [key, nk !== 'n:' ? nk : '', ek].filter(Boolean);
+    var had = keys.some(function (k) { return G.isObj(paid[k]); });
     if (want === had) return;
     if (want) paid[key] = { name: (ent && ent.name) || (row && row.name) || 'Someone', artist: !!(ent && G.isMember(ent)) };
     // The deep merge keeps what a patch leaves out: only a null removes.
-    else { paid[key] = null; if (nk !== 'n:') paid[nk] = null; }
+    else keys.forEach(function (k) { if (G.isObj(paid[k])) paid[k] = null; });
     var patch = {}; patch[showId] = { buyoutTrack: Object.assign({}, tr, { paid: paid }) };
     api.update(id, { shows: patch }).then(function () { render(true); });
   }
-  // The other direction: the old tracker's save mirrors into the database,
-  // quietly, by the same email-first match. Nothing happens before 0151.
+  /* The other direction: the old tracker's save mirrors into the database,
+     quietly, by the same email-first match, once the save itself is in.
+     Its keys are a crew map key, 'e:' + a seat's email (the owner's
+     included), or 'n:' + a name; the crew list is fetched first when this
+     phone doesn't hold it, so no tick is lost to a list still on its way.
+     Nothing happens before 0151, or for a seat without an account. */
   function buyoutDbMirror(id, showId, prev, next) {
     var B = window.GR_BACKEND;
     if (!buyoutsOn() || !B || !B.buyoutTrack) return;
     var t = getTour(id); if (!t) return;
-    var c = S.crewCache && S.crewCache[id];
-    var rows = (c && c.rows) || [];
-    var uidOf = function (key) {
-      if (/^u:/.test(key)) return key.slice(2);
-      if (/^n:/.test(key)) {
-        var nm = key.slice(2);
-        var byName = rows.filter(function (m) {
-          return String(m.name || '').trim().toLowerCase() === nm;
-        })[0];
-        return byName ? byName.userId : null;
-      }
-      var ent = G.rows(t.crew).filter(function (e) { return e.id === key; })[0];
-      if (!ent) return null;
-      var email = String(ent.email || '').trim().toLowerCase();
-      var row = rows.filter(function (m) {
-        return (email && String(m.email || '').trim().toLowerCase() === email) ||
-          (ent.name && m.name && String(m.name).trim() === String(ent.name).trim());
-      })[0];
-      return row ? row.userId : null;
-    };
     var a = G.isObj(prev) && G.isObj(prev.paid) ? prev.paid : {};
     var b = G.isObj(next) && G.isObj(next.paid) ? next.paid : {};
-    Object.keys(b).forEach(function (k) {
-      // A null is a tombstone - someone UNTICKED. Only a real mark ticks.
-      if (!G.isObj(b[k]) || G.isObj(a[k])) return; var u = uidOf(k);
-      if (u) B.buyoutTrack(id, showId, u).catch(function () { /* the backfill or the next tick catches it */ });
-    });
-    Object.keys(a).forEach(function (k) {
-      if (!G.isObj(a[k]) || G.isObj(b[k])) return; var u = uidOf(k);
-      if (u) B.buyoutUntrack(id, showId, u).catch(function () { /* same */ });
+    // A null is a tombstone - someone UNTICKED. Only a real mark ticks.
+    var on = Object.keys(b).filter(function (k) { return G.isObj(b[k]) && !G.isObj(a[k]); });
+    var off = Object.keys(a).filter(function (k) { return G.isObj(a[k]) && !G.isObj(b[k]); })
+      .concat(Object.keys(b).filter(function (k) { return b[k] === null && !G.isObj(a[k]); }));
+    if (!on.length && !off.length) return;
+    var low = function (v) { return String(v || '').trim().toLowerCase(); };
+    buyoutCrewRows(id).then(function (rows) {
+      var byEmail = function (email) {
+        email = low(email);
+        return email ? rows.filter(function (m) { return m.userId && (low(m.email) === email || low(m.invitedEmail) === email); })[0] : null;
+      };
+      var uidOf = function (key) {
+        if (/^u:/.test(key)) return key.slice(2);
+        if (/^e:/.test(key)) { var r = byEmail(key.slice(2)); return r ? r.userId : null; }
+        if (/^n:/.test(key)) {
+          var nm = key.slice(2);
+          var byName = rows.filter(function (m) { return m.userId && low(m.name) === nm; });
+          // (Two accounts wearing one name would be a guess: then nobody.)
+          return byName.length === 1 ? byName[0].userId : null;
+        }
+        var ent = G.rows(t.crew).filter(function (e) { return e.id === key; })[0];
+        if (!ent) return null;
+        var row = byEmail(ent.email) || rows.filter(function (m) {
+          return m.userId && ent.name && m.name && String(m.name).trim() === String(ent.name).trim();
+        })[0];
+        return row ? row.userId : null;
+      };
+      on.forEach(function (k) {
+        var u = uidOf(k);
+        if (u) B.buyoutTrack(id, showId, u).catch(function () { /* the next tick catches it */ });
+      });
+      off.forEach(function (k) {
+        var u = uidOf(k);
+        if (u) B.buyoutUntrack(id, showId, u).catch(function () { /* same */ });
+      });
     });
   }
   function buyoutPeople(id) {
@@ -22689,27 +22795,43 @@
     rows.forEach(function (r) { got[r.showId + '|' + r.userId] = true; });
     return got;
   }
-  /* MY PAY's own view of them: the days this tour logged a buyout and
+  // The pings (0176). Until that table is there, nothing to show.
+  function buyoutAsksOn() {
+    var B = window.GR_BACKEND;
+    return buyoutsOn() && !!(B && B.buyoutAsksOn && B.buyoutAsks && B.buyoutAskSend && B.buyoutAsksOn());
+  }
+  // The pings as "showId|userId" -> when last asked; {} before 0176, null while first fetched.
+  function buyoutAsked(id) {
+    if (!buyoutAsksOn()) return {};
+    var rows = window.GR_BACKEND.buyoutAsks(id);
+    if (!rows) return null;
+    var out = {};
+    rows.forEach(function (r) { var k = r.showId + '|' + r.userId; if (!out[k] || r.at > out[k]) out[k] = r.at; });
+    return out;
+  }
+  /* MY PAY's own view of them: the buyout shows from the fresh start on and
      whether this account's tick is in. Only your own rows are read (the
-     database hands Crew nothing else), and no amounts ride along. The tab
-     starts fresh from today (Devin, 2026-10-16: "our tour is playing catch
-     up these can go for now and start fresh on today"): days before today
-     no longer show here - the count on the tab follows the same list - and
-     the Managers' tick list keeps every day as it always has. */
+     database hands Crew nothing else), and no amounts ride along. lit: one
+     is still waiting, so the tab and the button glow green until you are
+     tracked on every one (Devin, 2026-10-17: "It stops glowing when it has
+     been given and tracked to that person"). */
   function myBuyoutDays(id, t) {
     var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
-    var today = G.tourToday();
-    var shows = buyoutShows(t).filter(function (sh) { return sh.date >= today; });
+    var shows = buyoutShows(t);
     var rows = shows.length ? B.buyoutTracks(id) : [];
     var mine = {};
     (rows || []).forEach(function (r) { if (r.userId === me) mine[r.showId] = true; });
-    return { shows: shows, mine: mine, loading: !!shows.length && !rows,
-      got: shows.filter(function (sh) { return mine[sh.id]; }).length };
+    var got = shows.filter(function (sh) { return mine[sh.id]; }).length;
+    var loading = !!shows.length && !rows;
+    return { shows: shows, mine: mine, loading: loading, got: got, lit: !loading && !!me && got < shows.length };
   }
-  /* The same button once the ticks live in the database (Devin, 2026-10-15):
-     green the moment buyout money is logged on a date while anyone on the
-     crew list still hasn't been ticked, and until everyone has. Managers
-     only; a tap opens the tick list. */
+  function buyoutBtn(lit, onclick) {
+    return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (lit ? ' on' : ''), type: 'button', onclick: onclick },
+      icon('bell', 15), 'BUYOUT ALERT'));
+  }
+  /* The Tour Manager's button: green from the moment buyout money is logged
+     on a show until everyone owed one is tracked on it; a tap opens the
+     tick list. */
   function buyoutTickBtn(id, t) {
     var shows = buyoutShows(t);
     var people = buyoutPeople(id);
@@ -22717,11 +22839,14 @@
     var lit = !!(shows.length && people && people.length && got) && shows.some(function (sh) {
       return people.some(function (p) { return !got[sh.id + '|' + p.userId]; });
     });
-    return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (lit ? ' on' : ''), type: 'button',
-      onclick: function () {
-        if (!buyoutShows(getTour(id) || {}).length) { toast('No buyouts logged on a date yet'); return; }
-        openBuyoutTicks(id);
-      } }, icon('bell', 15), 'BUYOUT ALERT'));
+    return buyoutBtn(lit, function () {
+      if (!buyoutShows(getTour(id) || {}).length) { toast('No buyouts logged yet'); return; }
+      openBuyoutTicks(id);
+    });
+  }
+  // Everyone else's: green while their own buyout is still waiting; a tap opens their own.
+  function buyoutMineBtn(id, t) {
+    return buyoutBtn(myBuyoutDays(id, t).lit, function () { openBuyoutMine(id); });
   }
   // A tick list that is up draws itself again when fresh ticks land (a poke,
   // or this phone's own tick answered).
@@ -22732,25 +22857,49 @@
     if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(buyoutTicksRedraw, 400); return; }
     try { buyoutLive(); } catch (e) { /* it draws again on its next tap */ }
   }
-  /* The tick list: every show with buyout money logged, each opening to the
-     people on the crew list. Tick someone as they get theirs; tap the tick
-     again to undo it. The database pokes the person either way, so their
-     MY PAY follows along live. */
-  function openBuyoutTicks(id) {
+  /* One tick or its undo, from the tick list or the Today card: the table,
+     then the mark on the show, then the ticked person's phone hears it, if
+     it asked to (the undo stays quiet; the poke already redraws MY PAY). */
+  async function buyoutTick(id, showId, userId, want) {
     var B = window.GR_BACKEND;
+    if (want) await B.buyoutTrack(id, showId, userId); else await B.buyoutUntrack(id, showId, userId);
+    buyoutDocMark(id, showId, userId, want);
+    if (want) {
+      var bsh = buyoutShows(getTour(id) || {}).filter(function (x) { return x.id === showId; })[0];
+      sendNotify(id, 'buyout', { to: userId, city: (bsh && bsh.city) || '' });
+    }
+  }
+  // One person under a show: the tick, name and role, Asked when they pinged, Received or Not yet.
+  function buyoutPersonRow(sh, p, on, asked, onTick) {
+    var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: on,
+      'aria-label': p.name + ' received their buyout · ' + (sh.city || 'Show'),
+      onchange: function (e) { onTick(!!e.target.checked); } });
+    return h('label', { class: 'row bo-row' }, cb,
+      h('span', { class: 'row-label' }, p.name, h('span', { class: 'hint' }, p.role)),
+      !on && asked ? h('span', { class: 'bo-asked' }, 'Asked') : null,
+      h('span', { class: 'bus-word' + (on ? ' on' : '') }, on ? 'Received' : 'Not yet'));
+  }
+  /* The tick list, the Tour Manager's alone: every buyout show from the
+     fresh start on, each opening to the people owed one. Tick someone as
+     they get theirs; tap the tick again to undo it. The database pokes the
+     person either way, so their MY PAY follows along live, and a ping from
+     someone still waiting shows as Asked by their name. */
+  function openBuyoutTicks(id) {
     var open = {}, pend = {};
     var first = buyoutShows(getTour(id) || {});
     if (first.length === 1) open[first[0].id] = true;
     var box = h('div', { class: 'ledger bo-list' });
     function draw() {
-      // The table went away under us (a migration rolled back), or the seat
+      // The table went away under us (a migration rolled back), or the job
       // did: the sheet goes quietly, the way the button already has.
-      if (!buyoutsOn() || !moneyLead(id)) { if (buyoutLive === draw) closeSheet(); return; }
+      var role = buyoutRole(id);
+      if (!buyoutsOn() || role === 'own') { if (buyoutLive === draw) closeSheet(); return; }
       var shows = buyoutShows(getTour(id) || {});
       if (!shows.length) { if (buyoutLive === draw) closeSheet(); return; }
       var people = buyoutPeople(id);
       var got = buyoutTicked(id);
-      if (!people || !got) {
+      var asked = buyoutAsked(id) || {};
+      if (!role || !people || !got) {
         box.replaceChildren(h('p', { class: 'note' }, 'Loading…'));
         // (The crew list answers to the page, not to this sheet: look again in a moment.)
         setTimeout(function () { if (buyoutLive === draw) draw(); }, 700);
@@ -22765,20 +22914,16 @@
       var kids = [];
       shows.forEach(function (sh) {
         var ticked = people.filter(function (p) { return has(sh, p); }).length;
+        var waiting = people.filter(function (p) { return !has(sh, p) && asked[sh.id + '|' + p.userId]; }).length;
         kids.push(h('button', { class: 'row rowbtn', type: 'button',
           'aria-expanded': open[sh.id] ? 'true' : 'false',
           onclick: function () { open[sh.id] = !open[sh.id]; draw(); } },
           h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date),
-            h('span', { class: 'hint' }, ticked === people.length ? 'Everyone has theirs' : ticked + ' of ' + people.length + ' tracked')),
+            h('span', { class: 'hint' }, (ticked === people.length ? 'Everyone has theirs' : ticked + ' of ' + people.length + ' tracked') +
+              (waiting ? ' · ' + waiting + ' asked' : ''))),
           h('span', { class: 'amt num' }, money(G.num(sh.income.buyouts))), icon('chevron', 18)));
         if (open[sh.id]) people.forEach(function (p) {
-          var on = has(sh, p);
-          var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: on,
-            'aria-label': p.name + ' received their buyout · ' + (sh.city || 'Show'),
-            onchange: function (e) { tick(sh.id, p.userId, !!e.target.checked); } });
-          kids.push(h('label', { class: 'row bo-row' }, cb,
-            h('span', { class: 'row-label' }, p.name, h('span', { class: 'hint' }, p.role)),
-            h('span', { class: 'bus-word' + (on ? ' on' : '') }, on ? 'Received' : 'Not yet')));
+          kids.push(buyoutPersonRow(sh, p, has(sh, p), !!asked[sh.id + '|' + p.userId], function (want) { tick(sh.id, p.userId, want); }));
         });
       });
       box.replaceChildren.apply(box, kids);
@@ -22787,19 +22932,12 @@
       var key = showId + '|' + userId;
       pend[key] = want;
       draw();
-      try { if (want) await B.buyoutTrack(id, showId, userId); else await B.buyoutUntrack(id, showId, userId); }
+      try { await buyoutTick(id, showId, userId, want); }
       catch (e) {
         delete pend[key];
         draw();
         if (buyoutsOn()) toast('Couldn’t save that. Try again.');
         return;
-      }
-      buyoutDocMark(id, showId, userId, want);
-      // The ticked person's phone hears their buyout is marked received, if
-      // it asked to (the undo stays quiet; the poke already redraws MY PAY).
-      if (want) {
-        var bsh = buyoutShows(getTour(id) || {}).filter(function (x) { return x.id === showId; })[0];
-        sendNotify(id, 'buyout', { to: userId, city: (bsh && bsh.city) || '' });
       }
       delete pend[key];
       draw();
@@ -22816,12 +22954,73 @@
     }, { label: 'Buyout alert', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
     buyoutLive = draw;
   }
-  /* BUYOUT ALERT, at the top of the Budget's Buyouts tab and nowhere else
-     since 2026-10-16 (it lived on the Overview's button grid before that):
-     it glows and pulses while someone from an earlier show still hasn't had
-     their buyout. */
+  /* Everyone else's BUYOUT ALERT (Devin, 2026-10-17: "I want to see my own
+     buyout status"): each buyout show from the fresh start on, Received or
+     Not yet, for this account alone, and on a Not yet a ping to the Tour
+     Manager ("In the buyout alert button you can ping the TM to get you
+     your buyout"). The ping waits on 0176; one an hour per show is plenty,
+     and the row says Sent until then. */
+  function openBuyoutMine(id) {
+    var B = window.GR_BACKEND, sending = {};
+    if (buyoutRole(id) === 'track') { openBuyoutTicks(id); return; }
+    var box = h('div', { class: 'ledger bo-list' });
+    function draw() {
+      if (!buyoutsOn()) { if (buyoutLive === draw) closeSheet(); return; }
+      var role = buyoutRole(id);
+      // (The crew list came in and says this account keeps the track after all.)
+      if (role === 'track') { if (buyoutLive === draw) openBuyoutTicks(id); return; }
+      var bo = myBuyoutDays(id, getTour(id) || {});
+      // (The pings are read alongside: Ping the TM shows once they are in, so Sent is never missed.)
+      var asksOn = buyoutAsksOn(), askedNow = asksOn ? buyoutAsked(id) : {}, asked = askedNow || {};
+      if (!role || bo.loading) {
+        box.replaceChildren(h('p', { class: 'note' }, 'Loading…'));
+        setTimeout(function () { if (buyoutLive === draw) draw(); }, 700);
+        return;
+      }
+      if (!bo.shows.length) { box.replaceChildren(h('p', { class: 'note' }, 'No buyouts logged yet.')); return; }
+      var me = B && B.uid ? B.uid() : null;
+      box.replaceChildren.apply(box, bo.shows.map(function (sh) {
+        var got = !!bo.mine[sh.id];
+        var at = asked[sh.id + '|' + me];
+        var sent = !!sending[sh.id] || !!(at && Date.now() - Date.parse(at) < 3600e3);
+        return h('div', { class: 'row bo-mine' },
+          h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date)),
+          !got && asksOn && askedNow ? h('button', { class: 'btn sm quiet bo-ping', type: 'button', disabled: sent,
+            onclick: function () { ping(sh); } }, sent ? 'Sent' : 'Ping the TM') : null,
+          h('span', { class: 'bus-word' + (got ? ' on' : '') }, got ? 'Received' : 'Not yet'));
+      }));
+    }
+    async function ping(sh) {
+      if (sending[sh.id]) return;
+      sending[sh.id] = true;
+      draw();
+      try { await B.buyoutAskSend(id, sh.id); }
+      catch (e) {
+        delete sending[sh.id];
+        draw();
+        toast(e && e.code === 'permission' ? 'That buyout is already tracked.' : 'Couldn’t send that. Try again.');
+        return;
+      }
+      // The push to the Tour Manager's phone, once the notify function knows the kind.
+      sendNotify(id, 'buyoutask', { showId: sh.id });
+    }
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'BUYOUT ALERT'),
+        box,
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+      ];
+    }, { label: 'Buyout alert', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
+    buyoutLive = draw;
+  }
+  /* BUYOUT ALERT, at the top of MY PAY's Buyouts tab and nowhere else since
+     2026-10-16. With the ticks table: the Tour Manager's opens the tick
+     list, everyone else's opens their own buyouts, and each glows green
+     while what it is about is still waiting. Before the table, the old
+     document-only list, for the people who can edit the tour. */
   function buyoutAlertBtn(id, t) {
-    if (buyoutsOn() && moneyLead(id)) return buyoutTickBtn(id, t);
+    if (buyoutsOn()) return buyoutRole(id) === 'track' ? buyoutTickBtn(id, t) : buyoutMineBtn(id, t);
     if (!canEditTour(id)) return null;
     var owed = buyoutsOwed(t);
     return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (owed.length ? ' on' : ''), type: 'button',
@@ -22858,6 +23057,7 @@
     var cur = { perHead: G.isObj(track) ? track.perHead : null, paid: {} };
     var before = G.isObj(track) && G.isObj(track.paid) ? track.paid : {};
     Object.keys(before).forEach(function (k) { if (G.isObj(before[k])) cur.paid[k] = before[k]; });
+    var seeded = {};   // ticked here from the ticks table, not from the show's own marks
     var people = [];
     var seen = {};
     /* Whose buyout is income: the people in the band. member: the tour's own
@@ -22911,7 +23111,7 @@
     function close(save) {
       if (save) {
         cur.perHead = perHead();
-        Object.keys(before).forEach(function (k) { if (!cur.paid[k]) cur.paid[k] = null; });
+        Object.keys(before).concat(Object.keys(seeded)).forEach(function (k) { if (!cur.paid[k]) cur.paid[k] = null; });
         done(cur);
       }
       pop.classList.remove('on');
@@ -22937,6 +23137,16 @@
     var cached = S.crewCache && S.crewCache[id];
     function fromMembers(rows) {
       (rows || []).forEach(function (m) { add(m.name || m.username || m.email, m.tourRole, m.email ? 'e:' + String(m.email).toLowerCase() : null); });
+      // One truth: once the ticks table is on, whoever it says has theirs
+      // shows ticked here too, though the show's own marks missed them.
+      var got = buyoutsOn() ? buyoutTicked(id) : null;
+      if (got) (rows || []).forEach(function (m) {
+        if (!m.userId || !got[show.id + '|' + m.userId]) return;
+        var nm = String(m.name || m.username || m.email || '').trim().toLowerCase();
+        var ek = m.email ? 'e:' + String(m.email).trim().toLowerCase() : '';
+        var p = people.filter(function (x) { return (ek && x.key === ek) || x.name.toLowerCase() === nm; })[0];
+        if (p && !cur.paid[p.key]) { cur.paid[p.key] = { name: p.name, artist: p.artist }; seeded[p.key] = true; }
+      });
       people.sort(function (a, b) { return (b.artist ? 1 : 0) - (a.artist ? 1 : 0) || a.name.localeCompare(b.name); });
       if (!(G.num(cur.perHead) > 0) && perIn) {
         var inp = perIn.querySelector ? perIn.querySelector('input') : null;
@@ -23377,6 +23587,7 @@
         var patch = {};
         patch[showId] = incomePatchFor(s, ctxNow());
         if (!(await api.update(id, { shows: patch }))) return;
+        if (patch[showId].buyoutTrack) buyoutDbMirror(id, showId, ini.track, patch[showId].buyoutTrack);
         closeSheet();
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft, flags: flagsNow } }).net;
         var r = G.round(after);
@@ -23877,7 +24088,8 @@
               buyoutHint),
             h('button', { class: 'btn sm quiet bo-track', type: 'button', onclick: function () {
               if (!(draft.buyouts > 0)) { toast('Log the buyout total first'); return; }
-              openBuyoutTracker(id, s, draft.buyouts, track, function (next) { buyoutDbMirror(id, s.id, track, next); track = next; updateBuyouts(); refresh(); });
+              // (The ticks reach the database when Save income does, not before: Cancel keeps them out.)
+              openBuyoutTracker(id, s, draft.buyouts, track, function (next) { track = next; updateBuyouts(); refresh(); });
             } }, 'Track'),
             mkInput));
         } else if (f.key === 'guarantee') {
