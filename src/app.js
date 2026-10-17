@@ -26215,6 +26215,7 @@
     // Money news: only for people who can see the tour's money.
     ['Money', [
       ['green', 'In the green', 'The tour\u2019s net turns positive', 'on'],
+      ['received', 'Money received', 'A show\u2019s guarantee or merch is marked received', 'on'],
       ['merchnums', 'MERCH NUMBERS', 'A night\u2019s merch numbers come in', 'stored']]]
   ];
   // What a key starts as on this phone: the saved choice, else what the old

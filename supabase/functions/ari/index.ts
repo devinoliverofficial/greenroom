@@ -339,6 +339,12 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
     sent += await push(to, text, tour.id);
   };
 
+  // MONEY RECEIVED's first look at a tour records what is already received
+  // quietly, so switching it on never sends a pile of old news.
+  const { data: recvSeed } = await admin.from("ari_sent").select("kind")
+    .eq("tour_id", tour.id).eq("show_id", "_recv").eq("kind", "recvseed").maybeSingle();
+  let moneyPeople: Set<string> | null = null;
+
   for (const [showId, raw] of shows) {
     if (!isObj(raw) || !raw.date || !raw.city) continue;
     const ds = isObj(raw.daySheet) ? raw.daySheet : {};
@@ -359,6 +365,21 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
         const to = (await everyone()).filter((s) => mgr.has(s.user_id) && (s.prefs ?? {}).merchnums === true);
         sent += await push(to, `MERCH NUMBERS! ${raw.city}: ${money(merch)} in merch.`, tour.id);
       }
+    }
+
+    // MONEY RECEIVED (Devin, 2026-10-17: "buzz for both"): a show's guarantee
+    // or merch marked received by any door (a tick, a matched deposit, the
+    // card rule), once per show and kind, to the people who see the tour's
+    // money, the same people as In the green.
+    const recv: [string, boolean, number, string][] = [
+      ["grecv", raw.guaranteeReceived === true, num(isObj(raw.income) ? raw.income.guarantee : 0), "guarantee"],
+      ["mrecv", raw.merchReceived === true, merch, "merch"]];
+    for (const [kind, isIn, amt, word] of recv) {
+      if (!isIn || !(await claim(tour.id, showId, kind)) || !recvSeed) continue;
+      moneyPeople ??= await managerIds(tour.id, tour.owner_id);
+      const mp = moneyPeople;
+      const to = (await everyone()).filter((s) => mp.has(s.user_id) && (s.prefs ?? {}).received !== false);
+      sent += await push(to, `RECEIVED! ${raw.city} ${word}${amt > 0 ? ": " + money(amt) : ""}.`, tour.id);
     }
 
     // Where "now" falls on this show's day, in minutes from its midnight;
@@ -430,6 +451,10 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
     const bcAt = onShowDay(minutesOf(ds.busCall));
     if (due(bcAt, 30)) await announce(showId, "buscall-pre", "Bus call in 30 minutes.", "buscall", NOBODY);
     if (atWin(bcAt)) await announce(showId, "buscall", "BUS CALL. Tap On Bus so the driver knows you're on.", "buscall", NOBODY);
+  }
+  if (!recvSeed) {
+    await admin.from("ari_sent").upsert({ tour_id: tour.id, show_id: "_recv", kind: "recvseed" },
+      { onConflict: "tour_id,show_id,kind", ignoreDuplicates: true });
   }
   return sent;
 }
