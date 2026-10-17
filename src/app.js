@@ -9393,8 +9393,41 @@
         mine ? menuRow('tag', 'Merchroom', function () { go({ name: 'merchroom', back: here }); }) : null,
         inMusic() ? menuRow('tabmoney', 'Budget History', function () { go({ name: 'history', back: here }); }) : null,
         menuRow('gear', 'Settings', function () { openSettingsSheet(); })),
+      menuTourGroup(backTo),
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
+  }
+  /* The current tour's own rows, consolidated here from the old three-dots
+     sheet (Devin, 2026-10-16: "This should be consolidated into the 3
+     horitontal line menu only"): one group headed by the tour's name, the
+     Tour options rows in their old order, plus Sync atVenu (the way to
+     Cards/Links, where its switch stays - one source of truth) and Received
+     boxes (a second door to the same sheet the Cards/Links row opens). The
+     tour is the page the menu was opened from, or the profile's. */
+  function menuTourGroup(backTo) {
+    var id = backTo && backTo.name === 'tour' && getTour(backTo.id) ? backTo.id : profileTourId();
+    var t = id ? getTour(id) : null;
+    if (!t || isOffTour(t) || !canEditTour(id)) return null;
+    var rm = receivedFor(id);
+    return h('section', { class: 'mn-group' },
+      h('h2', { class: 'mn-h mn-over' }, t.name || 'Untitled tour'),
+      menuRow('share', 'Share this tour', function () { openShare(id); }),
+      cardMenuItem(id, true),
+      menuRow('edit', 'Name and artist', function () { openRename(id); }),
+      menuRow('people', 'Crew', function () { openCrewSheet(id); }),
+      (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.flyer)
+        ? menuRow('flyer', 'Tour flyer', function () { openFlyerSheet(id); }) : null,
+      menuRow('card', 'Bring in your info', function () { openImportHub(id); }),
+      menuRow('share', 'Notifications', function () { openNotifications(id); }),
+      menuRow('copy', 'Tour closeout', function () { openCloseout(id); }),
+      menuRow('history', 'Card statement history', function () { openImportsSheet(id); }),
+      canSeeMoney(id) ? menuRow('cash', 'Merch cash log', function () { go({ name: 'tour', id: id, view: 'cashlog' }); }) : null,
+      menuRow('refresh', 'Sync atVenu', function () { go({ name: 'tour', id: id, view: 'cards' }); }),
+      S.mode === 'db' && createdTour(id) && (tourOpen(t) || rm.asked)
+        ? menuRow('check', 'Received boxes', function () { openReceivedSheet(); }) : null,
+      menuRow('tag', 'Learned labels', function () { openLabelsSheet(); }),
+      createdTour(id) || S.mode === 'local'
+        ? menuRow('trash', 'Delete tour', function () { confirmDeleteTour(id, function () { go({ name: 'home' }); }); }, null, { cls: 'mn-danger' }) : null);
   }
 
   /* ---- The first run (Devin, 2026-10-10) ----
@@ -15637,11 +15670,9 @@
     return h('header', { class: 'topbar' },
       h('span', { class: 'top-side' }, ls ? listBack(ls) : null),
       center || h('span', { class: 'logo-mark bar', 'aria-hidden': 'true' }),
+      // The old three-dots (Tour options) is folded into the three-lines
+      // menu's tour group (Devin, 2026-10-16): see menuTourGroup.
       h('div', { class: 'topbar-actions' },
-        canEditTour(id) ? h('button', {
-          class: 'iconbtn', type: 'button', 'aria-label': 'Tour options',
-          onclick: function () { openTourMenu(id); }
-        }, icon('more')) : null,
         menuBtn()));
   }
 
@@ -18850,23 +18881,82 @@
             acts('Next')
           ];
         }
-        var amt = 0, recv = false;
-        var box = h('input', { type: 'checkbox', class: 'rcv-check', id: 'td-recv', onchange: function (e) { recv = e.target.checked; } });
+        if (isG) return guaranteeBody(s);
+        var amt = 0;
         return [
-          h('p', { class: 'td-note' }, isG ? 'Tonight’s guarantee.' : 'Tonight’s merch total.'),
-          moneyInput({ id: 'td-' + kind, value: 0, label: isG ? 'Guarantee' : 'Merch total', last: true, big: true, onValue: function (n) { amt = n; } }),
-          // (Through card: Received is ticked by the bank deposit, not here.)
-          isG && receivedFor(tourId).guarantee !== 'card' ? h('label', { class: 'td-recv', for: 'td-recv' }, box, h('span', null, 'Received tonight')) : null,
+          h('p', { class: 'td-note' }, 'Tonight’s merch total.'),
+          moneyInput({ id: 'td-merch', value: 0, label: 'Merch total', last: true, big: true, onValue: function (n) { amt = n; } }),
           acts('Skip', function () {
-            if (!(amt > 0)) { toast(isG ? 'Type the guarantee first' : 'Type the merch total first'); return; }
+            if (!(amt > 0)) { toast('Type the merch total first'); return; }
             var inc = incomeWith(s, kind, amt), patch = { income: inc, loggedAt: Date.now() };
-            if (isG) { patch.guaranteeReceived = !!recv; patch.guaranteeNone = null; }
-            else {
-              // All-cash merch has no deposit to wait for; otherwise the deposit is still to come.
-              var due = G.merchDue({ income: inc, merchCash: G.num(s.merchCash), merchCardDeposit: s.merchCardDeposit != null ? G.num(s.merchCardDeposit) : null });
-              patch.merchReceived = !(due > 0); patch.merchNone = null;
+            // All-cash merch has no deposit to wait for; otherwise the deposit is still to come.
+            var due = G.merchDue({ income: inc, merchCash: G.num(s.merchCash), merchCardDeposit: s.merchCardDeposit != null ? G.num(s.merchCardDeposit) : null });
+            patch.merchReceived = !(due > 0); patch.merchNone = null;
+            save(patch, 'Merch · ' + money(amt));
+          })
+        ];
+      }
+      /* Log in Guarantees with the SAME numbers Log income keeps (Devin,
+         2026-10-16: "it is not adhering to the same guarantee options"):
+         Guarantee Total, Deposit Amount and taxes withheld, saved through
+         the one patch builder Log income's Save uses, so the two doors
+         write the same show document key for key. A deposit short by more
+         than the taxes needs the "why" question, which lives on Log income
+         alone: the card says so in one quiet line, and Log it opens Log
+         income with the numbers filled in. */
+      function guaranteeBody(s) {
+        var typed = { gross: 0, dep: 0, tax: 0, recv: false };
+        var mode = receivedFor(tourId).guarantee;
+        var r2 = incomeCalc.r2;
+        var gapLine = h('p', { class: 'td-gap', hidden: true });
+        function gapNow() { return typed.dep > 0 && typed.gross > 0 ? r2(typed.gross - typed.dep) : 0; }
+        function beyondTax() { return r2(gapNow() - Math.max(0, typed.tax)); }
+        function sayGap() {
+          var gap = gapNow();
+          var over = typed.dep > 0 && typed.gross > 0 && gap <= -0.005;
+          var short = gap >= 0.005 && beyondTax() >= 0.005;
+          gapLine.hidden = !(over || short);
+          gapLine.textContent = over ? 'More than the guarantee. A bonus or overage belongs under Back end, so it counts as income.'
+            : short ? G.moneyCents(beyondTax()) + ' of the gap is not taxes. Log it opens Log income to ask why, with these numbers filled in.' : '';
+        }
+        var field = function (fid, label, hint, nextId, last, onV) {
+          return h('div', { class: 'td-f' },
+            h('label', { class: 'td-fl', for: fid }, label, hint ? h('span', { class: 'hint' }, hint) : null),
+            moneyInput({ id: fid, value: 0, label: label, nextId: nextId, last: last, onValue: onV }));
+        };
+        var box = h('input', { type: 'checkbox', class: 'rcv-check', id: 'td-recv',
+          onchange: function (e) { typed.recv = e.target.checked; } });
+        return [
+          h('p', { class: 'td-note' }, 'Tonight’s guarantee.'),
+          h('div', { class: 'td-fields' },
+            field('td-guarantee', 'Guarantee Total', null, 'td-deposit', false, function (n) { typed.gross = n; sayGap(); }),
+            field('td-deposit', 'Deposit Amount', 'What’s coming to you, from the check or settlement', 'td-tax', false, function (n) { typed.dep = n; sayGap(); }),
+            field('td-tax', 'Taxes withheld', 'Comes off the guarantee logged', null, true, function (n) { typed.tax = n; sayGap(); })),
+          // The same rule Log income shows: through card, the tick is the app's to make.
+          mode !== 'card' ? h('label', { class: 'td-recv', for: 'td-recv' }, box, h('span', null, 'Received tonight'))
+            : h('p', { class: 'td-recv locked' }, 'Not received · ticks when the card shows it'),
+          gapLine,
+          acts('Skip', async function () {
+            if (!(typed.gross > 0)) { toast('Type the guarantee first'); return; }
+            if (Math.max(0, typed.tax) >= typed.gross) { toast('The taxes take the whole guarantee. Log that in Log income.'); return; }
+            // Short by more than the taxes: the why question lives on Log income.
+            if (gapNow() >= 0.005 && beyondTax() >= 0.005) {
+              S.todayAfter = null; closeSheet();
+              setTimeout(function () {
+                openIncome(tourId, showId, { gross: typed.gross, dep: typed.dep, tax: typed.tax,
+                  recv: mode !== 'card' ? typed.recv : null });
+              }, 320);
+              return;
             }
-            save(patch, (isG ? 'Guarantee' : 'Merch') + ' · ' + money(amt));
+            var tNow = getTour(tourId);
+            if (!tNow) { closeSheet(); return; }
+            var c = guaranteeQuickApply(incomeInit(s, tNow), { gross: typed.gross, dep: typed.dep,
+              tax: typed.tax, recv: mode !== 'card' ? typed.recv : null, mode: mode, show: s });
+            var before = G.round(G.calc(tNow).net);
+            await save(incomePatchFor(s, c), 'Guarantee · ' + money(typed.gross));
+            // Crossing into the green: the push Log income's own Save sends.
+            var after = G.round(G.calc(getTour(tourId) || tNow).net);
+            if (before < 0 && after >= 0 && moneyLead(tourId)) sendNotify(tourId, 'green', { net: money(after, true) });
           })
         ];
       }
@@ -22469,10 +22559,39 @@
         info.n ? h('p', { class: 'note rq-warn' }, plural(info.n, 'Received tick') + ' made by hand, not seen on the card yet, ' + (info.n === 1 ? 'comes' : 'come') + ' off' + onTours + '. Choosing Manually again puts ' + (info.n === 1 ? 'it' : 'them') + ' back.') : null,
         info.back ? h('p', { class: 'note' }, plural(info.back, 'Received tick') + ' taken off earlier ' + (info.back === 1 ? 'goes' : 'go') + ' back on' + onTours + '.') : null]);
   }
-  function openIncome(id, showId) {
-    var t = getTour(id);
-    var s = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : null;
-    if (!s) return;
+  /* The guarantee arithmetic Log income's sheet leans on, in ONE place its
+     save path and the Tonight card's quick guarantee both read, so a number
+     can never round one way on the sheet and another way in the book.
+     c holds the sheet's numbers: draft, gross, tax, dep, paidBy, why. */
+  var incomeCalc = {
+    r2: function (v) { return Math.round(G.num(v) * 100) / 100; },
+    // The gap between the two numbers; reasons only count while there is one.
+    shortNow: function (c) { return c.dep != null && c.gross > 0 ? incomeCalc.r2(c.gross - c.dep) : 0; },
+    // The reasons are asked for (and kept) only while the deposit is short.
+    listOn: function (c) { return c.paidBy !== 'agency' && c.gross > 0 && c.dep != null && incomeCalc.shortNow(c) >= 0.005; },
+    // The deposit as it's saved: what is coming, received yet or not.
+    depKept: function (c) { return c.draft.guarantee > 0 && c.paidBy !== 'agency' && c.dep != null ? c.dep : null; },
+    effWhy: function (c) { return incomeCalc.listOn(c) && incomeCalc.depKept(c) != null ? c.why : {}; },
+    // As it's saved: every reason by name, the unticked ones cleared (forSave)
+    // or just the ticked ones (for the live preview).
+    whyOut: function (c, forSave) {
+      var w = incomeCalc.effWhy(c), out = {}, any = false;
+      G.GUARANTEE_REASONS.forEach(function (r) {
+        var v = incomeCalc.r2(w[r.key]);
+        if (v > 0) { out[r.key] = v; any = true; } else if (forSave) out[r.key] = null;
+      });
+      return any ? out : (forSave ? null : {});
+    },
+    // Taxes are one of the reasons, but they stand without a gap too: they
+    // come off the guarantee whatever the deposit turns out to be.
+    taxOf: function (c) { return c.gross > 0 ? Math.max(0, G.num(c.why.tax)) : 0; },
+    // Counted the way the book counts it: the guarantee logged is the total less the tax.
+    netGuarantee: function (gross, tax) { return Math.max(0, Math.round((gross - tax) * 100) / 100); }
+  };
+  /* A show's income as Log income's sheet opens it: one reader for its two
+     doors (the sheet, and the Tonight card's quick guarantee), so what a
+     show already holds can never load two ways. */
+  function incomeInit(s, t) {
     var draft = {};
     G.INCOME_FIELDS.forEach(function (f) {
       draft[f.key] = G.num(G.isObj(s.income) ? s.income[f.key] : 0);
@@ -22487,31 +22606,12 @@
        Amount — and when they differ asks why: dollars by reason (taxes
        withheld are one of them). */
     var why = G.guaranteeWhy(s);
-    var whyNote = String(s.guaranteeWhyNote || '');
     var dep = s.guaranteeDeposit != null && G.num(s.guaranteeDeposit) > 0 ? Math.round(G.num(s.guaranteeDeposit) * 100) / 100 : null;
     // The amount the bank itself showed (matched by the feed, or catalogued from Cards).
     var depSeen = dep != null && s.guaranteeReceivedAt ? dep : null;
     var agentRule = G.normCommission(t && t.commission).agent;
-    var agentPct = agentRule && agentRule.mode === 'pct' ? Math.max(0, Math.min(100, G.num(agentRule.value))) / 100 : 0;
     // How the guarantee is paid: a check, straight into the bank, or to the agency first.
     var PAID_BY = [['check', 'Check'], ['direct', 'Direct Deposit'], ['agency', 'Agency Deposit']];
-    var paidBy = PAID_BY.some(function (x) { return x[0] === s.guaranteePaidBy; }) ? s.guaranteePaidBy : null;
-    var miscLabel = String((G.isObj(s.income) && s.income.miscLabel) || '');
-    // Who has their buyout (only the Artists' count as income).
-    var track = G.isObj(s.buyoutTrack) ? JSON.parse(JSON.stringify(s.buyoutTrack)) : null;
-    var settNotes = Array.isArray(s.settlementNotes)
-      ? JSON.parse(JSON.stringify(s.settlementNotes)) : [];
-    // Merch cash collected at the table, and whether each payment has landed.
-    // A night logged before the Received boxes existed reads as received.
-    var merchCash = G.num(s.merchCash);
-    // atVenu's card payout for the night (card sales less fees), when the
-    // Settlement showed it. That is the deposit to watch for.
-    var merchCardDeposit = s.merchCardDeposit != null ? G.num(s.merchCardDeposit) : null;
-    // Tips at the merch table: how much of the merch total, cash or deposited, and (cash) handed over yet.
-    var tips = G.merchTips(s);
-    // atVenu switched off for this tour (Cards/Links): no bubble, no per head, nothing read by itself.
-    var avOff = t.atvenuSync === false;
-    var legacy = !!s.loggedAt;
     /* A Received box ticked beside an EMPTY line means "nothing to wait for
        here" (no merch table, no guarantee): the night can still read as
        paid. It is kept in keys of its own, guaranteeNone / merchNone, so
@@ -22520,7 +22620,6 @@
        tick on each line is that kind. noneStored: it came with the show, so
        it gives way the moment an amount turns up on its line. */
     var noneBy = { guarantee: !(gross > 0) && s.guaranteeNone === true, merch: !(draft.merch > 0) && s.merchNone === true };
-    var noneStored = { guarantee: noneBy.guarantee, merch: noneBy.merch };
     // Ticked only when the show says so: a night logged before the boxes
     // existed opens unticked, and reads red until someone ticks it.
     var recv = {
@@ -22531,6 +22630,130 @@
     // settlement): it stands whether or not the guarantee is received. Only
     // "the bank showed it" needs the guarantee to be received.
     if (!recv.guarantee) depSeen = null;
+    return { draft: draft, tax: tax, gross: gross, why: why, whyNote: String(s.guaranteeWhyNote || ''),
+      dep: dep, depSeen: depSeen,
+      agentPct: agentRule && agentRule.mode === 'pct' ? Math.max(0, Math.min(100, G.num(agentRule.value))) / 100 : 0,
+      PAID_BY: PAID_BY,
+      paidBy: PAID_BY.some(function (x) { return x[0] === s.guaranteePaidBy; }) ? s.guaranteePaidBy : null,
+      miscLabel: String((G.isObj(s.income) && s.income.miscLabel) || ''),
+      // Who has their buyout (only the Artists' count as income).
+      track: G.isObj(s.buyoutTrack) ? JSON.parse(JSON.stringify(s.buyoutTrack)) : null,
+      settNotes: Array.isArray(s.settlementNotes) ? JSON.parse(JSON.stringify(s.settlementNotes)) : [],
+      // Merch cash collected at the table, and whether each payment has landed.
+      // A night logged before the Received boxes existed reads as received.
+      merchCash: G.num(s.merchCash),
+      // atVenu's card payout for the night (card sales less fees), when the
+      // Settlement showed it. That is the deposit to watch for.
+      merchCardDeposit: s.merchCardDeposit != null ? G.num(s.merchCardDeposit) : null,
+      // Tips at the merch table: how much of the merch total, cash or deposited, and (cash) handed over yet.
+      tips: G.merchTips(s),
+      // atVenu switched off for this tour (Cards/Links): no bubble, no per head, nothing read by itself.
+      avOff: t.atvenuSync === false,
+      noneBy: noneBy, noneStored: { guarantee: noneBy.guarantee, merch: noneBy.merch }, recv: recv };
+  }
+  /* The ONE builder of the patch a show's income save sends. Log income's
+     Save and the Tonight card's quick guarantee both come through here, so
+     the two doors write the same book byte for byte (Devin, 2026-10-16:
+     "it is not adhering to the same guarantee options"). c is the sheet's
+     context, incomeInit's shape with the typed numbers on it. */
+  function incomePatchFor(s, c) {
+    var total = G.showIncomeTotal({ income: c.draft, buyoutTrack: c.track });
+    var income = Object.assign({}, c.draft);
+    income.miscLabel = c.draft.misc > 0 ? c.miscLabel.trim() : '';
+    var due = G.merchDue({ income: c.draft, merchCash: c.merchCash, merchCardDeposit: c.merchCardDeposit });
+    var anyLogged = G.INCOME_FIELDS.some(function (f) { return G.num(c.draft[f.key]) > 0; });
+    var out = { income: income, loggedAt: total > 0 || anyLogged ? Date.now() : null,
+      buyoutTrack: c.draft.buyouts > 0 && c.track ? c.track : null,
+      settlementNotes: c.settNotes.length ? c.settNotes : null,
+      merchCash: c.draft.merch > 0 && c.merchCash > 0 ? c.merchCash : null,
+      merchTips: c.draft.merch > 0 && c.tips.amount > 0 ? { amount: Math.min(c.tips.amount, c.draft.merch), how: c.tips.how, paid: c.tips.how === 'cash' ? !!c.tips.paid : null } : null,
+      merchCardDeposit: c.draft.merch > 0 && c.merchCardDeposit != null ? c.merchCardDeposit : null,
+      guaranteeReceived: c.draft.guarantee > 0 ? !!c.recv.guarantee : null,
+      // A tick made by hand beside an empty line ("nothing to wait for
+      // here"): the night only reads as paid when both are ticked.
+      guaranteeNone: !(c.gross > 0) && c.recv.guarantee && c.noneBy.guarantee ? true : null,
+      merchNone: !(c.draft.merch > 0) && c.recv.merch && c.noneBy.merch ? true : null,
+      taxWithheld: c.tax > 0 && c.gross > 0 ? Math.min(c.tax, c.gross) : null,
+      guaranteePaidBy: c.gross > 0 ? c.paidBy : null,
+      guaranteeWhy: incomeCalc.whyOut(c, true),
+      guaranteeWhyNote: G.num(incomeCalc.effWhy(c).other) > 0 && c.whyNote.trim() ? c.whyNote.trim().slice(0, 80) : null,
+      // All-cash merch has no deposit to wait for.
+      merchReceived: c.draft.merch > 0 ? (due > 0 ? !!c.recv.merch : true) : null };
+    // The bank's date and amount go only when the merch line is emptied or the
+    // night is no longer received (not merely because nothing is due right now).
+    if (!(c.draft.merch > 0 && (due > 0 ? c.recv.merch : true))) {
+      out.merchReceivedAt = null;
+      out.merchDeposit = null;
+    }
+    // The Deposit Amount is kept whether or not the guarantee is received.
+    // The bank's date stays only beside a received guarantee whose amount
+    // the bank itself showed.
+    var hasDep = incomeCalc.depKept(c) != null;
+    out.guaranteeDeposit = hasDep ? c.dep : null;
+    // The "why" question has been on the sheet for this deposit.
+    out.guaranteeWhyAsked = hasDep && incomeCalc.listOn(c) ? true : null;
+    if (!hasDep || c.depSeen == null || c.dep !== c.depSeen || !c.recv.guarantee) out.guaranteeReceivedAt = null;
+    // What the bank itself has shown for this guarantee (kept by the
+    // database as deposits are catalogued) goes when the deposit goes,
+    // and stays on record when the amount is corrected by hand.
+    // (Still received, the Deposit Amount merely emptied: what the bank showed stays on record.)
+    if (!hasDep && !(c.recv.guarantee && c.draft.guarantee > 0 && s.guaranteeSeen != null)) out.guaranteeSeen = null;
+    else if (!hasDep) { /* kept */ }
+    // Received taken off by hand on a night the bank had shown in full: that
+    // sighting goes with it, so ticking it again by hand and a later deposit
+    // cannot double it. (A part payment the bank showed stays on record.)
+    else if (s.guaranteeReceived === true && !c.recv.guarantee && (s.guaranteeSeen == null || G.num(s.guaranteeSeen) >= c.dep - 1)) out.guaranteeSeen = null;
+    else if (c.depSeen != null && c.dep !== c.depSeen && s.guaranteeSeen == null) out.guaranteeSeen = c.depSeen;
+    return out;
+  }
+  /* The Tonight card's three numbers (and its Received answer) land on the
+     sheet's context exactly as Log income's own handlers would put them.
+     The hand-off road uses it too, so what was typed on the card is what
+     the sheet shows. inp: gross, dep, tax, recv (null under the card rule,
+     or to leave the stored answer alone), and for the card rule the mode
+     and the show, for the reading lockReceived gives the sheet. */
+  function guaranteeQuickApply(c, inp) {
+    // Typed Guarantee Total: an amount on the line clears a stored
+    // "nothing to wait for" tick, the way typing it on the sheet does.
+    c.gross = Math.max(0, G.num(inp.gross));
+    if (c.gross > 0) {
+      if (c.noneStored.guarantee) c.recv.guarantee = false;
+      c.noneStored.guarantee = false; c.noneBy.guarantee = false;
+    }
+    // Typed Deposit Amount and taxes withheld, kept as the sheet keeps them.
+    c.dep = G.num(inp.dep) > 0 ? incomeCalc.r2(inp.dep) : null;
+    if (G.num(inp.tax) > 0) c.why.tax = incomeCalc.r2(inp.tax); else delete c.why.tax;
+    c.tax = incomeCalc.taxOf(c);
+    c.draft.guarantee = incomeCalc.netGuarantee(c.gross, c.tax);
+    // Ticked (or not) by hand under a manual rule: the person's call.
+    if (inp.recv != null) {
+      c.recv.guarantee = !!inp.recv;
+      c.noneBy.guarantee = c.recv.guarantee && !(c.gross > 0);
+      c.noneStored.guarantee = false;
+    }
+    // Through card, the tick is the app's to make: the agency holding the
+    // guarantee, or bank money shown on the night (lockReceived's reading).
+    if (inp.mode === 'card' && c.gross > 0) {
+      var bank = inp.show.guaranteeReceived === true && inp.show.guaranteePaidBy !== 'agency' &&
+        (!!inp.show.guaranteeReceivedAt || G.num(inp.show.guaranteeSeen) > 0);
+      c.recv.guarantee = c.paidBy === 'agency' || bank;
+      c.noneBy.guarantee = false;
+    }
+    return c;
+  }
+  // carry: the Tonight card's hand-off, its three numbers arriving as if
+  // they had been typed on this sheet (Devin, 2026-10-16).
+  function openIncome(id, showId, carry) {
+    var t = getTour(id);
+    var s = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : null;
+    if (!s) return;
+    var ini = incomeInit(s, t);
+    if (carry) guaranteeQuickApply(ini, { gross: carry.gross, dep: carry.dep, tax: carry.tax, recv: carry.recv, show: s });
+    var draft = ini.draft, tax = ini.tax, gross = ini.gross, why = ini.why, whyNote = ini.whyNote,
+      dep = ini.dep, depSeen = ini.depSeen, agentPct = ini.agentPct, PAID_BY = ini.PAID_BY, paidBy = ini.paidBy,
+      miscLabel = ini.miscLabel, track = ini.track, settNotes = ini.settNotes, merchCash = ini.merchCash,
+      merchCardDeposit = ini.merchCardDeposit, tips = ini.tips, avOff = ini.avOff,
+      noneBy = ini.noneBy, noneStored = ini.noneStored, recv = ini.recv;
     ensureReceivedBy(id, t);
     var modes = receivedFor(id);
     // As saved: when the deposit is raised by hand, the extra comes off what
@@ -22591,56 +22814,12 @@
       var saveNow = async function (e) {
         e.preventDefault();
         blurActive();
-        var total = G.showIncomeTotal({ income: draft, buyoutTrack: track });
         var before = G.calc(getTour(id) || t).net;
         var flagsNow = currentFlags();
-        var income = Object.assign({}, draft);
-        income.miscLabel = draft.misc > 0 ? miscLabel.trim() : '';
+        // The whole patch comes from the one builder the Tonight card's
+        // quick guarantee also saves through: incomePatchFor above.
         var patch = {};
-        var due = G.merchDue({ income: draft, merchCash: merchCash, merchCardDeposit: merchCardDeposit });
-        var anyLogged = G.INCOME_FIELDS.some(function (f) { return G.num(draft[f.key]) > 0; });
-        patch[showId] = { income: income, loggedAt: total > 0 || anyLogged ? Date.now() : null,
-          buyoutTrack: draft.buyouts > 0 && track ? track : null,
-          settlementNotes: settNotes.length ? settNotes : null,
-          merchCash: draft.merch > 0 && merchCash > 0 ? merchCash : null,
-          merchTips: draft.merch > 0 && tips.amount > 0 ? { amount: Math.min(tips.amount, draft.merch), how: tips.how, paid: tips.how === 'cash' ? !!tips.paid : null } : null,
-          merchCardDeposit: draft.merch > 0 && merchCardDeposit != null ? merchCardDeposit : null,
-          guaranteeReceived: draft.guarantee > 0 ? !!recv.guarantee : null,
-          // A tick made by hand beside an empty line ("nothing to wait for
-          // here"): the night only reads as paid when both are ticked.
-          guaranteeNone: !(gross > 0) && recv.guarantee && noneBy.guarantee ? true : null,
-          merchNone: !(draft.merch > 0) && recv.merch && noneBy.merch ? true : null,
-          taxWithheld: tax > 0 && gross > 0 ? Math.min(tax, gross) : null,
-          guaranteePaidBy: gross > 0 ? paidBy : null,
-          guaranteeWhy: whyOut(true),
-          guaranteeWhyNote: G.num(effWhy().other) > 0 && whyNote.trim() ? whyNote.trim().slice(0, 80) : null,
-          // All-cash merch has no deposit to wait for.
-          merchReceived: draft.merch > 0 ? (due > 0 ? !!recv.merch : true) : null };
-        // The bank's date and amount go only when the merch line is emptied or the
-        // night is no longer received (not merely because nothing is due right now).
-        if (!(draft.merch > 0 && (due > 0 ? recv.merch : true))) {
-          patch[showId].merchReceivedAt = null;
-          patch[showId].merchDeposit = null;
-        }
-        // The Deposit Amount is kept whether or not the guarantee is received.
-        // The bank's date stays only beside a received guarantee whose amount
-        // the bank itself showed.
-        var hasDep = depKept() != null;
-        patch[showId].guaranteeDeposit = hasDep ? dep : null;
-        // The "why" question has been on the sheet for this deposit.
-        patch[showId].guaranteeWhyAsked = hasDep && listOn() ? true : null;
-        if (!hasDep || depSeen == null || dep !== depSeen || !recv.guarantee) patch[showId].guaranteeReceivedAt = null;
-        // What the bank itself has shown for this guarantee (kept by the
-        // database as deposits are catalogued) goes when the deposit goes,
-        // and stays on record when the amount is corrected by hand.
-        // (Still received, the Deposit Amount merely emptied: what the bank showed stays on record.)
-        if (!hasDep && !(recv.guarantee && draft.guarantee > 0 && s.guaranteeSeen != null)) patch[showId].guaranteeSeen = null;
-        else if (!hasDep) { /* kept */ }
-        // Received taken off by hand on a night the bank had shown in full: that
-        // sighting goes with it, so ticking it again by hand and a later deposit
-        // cannot double it. (A part payment the bank showed stays on record.)
-        else if (s.guaranteeReceived === true && !recv.guarantee && (s.guaranteeSeen == null || G.num(s.guaranteeSeen) >= dep - 1)) patch[showId].guaranteeSeen = null;
-        else if (depSeen != null && dep !== depSeen && s.guaranteeSeen == null) patch[showId].guaranteeSeen = depSeen;
+        patch[showId] = incomePatchFor(s, ctxNow());
         if (!(await api.update(id, { shows: patch }))) return;
         closeSheet();
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft, flags: flagsNow } }).net;
@@ -22893,7 +23072,7 @@
       var netRow = h('div', { class: 'row mx-row' },
         h('div', { class: 'row-label' }, 'Guarantee logged', netHint), netAmt);
       function syncGuarantee() {
-        draft.guarantee = Math.max(0, Math.round((gross - tax) * 100) / 100);
+        draft.guarantee = incomeCalc.netGuarantee(gross, tax);
         // Counted the way the book counts it, so the sheet and the tour agree.
         var as = { income: { guarantee: draft.guarantee }, taxWithheld: tax, guaranteePaidBy: paidBy,
           guaranteeReceived: !!recv.guarantee, guaranteeDeposit: depKept(), guaranteeWhy: whyOut(false) };
@@ -22905,29 +23084,26 @@
             lost > 0 ? ' less ' + money(lost) + ' that won\u2019t arrive' : ''].join('');
         sayAgency();
       }
-      var r2 = function (v) { return Math.round(G.num(v) * 100) / 100; };
+      var r2 = incomeCalc.r2;
+      // The sheet's numbers as incomeCalc and incomePatchFor read them, live.
+      function ctxNow() { return { draft: draft, gross: gross, tax: tax, dep: dep, depSeen: depSeen, paidBy: paidBy,
+        why: why, whyNote: whyNote, recv: recv, noneBy: noneBy, miscLabel: miscLabel, track: track,
+        settNotes: settNotes, merchCash: merchCash, tips: tips, merchCardDeposit: merchCardDeposit }; }
       // The gap between the two numbers; reasons only count while there is one.
-      function shortNow() { return dep != null && gross > 0 ? r2(gross - dep) : 0; }
+      function shortNow() { return incomeCalc.shortNow(ctxNow()); }
       // The reasons are asked for (and kept) only while the deposit is short.
-      function listOn() { return paidBy !== 'agency' && gross > 0 && dep != null && shortNow() >= 0.005; }
+      function listOn() { return incomeCalc.listOn(ctxNow()); }
       // The deposit as it's saved: what is coming, received yet or not.
-      function depKept() { return draft.guarantee > 0 && paidBy !== 'agency' && dep != null ? dep : null; }
-      function effWhy() { return listOn() && depKept() != null ? why : {}; }
+      function depKept() { return incomeCalc.depKept(ctxNow()); }
+      function effWhy() { return incomeCalc.effWhy(ctxNow()); }
       function whySum() { var w = effWhy(); return Object.keys(w).reduce(function (n, k) { return n + G.num(w[k]); }, 0); }
       // As it's saved: every reason by name, the unticked ones cleared (forSave)
       // or just the ticked ones (for the live preview).
-      function whyOut(forSave) {
-        var w = effWhy(), out = {}, any = false;
-        G.GUARANTEE_REASONS.forEach(function (r) {
-          var v = r2(w[r.key]);
-          if (v > 0) { out[r.key] = v; any = true; } else if (forSave) out[r.key] = null;
-        });
-        return any ? out : (forSave ? null : {});
-      }
+      function whyOut(forSave) { return incomeCalc.whyOut(ctxNow(), forSave); }
       // Taxes are one of the reasons, but they stand without a gap too: they
       // come off the guarantee whatever the deposit turns out to be. So the
       // tax is whatever is on the sheet, never a by-product of the deposit.
-      function setTax() { tax = gross > 0 ? Math.max(0, G.num(why.tax)) : 0; }
+      function setTax() { tax = incomeCalc.taxOf(ctxNow()); }
       // The tax box of its own, shown whenever the reasons list isn't.
       var taxInput = moneyInput({
         id: 'inc-tax', value: tax, label: 'Taxes withheld', nextId: 'inc-backend',
@@ -24657,44 +24833,6 @@
     return h('button', { class: 'btn ghost block', type: 'button', onclick: tap },
       icon(ready ? 'gear' : 'card', 18), ready ? 'Card settings' : 'Add card info');
   }
-  function openTourMenu(id) {
-    var t = getTour(id);
-    if (!t) return;
-    var name = t.name || 'this tour';
-    openSheet(function () {
-      return [
-        h('h2', { class: 'sh-title' }, t.name || 'Tour options'),
-        h('div', { class: 'stack' },
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openShare(id); } },
-            icon('share', 18), 'Share this tour'),
-          cardMenuItem(id),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openRename(id); } },
-            icon('edit', 18), 'Name and artist'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCrewSheet(id); } },
-            icon('people', 18), 'Crew'),
-          (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.flyer) ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { openFlyerSheet(id); } }, icon('flyer', 18), 'Tour flyer') : null,
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportHub(id); } },
-            icon('card', 18), 'Bring in your info'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openNotifications(id); } },
-            icon('share', 18), 'Notifications'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openCloseout(id); } },
-            icon('copy', 18), 'Tour closeout'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openImportsSheet(id); } },
-            icon('history', 18), 'Card statement history'),
-          canSeeMoney(id) && !isOffTour(t) ? h('button', { class: 'btn ghost block', type: 'button',
-            onclick: function () { closeSheet(true); go({ name: 'tour', id: id, view: 'cashlog' }); } },
-            icon('cash', 18), 'Merch cash log') : null,
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openLabelsSheet(); } },
-            icon('tag', 18), 'Learned labels'),
-          createdTour(id) || S.mode === 'local' ? h('button', {
-            class: 'btn danger block', type: 'button',
-            onclick: function () { confirmDeleteTour(id, function () { go({ name: 'home' }); }); }
-          }, icon('trash', 18), 'Delete tour') : null)
-      ];
-    }, { label: 'Tour options' });
-  }
-
   /* ============================== Reading things ==============================
      Flyers and card statements both end in the same place: an editable review
      list the user confirms before anything is saved. */

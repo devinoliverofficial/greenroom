@@ -1679,6 +1679,28 @@ shim = r"""<script>
   };
   try { if (/[?&]venue\b/.test(String(location.search || ''))) window.__harness.venue(); } catch (e) { /* no address to read */ }
   try { if (/[?&]rate\b/.test(String(location.search || ''))) window.__harness.rate(); } catch (e) { /* no address to read */ }
+  /* ---- TONIGHT'S QUICK GUARANTEE, AND THE ONE MENU (2026-10-16) ----
+     The Tonight card asks the guarantee with the SAME three numbers Log
+     income keeps. To see it: open the profile's Today tab, tap Tasks, swipe
+     the Today card right, and walk the questions to Log in Guarantees
+     (?rate arms tonight's pieces: s1 is today with merch 1400 logged, so
+     the guarantee question is still the open one). The card shows Guarantee
+     Total, Deposit Amount and Taxes withheld, with the Received line
+     following the tour's Received-boxes rule - manual: the tick; through
+     card: the locked words 'Not received · ticks when the card shows it'.
+     Log it saves through the one patch builder Log income's Save uses
+     (incomePatchFor in src/app.js), so the same numbers on either door
+     write the same show document key for key; a deposit short by MORE than
+     the typed taxes says one quiet line instead and Log it opens Log income
+     with the three numbers filled in (openIncome's carry).
+     The three dots beside the three lines are gone from the tour band: the
+     three-lines menu now holds one group headed by the current tour's name
+     (the route's tour, else the profile's - here 'Harness run'), with the
+     old Tour options rows in their old order, plus Sync atVenu (the way to
+     Cards/Links, where its switch stays - one source of truth) and
+     Received boxes (a second door to the sheet the Cards/Links row opens).
+     Open the three lines from the tour or the profile and the group is
+     there; sign in as ?crew and it is not (crew never had Tour options). */
   /* ---- THE GUEST LIST: rows beside the tour, as on the real backend ----
      Tonight's Austin show (s1) starts with three names in __harness.guests: one this phone put on
      (added_by u-devin), one Brent put on, and one old row with no added_by at all. Tap a name to

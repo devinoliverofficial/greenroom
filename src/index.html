@@ -1103,6 +1103,13 @@ span.avatar { cursor: inherit; }
 .td-acts { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; margin-top: 4px; }
 .td-acts.one { grid-template-columns: 1fr; }
 .td-recv { display: flex; align-items: center; justify-content: center; gap: 9px; font-size: 14.5px; color: var(--ink); }
+/* The Tonight card's quick guarantee: the same three numbers Log income keeps. */
+.td-fields { display: grid; gap: 8px; }
+.td-f { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.td-fl { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 14px; color: var(--ink); text-align: left; }
+.td-fl .hint { font-size: 11.5px; line-height: 1.35; color: var(--ink-3); }
+.td-recv.locked { margin: 0; font-size: 13px; color: var(--ink-3); }
+.td-gap { margin: 0; font-size: 12.5px; line-height: 1.4; text-align: center; color: var(--ink-2); }
 .td-file { display: grid; }
 .td-hint { margin: 12px 0 0; text-align: center; font-size: 12px; color: var(--ink-3); }
 /* A credit card as its own Expenses line: its name, then the card company. */
