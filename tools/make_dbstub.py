@@ -1750,6 +1750,55 @@ shim = r"""<script>
     return Promise.resolve(out);
   }
   window.__harness.members = []; window.__harness.invited = []; window.__harness.notified = []; window.__harness.notes = [];
+  /* ---- THE TOUR CHAT, LIKE A PHONE'S GROUP CHAT (2026-10-17) ----
+     Devin: "Let's make the greenroom chat better. Look at the reference I
+     sent" (an iPhone group chat). __harness.chat() (or open the page with
+     ?chat) seats Jeff Mora and Maya Ortiz on the harness tour beside Brent
+     (Brent and Maya with photos, Jeff without) and fills its chat: Brent,
+     Jeff, a run of three from Maya, half an hour's quiet, two of yours,
+     then Brent again. Open Chat on the bottom bar:
+       the top: Brent's, Jeff's and Maya's faces overlapping over the tour's
+         name (Harness run) in a grey pill, ARI on the left, the bell on the
+         right;
+       the messages: each sender's name in small grey over the first bubble
+         of their run and their photo (Jeff: his initial) by the last; grey
+         bubbles on the left, yours green on the right; the curl only on the
+         last bubble of a run; a time line ("Today 1:05 PM") over the first
+         message and again after the quiet;
+       a tap on a bubble shows its time, and Delete for whoever may delete
+         it (tap again to close); the page opens at the newest message;
+       the bar: a round + (More: Ari, Send Tour Alert, tour notifications)
+         and the grey "Message" pill. Send one: it lands at the bottom, green.
+     ?chat&crew: the same chat on a Crew phone (no ARI, no Send Tour Alert;
+     Delete only under your own). */
+  window.__harness.chat = function () {
+    var H = window.__harness, now = Date.now(), min = 6e4;
+    var seat = function (uid, name, role) {
+      if (H.crew.some(function (r) { return r.userId === uid; })) return;
+      var mail = name.split(' ')[0].toLowerCase() + '@example.com';
+      H.crew.push({ owner: false, role: 'viewer', userId: uid, name: name, email: mail, invitedEmail: mail, phone: '', tourRole: role, joined: true });
+    };
+    seat('u-jeff', 'Jeff Mora', 'FOH Engineer');
+    seat('u-maya', 'Maya Ortiz', 'Merch');
+    var face = function (bg, skin, shirt) {
+      return 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="' + bg + '"/>' +
+        '<circle cx="20" cy="15" r="7" fill="' + skin + '"/><rect x="8" y="25" width="24" height="15" rx="8" fill="' + shirt + '"/></svg>');
+    };
+    H.faces = Object.assign({}, H.faces, { 'u-brent': face('#3a6ea5', '#f1d2b6', '#22303f'), 'u-maya': face('#8a4f7d', '#e7c1a0', '#2b2b2b') });
+    var say = function (k, uid, name, ago, body) { return { id: 'n-chat-' + k, day: 'chat', author: name, addedBy: uid, at: now - ago * min, body: body }; };
+    H.notes = (H.notes || []).filter(function (n) { return !/^n-chat-/.test(n.id); }).concat([
+      say(1, 'u-brent', 'Brent Allen', 190, 'Load in moved to 2:30. The dock is shared with the opener.'),
+      say(2, 'u-jeff', 'Jeff Mora', 186, 'Copy'),
+      say(3, 'u-maya', 'Maya Ortiz', 180, 'Packed and ready. Is the bus still out back or did it move?'),
+      say(4, 'u-maya', 'Maya Ortiz', 179, 'Grabbing coffee first'),
+      say(5, 'u-maya', 'Maya Ortiz', 178, 'Anyone want one?'),
+      say(6, 'u-devin', 'Devin Oliver', 95, 'Bus is out front now'),
+      say(7, 'u-devin', 'Devin Oliver', 94, 'Doors at 7, we are on at 9:40'),
+      say(8, 'u-brent', 'Brent Allen', 20, 'On my way')]);
+    emit();
+    return 'Jeff and Maya seated, eight messages in the chat';
+  };
+  try { if (/[?&]chat\b/.test(String(location.search || ''))) window.__harness.chat(); } catch (e) { /* no address to read */ }
   /* ---- THE TASKS DECK: EVERY JOB DONE ONCE (2026-10-17) ----
      Devin: "you should never do a task twice. Whether you've done it through
      the task button or did it through the app." __harness.taskDeck() (or open
@@ -4762,8 +4811,16 @@ shim = r"""<script>
       H.notes.push({ id: 'n-ans-' + id, day: 'chat', body: said, author: 'Ari', at: Date.now() });
       return a.status;
     },
-    saveNote: function (tourId, day, note) { window.__harness.notes.push(note); return Promise.resolve(); },
-    notesFor: function () { return window.__harness.notes; },
+    // As the table does: the note's day, the account that wrote it and when; the chat and a night's notes kept apart.
+    saveNote: function (tourId, day, note) { window.__harness.notes.push(Object.assign({ day: day, addedBy: 'u-devin', at: Date.now() }, note)); return Promise.resolve(); },
+    notesFor: function (tourId, day) { return window.__harness.notes.filter(function (n) { return !day || !n.day || n.day === day; }); },
+    // A Crew phone deletes only its own; the tour's leads delete anyone's.
+    removeNote: function (id) {
+      var H = window.__harness, n = H.notes.filter(function (x) { return x.id === id; })[0];
+      if (!n || (H.asCrew && n.addedBy !== 'u-devin')) return Promise.reject(Object.assign(new Error('permission'), { code: 'permission' }));
+      H.notes = H.notes.filter(function (x) { return x.id !== id; });
+      return Promise.resolve();
+    },
     // The guest list, in memory (see THE GUEST LIST near the top): the same
     // shapes and the same who-may-touch-it line the real table enforces.
     guestsFor: function (tourId, showId) {

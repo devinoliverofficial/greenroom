@@ -17074,35 +17074,71 @@
     return G.ymd(dt) === G.ymd(new Date()) ? clock : dayMD(G.ymd(dt)) + ' ' + clock;
   }
   function viewTourChat(id, t) {
-    var backend = !!(window.GR_BACKEND && S.mode === 'db' && window.GR_BACKEND.notesFor);
-    var myUid = backend && window.GR_BACKEND.uid ? window.GR_BACKEND.uid() : null;
+    var B = window.GR_BACKEND;
+    var backend = !!(B && S.mode === 'db' && B.notesFor);
+    var myUid = backend && B.uid ? B.uid() : null;
     var list = notesFor(t, id, 'chat').filter(function (n) { return !isAriNote(n); }).slice()
       .sort(function (a, b) { return noteTime(a) - noteTime(b); });
     var refresh = function () { setTimeout(function () { render(true); }, backend ? 500 : 150); };
     // Each writer's green check by the rule, the size the tour's other lists wear it (one ask: see checkList).
     var marks = checkList('sm');
     marks.ask();
-
-    var msgs = list.map(function (n) {
-      var mine = !backend || !myUid || (n.addedBy && n.addedBy === myUid);
-      var ts = noteTime(n), dt = ts ? new Date(ts) : null;
-      var when = !dt ? '' : G.ymd(dt) === G.ymd(new Date())
-        ? dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : dayMD(G.ymd(dt));
-      return h('div', { class: 'chat-msg' },
-        h('div', { class: 'chat-top' },
-          h('span', { class: 'chat-a' }, nameWith(n.author || 'Someone', backend && n.addedBy ? marks.mark(n.addedBy, false) : null)),
-          h('span', { class: 'chat-t' }, when),
-          (canWrite() || mine) ? h('button', { class: 'iconbtn sm chat-x', type: 'button',
-            'aria-label': 'Delete this message',
-            onclick: async function () {
-              try { await removeNote(id, 'chat', n.id); refresh(); }
-              catch (e2) { toast('Only the tour manager can delete someone else’s message.'); }
-            } }, icon('trash', 14)) : null),
-        h('div', { class: 'chat-b' }, n.body));
+    var faces = (backend && B.facesFor && B.facesFor(id)) || {};
+    var runs = chatRuns(list, function (n) { return !backend || !myUid || (n.addedBy && n.addedBy === myUid); }, function (n) {
+      return backend && n.addedBy ? n.addedBy : 'n:' + String(n.author || '').trim().toLowerCase();
     });
 
-    // The typing bar, iMessage size: a thin pill, the send arrow inside its
-    // right end, lit once there's something to send.
+    /* Laid out after a phone's group chat (Devin, 2026-10-17, his screenshot
+       in MODELXCREW/chat): bubbles in runs by sender, the sender's name over
+       the first of a run and their photo beside the last, yours on the right
+       in the green. A time sits over the first message and after a pause. A
+       tap on a bubble shows its time, and Delete for whoever may delete it. */
+    var openNote = S.chatOpen && S.chatOpen.tour === id ? S.chatOpen.note : null;
+    var rows = [];
+    runs.forEach(function (m) {
+      var n = m.n, name = n.author || 'Someone';
+      if (m.stamp) rows.push(h('div', { class: 'chat-stamp' }, chatStamp(noteTime(n))));
+      if (m.first && !m.mine) {
+        rows.push(h('div', { class: 'chat-who-line' }, nameWith(name, backend && n.addedBy ? marks.mark(n.addedBy, false) : null)));
+      }
+      var open = openNote === n.id;
+      var info = h('div', { class: 'chat-info' + (m.mine ? ' mine' : ''), hidden: !open },
+        h('span', null, noteWhen(n)),
+        (canWrite() || m.mine) ? h('button', { class: 'chat-del', type: 'button', 'aria-label': 'Delete this message',
+          onclick: async function () {
+            try { await removeNote(id, 'chat', n.id); S.chatOpen = null; refresh(); }
+            catch (e2) { toast('Only the tour manager can delete someone else’s message.'); }
+          } }, 'Delete') : null);
+      // (Not a button: a long press still selects the words, to copy them.)
+      var bubble = h('div', { class: 'chat-bubble' + (m.last ? ' tail' : ''), role: 'button', tabindex: '0', 'aria-expanded': open ? 'true' : 'false',
+        onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); bubble.click(); } },
+        onclick: function () {
+          var show = info.hidden;
+          // One open at a time: the line under any other bubble closes.
+          var listEl = bubble.closest('.chat-list');
+          if (listEl) {
+            listEl.querySelectorAll('.chat-info:not([hidden])').forEach(function (x) { x.hidden = true; });
+            listEl.querySelectorAll('.chat-bubble[aria-expanded="true"]').forEach(function (x) { x.setAttribute('aria-expanded', 'false'); });
+          }
+          info.hidden = !show;
+          bubble.setAttribute('aria-expanded', show ? 'true' : 'false');
+          S.chatOpen = show ? { tour: id, note: n.id } : null;
+        } }, n.body);
+      rows.push(h('div', { class: 'chat-row ' + (m.mine ? 'mine' : 'theirs') + (m.first ? ' first' : '') },
+        m.mine ? null : h('span', { class: 'chat-face-slot' },
+          m.last ? personPhoto({ name: name, avatar: (n.addedBy && faces[n.addedBy]) || '' }, 'xs chat-face') : null),
+        bubble), info);
+    });
+
+    // The people in the chat, over its name: a few faces, overlapping.
+    var people = chatPeople(id, list, myUid, faces).slice(0, 4);
+    var who = h('div', { class: 'chat-who' },
+      people.length ? h('div', { class: 'chat-faces', 'aria-hidden': 'true' }, people.map(function (p) { return personPhoto(p, 'xs chat-face'); })) : null,
+      h('h2', { class: 'chat-name' }, String(t && t.name || '').trim() || 'Tour chat'));
+
+    // The typing bar, iMessage size: the + for the chat's extras, then a
+    // thin pill with the send arrow inside its right end, lit once there's
+    // something to send.
     var draftKey = 'chat:' + id;
     var sendBtn = h('button', { class: 'chat-send', type: 'submit', 'aria-label': 'Send',
       disabled: !String(S.drafts[draftKey] || '').trim() }, icon('up', 17));
@@ -17125,19 +17161,100 @@
         refresh();
       } catch (e2) { toast('Couldn’t send that. Try again.'); }
     };
+    var extras = chatExtras(id);
 
-    return h('div', { class: 'page tour has-tabs chat-page' },
+    // The chat opens on its newest message, and stays there while you are
+    // down there; a message you send takes you to it.
+    // (Drawn while the screen still shows what was there before: is that this chat?)
+    var shown = document.querySelector('#view .chat-page');
+    var fresh = !shown || shown.getAttribute('data-tour') !== String(id);
+    S.chatCount = S.chatCount || {};
+    var grew = S.chatCount[id] != null && list.length > S.chatCount[id];
+    S.chatCount[id] = list.length;
+    var doc = document.documentElement;
+    var atEnd = !fresh && window.innerHeight + window.scrollY >= doc.scrollHeight - 160;
+    var lastMine = runs.length > 0 && runs[runs.length - 1].mine;
+    if (fresh || atEnd || (grew && lastMine)) {
+      requestAnimationFrame(function () { window.scrollTo(0, document.documentElement.scrollHeight); });
+    }
+
+    return h('div', { class: 'page tour has-tabs chat-page', 'data-tour': id },
       // The full Greenroom wordmark with Chat small under it, sized to the slim band.
       tourBand(t, id, 'chat', h('h1', { class: 'band-brand' },
         h('span', { class: 'wordmark-full', role: 'img', 'aria-label': 'Greenroom' }), h('span', { class: 'band-brand-t' }, 'Chat'))),
       dbBanner(),
       // The bus, barely there behind the conversation.
       h('div', { class: 'chat-bus', 'aria-hidden': 'true' }),
-      h('div', { class: 'chat-tools' }, h('span', { class: 'ct-side' }), ariButton(id), alertsBell(id) || h('span', { class: 'ct-side' })),
-      msgs.length ? h('div', { class: 'chat-list' }, msgs) : null,
+      h('div', { class: 'chat-tools' }, ariButton(id), who, alertsBell(id) || h('span', { class: 'ct-side' })),
+      rows.length ? h('div', { class: 'chat-list' }, rows) : null,
       h('form', { class: 'chat-form', onsubmit: send, novalidate: true },
+        extras.length ? h('button', { class: 'chat-plus', type: 'button', 'aria-label': 'More',
+          onclick: function () { openChatExtras(id); } }, icon('plus', 20)) : null,
         h('div', { class: 'chat-field' }, input, sendBtn)),
       tourTabs(id, 'chat'));
+  }
+  /* The chat's messages in runs. mine: is it this phone's; who: the sender.
+     A time line (stamp) goes over the first message, the first of a new day
+     and the first after half an hour's quiet; a run ends at a new sender or
+     at a time line. */
+  var CHAT_PAUSE = 30 * 60e3;
+  function chatRuns(list, mine, who) {
+    var out = list.map(function (n, i) {
+      var p = list[i - 1], ts = noteTime(n), pt = p ? noteTime(p) : 0, me = !!mine(n);
+      return { n: n, mine: me, who: me ? '' : who(n),
+        stamp: !!ts && (!p || !pt || ts - pt >= CHAT_PAUSE || G.ymd(new Date(ts)) !== G.ymd(new Date(pt))) };
+    });
+    out.forEach(function (m, i) { var p = out[i - 1]; m.first = !p || m.stamp || p.mine !== m.mine || p.who !== m.who; });
+    out.forEach(function (m, i) { var x = out[i + 1]; m.last = !x || x.first; });
+    return out;
+  }
+  function chatStamp(ts) {
+    var dt = new Date(ts), day = G.ymd(dt);
+    var clock = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return (day === G.ymd(new Date()) ? 'Today ' : dayLong(day) + ' at ') + clock;
+  }
+  /* Who is in the chat: everyone with a seat on the tour (the crew list's
+     signed-up rows), else whoever has written in it. Never you. */
+  function chatPeople(id, list, myUid, faces) {
+    var B = window.GR_BACKEND, c = S.crewCache && S.crewCache[id];
+    if (!c && S.mode === 'db' && B && B.crew) {
+      S.crewCache = S.crewCache || {};
+      S.crewAsk = S.crewAsk || {};
+      if (!S.crewAsk[id]) {
+        S.crewAsk[id] = true;
+        // (Not forced: a redraw waits while someone is typing a message.)
+        B.crew(id).then(function (rows) { S.crewCache[id] = { rows: rows, at: Date.now() }; render(); })
+          .catch(function () { delete S.crewAsk[id]; });
+      }
+    }
+    var out = [], seen = {};
+    var add = function (uid, name) {
+      name = String(name || '').trim();
+      var k = uid || 'n:' + name.toLowerCase();
+      if ((!uid && !name) || seen[k] || (myUid && uid === myUid)) return;
+      seen[k] = true;
+      out.push({ name: name || 'Someone', avatar: (uid && faces[uid]) || '' });
+    };
+    var seats = c ? c.rows.filter(function (m) { return m.joined && m.userId && m.userId !== myUid; }) : [];
+    if (seats.length) seats.forEach(function (m) { add(m.userId, m.name || m.username || m.email); });
+    else list.forEach(function (n) { add(n.addedBy, n.author); });
+    return out;
+  }
+  /* The + beside the typing bar: the chat's extras in one place (Ari for
+     whoever leads the tour, and the tour alerts). They stay at the top too. */
+  function chatExtras(tourId) {
+    var out = [];
+    if (leadsTour(tourId)) {
+      var n = ariUnread(tourId);
+      out.push(h('button', { class: 'btn ghost block', type: 'button', onclick: function () { openAriSheet(tourId); } },
+        'Ari' + (n ? ' · ' + plural(n, 'new message') : '')));
+    }
+    return out.concat(alertRows(tourId));
+  }
+  function openChatExtras(tourId) {
+    openSheet(function () {
+      return [h('h2', { class: 'sh-title' }, 'More'), h('div', { class: 'stack' }, chatExtras(tourId))];
+    }, { label: 'More' });
   }
 
   /* ================================ Ari ================================
@@ -25258,27 +25375,31 @@
   }
 
   function openAlertsMenu(tourId) {
-    var B = window.GR_BACKEND;
-    var db = S.mode === 'db' && B && B.pushSupported;
     openSheet(function () {
-      var phone;
-      if (!db) phone = null;
-      else if (!B.pushSupported()) {
-        phone = h('p', { class: 'note' },
-          'To get tour alerts on this phone, add Greenroom to your Home Screen (Share \u2192 Add to Home Screen) and open it from there.');
-      } else {
-        phone = h('button', { class: 'btn ' + (S.pushOn ? 'ghost' : 'quiet glow') + ' block', type: 'button',
-          onclick: function () { openNotifications(tourId); } },
-          icon('bell', 18), S.pushOn ? 'Tour notifications are on \u00b7 settings' : 'Get tour notifications on this phone');
-      }
       return [
         h('h2', { class: 'sh-title' }, 'Tour alerts'),
-        h('div', { class: 'stack' },
-          (createdTour(tourId) || moneyLead(tourId)) ? h('button', { class: 'btn primary block', type: 'button',
-            onclick: function () { openAlertSheet(tourId); } }, icon('bell', 18), 'Send Tour Alert') : null,
-          phone)
+        h('div', { class: 'stack' }, alertRows(tourId))
       ];
     }, { label: 'Tour alerts' });
+  }
+  // What the bell offers (the chat's + offers it too): Send Tour Alert for whoever may, and alerts on this phone.
+  function alertRows(tourId) {
+    var B = window.GR_BACKEND;
+    var db = S.mode === 'db' && B && B.pushSupported;
+    var phone;
+    if (!db) phone = null;
+    else if (!B.pushSupported()) {
+      phone = h('p', { class: 'note' },
+        'To get tour alerts on this phone, add Greenroom to your Home Screen (Share \u2192 Add to Home Screen) and open it from there.');
+    } else {
+      phone = h('button', { class: 'btn ' + (S.pushOn ? 'ghost' : 'quiet glow') + ' block', type: 'button',
+        onclick: function () { openNotifications(tourId); } },
+        icon('bell', 18), S.pushOn ? 'Tour notifications are on \u00b7 settings' : 'Get tour notifications on this phone');
+    }
+    return [
+      (createdTour(tourId) || moneyLead(tourId)) ? h('button', { class: 'btn primary block', type: 'button',
+        onclick: function () { openAlertSheet(tourId); } }, icon('bell', 18), 'Send Tour Alert') : null,
+      phone].filter(Boolean);
   }
 
   /* Devin's notification kinds (2026-10-15), each one key on this phone's
