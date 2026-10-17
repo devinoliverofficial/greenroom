@@ -334,6 +334,9 @@
   }
   function mapError(e) {
     var msg = String(e && e.message || '');
+    // A show rated once already (0173: a rating stands, one per person per
+    // show), by this phone a moment ago or by another.
+    if (e && e.code === '23505' && /show_ratings/.test(msg)) return err('already-rated');
     if (/permission|policy|denied|42501/i.test(msg)) return err('permission');
     if (/network|fetch|load failed|connection/i.test(msg)) return err('offline');
     return err('unavailable');
@@ -1430,20 +1433,32 @@
         crowd: one(p.crowd), venue: one(p.venue), city: one(p.city) };
       // The structured review (0165) rides the same row when the app sends one.
       if (isObj(p.review)) row.review = p.review;
-      var q = await sb.from('show_ratings').upsert(row, { onConflict: 'tour_id,show_id,user_id' });
+      // A plain insert: a rating stands once sent (0173 takes the update
+      // right away, and an upsert needs it even with nothing to replace).
+      var q = await sb.from('show_ratings').insert(row);
+      var c = showRateCache[tourId];
+      var held = function (r) {
+        if (!(c && c.data)) return;
+        c.data = c.data.filter(function (x) { return !(x.showId === showId && x.userId === session.user.id); }).concat([r]);
+      };
       if (q.error) {
         // No review column after all (a build ahead of 0165): remembered for
         // the session, and the app shows the old sheet instead.
         if (row.review && columnMissing(q.error)) { reviewKnown = false; emit('tours'); throw err('review-missing'); }
         if (tableMissing(q.error)) { rateKnown = false; emit('tours'); throw err('unavailable'); }
-        throw mapError(q.error);
+        var e = mapError(q.error);
+        if (e.code === 'already-rated') {
+          // Rated already (another phone, a double tap): held as rated at
+          // once, and the band's real rows are read again.
+          held({ showId: showId, userId: session.user.id, crowd: null, venue: null, city: null, at: new Date().toISOString() });
+          showRateGen[tourId] = (showRateGen[tourId] || 0) + 1;
+          if (c) c.stale = true;
+          emit('tours');
+        }
+        throw e;
       }
       // What's shown moves at once; the next read carries the database's clock.
-      var c = showRateCache[tourId];
-      if (c && c.data) {
-        c.data = c.data.filter(function (r) { return !(r.showId === showId && r.userId === session.user.id); })
-          .concat([{ showId: showId, userId: session.user.id, crowd: row.crowd, venue: row.venue, city: row.city, at: new Date().toISOString() }]);
-      }
+      held({ showId: showId, userId: session.user.id, crowd: row.crowd, venue: row.venue, city: row.city, at: new Date().toISOString() });
       emit('tours');
     },
     showRatings: function (tourId, fresh) {

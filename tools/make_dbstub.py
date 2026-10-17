@@ -852,8 +852,11 @@ shim = r"""<script>
      The probe answers true here, so your own profile carries its Top 10 tab
      from the start (last on the row, after Spots; Devin, 2026-10-16: "its
      own tab on the user profile so it's not just randomly hovering over the
-     tabs" - the floating strip above your own tabs is gone), and the page
-     others see still pins the strip above its tabs once a list has spots.
+     tabs" - the floating strip above your own tabs is gone), and since
+     2026-10-17 the page others see carries it as a tab too (Devin: "the
+     'top 10 artists' should be in a tab next to stats and tours and
+     artists"): Artists, Tours, Stats, Top 10, the same list read only, and
+     no strip above the tabs any more.
      HOOKS:
        __harness.topten()   puts up to five artists on the test account's Top 10 and answers
                             how many. Open your profile's Top 10 tab: the full
@@ -862,9 +865,12 @@ shim = r"""<script>
                             artist search (empty, the tab holds the pick
                             card instead). With To Do List and Spots both
                             live the row holds six tabs - check it at 375px.
-                            View profile shows the strip as others get it,
-                            above their tabs, without the door. Or open the
-                            page with ?topten.
+                            View profile (the viewer experience) shows the
+                            row Artists, Tours, Stats, Top 10 at 375px with
+                            nothing above it; tap Top 10 for the same list,
+                            no Edit your Top 10 under it. Empty, the tab
+                            reads "No Top 10 yet". Or open the page with
+                            ?topten.
        __harness.topTens    every list: { userId: [{ artistId, rank, name, avatar }] }. Change
                             one by hand, then render follows the next save or reopen.
        __harness.favCalls   every save the app made: [{ fn: 'favAdd' | 'favRemove' | 'favSwap', args }].
@@ -1541,17 +1547,19 @@ shim = r"""<script>
      2026-10-16: "'rate' 'vote' 'requests'"; the show-day button reads
      Requests now) AND on every show row already played (Devin, later the
      same day: "I should be able to see 'rate' on all previous shows on the
-     current tour" - the database lets the band write or change a rating on
-     any show of the tour, no date rule, so the context line says "You can
-     change it any time"), for the tour's owner (this phone, u-devin) and
-     the artist's Members. Since 2026-10-16 a rate-able row reads its
-     buttons in ONE row, Day sheet then Rate then Requests (Devin: "The
-     'rate' button should be centered between day sheets and requests");
-     rows without Rate keep Day sheet and Requests with no hole. Sent, a
-     row's Rate goes quiet. TO SEE THE PLAYED ROWS: Calendar > View previous
-     dates - Dallas and Houston each carry Rate (plain, no switch needed);
-     send one and only that row's button goes quiet, each opening the wizard
-     on its own city and venue. A tap
+     current tour" - the database lets the band rate any show of the tour,
+     no date rule), for the tour's owner (this phone, u-devin) and the
+     artist's Members. Since 2026-10-16 a rate-able row reads its buttons in
+     ONE row, Day sheet then Rate then Requests (Devin: "The 'rate' button
+     should be centered between day sheets and requests"); rows without Rate
+     keep Day sheet and Requests with no hole. ONCE, FOR GOOD (Devin,
+     2026-10-17: "Once you rate the show you can't rate again (obviously
+     until next time you play)"; 0173): sent, the row reads Rated with a
+     green check in Rate's place and nothing opens on a tap; the sheets
+     say "You rate each show once." TO SEE THE PLAYED ROWS: Calendar > View
+     previous dates - Dallas and Houston each carry Rate (plain, no switch
+     needed); send one and only that row turns to Rated, each opening the
+     wizard on its own city and venue. Or run __harness.rated() below. A tap
      opens the one-question wizard (0165): eleven screens at 375px, five
      stars with halves (LEFT half of a star is the half step, RIGHT the
      whole), word chips by star side, a 100-character note each, Yes/No for
@@ -1621,6 +1629,23 @@ shim = r"""<script>
                             one fires). Rate the show or Not now both mark
                             the phone asked; run ratePrompt() again to see
                             it again.
+       __harness.rated()    this phone's own rating lands on Dallas (played)
+                            and comes off Houston: Calendar > View previous
+                            dates shows Dallas reading Rated with its check
+                            (a tap does nothing) and Houston still Rate.
+                            Tap Houston's Rate and send it: Houston turns to
+                            Rated too. A second send of the same night
+                            answers 'already-rated' here as the database
+                            does (a duplicate refused): the app closes the
+                            sheet with "You already rated this show" and no
+                            error. To walk that, open Houston's wizard, then
+                            in the console push u-devin's Houston row into
+                            __harness.showStars by hand, and tap Done.
+       __harness.ratingsLoading = true   the band's rows answer null, as while
+                            they are still on their way: every Rate slot
+                            stays EMPTY (a rated show never reads as one to
+                            rate). Set it back to false and reopen the
+                            Calendar to see Rate and Rated return.
        __harness.venueStars every venue's stars ({ venueId: { userId: stars } });
        __harness.showStars  every night's band rows, each with its review;
                             __harness.rateCalls what this phone wrote.
@@ -1702,6 +1727,15 @@ shim = r"""<script>
     emit();
     return 'doors ' + tours.t1.shows.s1.daySheet.doors + ', set end ' + (tours.t1.shows.s1.daySheet.setTimes[1] || {}).end +
       ', merch 1400 logged, two band rows, the rated history and the open-ask on tonight';
+  };
+  window.__harness.rated = function () {
+    var H = window.__harness;
+    H.ratingsLoading = false;
+    H.showStars = (H.showStars || []).filter(function (r) { return !(r.tourId === 't1' && (r.showId === 's0' || r.showId === 's00') && r.userId === 'u-devin'); });
+    H.showStars.push({ tourId: 't1', showId: 's0', userId: 'u-devin', crowd: 8, venue: 7, city: 8,
+      review: { crowd: { stars: 4 }, venue: { stars: 3.5 }, area: { stars: 4 } }, at: new Date().toISOString() });
+    emit();
+    return 'Dallas rated by this phone, Houston not - Calendar > View previous dates';
   };
   try { if (/[?&]venue\b/.test(String(location.search || ''))) window.__harness.venue(); } catch (e) { /* no address to read */ }
   try { if (/[?&]rate\b/.test(String(location.search || ''))) window.__harness.rate(); } catch (e) { /* no address to read */ }
@@ -4021,7 +4055,11 @@ shim = r"""<script>
        Rate button opens the one-question wizard; __harness.reviewOff = true
        answers as before 0165 (the old three-slider sheet opens instead,
        and a wizard already open answers Done with 'review-missing', the
-       way a write that finds no column does, so the old sheet appears). */
+       way a write that finds no column does, so the old sheet appears).
+       A rating stands once sent (0173): a second showRate for the same
+       night answers 'already-rated', as the database's duplicate refusal
+       does; __harness.ratingsLoading = true makes showRatings answer null,
+       as while the band's rows are still on their way. */
     ratingsOn: function () { return !window.__harness.ratingsOff; },
     showReviewOn: function () { return !window.__harness.ratingsOff && !window.__harness.reviewOff; },
     venueRate: function (id, stars) {
@@ -4044,7 +4082,11 @@ shim = r"""<script>
       // after the wizard opened): the write answers the way the real one does.
       if (p.review && H.reviewOff) return Promise.reject(Object.assign(new Error('review-missing'), { code: 'review-missing' }));
       var one = function (v) { var n = Math.round(Number(v)); return n >= 1 && n <= 10 ? n : null; };
-      H.showStars = (H.showStars || []).filter(function (r) { return !(r.tourId === tourId && r.showId === showId && r.userId === 'u-devin'); });
+      if ((H.showStars || []).some(function (r) { return r.tourId === tourId && r.showId === showId && r.userId === 'u-devin'; })) {
+        (H.rateCalls = H.rateCalls || []).push({ fn: 'showRate', args: [tourId, showId, p], refused: 'already-rated' });
+        return Promise.reject(Object.assign(new Error('already-rated'), { code: 'already-rated' }));
+      }
+      H.showStars = H.showStars || [];
       H.showStars.push({ tourId: tourId, showId: showId, userId: 'u-devin', crowd: one(p.crowd), venue: one(p.venue), city: one(p.city),
         review: p.review || null, at: new Date().toISOString() });
       (H.rateCalls = H.rateCalls || []).push({ fn: 'showRate', args: [tourId, showId, p] });
@@ -4052,7 +4094,7 @@ shim = r"""<script>
     },
     showRatings: function (tourId) {
       var H = window.__harness;
-      if (H.ratingsOff) return null;
+      if (H.ratingsOff || H.ratingsLoading) return null;
       return (H.showStars || []).filter(function (r) { return r.tourId === tourId; }).map(function (r) {
         return { showId: r.showId, userId: r.userId, crowd: r.crowd, venue: r.venue, city: r.city, review: r.review || null, at: r.at };
       });

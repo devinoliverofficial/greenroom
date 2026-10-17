@@ -3135,6 +3135,12 @@
       : h('button', { class: 'pf-btn go', type: 'button', onclick: function () { setFollow(true); } },
           card.followsMe ? 'Follow back' : 'Follow');
     var tab = (S.vpTab && S.vpTab.uid === uid && S.vpTab.tab) || 'artists';
+    // Their Top 10 (0159) on a tab of its own beside Stats (Devin,
+    // 2026-10-17: "the 'top 10 artists' should be in a tab next to stats and
+    // tours and artists. simliar to how it is on the 'user' experience"),
+    // there whenever the table is live, as on your own profile.
+    var topTab = favsOn();
+    if (tab === 'top10' && !topTab) tab = 'artists';
     var pickTab = function (t) { S.vpTab = { uid: uid, tab: t }; render(true); };
     var tabBtn = function (key, label, ic) {
       return h('button', { class: 'vp-tab' + (tab === key ? ' on' : ''), type: 'button', role: 'tab',
@@ -3247,19 +3253,18 @@
           h('button', { class: 'pf-btn', type: 'button',
             onclick: preview ? justLooking('This is where people message you.') : function () { openDm(uid, peer); } }, 'Message'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openContact(uid, card); } }, 'Contact'))),
-      // Their Top 10 (0159), the MySpace way: pinned above the tabs, as anyone gets it.
-      topTenStrip(uid, false),
-      h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('artists', 'Artists', 'people'), tabBtn('tours', 'Tours', 'tabmap'),
-        tabBtn('stats', 'Stats', 'tabstats')),
+      h('div', { class: 'vp-tabs ' + (topTab ? 'four' : 'three'), role: 'tablist' }, tabBtn('artists', 'Artists', 'people'), tabBtn('tours', 'Tours', 'tabmap'),
+        tabBtn('stats', 'Stats', 'tabstats'), topTab ? tabBtn('top10', 'Top 10', 'star') : null),
       tab === 'artists'
         ? (artistRows.length ? h('ul', { class: 'tour-list rows vp-list' }, artistRows)
             : emptyState('No artists yet', first + ' hasn\u2019t added any artists yet.'))
         : tab === 'stats' ? personFlowers(card)
+        : tab === 'top10' ? vpTopTen(uid, first)
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', first + ' hasn\u2019t been on a tour in Greenroom yet.')),
       // Confirmed credits count nights from an artist's synced history: its
       // source gets its line, under the Tours list alone (Devin, 2026-10-15).
-      tab !== 'stats' && tab !== 'artists' && Array.isArray(card.credits) && card.credits.length ? setlistCredit() : null,
+      tab === 'tours' && Array.isArray(card.credits) && card.credits.length ? setlistCredit() : null,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
   }
@@ -4301,7 +4306,9 @@
            // Under the tours, for whoever runs the page: a rescan any time, and the search's own status.
            manage && card.verified && hc0.row ? rescanButton(id) : null,
            tourFinderBlock(id, card, manage, unclaimed)],
-      historyCredit(id),
+      // Tour data's credit, under the Tours tab alone (Devin, 2026-10-17:
+      // "get rid of setlist.fm tag on EVERYTHING besides the tour tab").
+      tab === 'tours' ? historyCredit(id) : null,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(manage && id === actingAs() ? 'me' : ''));
   }
@@ -5466,8 +5473,7 @@
         fresh.length ? h('div', { class: 'ledger' }, fresh.map(function (g) { return line(g, 'waiting'); }))
           : pend.length ? h('p', { class: 'note' }, d.pendingAll ? 'ALL TOURS, every show.' : 'A change to what is confirmed above.') : null,
         a.state === 'approved' && a.declinedAt ? h('p', { class: 'note' }, artist + ' sent back the last thing you added. What is confirmed stays.') : null,
-        h('p', { class: 'note' }, 'Add another from ' + artist + '’s page: tap I was on this tour under a tour, or I played this festival under a festival.'),
-        setlistCredit(d.url)
+        h('p', { class: 'note' }, 'Add another from ' + artist + '’s page: tap I was on this tour under a tour, or I played this festival under a festival.')
       ]);
     }
     var here = !!(S.route && S.route.name === 'act' && S.route.id === a.artistId);
@@ -6567,8 +6573,9 @@
      On your own profile the Top 10 lives on its own tab since 2026-10-16
      (Devin: "Let's move the 'top 10' artists into its own tab on the user
      profile so it's not just randomly hovering over the tabs"), with the
-     door to pick and reorder it; on the page others see it stays pinned
-     above the tabs, each spot opening its artist's page. Top Fans is a
+     door to pick and reorder it; on the page others see it is a tab too
+     since 2026-10-17, beside Stats, the same list without the door, each
+     spot opening its artist's page. Top Fans is a
      quiet word beside an artist page's fan count, for visitors, opening the
      ranked list. Nothing here renders before migration 0159 is live:
      favsOn() stays false until the backend finds the table, and the Top
@@ -6613,6 +6620,13 @@
   function pfTopTen() {
     var uid = socialOn() ? window.GR_BACKEND.uid() : null;
     return topTenStrip(uid, true) || h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading…');
+  }
+  // Someone else's Top 10 tab: the same list, read only. An empty list says
+  // so; one still on its way says it is loading.
+  function vpTopTen(uid, first) {
+    var rows = favsOn() ? window.GR_BACKEND.favoritesOf(uid) : null;
+    if (!Array.isArray(rows)) return h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading…');
+    return topTenStrip(uid, false) || emptyState('No Top 10 yet', first + ' hasn’t picked a Top 10 yet.');
   }
   /* The sheet where a Top 10 is made and kept: the spots in order, each with
      its arrows and its off button; under them the same artist search the
@@ -7499,9 +7513,7 @@
         named.length ? h('h3', { class: 'sh-h3' }, 'Or tour by tour') : null,
         named.map(groupRow),
         loose.length ? h('h3', { class: 'sh-h3' }, 'Shows outside a tour') : null,
-        loose.map(groupRow),
-        // Their data, their credit.
-        setlistCredit(d.url)
+        loose.map(groupRow)
       ]);
       var t = G.creditTally(gs, st.sel);
       fillEl(foot, [
@@ -7612,8 +7624,7 @@
         h('div', { class: 'ledger' }, pend.map(function (g) { return line(g, keeps && !same(g)); }),
           h('div', { class: 'row total' }, h('span', null, tallyText(t)), h('strong', { class: 'amt num' }, plural(t.shows, 'show')))),
         had.length ? h('p', { class: 'note' }, keeps ? 'Everything you approved before (' + tallyText(total(had)) + ') is still in it. The lines marked new are what was added.'
-          : 'This replaces what you approved before (' + tallyText(total(had)) + ').') : null,
-        setlistCredit(d.url)
+          : 'This replaces what you approved before (' + tallyText(total(had)) + ').') : null
       ]);
       fillEl(foot, [
         h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || null,
@@ -7965,16 +7976,16 @@
     if (!row) return '';
     if (row.status === 'checking') return 'Looking the act up…';
     if (row.status === 'idle') return '';
-    if (row.status === 'finding') return 'Finding the band on setlist.fm…';
+    if (row.status === 'finding') return 'Finding the band’s road history…';
     if (row.status === 'syncing') {
-      if (histWaiting(row)) return 'Greenroom has read its fill from setlist.fm for today. The rest of the road history comes in tomorrow.';
+      if (histWaiting(row)) return 'Greenroom has read its fill for today. The rest of the road history comes in tomorrow.';
       return 'Reading the road history…' +
         (row.pages > 0 ? ' page ' + Math.min(G.num(row.next_page) || 1, row.pages) + ' of ' + row.pages : '');
     }
     if (row.status === 'bad_token') return 'setlist.fm refused the key — replace it.';
     if (row.status === 'error') {
-      return row.auto ? 'setlist.fm had trouble, so this isn’t the whole story yet. It tries again on its own.'
-        : (row.detail || 'setlist.fm had trouble. It tries again on its own.');
+      return row.auto ? 'The road history had trouble loading, so this isn’t the whole story yet. It tries again on its own.'
+        : (row.detail || 'The road history had trouble loading. It tries again on its own.');
     }
     if (row.status === 'ok') {
       var sum = G.isObj(row.summary) ? row.summary : {};
@@ -8614,9 +8625,6 @@
             try { await B.historyNudge(id, true); } catch (x) { b.disabled = false; saveFailed('history', x); return; }
             histOf(id, true); closeSheet(); toast('Reading it fresh');
           } }, 'Sync fresh')));
-        kids.push(h('p', { class: 'note' }, 'Fan-logged data from ',
-          h('a', { class: 'hist-src', href: 'https://www.setlist.fm', target: '_blank', rel: 'noopener' }, 'setlist.fm'),
-          ' — a missing night just hasn’t been logged there yet.'));
       } else if (!got.row && !got.verified) {
         // A page made by hand isn't tied to a known act, so it can't borrow one's road story.
         kids.push(h('p', { class: 'note' }, 'Tour history is for verified pages, so nobody can borrow another band\u2019s road story. ' +
@@ -8661,10 +8669,6 @@
                 } });
             } }, 'Turn off')));
         }
-        // Their data, their credit — the link rides along in the sheet too.
-        kids.push(h('p', { class: 'note' }, 'Fan-logged data from ',
-          h('a', { class: 'hist-src', href: 'https://www.setlist.fm', target: '_blank', rel: 'noopener' }, 'setlist.fm'),
-          ' — a missing night just hasn’t been logged there yet.'));
       }
       fillEl(host, kids);
     }
@@ -8672,8 +8676,7 @@
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'Tour history'),
-        h('p', { class: 'sh-sub' }, 'The band’s whole road story — every show, tour, country and city — ' +
-          'read from setlist.fm, the fans’ setlist archive, and counted on the page by itself.'),
+        h('p', { class: 'sh-sub' }, 'The band’s whole road story: every show, tour, country and city, counted on the page by itself.'),
         host
       ];
     }, { label: 'Tour history' });
@@ -11426,8 +11429,11 @@
       // (Your Top 10 left this spot for its own tab, Devin, 2026-10-16.)
       profileTabs(entries, byArtist, loose, declared),
       // Your numbers count nights from an artist's synced history once it
-      // confirms them: that data's source gets its line, on every tab.
+      // confirms them: that data's source gets its line, under the Tours tab
+      // alone (Devin, 2026-10-17: "get rid of setlist.fm tag on EVERYTHING
+      // besides the tour tab"). Tours is always on the row, so the pick is it.
       (function () {
+        if (S.pfTab !== 'tours') return null;
         var B = window.GR_BACKEND, mc = socialOn() && B && B.uid ? cardOf(B.uid()).card : null;
         return mc && Array.isArray(mc.credits) && mc.credits.length ? setlistCredit() : null;
       })(),
@@ -17358,7 +17364,7 @@
      and the tour's owner only; the database holds the rows to the band, so
      the artist page and the tour show nothing public. ---- */
   // The night that can be rated now: tonight once doors have passed, else
-  // yesterday's show (still changeable today), else nothing.
+  // yesterday's show, else nothing.
   function rateShowOf(t) {
     var today = G.tourToday();
     var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); });
@@ -17392,12 +17398,16 @@
   /* The calendar's Rate button (Devin, 2026-10-16: "So it'll be 'rate'
      'vote' 'requests'", and later the same day: "I should be able to see
      'rate' on all previous shows on the current tour"). Every played show
-     row carries it, for the band alone - the database lets the band write
-     and change a rating on any show of the tour, with no date rule (0154's
-     policies check the person and the show, never the night). Tonight's row
-     keeps its after-doors rule. Sent, a row's button goes quiet but stays
-     tappable. Drawing it warms the review-column probe, so the tap already
-     knows which sheet to open. */
+     row carries it, for the band alone - the database lets the band rate
+     any show of the tour, with no date rule (0154's policies check the
+     person and the show, never the night). Tonight's row keeps its
+     after-doors rule. A show is rated once, for good (Devin, 2026-10-17:
+     "Once you rate the show you can't rate again (obviously until next time
+     you play)"): rated, the row reads Rated with a check and nothing opens;
+     the next night is a new show and rates fresh. Until the band's rows are
+     in, the slot stays empty, so a rated show never reads as one to rate.
+     Drawing it warms the review-column probe, so the tap already knows
+     which sheet to open. */
   function rateCalBtn(tourId, s) {
     var t = getTour(tourId);
     if (!t || !s || !s.id || !bandOnTour(tourId, t)) return null;
@@ -17406,19 +17416,40 @@
       var r = rateShowOf(t);
       if (!r || r.id !== s.id) return null;
     }
-    var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
+    var B = window.GR_BACKEND;
     if (B.showReviewOn) B.showReviewOn();
-    var mine = (B.showRatings(tourId) || []).filter(function (x) { return x.showId === s.id && x.userId === uid; })[0];
-    return h('button', { class: 'cal-btn' + (mine ? ' idle' : ''), type: 'button',
-      'aria-label': mine ? 'Rate this show, sent' : 'Rate this show',
+    var done = rateDone(tourId, s.id);
+    if (done == null) return null;
+    if (done) return h('span', { class: 'cal-btn cal-rated', role: 'img', 'aria-label': 'You rated this show' }, icon('check', 11), 'Rated');
+    return h('button', { class: 'cal-btn', type: 'button', 'aria-label': 'Rate this show',
       onclick: function () { openRateShow(tourId, s.id); } }, 'Rate');
+  }
+  // Has this account rated this show? true or false, or null while the
+  // band's rows are still on their way (never guessed as unrated).
+  function rateDone(tourId, showId) {
+    var B = window.GR_BACKEND, uid = B && B.uid ? B.uid() : '';
+    var rows = uid && B.showRatings ? B.showRatings(tourId) : null;
+    if (!Array.isArray(rows)) return null;
+    return rows.some(function (r) { return r.showId === showId && r.userId === uid; });
+  }
+  var RATED_ONCE = 'You already rated this show';
+  // Rated already: whatever sheet is up closes, one quiet line says so, and
+  // the row redraws as Rated. Answers whether it stepped in.
+  function rateRefused(tourId, showId) {
+    if (rateDone(tourId, showId) !== true) return false;
+    closeSheet();
+    toast(RATED_ONCE);
+    render(true);
+    return true;
   }
   /* Which sheet a tap opens: the one-question wizard once the database
      carries the review column (0165), else the old three-slider sheet, kept
      whole below. The probe is warmed where the button draws, so the answer
-     is usually in before anyone taps. */
+     is usually in before anyone taps. A show already rated opens nothing. */
   function openRateShow(tourId, showId) {
     var B = window.GR_BACKEND;
+    if (rateDone(tourId, showId) == null) { toast('The band\u2019s ratings are still loading. Try again in a moment.'); return; }
+    if (rateRefused(tourId, showId)) return;
     if (B && B.showReviewOn && B.showReviewOn()) openRateWizard(tourId, showId);
     else openRateShowSliders(tourId, showId);
   }
@@ -17552,6 +17583,7 @@
   // The ask itself: where the night was, and the two ways out. Rate the
   // show opens the same wizard the calendar's button does, on that show.
   function openRateAsk(tourId, s) {
+    if (!s || rateDone(tourId, s.id) === true) return;
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'How was the show?'),
@@ -17563,11 +17595,14 @@
       ];
     }, { label: 'Rate the show' });
   }
-  // The 0154 sheet, word for word: what a build ahead of 0165 still opens.
+  // The 0154 sheet: what a build ahead of 0165 still opens. Sent once, for
+  // good: it never opens on a show already rated, and a rating that lands
+  // while it is open (another phone) leaves nothing to send.
   function openRateShowSliders(tourId, showId) {
+    if (rateRefused(tourId, showId)) return;
     var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
     var CATS = [['crowd', 'Crowd'], ['venue', 'Venue'], ['city', 'City']];
-    var st = { busy: false, touched: false, seeded: false, waits: 0 };
+    var st = { busy: false, waits: 0 };
     var f = { crowd: 0, venue: 0, city: 0 };
     var host = h('div', { class: 'rt-host' });
     var foot = h('div', { class: 'stack' });
@@ -17583,11 +17618,6 @@
       var t = getTour(tourId) || {}, s = showNow() || {};
       var rows = rowsNow();
       var mine = (rows || []).filter(function (r) { return r.userId === uid; })[0];
-      // What you sent before, preselected once it arrives (unless you've tapped already).
-      if (mine && !st.seeded && !st.touched) {
-        st.seeded = true;
-        CATS.forEach(function (c) { if (G.num(mine[c[0]]) >= 1) f[c[0]] = G.num(mine[c[0]]); });
-      }
       // The band's rows may still be on their way: drawn again when they land.
       if (rows == null && st.waits < 20 && !st.busy) {
         st.waits += 1;
@@ -17595,7 +17625,7 @@
       }
       var kids = CATS.map(function (c) {
         return [h('p', { class: 'field-label' }, c[1]),
-          tenRow(f[c[0]], function (n) { if (st.busy) return; st.touched = true; f[c[0]] = n; draw(); }, c[1] + ', 1 to 10')];
+          tenRow(f[c[0]], function (n) { if (st.busy) return; f[c[0]] = n; draw(); }, c[1] + ', 1 to 10')];
       });
       var line = CATS.map(function (c) {
         var vals = (rows || []).map(function (r) { return G.num(r[c[0]]); }).filter(function (v) { return v >= 1; });
@@ -17610,16 +17640,24 @@
         m10 != null ? h('p', { class: 'note' }, 'Merch ' + m10 + ' of 10 · the app’s score, this night against the tour’s average.') : null));
       fillEl(host, kids);
       var any = f.crowd || f.venue || f.city;
-      fillEl(foot, [
+      fillEl(foot, mine && !st.busy ? [
+        h('p', { class: 'note' }, RATED_ONCE + '.'),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close')] : [
         h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || !any || null, onclick: send },
-          st.busy ? 'Sending…' : mine ? 'Save changes' : 'Send'),
+          st.busy ? 'Sending…' : 'Send'),
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now')]);
     }
     async function send() {
       if (st.busy || !(f.crowd || f.venue || f.city)) return;
+      if (rateRefused(tourId, showId)) return;
       st.busy = true; draw();
       try { await B.showRate(tourId, showId, f); }
-      catch (x) { st.busy = false; draw(); toast(x && x.code === 'offline' ? NO_SIGNAL : 'Couldn’t send that. Try again.'); return; }
+      catch (x) {
+        st.busy = false;
+        // Rated already after all (another phone): taken as rated, not as a failure.
+        if (x && x.code === 'already-rated') { closeSheet(); toast(RATED_ONCE); render(true); return; }
+        draw(); toast(x && x.code === 'offline' ? NO_SIGNAL : 'Couldn’t send that. Try again.'); return;
+      }
       closeSheet();
       toast('Sent to the band');
       render(true);
@@ -17630,7 +17668,7 @@
       return [
         h('h2', { class: 'sh-title' }, 'Rate the show'),
         h('p', { class: 'sh-sub' }, [[s.city, s.venue].filter(Boolean).join(' · '),
-          'The band sees this, nobody else. You can change it any time.'].filter(Boolean).join('. ')),
+          'The band sees this, nobody else. You rate each show once.'].filter(Boolean).join('. ')),
         host, foot
       ];
     }, { label: 'Rate the show' });
@@ -17721,8 +17759,10 @@
      nothing. Done builds the review with only the answered questions,
      shaped exactly as show_review_ok wants, mirrors crowd and venue into
      the old 1-10 ints (stars times two) so the 0154 averages stay alive,
-     and sends it all on the one show_ratings row. */
+     and sends it all on the one show_ratings row, once for good (0173): it
+     never opens on a show already rated, and checks again before sending. */
   function openRateWizard(tourId, showId) {
+    if (rateRefused(tourId, showId)) return;
     var B = window.GR_BACKEND;
     var at = 0, busy = false;
     var ans = {};
@@ -17751,6 +17791,7 @@
       if (busy) return;
       var review = buildReview();
       if (!Object.keys(review).length) { toast('Pick at least one answer first.'); return; }
+      if (rateRefused(tourId, showId)) return;
       busy = true; draw();
       // The old 1-10 ints mirror the three scores a review gives (venue is
       // the mean of the venue-based questions, city the area's stars, crowd
@@ -17765,6 +17806,9 @@
         // The column is not there after all (a build ahead of 0165): the
         // old sheet opens instead, and the session remembers.
         if (x && x.code === 'review-missing') { openRateShowSliders(tourId, showId); return; }
+        // Rated already after all (another phone, a double tap): taken as
+        // rated, not as a failure; the row redraws as Rated.
+        if (x && x.code === 'already-rated') { closeSheet(); toast(RATED_ONCE); render(true); return; }
         draw();
         toast(x && x.code === 'offline' ? NO_SIGNAL : 'Couldn’t send that. Try again.');
         return;
@@ -17848,11 +17892,9 @@
     openSheet(function () {
       var t = getTour(tourId) || {}, s = (G.isObj(t.shows) && t.shows[showId]) || {};
       return [
-        // Truthful for tonight and for an old show alike: the database lets
-        // the band change a rating any time (0154's update policy has no
-        // date rule), so no midnight clause.
+        // Said before the first answer: a rating stands once sent (0173).
         h('p', { class: 'sh-sub rw-where' }, [[s.city, s.venue].filter(Boolean).join(' · '),
-          'The band sees this, nobody else. You can change it any time.'].filter(Boolean).join('. ')),
+          'The band sees this, nobody else. You rate each show once.'].filter(Boolean).join('. ')),
         host
       ];
     }, { label: 'Rate the show', cls: 'rw-sheet' });

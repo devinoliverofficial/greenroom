@@ -2015,6 +2015,10 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .cal-row .where .city, .cal-row .where .venue { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 .cal-btn.ds-jump { background: none; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-2); }
 .cal-btn.idle { opacity: .55; }
+/* A show rated once, for good: a quiet word with its check, no pill, nothing
+   to tap. Bare of padding so it fits the 50px Rate column. */
+.cal-btn.cal-rated { display: inline-flex; align-items: center; gap: 2px; padding: 5px 0; background: none; color: var(--ink-2); cursor: default; }
+.cal-btn.cal-rated .ic { display: inline-flex; color: var(--pos); }
 .cal-btn.on { background: var(--brand); color: var(--on-brand);
   box-shadow: 0 0 14px color-mix(in oklab, var(--brand), transparent 40%); animation: bopulse 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .cal-btn.on { animation: none; } }
@@ -2697,7 +2701,7 @@ button.acct-row:active { background: var(--surface-2); }
 .am-li .fl-row { flex: 1; min-width: 0; }
 .am-more { position: relative; z-index: 1; display: flex; justify-content: center; margin: 14px 0 6px; }
 .vp-tabs.three .vp-tab { font-size: 14px; gap: 7px; }
-/* Four tabs on an artist page (the To Do List rides along): sized so all four fit a 375 wide phone. */
+/* Four tabs on an artist page (the To Do List rides along) or on someone's profile (Top 10 rides along): sized so all four fit a 375 wide phone. */
 .vp-tabs.four .vp-tab { font-size: 12px; gap: 4px; white-space: nowrap; padding-left: 2px; padding-right: 2px; }
 .vp-tabs.four .vp-tab .ic svg { width: 16px; height: 16px; }
 .avatar.photo .brand-logo { object-fit: cover; padding: 0; }
