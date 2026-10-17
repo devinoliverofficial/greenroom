@@ -54,6 +54,12 @@
   var tourSpotCache = {}, tourSpotAsk = {}, tourSpotGen = {}, spotKnown = null, spotProbing = false;
   var SPOT_COLS = 'id, tour_id, city, city_key, name, kind, note, created_at';
   var SPOT_KINDS = ['food', 'coffee', 'bar', 'club', 'to do', 'other'];
+  // Where a spot is (0175): whether the four columns are there (null until
+  // the table's probe answers), and the spot cards' details road: whether
+  // its two functions are there, and each spot's answer for the session.
+  var spotGeo = null, SPOT_GEO_COLS = ', lat, lon, address, osm_ref';
+  var sdKnown = null, sdProbing = false, sdCache = Object.create(null);
+  var SD_FRESH = 600e3;
   // Ratings (0154): everyone's stars on a venue (read back through
   // venue_card), the band's word on each night of a tour, and whether the
   // tables are there at all (null until the first ask answers; the answer is
@@ -2219,8 +2225,9 @@
        (asked once per session; false until it answers, so a build ahead of
        its migration simply shows nothing). followSpots: the spots the people
        this account follows have recommended in a town, newest first, each
-       { userId, who, city, name, kind, note } - at once from what this phone
-       holds (null while it's first being fetched). near is tonight's city as
+       { userId, who, city, name, kind, note } (and since 0175 the spot's id
+       and, when known, lat, lon, address, osmRef) - at once from what this
+       phone holds (null while it's first being fetched). near is tonight's city as
        the app writes it; the server reads only the town before the comma,
        and the answer is held ten minutes by that squeezed town. The read is
        the viewer's own: only their phone asks with their follows, and
@@ -2608,7 +2615,13 @@
       if (!session) throw err('unavailable');
       var row = spotRow(isObj(p) ? p : {});
       row.user_id = session.user.id;
-      var q = await sb.from('local_spots').insert(row).select(SPOT_COLS).single();
+      var q = await sb.from('local_spots').insert(row).select(spotCols()).single();
+      if (q.error && spotGeoGone(q.error)) {
+        // The where-it-is columns went away (0175 rolled back): the spot saves the way it always did.
+        row = spotRow(isObj(p) ? p : {});
+        row.user_id = session.user.id;
+        q = await sb.from('local_spots').insert(row).select(spotCols()).single();
+      }
       if (q.error) throw spotError(q.error);
       if (mySpotCache && mySpotCache.data) mySpotCache.data.push(spotShape(q.data));
       spotsStale(); emit('tours');
@@ -2617,7 +2630,16 @@
     spotSave: async function (id, patch) {
       if (!session) throw err('unavailable');
       var row = spotRow(isObj(patch) ? patch : {});
-      var q = await sb.from('local_spots').update(row).eq('id', id).select(SPOT_COLS);
+      // Only where-it-is changed, on a table without those columns: nothing to write.
+      var write = function () {
+        return Object.keys(row).length ? sb.from('local_spots').update(row).eq('id', id).select(spotCols())
+          : sb.from('local_spots').select(spotCols()).eq('id', id);
+      };
+      var q = await write();
+      if (q.error && spotGeoGone(q.error)) {
+        row = spotRow(isObj(patch) ? patch : {});
+        q = await write();
+      }
       if (q.error) throw spotError(q.error);
       if (!q.data || !q.data.length) throw err('permission'); // RLS said no
       if (mySpotCache && mySpotCache.data) {
@@ -2644,6 +2666,81 @@
       if (!c || c.stale || fresh || Date.now() - c.at > FLOWERS_FRESH) loadTourSpots(tourId, cityKey);
       return c ? c.data : null;
     },
+    /* Spot cards (0175). spotDetailsOn: are the two functions there (asked
+       once per session; false until it answers, so a build ahead of its
+       migration opens cards from what a row carries, with no details).
+       spotDetails(id, cb, face): what the server knows about one spot, by
+       ask-then-take: cb is called each time more is known (the card fills
+       in as it goes), with { spot: { id, lat, lon, address, osmRef },
+       userId, who, avatar (only when face is true), details: { website,
+       phone, hours, cuisine, area, street, postcode }, waiting }, and with
+       null when nothing came. A spot that did not know where it was is
+       looked up by its name and town first; then the map's details. The
+       ask answers at once from the server's caches when it can; a {wait}
+       is polled (twice after 400 milliseconds, then every 800, up to
+       sixteen looks); the house pace gate's {busy} is asked again after a
+       beat, four times at most. A finished answer is held ten minutes, and
+       a spot found on the way is written into the rows this phone holds. */
+    spotDetailsOn: function () {
+      if (sdKnown === null) sdProbe();
+      return sdKnown === true;
+    },
+    spotDetails: function (id, cb, face) {
+      id = Number(id);
+      if (!session || !(id > 0) || sdKnown === false) { cb(null); return; }
+      var c = sdCache[id];
+      if (c && c.done && Date.now() - c.at < SD_FRESH && (!c.data || !face || 'avatar' in c.data)) { cb(c.data); return; }
+      if (c && c.busy) { c.cbs.push(cb); if (c.data) cb(c.data); return; }
+      c = sdCache[id] = { data: c && c.data ? c.data : null, busy: true, done: false, at: 0, cbs: [cb] };
+      var tell = function () { c.cbs.forEach(function (f) { try { f(c.data); } catch (e) { /* a closed card */ } }); };
+      var end = function (done) {
+        c.busy = false; c.done = done; c.at = Date.now();
+        if (c.data) c.data.waiting = false;
+        tell(); c.cbs = [];
+      };
+      var looks = 0, busyTries = 0;
+      var took = function (a) {
+        if (!isObj(a) || a.none) { end(true); return; }
+        var d = c.data || {};
+        if (isObj(a.spot)) {
+          var sp = a.spot;
+          d.spot = { id: id, lat: typeof sp.lat === 'number' ? sp.lat : null, lon: typeof sp.lon === 'number' ? sp.lon : null,
+            address: String(sp.address || ''), osmRef: String(sp.osmRef || '') };
+          spotGeoKeep(id, d.spot);
+        }
+        if ('userId' in a) d.userId = a.userId;
+        if ('who' in a) d.who = String(a.who || '').trim() || 'Someone';
+        if ('avatar' in a) d.avatar = String(a.avatar || '');
+        if (isObj(a.details)) d.details = spotDetailShape(a.details);
+        d.waiting = a.wait != null || !!a.busy;
+        c.data = d;
+        if (a.wait != null && looks < 16) {
+          tell();
+          setTimeout(function () {
+            looks += 1;
+            sb.rpc('spot_details_take', { req_id: a.wait, spot_id: id, step: String(a.step || '') }).then(function (r) {
+              if (r.error) { if (fnMissing(r.error)) sdKnown = false; end(false); return; }
+              took(r.data);
+            }, function () { end(false); });
+          }, looks < 2 ? 400 : 800);
+          return;
+        }
+        if (a.busy && busyTries < 4) {
+          tell();
+          busyTries += 1;
+          setTimeout(ask, 1200);
+          return;
+        }
+        end(a.wait == null && !a.busy);
+      };
+      var ask = function () {
+        sb.rpc('spot_details_ask', { spot_id: id, face: !!face }).then(function (r) {
+          if (r.error) { if (fnMissing(r.error)) sdKnown = false; end(false); return; }
+          took(r.data);
+        }, function () { end(false); });
+      };
+      ask();
+    },
     /* Spots find places as they're typed (0164; near, 0166). placeSearchOn:
        are the two functions there (asked once per session; false until it
        answers, so a build ahead of its migration leaves the sheet typing
@@ -2658,7 +2755,8 @@
        hop the take itself hands back a FRESH wait ticket, and the poll
        simply carries on with that one. cb gets up to eight
        { name, kind, street, city, state, country } rows (kind is
-       OpenStreetMap's own word), or [] when nothing was found or no answer
+       OpenStreetMap's own word; since 0175 also postcode, lat, lon and
+       osmRef, the map's own id), or [] when nothing was found or no answer
        came. One search is in flight at a time: a newer call cancels the
        older poll, so a stale answer never lands. Answers are kept for the
        session by the squeezed lower-cased words plus the town, so retyping
@@ -3487,9 +3585,15 @@
         return null;
       }
       var rows = (Array.isArray(q.data) ? q.data : []).filter(isObj).slice(0, 40).map(function (r) {
-        return { userId: r.userId, who: String(r.who || '').trim() || 'Someone',
+        var it = { userId: r.userId, who: String(r.who || '').trim() || 'Someone',
           city: String(r.city || '').trim(), name: String(r.name || '').trim(),
           kind: String(r.kind || 'other'), note: String(r.note || '').trim() };
+        // Since 0175 each row also says which spot it is and where, so it opens its card.
+        if (r.id != null) it.id = r.id;
+        if (typeof r.lat === 'number' && typeof r.lon === 'number') { it.lat = r.lat; it.lon = r.lon; }
+        if (r.address) it.address = String(r.address);
+        if (r.osmRef) it.osmRef = String(r.osmRef);
+        return it;
       });
       return { data: rows };
     }).then(function (got) {
@@ -3874,14 +3978,62 @@
   // finds none, and the whole feature stays out of sight (spotsOn answers
   // false, so the app draws nothing). No signal: unanswered, asked again the
   // next time something draws.
+  // The same ask finds out whether a spot can say where it is (0175): a
+  // table without those columns answers column-missing, and spots simply
+  // read and save the way they always did.
   function spotProbe() {
     if (spotProbing || !session) return;
     spotProbing = true;
-    sb.from('local_spots').select('id').limit(1).then(function (q) {
+    sb.from('local_spots').select('id' + SPOT_GEO_COLS).limit(1).then(function (q) {
       spotProbing = false;
-      if (!q.error) { spotKnown = true; emit('tours'); }
+      if (!q.error) { spotGeo = true; spotKnown = true; emit('tours'); }
       else if (tableMissing(q.error)) spotKnown = false;
+      else if (columnMissing(q.error)) { spotGeo = false; spotKnown = true; emit('tours'); }
     }, function () { spotProbing = false; });
+  }
+  function spotCols() { return SPOT_COLS + (spotGeo === true ? SPOT_GEO_COLS : ''); }
+  /* ---- Spot cards (0175): what the server knows about one spot ---- */
+  // Is the function there? One ask per session, with spot 0: a database
+  // that has it answers {none} (no such spot, which is itself the answer,
+  // and nothing is asked of the map); one that does not says the function
+  // is missing, and cards open with what their row carries. No signal:
+  // unanswered, asked again the next time a card opens.
+  function sdProbe() {
+    if (sdProbing || !session) return;
+    sdProbing = true;
+    sb.rpc('spot_details_ask', { spot_id: 0 }).then(function (q) {
+      sdProbing = false;
+      if (q.error && fnMissing(q.error)) sdKnown = false;
+      else if (!q.error) { sdKnown = true; emit('tours'); }
+    }, function () { sdProbing = false; });
+  }
+  // The details the card shows, each a short plain string; a website only
+  // as a web address.
+  function spotDetailShape(d) {
+    var s = function (v, n) { return String(v == null ? '' : v).trim().slice(0, n); };
+    var web = s(d.website, 300);
+    return { website: /^https?:\/\/[^\s<>"]+$/i.test(web) ? web : '', phone: s(d.phone, 40), hours: s(d.hours, 255),
+      cuisine: s(d.cuisine, 80), area: s(d.area, 80), street: s(d.street, 120), postcode: s(d.postcode, 20) };
+  }
+  // A spot found on the way (looked up by name and town) is written into
+  // the rows this phone holds, so the next card opens knowing where it is.
+  function spotGeoKeep(id, g) {
+    if (!g || g.lat == null || g.lon == null) return;
+    var fix = function (x) {
+      if (!x || x.id !== id || x.lat != null) return;
+      x.lat = g.lat; x.lon = g.lon;
+      if (g.address && !x.address) x.address = g.address;
+      if (g.osmRef && !x.osmRef) x.osmRef = g.osmRef;
+    };
+    if (mySpotCache && mySpotCache.data) mySpotCache.data.forEach(fix);
+    Object.keys(tourSpotCache).forEach(function (k) { var t = tourSpotCache[k]; if (t && t.data) t.data.forEach(fix); });
+    Object.keys(fsCache).forEach(function (k) { var t = fsCache[k]; if (t && t.data) t.data.forEach(fix); });
+  }
+  // A read or write refused for the 0175 columns (the migration rolled
+  // back): spots go back to the columns they always had.
+  function spotGeoGone(e) {
+    if (spotGeo === true && columnMissing(e) && !tableMissing(e)) { spotGeo = false; return true; }
+    return false;
   }
   function spotsStale() {
     Object.keys(tourSpotCache).forEach(function (k) { tourSpotGen[k] = (tourSpotGen[k] || 0) + 1; if (tourSpotCache[k]) tourSpotCache[k].stale = true; });
@@ -3907,23 +4059,41 @@
     if ('kind' in p) row.kind = SPOT_KINDS.indexOf(String(p.kind || '')) >= 0 ? String(p.kind) : 'other';
     if ('note' in p) row.note = String(p.note || '').trim().slice(0, 240) || null;
     if ('tourId' in p) row.tour_id = p.tourId || null;
+    // Where it is (0175), only once the table has the columns: the two
+    // coordinates go as a pair or not at all, the map's id only in its own
+    // spelling ('N123').
+    if (spotGeo === true) {
+      if ('lat' in p || 'lon' in p) {
+        var la = p.lat, lo = p.lon;
+        var ok = typeof la === 'number' && typeof lo === 'number' && isFinite(la) && isFinite(lo) &&
+          Math.abs(la) <= 90 && Math.abs(lo) <= 180;
+        row.lat = ok ? la : null; row.lon = ok ? lo : null;
+      }
+      if ('address' in p) row.address = String(p.address || '').trim().slice(0, 160) || null;
+      if ('osmRef' in p) row.osm_ref = /^[NWR]\d{1,20}$/.test(String(p.osmRef || '')) ? String(p.osmRef) : null;
+    }
     return row;
   }
   function spotShape(r) {
-    return { id: r.id, tourId: r.tour_id || null, city: r.city || '', cityKey: r.city_key || '',
+    var it = { id: r.id, tourId: r.tour_id || null, city: r.city || '', cityKey: r.city_key || '',
       name: r.name || '', kind: r.kind || 'other', note: r.note || '', createdAt: r.created_at };
+    if (r.lat != null && r.lon != null) { it.lat = Number(r.lat); it.lon = Number(r.lon); }
+    if (r.address) it.address = String(r.address);
+    if (r.osm_ref) it.osmRef = String(r.osm_ref);
+    return it;
   }
   // Your own places, oldest first (the app groups them by city itself).
   function loadMySpots() {
     if (!session) return;
     var gen = mySpotGen, ask = mySpotAsk;
     if (ask && ask.gen === gen) return ask;
-    var p = sb.from('local_spots').select(SPOT_COLS).eq('user_id', session.user.id).order('created_at')
+    var p = sb.from('local_spots').select(spotCols()).eq('user_id', session.user.id).order('created_at')
       .then(function (q) {
         if (q.error) {
           // Not there yet: the feature goes quiet. Anything else (no signal):
           // what was held stands, and the next draw asks again.
           if (tableMissing(q.error)) { spotKnown = false; mySpotCache = null; emit('tours'); }
+          else if (spotGeoGone(q.error)) emit('tours');
           return null;
         }
         return (q.data || []).map(spotShape);
@@ -3943,13 +4113,14 @@
     var k = tourId + '|' + String(cityKey || '');
     var gen = tourSpotGen[k] || 0, ask = tourSpotAsk[k];
     if (ask && ask.gen === gen) return ask;
-    var p = sb.from('local_spots').select(SPOT_COLS + ', user_id')
+    var p = sb.from('local_spots').select(spotCols() + ', user_id')
       .eq('tour_id', tourId).eq('city_key', String(cityKey || '')).order('created_at')
       .then(function (q) {
         if (q.error) {
           // Not there yet: the feature goes quiet. Anything else (no signal):
           // what was held stands, and the next draw asks again.
           if (tableMissing(q.error)) { spotKnown = false; delete tourSpotCache[k]; emit('tours'); }
+          else if (spotGeoGone(q.error)) emit('tours');
           return null;
         }
         var rows = q.data || [], ids = [];

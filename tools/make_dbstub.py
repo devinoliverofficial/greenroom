@@ -1170,13 +1170,15 @@ shim = r"""<script>
     return 'two lists seeded, one task assigned to the test person on each';
   };
   try { if (/[?&]todos\b/.test(String(location.search || ''))) window.__harness.todos(); } catch (e) { /* no address to read */ }
-  /* ---- FAVORITE LOCAL SPOTS (0153): the profile's Spots tab, and PLACES RECOMMENDED BY TOUR on the day sheet ----
+  /* ---- FAVORITE LOCAL SPOTS (0153): the profile's Spots tab, and TOUR SPOTS on the day sheet ----
      The database table local_spots is __harness.spotRows here
-     ([{ id, userId, tourId, city, name, kind, note, createdAt }]). The
+     ([{ id, userId, tourId, city, name, kind, note, createdAt }, and since
+     0175 lat, lon, address, osmRef when the spot knows where it is]). The
      profile tab holds the test person's own rows (u-devin); the day sheet's
-     PLACES RECOMMENDED BY TOUR holds every row pinned to the open tour whose
-     city keys like the day's city (GR.roadCityKey, the counting rules' own
-     spelling), with each saver's first name.
+     TOUR SPOTS (the heading green with the tab's heart, each row its
+     recommender's photo from __harness.faces) holds every row pinned to the
+     open tour whose city keys like the day's city (GR.roadCityKey, the
+     counting rules' own spelling), with each saver's first name.
        __harness.spots()    seeds tonight's Austin with places from two
                             people: two of the test person's (one shared with
                             the tour, one kept to themselves) and two of
@@ -1199,6 +1201,44 @@ shim = r"""<script>
        __harness.spotsOff = true   the probe answers as with no table (a
                             build ahead of its migration): no Spots tab on
                             the profile and no block on any day sheet.
+     SPOT CARDS (0175): a tap on any spot row (the Spots tab inside an open
+     city, the day sheet's TOUR SPOTS, Today's spots from people you follow)
+     opens the spot's card: the name big, kind and neighbourhood, Walk /
+     Website / Call, the Hours and Distance facts, the address, the week's
+     hours, the phone and site, who recommended it with their photo and
+     note, and Edit spot on your own. The server's details road
+     (spot_details_ask/take) is played by spotDetails here: the first open
+     of a spot in a session answers what the row has with "Looking up the
+     details…" and fills in after __harness.spotDetailsBeat ms (600 by
+     default; 0 for at once); a spot with no lat/lon is looked up in
+     __harness.placeRows by its exact name in its own town, as the server's
+     look-up does, and the details come from __harness.placeDetails by the
+     map's id (osmRef). With ?spots: Veracruz All Natural knows where it is
+     and has every detail (Open or Closed by the clock, since tonight's town
+     is Austin); Houndstooth Coffee and Hotel Vegas are found on open (Hotel
+     Vegas' hours run past midnight); Barton Springs Pool is found but the
+     map has no details for it (no Website, no Call, no Hours); The
+     Churchill in Phoenix is not found at all (Walk goes by its name and
+     town, no Distance, no credit line).
+       __harness.here(lat, lon, state)   the phone's location for the cards:
+                            here(30.2669, -97.7428) is downtown Austin with
+                            location already allowed (Distance and the Walk
+                            minutes show at once); here(30.2669, -97.7428,
+                            'prompt') has the phone not asked yet (the card
+                            shows a green How far? that asks on a tap, then
+                            fills in); here(null) is location turned off (no
+                            Distance at all). Or open the page with ?here
+                            (allowed) or ?hereask (not asked yet). Without
+                            any of these the browser's own location is used.
+       __harness.placeDetails   { osmRef: { website, phone, hours, cuisine,
+                            area, street, postcode } }, change by hand.
+       __harness.spotDetailAsks  every card's ask: [{ id, face }] (face is
+                            true when the card had no photo for the
+                            recommender and asked the server for it).
+       __harness.spotDetailsOff = true   the road answers as with no 0175:
+                            cards open from what the row carries, no details.
+       __harness.faces      { userId: photo } for the day sheet's crew photos
+                            (the tour_faces answer); ?spots seeds Brent's.
      FINDING PLACES AS YOU TYPE (0164, NEAR THE CITY since 0166): the
      Add/Edit spot sheet's Name field searches once three characters are
      down, and a quiet list drops under the field (name over street and
@@ -1263,14 +1303,43 @@ shim = r"""<script>
   // A row the way the real backend hands one over (the key worked out from
   // the city with the one rule, as the database's trigger keeps it).
   function spotOut(r) {
-    return { id: r.id, tourId: r.tourId || null, city: r.city, cityKey: window.GR.roadCityKey(String(r.city).split(',')[0]),
+    var it = { id: r.id, tourId: r.tourId || null, city: r.city, cityKey: window.GR.roadCityKey(String(r.city).split(',')[0]),
       name: r.name, kind: r.kind, note: r.note || '', createdAt: r.createdAt };
+    // Where it is (0175), when the row knows.
+    if (typeof r.lat === 'number' && typeof r.lon === 'number') { it.lat = r.lat; it.lon = r.lon; }
+    if (r.address) it.address = r.address;
+    if (r.osmRef) it.osmRef = r.osmRef;
+    return it;
+  }
+  // Where a spot is, as a save hands it over (0175): kept as the table keeps it.
+  function spotWhere(row, p) {
+    if ('lat' in p || 'lon' in p) {
+      var ok = typeof p.lat === 'number' && typeof p.lon === 'number';
+      row.lat = ok ? p.lat : undefined; row.lon = ok ? p.lon : undefined;
+    }
+    if ('address' in p) row.address = String(p.address || '').slice(0, 160);
+    if ('osmRef' in p) row.osmRef = /^[NWR]\d{1,20}$/.test(String(p.osmRef || '')) ? p.osmRef : '';
+  }
+  // The server's look-up by name and town for a spot that does not know
+  // where it is, played on __harness.placeRows: the exact name in its own town.
+  function spotFind(row) {
+    if (typeof row.lat === 'number' || row.osmRef) return;
+    var G = window.GR, town = G.roadCityKey(String(row.city || '').split(',')[0]);
+    var hit = (window.__harness.placeRows || []).filter(function (p) {
+      return String(p.name || '').toLowerCase() === String(row.name || '').toLowerCase() &&
+        G.roadCityKey(String(p.city || '')) === town && typeof p.lat === 'number';
+    })[0];
+    if (!hit) return;
+    row.lat = hit.lat; row.lon = hit.lon;
+    row.address = [hit.street, hit.postcode].filter(Boolean).join(', ');
+    row.osmRef = hit.osmRef || '';
   }
   window.__harness.spots = function () {
     var H = window.__harness;
     var now = new Date().toISOString();
     H.spotRows = [
-      { id: 1, userId: 'u-devin', tourId: 't1', city: 'Austin, TX', name: 'Veracruz All Natural', kind: 'food', note: 'Migas tacos, ten minutes from the venue', createdAt: now },
+      { id: 1, userId: 'u-devin', tourId: 't1', city: 'Austin, TX', name: 'Veracruz All Natural', kind: 'food', note: 'Migas tacos, ten minutes from the venue', createdAt: now,
+        lat: 30.2557, lon: -97.7238, address: '1704 East Cesar Chavez Street, 78702', osmRef: 'N1001' },
       { id: 2, userId: 'u-devin', tourId: null, city: 'Austin, TX', name: 'Houndstooth Coffee', kind: 'coffee', note: 'Quiet in the morning', createdAt: now },
       { id: 3, userId: 'u-brent', tourId: 't1', city: 'Austin, TX', name: 'Hotel Vegas', kind: 'bar', note: 'Patio after load out', createdAt: now },
       { id: 4, userId: 'u-brent', tourId: 't1', city: 'Austin, TX', name: 'Barton Springs Pool', kind: 'to do', note: 'Cold water, best on a day off', createdAt: now },
@@ -1279,6 +1348,19 @@ shim = r"""<script>
       { id: 5, userId: 'u-devin', tourId: 't1', city: 'Phoenix, AZ', name: 'The Churchill', kind: 'club', note: '', createdAt: new Date(Date.now() - 864e5).toISOString() }
     ];
     H.spotNext = 6;
+    H.spotDetailSeen = {};
+    // What the map knows (0175), by its id; Barton Springs (W1004) has nothing.
+    H.placeDetails = {
+      N1001: { website: 'https://example.com/veracruz', phone: '+1 512-555-0142', hours: 'Mo-Su 07:00-15:00',
+        cuisine: 'mexican', area: 'East Cesar Chavez', street: '1704 East Cesar Chavez Street', postcode: '78702' },
+      N1002: { website: 'https://example.com/houndstooth', hours: 'Mo-Fr 07:00-18:00; Sa,Su 08:00-18:00', cuisine: 'coffee_shop', area: 'Rosedale' },
+      N1003: { phone: '+1 512-555-0187', hours: 'Mo-Th 17:00-00:00; Fr,Sa 15:00-02:00; Su 15:00-00:00', area: 'East Austin' },
+      N1201: { hours: 'Mo-Su 16:00-02:00', area: 'East Austin' }
+    };
+    // Brent's profile photo, the way the tour's faces answer carries one.
+    H.faces = Object.assign({}, H.faces, { 'u-brent': 'data:image/svg+xml,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="#3a6ea5"/>' +
+      '<circle cx="20" cy="15" r="7" fill="#f1d2b6"/><rect x="8" y="25" width="24" height="15" rx="8" fill="#22303f"/></svg>') });
     // (No word of its own on the real thing; here the nudge just redraws open pages.)
     H.poke('spots');
     return 'Austin seeded from two people, one Phoenix spot a day older';
@@ -1291,8 +1373,9 @@ shim = r"""<script>
   window.__harness.followSpots = function () {
     var H = window.__harness;
     H.followSpotRows = [
-      { userId: 'u-rosa', who: 'Rosa Vane', city: 'Austin', name: 'Nickel City', kind: 'bar', note: 'Frozen Irish coffee after the show', createdAt: new Date().toISOString() },
-      { userId: 'u-theo', who: 'Theo Marsh', city: 'Austin', name: 'Cenote', kind: 'coffee', note: '', createdAt: new Date(Date.now() - 864e5).toISOString() }
+      { id: 901, userId: 'u-rosa', who: 'Rosa Vane', city: 'Austin', name: 'Nickel City', kind: 'bar', note: 'Frozen Irish coffee after the show', createdAt: new Date().toISOString(),
+        lat: 30.2697, lon: -97.7222, address: '1133 East 11th Street, 78702', osmRef: 'N1201' },
+      { id: 902, userId: 'u-theo', who: 'Theo Marsh', city: 'Austin', name: 'Cenote', kind: 'coffee', note: '', createdAt: new Date(Date.now() - 864e5).toISOString() }
     ];
     // (No word of its own on the real thing; here the nudge just redraws open pages.)
     H.poke('followspots');
@@ -1302,17 +1385,43 @@ shim = r"""<script>
   // The places typing can find (0164), there from the start so the Name
   // field's list can be seen without a switch. Rows the shape the real take
   // hands over; kind is OpenStreetMap's own word.
+  // Since 0175 each also says where it is: postcode, lat, lon and the map's id.
   window.__harness.placeRows = [
-    { name: 'Voodoo Doughnut', kind: 'pastry', street: '22 Southwest 3rd Avenue', city: 'Portland', state: 'Oregon', country: 'United States' },
-    { name: 'Voodoo Doughnut', kind: 'pastry', street: '212 East 6th Street', city: 'Austin', state: 'Texas', country: 'United States' },
-    { name: 'Voodoo Brewing', kind: 'bar', street: '215 Arch Street', city: 'Meadville', state: 'Pennsylvania', country: 'United States' },
-    { name: 'Veracruz All Natural', kind: 'restaurant', street: '1704 East Cesar Chavez Street', city: 'Austin', state: 'Texas', country: 'United States' },
-    { name: 'Houndstooth Coffee', kind: 'cafe', street: '4200 North Lamar Boulevard', city: 'Austin', state: 'Texas', country: 'United States' },
-    { name: 'Hotel Vegas', kind: 'bar', street: '1502 East 6th Street', city: 'Austin', state: 'Texas', country: 'United States' },
-    { name: 'Berghain', kind: 'nightclub', street: 'Am Wriezener Bahnhof', city: 'Berlin', state: '', country: 'Germany' },
-    { name: 'Barton Springs Pool', kind: 'park', street: '', city: 'Austin', state: 'Texas', country: 'United States' },
-    { name: 'Powell’s City of Books', kind: 'books', street: '1005 West Burnside Street', city: 'Portland', state: 'Oregon', country: 'United States' }
+    { name: 'Voodoo Doughnut', kind: 'pastry', street: '22 Southwest 3rd Avenue', city: 'Portland', state: 'Oregon', country: 'United States', postcode: '97204', lat: 45.5226, lon: -122.6731, osmRef: 'N1101' },
+    { name: 'Voodoo Doughnut', kind: 'pastry', street: '212 East 6th Street', city: 'Austin', state: 'Texas', country: 'United States', postcode: '78701', lat: 30.2672, lon: -97.7408, osmRef: 'N1102' },
+    { name: 'Voodoo Brewing', kind: 'bar', street: '215 Arch Street', city: 'Meadville', state: 'Pennsylvania', country: 'United States', postcode: '16335', lat: 41.6407, lon: -80.1514, osmRef: 'N1103' },
+    { name: 'Veracruz All Natural', kind: 'restaurant', street: '1704 East Cesar Chavez Street', city: 'Austin', state: 'Texas', country: 'United States', postcode: '78702', lat: 30.2557, lon: -97.7238, osmRef: 'N1001' },
+    { name: 'Houndstooth Coffee', kind: 'cafe', street: '4200 North Lamar Boulevard', city: 'Austin', state: 'Texas', country: 'United States', postcode: '78756', lat: 30.3082, lon: -97.7395, osmRef: 'N1002' },
+    { name: 'Hotel Vegas', kind: 'bar', street: '1502 East 6th Street', city: 'Austin', state: 'Texas', country: 'United States', postcode: '78702', lat: 30.2629, lon: -97.7276, osmRef: 'N1003' },
+    { name: 'Berghain', kind: 'nightclub', street: 'Am Wriezener Bahnhof', city: 'Berlin', state: '', country: 'Germany', postcode: '10243', lat: 52.5111, lon: 13.443, osmRef: 'W1104' },
+    { name: 'Barton Springs Pool', kind: 'park', street: '', city: 'Austin', state: 'Texas', country: 'United States', postcode: '', lat: 30.264, lon: -97.7713, osmRef: 'W1004' },
+    { name: 'Powell’s City of Books', kind: 'books', street: '1005 West Burnside Street', city: 'Portland', state: 'Oregon', country: 'United States', postcode: '97209', lat: 45.5231, lon: -122.6812, osmRef: 'W1105' }
   ];
+  /* The phone's location for spot cards (0175): see SPOT CARDS under
+     FAVORITE LOCAL SPOTS. Plays the browser's own location and its
+     permission answer: 'granted' answers at once, 'prompt' answers the
+     How far? tap (and is 'granted' after), a null lat is location off. */
+  window.__harness.here = function (lat, lon, state) {
+    var st = lat == null ? 'denied' : (state || 'granted');
+    var pos = lat == null ? null : { coords: { latitude: lat, longitude: lon, accuracy: 30 } };
+    try {
+      navigator.geolocation.getCurrentPosition = function (ok, fail) {
+        setTimeout(function () {
+          if (pos) { st = 'granted'; ok(pos); } else if (fail) fail({ code: 1, message: 'User denied Geolocation' });
+        }, 300);
+      };
+      if (navigator.permissions) {
+        navigator.permissions.query = function (d) {
+          return Promise.resolve({ state: d && d.name === 'geolocation' ? st : 'prompt' });
+        };
+      }
+    } catch (e) { return 'this browser would not take the stand-in'; }
+    return pos ? 'the phone is at ' + lat + ', ' + lon + ' (' + st + ')' : 'location is off';
+  };
+  try {
+    if (/[?&]here\b/.test(String(location.search || ''))) window.__harness.here(30.2669, -97.7428);
+    else if (/[?&]hereask\b/.test(String(location.search || ''))) window.__harness.here(30.2669, -97.7428, 'prompt');
+  } catch (e) { /* no address to read */ }
   /* ---- ALSO IN TOWN TONIGHT (0157): the night's other concerts on the day sheet ----
      The database's little cache and its two functions are played by
      __harness.cityEventRows here ({ showId: [{ name, venue, time, url }] }).
@@ -2290,7 +2399,7 @@ shim = r"""<script>
       return Promise.resolve({ following: [Object.assign(row('u-brent'), { iFollow: true })], crew: [row('u-jeff')],
         artists: (window.__harness.acts || []).map(function (a) { return { id: a.id, handle: a.handle, name: a.name, avatar: '' }; }) });
     },
-    facesFor: function () { return {}; },
+    facesFor: function () { return window.__harness.faces || {}; },
     removeEndorsement: function (eid) { var H = window.__harness; H.devinActs = devinActs().filter(function (x) { return x.eid !== eid; }); return Promise.resolve(); },
     endorse: function (aid, uid) { var H = window.__harness, a = (H.acts || []).filter(function (x) { return x.id === aid; })[0]; if (a) a.members.forEach(function (m) { if (m.userId === uid) m.endorsed = true; }); return Promise.resolve(); },
     /* Square, in memory (MODEL7MERCH): connected to the sandbox with two test nights. */
@@ -3102,9 +3211,11 @@ shim = r"""<script>
       H.spotRows = H.spotRows || [];
       var id = H.spotNext || 100;
       H.spotNext = id + 1;
-      H.spotRows.push({ id: id, userId: 'u-devin', tourId: q.tourId || null, city: String(q.city || '').slice(0, 60),
+      var row = { id: id, userId: 'u-devin', tourId: q.tourId || null, city: String(q.city || '').slice(0, 60),
         name: String(q.name || '').slice(0, 80), kind: q.kind || 'other', note: String(q.note || '').slice(0, 240),
-        createdAt: new Date().toISOString() });
+        createdAt: new Date().toISOString() };
+      spotWhere(row, q);
+      H.spotRows.push(row);
       return Promise.resolve(id);
     },
     spotSave: function (id, patch) {
@@ -3116,6 +3227,7 @@ shim = r"""<script>
       if ('kind' in p) row.kind = p.kind || 'other';
       if ('note' in p) row.note = String(p.note || '').slice(0, 240);
       if ('tourId' in p) row.tourId = p.tourId || null;
+      spotWhere(row, p);
       return Promise.resolve();
     },
     spotDrop: function (id) {
@@ -3136,6 +3248,37 @@ shim = r"""<script>
         return it;
       });
     },
+    /* Spot cards (0175), in memory: see SPOT CARDS under FAVORITE LOCAL
+       SPOTS. spotDetails answers the way the live road does: at once with
+       what the spot is, then (the first open of a spot in a session) after
+       __harness.spotDetailsBeat ms with where it is (found in
+       __harness.placeRows by exact name in its own town when it did not
+       know) and the map's details from __harness.placeDetails. */
+    spotDetailsOn: function () { return !window.__harness.spotDetailsOff; },
+    spotDetails: function (id, cb, face) {
+      var H = window.__harness;
+      (H.spotDetailAsks = H.spotDetailAsks || []).push({ id: id, face: !!face });
+      if (H.spotDetailsOff) { cb(null); return; }
+      var row = (H.spotRows || []).filter(function (r) { return r.id === id; })[0] ||
+        (H.followSpotRows || []).filter(function (r) { return r.id === id; })[0];
+      if (!row) { cb(null); return; }
+      var answer = function (waiting) {
+        var o = { spot: { id: id, lat: typeof row.lat === 'number' ? row.lat : null, lon: typeof row.lon === 'number' ? row.lon : null,
+          address: row.address || '', osmRef: row.osmRef || '' }, userId: row.userId,
+          who: row.who || todoName(row.userId) || 'Someone', waiting: waiting };
+        if (face) o.avatar = (H.faces && H.faces[row.userId]) || '';
+        var d = !waiting && row.osmRef && H.placeDetails && H.placeDetails[row.osmRef];
+        if (d) o.details = JSON.parse(JSON.stringify(d));
+        else if (!waiting && row.osmRef) o.details = {};
+        return o;
+      };
+      H.spotDetailSeen = H.spotDetailSeen || {};
+      var beat = H.spotDetailsBeat == null ? 600 : H.spotDetailsBeat;
+      if (H.spotDetailSeen[id] || !beat) { H.spotDetailSeen[id] = true; spotFind(row); cb(answer(false)); return; }
+      H.spotDetailSeen[id] = true;
+      cb(answer(true));
+      setTimeout(function () { spotFind(row); cb(answer(false)); }, beat);
+    },
     /* Spots ride the following (0169), in memory: see SPOTS FROM PEOPLE YOU
        FOLLOW under FAVORITE LOCAL SPOTS. __harness.followSpotRows play the
        live function's own answer; followSpots(near) hands back the rows
@@ -3152,7 +3295,13 @@ shim = r"""<script>
       }).slice().sort(function (a, b) {
         return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
       }).map(function (r) {
-        return { userId: r.userId, who: r.who || 'Someone', city: r.city, name: r.name, kind: r.kind || 'other', note: r.note || '' };
+        var it = { userId: r.userId, who: r.who || 'Someone', city: r.city, name: r.name, kind: r.kind || 'other', note: r.note || '' };
+        // Since 0175: which spot it is, and where when known.
+        if (r.id != null) it.id = r.id;
+        if (typeof r.lat === 'number' && typeof r.lon === 'number') { it.lat = r.lat; it.lon = r.lon; }
+        if (r.address) it.address = r.address;
+        if (r.osmRef) it.osmRef = r.osmRef;
+        return it;
       });
     },
     /* Finding places as you type (0164, near a town since 0166), in memory:
