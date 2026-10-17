@@ -2516,6 +2516,15 @@ button.ivc-row:active { background: var(--surface-2); }
   .splash-note.quick .sn-card { transform: none; transition: opacity .12s ease; }
   .splash-note.quick.on .hs-horn { animation: none; }
 }
+/* The bus call and rate-the-show asks: the same splash, held until it is answered. The screen dims as a sheet's
+   does, the big words come down a size so "BUS CALL 30MIN." keeps to one line at 375px, and the two buttons are
+   the only things on it that take a tap (none at all while it fades). */
+.splash-note.night-ask { padding: 0 16px; }
+.splash-note.night-ask.on { background: var(--scrim); pointer-events: auto; }
+.splash-note.night-ask .sn-card { width: 100%; max-width: 360px; padding: 26px 8px; text-align: center; }
+.splash-note.night-ask .sn-big { font-size: 28px; line-height: 1.2; }
+.na-line { display: block; }
+.na-btns { display: grid; gap: 10px; width: 100%; max-width: 280px; margin-top: 14px; }
 /* A charge that has just been added or set aside holds its place for a quarter of a second (LEAVE_MS in
    app.js): it fades, and only then closes up. A quick second tap so lands on the row that is leaving, where
    nothing answers, and not on the next row sliding up under the finger. The app sets the height it closes

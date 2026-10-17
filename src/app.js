@@ -18177,51 +18177,154 @@
     if (B && B.showReviewOn && B.showReviewOn()) openRateWizard(tourId, showId);
     else openRateShowSliders(tourId, showId);
   }
-  /* The ask on opening the app (Devin, 2026-10-16, evening: "I actually
-     think the rating prompt should happen an hour after the bands set
-     ends"). For the band on the live tour alone: when an hour has passed
-     since the band's own set ended by the most recent played show's day
-     sheet (rateSetEndPassed below - and when that sheet has no readable set
-     end for the band, the older bus-call rule still carries show nights
-     without set times) and this account hasn't rated that show, a small
-     sheet offers the wizard. The phone remembers it asked, per tour and
-     show, the moment the sheet opens: answered, Not now or swiped away, it
-     never nags twice. It waits out the intro and the day's countdown
-     splash, and steps aside if some other sheet is already up (the next
-     open asks instead). */
-  /* The ask on opening the app at bus call (Devin, 2026-10-16: "When bus
-     call hits on everyones app when you open it should prompt 'Bus Check
-     In' splash prompt"): a rider on today's list who hasn't said On Bus,
-     with the bus call passed, gets the Bus Check In sheet itself on open -
-     once per tour day per phone, after the intro and the splashes, never
-     over another sheet. It goes first; a rating ask waits for the next
-     open when this one fires. */
-  var busAskLive = false;
+  /* The two asks of a show night, as splashes (Devin, 2026-10-17: "30min
+     before bus call their needs to be a splash effect that happens when you
+     open the app that says 'BUS CALL 30MIN. CHECK IN?' - This also happens
+     at bus call if someone didn't already check in", and "a splash effect
+     to be prompted an hour after set time to rate the show"). Each rises
+     when the app opens, when it comes back to the front, and while it is
+     open at the moment itself (nightAskTick below). The phone remembers
+     each ask the moment it rises: answered or not, it never asks twice.
+     They wait out the opening drive-by and any other splash, never rise
+     under a finger, over a sheet or the Tasks deck, or while someone types
+     (the next look asks instead), and the bus ask goes first: the rating waits until it is
+     done, and a few seconds more, so the two never land back to back.
+
+     BUS CALL: a rider on today's bus list (riding the bus, and not yet On
+     bus today) gets "BUS CALL 30MIN. CHECK IN?" from thirty minutes before
+     today's bus call, then "BUS CALL. CHECK IN?" from the bus call on if
+     still not aboard; each once per tour day per phone, live tours only.
+     Check in says On bus, exactly as the bus sheet's On Bus does (WE ARE A
+     BUS included, busSayWord). The time reads on the show night's clock:
+     a 1:30 AM bus call belongs to the night before, and so does a phone
+     opened at 1:05 AM (G.busCallLeft). This replaces the at-bus-call ask
+     of 2026-10-16, which opened the Bus Check In sheet itself.
+
+     RATE THE SHOW: for the band on the live tour alone, an hour after the
+     band's own set ended by the most recent played show's day sheet
+     (rateSetEndPassed below - and when that sheet has no readable set end
+     for the band, the older bus-call rule still carries show nights
+     without set times), when this account hasn't rated that show: "RATE
+     THE SHOW?" over the city and venue, Rate (the wizard) or Not now. Once
+     per tour and show per phone. */
+  var nightAskEl = null, nightAskClosed = 0;
+  // The opening drive-by, another splash (or one just answered), or a finger mid-tap.
+  function nightAskBlocked() {
+    return !!(document.getElementById('gr-splash') || document.querySelector('.splash-note') ||
+      (fingerDown && Date.now() - fingerDown < 4000) || Date.now() - nightAskClosed < 15000);
+  }
+  // A sheet or the Tasks deck is up, or someone is typing: the ask steps aside for the next look.
+  function nightAskBusy() {
+    var a = document.activeElement;
+    return !!(sheet || document.querySelector('.deck') || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)));
+  }
+  /* The splash itself: the dimmed screen and big glowing words of INVITE
+     SENT and the countdown, waiting for an answer. Its two buttons are the
+     only things on it that take a tap. o: label, big (the lines of the big
+     words), sub, yes, busyYes (the yes button's words while it works), no,
+     onYes (resolving false keeps the splash up, for a save that failed). */
+  function nightAskSplash(o) {
+    if (nightAskEl) return;
+    var busy = false, el, yes, no;
+    var close = function () {
+      if (nightAskEl !== el) return;
+      nightAskEl = null;
+      nightAskClosed = Date.now();
+      el.classList.remove('on');
+      setTimeout(function () { el.remove(); }, 300);
+    };
+    yes = h('button', { class: 'btn primary block', type: 'button', onclick: async function () {
+      if (busy) return;
+      busy = true;
+      yes.disabled = true; no.disabled = true;
+      if (o.busyYes) yes.textContent = o.busyYes;
+      var stay = false;
+      try { stay = (await o.onYes()) === false; } catch (e) { stay = true; }
+      busy = false;
+      if (stay && nightAskEl === el) {
+        yes.disabled = false; no.disabled = false;
+        yes.textContent = o.yes;
+        return;
+      }
+      close();
+    } }, o.yes);
+    no = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { if (!busy) close(); } }, o.no);
+    el = h('div', { class: 'splash-note night-ask', role: 'dialog', 'aria-modal': 'true', 'aria-label': o.label },
+      h('div', { class: 'sn-card' },
+        h('div', { class: 'sn-big' }, o.big.map(function (x) { return h('span', { class: 'na-line' }, x); })),
+        o.sub ? h('div', { class: 'sn-sub' }, o.sub) : null,
+        h('div', { class: 'na-btns' }, yes, no)));
+    nightAskEl = el;
+    document.body.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('on'); });
+  }
+  // Which bus call ask is due: 'soon' from thirty minutes before today's bus
+  // call, 'call' from the bus call on, '' before then or with no time set.
+  function busAskStage(busCall) {
+    var left = G.busCallLeft(busCall);
+    if (left == null || left > 30) return '';
+    return left > 0 ? 'soon' : 'call';
+  }
+  function busAskKey(id, stage) {
+    return (stage === 'soon' ? 'gr-busask30:' : 'gr-busask:') + id + ':' + G.tourToday();
+  }
+  /* Aboard today: neither bus call ask comes again on this phone today. Kept
+     on the phone because the database keeps each word under the phone's
+     calendar date, so after midnight a word said before it reads as none. */
+  function busAskSettle(id) {
+    try {
+      localStorage.setItem(busAskKey(id, 'soon'), '1');
+      localStorage.setItem(busAskKey(id, 'call'), '1');
+    } catch (e) { /* at most one ask more */ }
+  }
+  var busAskLive = false, busAskQuiet = {};
   function maybeBusAsk(id, t) {
     if (busAskLive || !t || !tourIsLive(t) || !busOn()) return;
     var B = window.GR_BACKEND, me = B.uid ? B.uid() : null;
     var today = G.tourToday();
     var s = G.rows(t.shows).filter(function (x) { return x.date === today; })[0];
     var busCall = s && G.isObj(s.daySheet) ? s.daySheet.busCall : '';
-    if (!busCallDue(busCall)) return;
-    var key = 'gr-busask:' + id + ':' + today;
+    var stage = busAskStage(busCall);
+    if (!stage) return;
+    var key = busAskKey(id, stage);
+    if (busAskQuiet[key]) return;
     try { if (localStorage.getItem(key)) return; } catch (e) { return; }
     busAskLive = true;
     var tries = 0, clear = 0;
     var show = function () {
       if (tries++ > 40) { busAskLive = false; return; }
-      if (document.getElementById('gr-splash') || document.querySelector('.splash-note')) { clear = 0; setTimeout(show, 600); return; }
+      // Two clear looks in a row, so a splash a beat from landing isn't walked over.
+      if (nightAskBlocked()) { clear = 0; setTimeout(show, 600); return; }
       if (clear++ < 1) { setTimeout(show, 600); return; }
-      if (sheet) { busAskLive = false; return; } // something else is up: the next open asks
+      if (nightAskBusy()) { busAskLive = false; return; }
       var data = B.busList(id); // null while the words are on their way
       if (data == null) { setTimeout(show, 600); return; }
       busAskLive = false;
       var mine = ((data && data.people) || []).filter(function (p) { return p.userId === me; })[0];
-      if (!mine || busWordToday(mine) === 'on') return; // not a rider, or already aboard
+      if (!mine) { busAskQuiet[key] = true; return; } // not riding the bus
+      if (busWordToday(mine) === 'on') { busAskSettle(id); return; } // already aboard
       try { localStorage.setItem(key, '1'); } catch (e) { return; }
-      openBusSheet(id, busCall);
+      openBusAsk(id, stage);
     };
     setTimeout(show, 450);
+  }
+  function openBusAsk(id, stage) {
+    nightAskSplash({
+      label: 'Bus call. Check in?',
+      big: stage === 'soon' ? ['BUS CALL 30MIN.', 'CHECK IN?'] : ['BUS CALL.', 'CHECK IN?'],
+      yes: 'Check in', busyYes: 'Checking in…', no: 'Not yet',
+      onYes: async function () {
+        try { await busSayWord(id, 'on'); }
+        catch (e) {
+          if (!busOn()) return true; // the table went away: the splash goes quietly
+          toast('Couldn’t save that. Try again.');
+          return false;
+        }
+        toast('You’re on the bus');
+        render(true);
+        return true;
+      }
+    });
   }
   var rateAskLive = false;
   function maybeRateAsk(id, t) {
@@ -18238,20 +18341,46 @@
     var tries = 0, clear = 0;
     var show = function () {
       if (tries++ > 40) { rateAskLive = false; return; }
-      // The intro overlay and the countdown splash go first; two clear looks
-      // in a row, so a splash a beat from landing isn't walked over.
-      if (document.getElementById('gr-splash') || document.querySelector('.splash-note')) { clear = 0; setTimeout(show, 600); return; }
+      // The bus ask goes first, then the intro, the splashes and a finger mid-tap.
+      if (busAskLive || nightAskBlocked()) { clear = 0; setTimeout(show, 600); return; }
       if (clear++ < 1) { setTimeout(show, 600); return; }
-      if (sheet) { rateAskLive = false; return; } // something else is up: the next open asks
+      if (nightAskBusy()) { rateAskLive = false; return; }
       var rows = B.showRatings(id); // null while the band's rows are on their way
       if (rows == null) { setTimeout(show, 600); return; }
       rateAskLive = false;
-      if (rows.some(function (r) { return r.showId === s.id && r.userId === uid; })) return; // already rated
       try { localStorage.setItem(key, '1'); } catch (e) { return; }
+      // Rated already, and a show is rated once: nothing to ask, ever.
+      if (rows.some(function (r) { return r.showId === s.id && r.userId === uid; })) return;
       openRateAsk(id, s);
     };
     setTimeout(show, 450);
   }
+  /* The moments come to the app, too: while it is in front, a look every
+     twenty seconds, and one as it comes back from the background. The tour
+     is the live one on screen, else the one Today follows. */
+  function nightAskTick(force) {
+    if (!S.loaded || (!force && document.visibilityState === 'hidden')) return;
+    var r = S.route || {}, id = null, t = null;
+    if (r.name === 'tour' && r.id) { t = getTour(r.id); if (t && tourIsLive(t)) id = r.id; }
+    if (!id) { id = profileTourId(); t = id ? getTour(id) : null; }
+    if (!id || !t || !tourIsLive(t)) return;
+    maybeBusAsk(id, t);
+    maybeRateAsk(id, t);
+  }
+  setInterval(nightAskTick, 20 * 1000);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') setTimeout(nightAskTick, 600);
+  });
+  /* Dev harness only: its clock hooks (?busask, ?rateask) look at once, once
+     the app is up, instead of within twenty seconds - and in a preview pane
+     that is out of sight too. The live app has no __harness. */
+  if (window.__harness) window.__harness.nightAskTick = function (tries) {
+    if (!S.loaded) {
+      if ((tries || 0) < 40) setTimeout(function () { window.__harness.nightAskTick((tries || 0) + 1); }, 250);
+      return;
+    }
+    nightAskTick(true);
+  };
   /* Has an hour passed since the band's own set ended? (Devin, 2026-10-16:
      "the rating prompt should happen an hour after the bands set ends".)
      The band's set is the sheet's set-times row naming the tour's "your
@@ -18304,20 +18433,18 @@
     var now = new Date();
     return now.getHours() * 60 + now.getMinutes() + 24 * 60 >= mins - 60;
   }
-  // The ask itself: where the night was, and the two ways out. Rate the
-  // show opens the same wizard the calendar's button does, on that show.
+  // The ask itself: where the night was, and the two ways out. Rate opens
+  // the same wizard the calendar's button does, on that show, under the
+  // splash as it fades.
   function openRateAsk(tourId, s) {
     if (!s || rateDone(tourId, s.id) === true) return;
-    openSheet(function () {
-      return [
-        h('h2', { class: 'sh-title' }, 'How was the show?'),
-        h('p', { class: 'sh-sub' }, [s.city, s.venue].filter(Boolean).join(' · ') || 'The most recent show'),
-        h('div', { class: 'stack', style: 'margin-top:14px' },
-          h('button', { class: 'btn primary block', type: 'button',
-            onclick: function () { openRateShow(tourId, s.id); } }, 'Rate the show'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
-      ];
-    }, { label: 'Rate the show' });
+    nightAskSplash({
+      label: 'Rate the show?',
+      big: ['RATE THE SHOW?'],
+      sub: [s.city, s.venue].filter(Boolean).join(' · ') || 'The most recent show',
+      yes: 'Rate', no: 'Not now',
+      onYes: function () { openRateShow(tourId, s.id); }
+    });
   }
   // The 0154 sheet: what a build ahead of 0165 still opens. Sent once, for
   // good: it never opens on a show already rated, and a rating that lands
@@ -20787,17 +20914,12 @@
   }
   // It's bus call: within the hour before the day sheet's time, or past it.
   // (A bus call that isn't a time, "TBA" or "after load out", never is.)
-
+  // A bus call in the small hours (3 AM) belongs to the night after the
+  // show, not the morning before it, and so does a phone opened in them:
+  // both read on the show night's clock (G.busCallLeft).
   function busCallDue(v) {
-    var p = G.splitTime(v || '');
-    if (!p.ampm || !/^\d{1,2}:\d{2}$/.test(p.main)) return false;
-    var hm = p.main.split(':');
-    var mins = ((+hm[0]) % 12 + (p.ampm === 'PM' ? 12 : 0)) * 60 + (+hm[1]);
-    // A bus call in the small hours (3 AM) belongs to the night after the
-    // show, not the morning before it: it counts as next-day minutes.
-    if (mins < 12 * 60) mins += 24 * 60;
-    var now = new Date();
-    return now.getHours() * 60 + now.getMinutes() >= mins - 60;
+    var left = G.busCallLeft(v || '');
+    return left != null && left <= 60;
   }
   /* A word said before this tour day began reads as no word yet. The
      database keys a check-in by the phone's calendar date, so the small
@@ -20891,24 +21013,8 @@
           onclick: async function () {
             if (busy || cur) return;
             busy = true; draw();
-            try { await B.busSet(id, state); }
+            try { await busSayWord(id, state); }
             catch (e) { busy = false; draw(); if (busOn()) toast('Couldn\u2019t save that. Try again.'); return; }
-            // The completing On Bus tells the wheel (Devin, 2026-10-16:
-            // "the driver should be notified when we are a bus"): when this
-            // word made it everyone, one WE ARE A BUS goes to the tour's
-            // drivers through the notify door, once per phone per day.
-            if (state === 'on') {
-              var after = B.busList(id), folks = (after && after.people) || [];
-              var all = folks.length > 0 && folks.every(function (p) {
-                return p.userId === me || busWordToday(p) === 'on';
-              });
-              if (all) {
-                var wkey = 'gr-wearebus:' + id + ':' + G.tourToday();
-                var said = false;
-                try { said = !!localStorage.getItem(wkey); if (!said) localStorage.setItem(wkey, '1'); } catch (e2) { said = true; }
-                if (!said) sendNotify(id, 'wearebus', {});
-              }
-            }
             busy = false; draw(); render(true);
           } }, label);
       };
@@ -20945,6 +21051,28 @@
       ];
     }, { label: 'Bus Check In', onClose: function () { if (busLive === draw) busLive = null; } });
     busLive = draw;
+  }
+  /* This account's own word for today, 'on' or 'off': the sheet's On Bus /
+     Off Bus and the bus call splash's Check in both say it here. Throws
+     only when the save does. On bus settles the day's bus call asks on this
+     phone, and the completing On Bus tells the wheel (Devin, 2026-10-16:
+     "the driver should be notified when we are a bus"): when this word
+     made it everyone, one WE ARE A BUS goes to the tour's drivers through
+     the notify door, once per phone per day. */
+  async function busSayWord(id, state) {
+    var B = window.GR_BACKEND, me = B.uid ? B.uid() : null;
+    await B.busSet(id, state);
+    if (state !== 'on') return;
+    busAskSettle(id);
+    var after = B.busList(id), folks = (after && after.people) || [];
+    var all = folks.length > 0 && folks.every(function (p) {
+      return p.userId === me || busWordToday(p) === 'on';
+    });
+    if (!all) return;
+    var wkey = 'gr-wearebus:' + id + ':' + G.tourToday();
+    var said = false;
+    try { said = !!localStorage.getItem(wkey); if (!said) localStorage.setItem(wkey, '1'); } catch (e2) { said = true; }
+    if (!said) sendNotify(id, 'wearebus', {});
   }
   /* Dev harness only: its ?bus hook opens the sheet itself once the fake
      backend is up, so the restyled look shows without walking to the Chat.

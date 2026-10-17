@@ -1736,6 +1736,32 @@
     eq(G.splitTime('11:00 AM').ampm, 'AM', 'the AM/PM comes back out for editing');
   });
 
+  test('show night clock: the small hours belong to the night before', function () {
+    eq(G.nightMins('11:45PM'), 23 * 60 + 45, 'an evening time as it stands');
+    eq(G.nightMins('1:30AM'), 25 * 60 + 30, 'a 1:30 AM bus call is the small hours after the show');
+    eq(G.nightMins('1am'), 25 * 60, 'shorthand, as it sits in live day sheets');
+    eq(G.nightMins('12:40 AM'), 24 * 60 + 40, 'half past midnight');
+    eq(G.nightMins('12:00PM'), 12 * 60, 'noon is the day, not the night');
+    eq(G.nightMins('TBA'), null, 'not a time');
+    eq(G.nightMins(''), null, 'blank');
+    eq(G.nightMins('1:30'), null, 'no AM or PM, no guess');
+    eq(G.nightNow(new Date(2026, 9, 17, 23, 20)), 23 * 60 + 20, 'a phone before midnight');
+    eq(G.nightNow(new Date(2026, 9, 18, 1, 5)), 25 * 60 + 5, 'a phone at 1:05 AM is still last night');
+    eq(G.nightNow(new Date(2026, 9, 18, 4, 59)), 28 * 60 + 59, 'up to the 5 AM day line');
+    eq(G.nightNow(new Date(2026, 9, 18, 5, 0)), 5 * 60, 'from 5 AM it is a new day');
+  });
+
+  test('bus call: minutes left, across midnight', function () {
+    eq(G.busCallLeft('11:45PM', new Date(2026, 9, 17, 23, 20)), 25, '25 minutes before an evening bus call');
+    eq(G.busCallLeft('11:45PM', new Date(2026, 9, 17, 23, 50)), -5, 'five minutes past it');
+    eq(G.busCallLeft('11:45PM', new Date(2026, 9, 18, 0, 10)), -25, 'past midnight it has still passed');
+    eq(G.busCallLeft('1:30AM', new Date(2026, 9, 17, 23, 50)), 100, 'a small-hours bus call seen before midnight');
+    eq(G.busCallLeft('1:30AM', new Date(2026, 9, 18, 1, 5)), 25, 'and after midnight (the phone and the time read alike)');
+    eq(G.busCallLeft('1:30AM', new Date(2026, 9, 18, 1, 35)), -5, 'just past it');
+    eq(G.busCallLeft('1:30AM', new Date(2026, 9, 17, 14, 0)), 690, 'the afternoon before');
+    eq(G.busCallLeft('TBA', new Date(2026, 9, 17, 23, 0)), null, 'no time, no bus call');
+  });
+
   /* ============ The money, checked twice ============
      A second calculator, written straight from the rules (not from calc's
      code), run against hundreds of made-up tours with every kind of money
