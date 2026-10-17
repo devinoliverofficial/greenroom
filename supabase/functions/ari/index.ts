@@ -50,7 +50,7 @@ const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE
 
 /* Devin's words, as he wrote them. */
 const SAY = {
-  loadin: "LOAD IN! It\u2019s that time again gang! Let\u2019s rally the troops, strap the boots and head for war! Load in is in 10 minutes, \\m/",
+  loadin: "LOAD IN! It\u2019s that time again gang! Let\u2019s rally the troops, strap the boots and head for war! Load in is in 30 minutes, \\m/",
   showtime: "SHOW TIME! It\u2019s just about show time boys! Start your stretches, stop at bluey for your gear, drink a beer, chug a water, it\u2019s time to rock!",
   daysheet: "DAY SHEET AVAILABLE! Whats up gang! It\u2019s show day, let\u2019s kick today\u2019s ass, watch your brothers/sisters back, throw on that charm, shake some hands and getter done!",
 };
@@ -382,8 +382,12 @@ async function runTour(tour: { id: string; owner_id: string; doc: Record<string,
       if (postedToday || here.minutes >= 9 * 60) await announce(showId, "daysheet", SAY.daysheet, "sheet", EVERYONE);
     }
 
-    // LOAD IN: 10 minutes out, in Devin's own words.
-    if (due(onShowDay(minutesOf(ds.loadIn, true)), 10)) await announce(showId, "loadin", SAY.loadin, "loadin", CREWISH);
+    // LOAD IN: 30 minutes out, in Devin's own words, and again when it's time
+    // (his spec: "get notifications 30 mins before and when it's time";
+    // 30 picked over 10 on 2026-10-17). Both ride the one Load In switch.
+    const loadInAt = onShowDay(minutesOf(ds.loadIn, true));
+    if (due(loadInAt, 30)) await announce(showId, "loadin", SAY.loadin, "loadin", CREWISH);
+    if (atWin(loadInAt)) await announce(showId, "loadinnow", "LOAD IN. It's time.", "loadin", CREWISH);
 
     // SHOW TIME: 30 minutes before our band plays (the 30-minute stage
     // warning, key stage30), in Devin's own words.
