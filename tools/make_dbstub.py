@@ -1359,24 +1359,37 @@ shim = r"""<script>
      on Today and on the day sheet, only on the day being played; a tap opens
      the sheet of the nights before tonight, newest first.
      The line lives in two places: on the TOUR day sheet it still sits under
-     the venue; on the profile's TODAY tab it is the History section at the
-     bottom (Devin, 2026-10-16), the same tappable line under an mn-h
-     heading, and under it, when the answer carries 'stars' and 'ratings'
-     (0165 hands them to the band alone), the stars drawn small with
-     "from <n> ratings".
+     the venue; on the profile's TODAY tab it is the History section right
+     under the schedule, where Notes was (2026-10-16 night), dressed as the
+     schedule is: the centred heading over one card of label-and-value rows.
+     The venue line is the first row (a chevron and a tap when there are
+     earlier nights); then, from 0174, "Times in Austin" (cityCount nights
+     before tonight, or "First time"), "Last time in Austin" (cityLast: its
+     tour and date), "Average merch" (merchAvg over merchN shows, for
+     everyone on the tour) and "Average guarantee" (guaranteeAvg over
+     guaranteeN shows, which the server sends to Members alone); last the
+     "Rating" row when the answer carries 'stars' and 'ratings' (0165, the
+     band alone). A key the answer lacks is a row that is not there.
      HOOKS:
-       __harness.venueHistory()   seeds five earlier nights at Mohawk for tonight's
-                            Austin show (s1): two tours, a festival, a third tour and
-                            a year's shows outside a tour, so Today and the day sheet
-                            read "Your 6th time at Mohawk" - plus the band's own
-                            stars (4.5 from 3 ratings), so Today's History section
-                            shows the small green stars line. Delete
-                            __harness.venueHistoryRows.s1.stars and .ratings (then
-                            switch tabs) for what a crew phone sees: the history
-                            alone, no stars line. Answers the words. Or open
-                            the page with ?venuehistory.
+       __harness.venueHistory()   what a Member (or the tour's owner) sees: five
+                            earlier nights at Mohawk for tonight's Austin show (s1),
+                            two tours, a festival, a third tour and a year's shows
+                            outside a tour, so Today and the day sheet read "Your
+                            6th time at Mohawk"; the town (9 nights before tonight,
+                            last on Spin the Wheel, Mar 7, 2026), merch $2,311 over
+                            3 shows, guarantee $6,250 over 2 shows, and the band's
+                            own stars (4.5 from 3 ratings). Answers the words. Or
+                            open the page with ?venuehistory, then the profile's
+                            TODAY tab.
+       __harness.venueHistoryCrew()   what a crew phone sees: the same answer with no
+                            guarantee and no stars (the server never sends either
+                            to Crew or a hired Manager). Or ?venuehistory=crew.
+                            Delete the city and money keys from
+                            __harness.venueHistoryRows.s1 (then switch tabs) for
+                            the look before 0174 is live: the venue row alone.
        __harness.venueHistoryFirst()   tonight's row with no nights before it: the
-                            line reads "Your first time at Mohawk" and is not a button.
+                            line reads "Your first time at Mohawk" and is not a button;
+                            the town row reads "First time".
        __harness.venueHistoryRows   every seeded answer, by show id. Change it, then
                             redraw (switch tabs); delete s1's row and the line goes.
        __harness.venueHistoryLast   the last ask the app made: { tourId, showId, sig }
@@ -1391,18 +1404,30 @@ shim = r"""<script>
       { date: '2019-03-15', name: 'SXSW 2019', kind: 'festival' },
       { date: '2017-03-14', name: 'Treehouse Tour', kind: 'tour' },
       { date: '2012-03-04', name: 'Digital Renegade', kind: 'tour' },
-      { date: '2010-08-21', name: 'Shows outside a tour', kind: 'shows' }] };
+      { date: '2010-08-21', name: 'Shows outside a tour', kind: 'shows' }],
+      cityCount: 9, cityLast: { date: '2026-03-07', name: 'Spin the Wheel', kind: 'tour' },
+      merchAvg: 2310.67, merchN: 3, guaranteeAvg: 6250, guaranteeN: 2 };
     emit();   // (open pages draw again, as when the real answer lands)
     return 'Your 6th time at Mohawk';
+  };
+  window.__harness.venueHistoryCrew = function () {
+    var H = window.__harness;
+    H.venueHistory();
+    ['guaranteeAvg', 'guaranteeN', 'stars', 'ratings'].forEach(function (k) { delete H.venueHistoryRows.s1[k]; });
+    emit();
+    return 'Your 6th time at Mohawk, the town and merch; no guarantee, no stars';
   };
   window.__harness.venueHistoryFirst = function () {
     var H = window.__harness, a = creditIss();
     H.venueHistoryRows = H.venueHistoryRows || {};
-    H.venueHistoryRows.s1 = { artistId: a ? a.id : 'act-iss', artist: 'I See Stars', count: 0, nights: [] };
+    H.venueHistoryRows.s1 = { artistId: a ? a.id : 'act-iss', artist: 'I See Stars', count: 0, nights: [], cityCount: 0 };
     emit();
     return 'Your first time at Mohawk';
   };
-  try { if (/[?&]venuehistory\b/.test(String(location.search || ''))) window.__harness.venueHistory(); } catch (e) { /* no address to read */ }
+  try {
+    if (/[?&]venuehistory=crew\b/.test(String(location.search || ''))) window.__harness.venueHistoryCrew();
+    else if (/[?&]venuehistory\b/.test(String(location.search || ''))) window.__harness.venueHistory();
+  } catch (e) { /* no address to read */ }
   /* ---- TODAY AS CLIFF NOTES (2026-10-16): the profile's Today keeps six kinds of schedule row ----
      Devin: "the today tab should be more 'cliff notes' of the day sheet...
      Load in, soundcheck, VIP's (only if it's pertaining to the band that is
@@ -1452,6 +1477,42 @@ shim = r"""<script>
     return 'Today keeps Load in, Soundcheck (I See Stars), VIP, Doors, Set times (I See Stars), Bus call; the Day sheet tab keeps it all';
   };
   try { if (/[?&]cliff\b/.test(String(location.search || ''))) window.__harness.cliff(); } catch (e) { /* no address to read */ }
+  /* ---- THE DAY SHEET'S BUTTONS AND NO NOTES (2026-10-16 night) ----
+     Devin: "get rid of 'edit day sheet' button at the bottom if the day
+     sheet is already added... 'import from master tour' - put that under
+     the spots and notes. Get rid of 'copy day sheet' and just put the copy
+     icon underneath the pencil icon but paralell with the 'schedule'
+     text", and "just get rid of notes on both main day sheet and the today
+     tab". On the tour's DAY SHEET tab, tonight's Austin show (s1) has a
+     sheet: no big button at the bottom, the pencil left of the venue name
+     edits it, the copy icon sits right under the pencil on the Schedule
+     heading's line, the spots sit under the sheet, and Import from Master
+     Tour is the last thing on the page. Tap tomorrow's chip in the day
+     rail (San Antonio, no sheet): "No day sheet added." with the "Fill in
+     the day sheet" button under it, and no copy icon.
+     HOOKS:
+       __harness.dayNotes()   writes Notes on tonight's sheet. Neither the Day
+                            sheet tab nor Today shows them, the editor (the
+                            pencil) has no Notes box, Post day sheet keeps
+                            them in tours.t1.shows.s1.daySheet.notes, and the
+                            copy icon leaves them out. Or ?daynotes.
+       __harness.dayBare()    takes tonight's sheet away (address included):
+                            the Day sheet tab shows "No day sheet added." and
+                            the Fill in button. Or ?daybare. */
+  window.__harness.dayNotes = function () {
+    tours.t1.shows.s1.daySheet = Object.assign({}, tours.t1.shows.s1.daySheet, { notes: 'Side door, parking pass at will call' });
+    emit();
+    return 'notes saved on tonight, shown nowhere';
+  };
+  window.__harness.dayBare = function () {
+    tours.t1.shows.s1.daySheet = null;
+    emit();
+    return 'tonight has no day sheet';
+  };
+  try {
+    if (/[?&]daynotes\b/.test(String(location.search || ''))) window.__harness.dayNotes();
+    if (/[?&]daybare\b/.test(String(location.search || ''))) window.__harness.dayBare();
+  } catch (e) { /* no address to read */ }
   /* ---- THE GREEN CHECK EVERYWHERE (0161): the check by the rule in every list that names a person ----
      The database's person_checks (verified, or Bronze plus an endorsement
      that stands) is played by __harness.checks here: { userId: true | false }.

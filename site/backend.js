@@ -3425,6 +3425,20 @@
       // answer, for the band alone; absent, there is simply nothing to show.
       var rs = Number(a.stars), rn = Math.round(Number(a.ratings));
       if (rn > 0 && isFinite(rs) && rs > 0) { out.stars = Math.round(rs * 10) / 10; out.ratings = rn; }
+      // The town (0174): how many nights there before tonight and the newest
+      // of them; then the money averages, merch for the tour and the
+      // guarantee for the band alone. Each one only when the answer has it.
+      var cn = Math.round(Number(a.cityCount));
+      if (a.cityCount != null && isFinite(cn) && cn >= 0) out.cityCount = cn;
+      var cl = a.cityLast;
+      if (out.cityCount > 0 && isObj(cl) && /^\d{4}-\d{2}-\d{2}$/.test(String(cl.date || ''))) {
+        out.cityLast = { date: String(cl.date), name: String(cl.name || '').trim(),
+          kind: cl.kind === 'festival' || cl.kind === 'shows' ? cl.kind : 'tour' };
+      }
+      var ma = Number(a.merchAvg), mn = Math.round(Number(a.merchN));
+      if (mn > 0 && isFinite(ma) && ma > 0) { out.merchAvg = Math.round(ma * 100) / 100; out.merchN = mn; }
+      var ga = Number(a.guaranteeAvg), gn = Math.round(Number(a.guaranteeN));
+      if (gn > 0 && isFinite(ga) && ga > 0) { out.guaranteeAvg = Math.round(ga * 100) / 100; out.guaranteeN = gn; }
       return { data: out };
     }).then(function (got) {
       if (vhAsk[k] === p) delete vhAsk[k];
