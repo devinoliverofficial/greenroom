@@ -8239,7 +8239,7 @@
       return 'Reading the road history…' +
         (row.pages > 0 ? ' page ' + Math.min(G.num(row.next_page) || 1, row.pages) + ' of ' + row.pages : '');
     }
-    if (row.status === 'bad_token') return 'setlist.fm refused the key — replace it.';
+    if (row.status === 'bad_token') return 'setlist.fm refused the key. Replace it.';
     if (row.status === 'error') {
       return row.auto ? 'The road history had trouble loading, so this isn’t the whole story yet. It tries again on its own.'
         : (row.detail || 'The road history had trouble loading. It tries again on its own.');
@@ -21146,12 +21146,13 @@
         return v ? dsRow(label, h('span', { class: 'ds-time num' }, v)) : null;
       };
       // Soundchecks and set times: a small heading, then one row per band.
-      var bandRows = function (title, list) {
+      // out: the heading sits above its card instead of inside it (Today).
+      var bandRows = function (title, list, out) {
         var got = (Array.isArray(list) ? list : []).filter(function (r) {
           return r && (String(r.band || '').trim() || String(r.time || '').trim() || String(r.end || '').trim());
         });
         if (!got.length) return [];
-        return [h('div', { class: 'row ds-sub' }, title)].concat(got.map(function (r) {
+        return [out ? h('p', { class: 'ds-sub-out' }, title) : h('div', { class: 'row ds-sub' }, title)].concat(got.map(function (r) {
           return h('div', { class: 'row ds-row ds-band-row' },
             h('span', { class: 'row-label' }, String(r.band || '').trim() || 'TBA'),
             h('span', { class: 'ds-time num' }, G.timeSpan(r.time, r.end) || 'TBA'));
@@ -21167,7 +21168,10 @@
       var blocks = function (title, groups) {
         var cards = groups.map(function (g) { return [].concat.apply([], g).filter(Boolean); })
           .filter(function (g) { return g.length; })
-          .map(function (g) { return h('div', { class: 'ledger ds-block' }, g); });
+          .map(function (g) {
+            var lead = g[0] && g[0].classList && g[0].classList.contains('ds-sub-out') ? g.shift() : null;
+            return [lead, h('div', { class: 'ledger ds-block' }, g)];
+          });
         return cards.length ? h('section', { class: 'ds-sec' }, title ? h('h3', { class: 'ds-sec-h' }, title) : null, cards) : null;
       };
       /* o.cliff is the profile's Today as cliff notes (Devin, 2026-10-16:
@@ -21212,9 +21216,11 @@
           // The cliff notes: lobby call, last call, load out and the drive
           // stay on the Day sheet tab, untouched.
           [clockRow('Load in', d.loadIn, d.loadInEnd)],
-          [bandRows('Soundcheck', bandKeep(d.soundchecks))],
+          // Today shows only the viewer's band, so its set time reads singular,
+          // and both headings sit outside their cards (Devin, 2026-10-17).
+          [bandRows('Soundcheck', bandKeep(d.soundchecks), true)],
           [textRow('VIP', vipKeep(d.vip)), clockRow('Doors', d.doors)],
-          [bandRows('Set times', bandKeep(d.setTimes))],
+          [bandRows('Set time', bandKeep(d.setTimes), true)],
           [clockRow('Bus call', d.busCall)]] : [
           [clockRow('Lobby call', d.lobbyCall), clockRow('Load in', d.loadIn, d.loadInEnd)],
           [bandRows('Soundcheck', d.soundchecks)],
@@ -21342,7 +21348,7 @@
           document.body.appendChild(ta);
           var ok = await copyText(copyText2, ta);
           ta.remove();
-          toast(ok ? 'Copied \u2014 paste it in the group chat' : 'Press and hold to copy');
+          toast(ok ? 'Copied. Paste it in the group chat.' : 'Press and hold to copy');
         }
       }, icon('copy', 18));
       // A show's sheet is built sections, each under its heading; an off day's has no Schedule.
@@ -24668,7 +24674,7 @@
             onclick: async function () {
               var r = await sendUpdate(text, ta);
               if (r === 'sent') toast('Update sent');
-              else if (r === 'copied') toast('Copied — paste it in the group chat');
+              else if (r === 'copied') toast('Copied. Paste it in the group chat.');
               else if (r === 'manual') toast('Press and hold the text to copy it');
             }
           }, icon('share', 18), 'Send today’s update'),

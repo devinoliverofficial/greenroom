@@ -565,9 +565,11 @@ a.btn { text-decoration: none; }
 /* Nothing posted yet: a quiet line, not a headline. */
 .empty.ds-empty { padding: 30px 0 10px; text-align: center; }
 .empty.ds-empty h3 { margin: 0; font-size: 15px; font-weight: 500; letter-spacing: -.01em; color: var(--ink-2); }
-.ds-trash { position: absolute; right: -8px; top: 50%; transform: translateY(-50%); color: var(--ink-3); }
-.ds-trash:active { color: var(--neg); }
-.ds-pencil { position: absolute; left: -8px; top: 50%; transform: translateY(-50%); color: var(--pos); }
+.ds-trash { position: absolute; right: -8px; top: 50%; transform: translateY(-50%); }
+.ds-pencil { position: absolute; left: -8px; top: 50%; transform: translateY(-50%); }
+/* Both corners green like the Overview's pencil (Devin, 2026-10-17); .iconbtn.sm's grey would win otherwise. */
+.iconbtn.ds-pencil, .iconbtn.ds-trash { color: var(--pos); }
+.iconbtn.ds-trash:active { color: var(--neg); }
 /* The copy icon right under the pencil, on the Schedule heading's line. */
 .ds-sec-hrow { position: relative; }
 .ds-sec-hrow .ds-copy { position: absolute; left: -8px; top: 50%; transform: translateY(-50%); color: var(--pos); }
@@ -1963,6 +1965,9 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .ds-page .ds-row:not(.ds-band-row) .row-label { font-style: italic; }
 .ds-page .ds-band-row .row-label { font-weight: 700; }
 .ds-page .row.ds-sub { justify-content: center; text-align: center; }
+/* Today's Soundcheck and Set time: outside their card like the Schedule heading, at the in-card size. */
+.ds-page .ds-sub-out { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); text-align: center; }
+.ds-page .ds-block + .ds-sub-out { margin-top: 14px; }
 .ds-page .ledger .row.ds-row { min-height: 42px; padding: 9px 14px; }
 .ds-page .ds-row .row-label { font-size: 13.5px; }
 .ds-page .ds-row .ds-time { font-size: 13.5px; letter-spacing: -.02em; }
