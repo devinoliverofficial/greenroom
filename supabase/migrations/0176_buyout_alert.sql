@@ -255,6 +255,43 @@ begin
   end loop;
 end $$;
 
+-- 4. Crew's copy of the tour (tour_public, 0028) holds no money, so a crew
+-- phone could never see that a show has a buyout and its BUYOUTS tab could
+-- never glow. The copy gains one yes-only mark per show, buyoutLogged, when
+-- the show's buyouts are above zero: no amount, nothing else. The number is
+-- read the way the app reads it (anything not a digit, dot or minus set
+-- aside), and a value that still is not a number is simply no mark, so the
+-- tour-save trigger can never fail on it. Everything else is 0028's text.
+create or replace function public.tour_for_ga(d jsonb)
+returns jsonb
+language sql immutable set search_path = public as $$
+  with doc as (select case when jsonb_typeof(d) = 'object' then d else '{}'::jsonb end as d),
+  shows as (
+    select case when jsonb_typeof(doc.d -> 'shows') = 'object' then doc.d -> 'shows' else '{}'::jsonb end as s from doc
+  )
+  select coalesce((
+    select jsonb_object_agg(k, v) from doc, jsonb_each(doc.d) e(k, v)
+    where k = any (array['artist', 'bands', 'createdAt', 'deletedAt', 'name', 'ourBand', 'rehearsalStart',
+      'rehearsalEnd', 'setupDone', 'setupStep', 'spanStart', 'spanEnd', 'offDays', 'dayNotes', 'updateSentOn'])
+  ), '{}'::jsonb)
+  || jsonb_build_object('shows', coalesce((
+    select jsonb_object_agg(sid, (
+      select coalesce(jsonb_object_agg(k, v), '{}'::jsonb)
+      from jsonb_each(case when jsonb_typeof(sv) = 'object' then sv else '{}'::jsonb end) f(k, v)
+      where k = any (array['id', 'date', 'city', 'venue', 'createdAt', 'daySheet', 'soldOut'])
+    ) || case when coalesce(substring(regexp_replace(coalesce(sv -> 'income' ->> 'buyouts', ''), '[^0-9.-]', '', 'g')
+                    from '^-?[0-9]*\.?[0-9]+')::numeric, 0) > 0
+              then '{"buyoutLogged": true}'::jsonb else '{}'::jsonb end)
+    from shows, jsonb_each(shows.s) g(sid, sv)
+  ), '{}'::jsonb))
+$$;
+
+-- Every crew copy meets the new rule once (only the rows it changes).
+update public.tour_public p
+   set doc = public.tour_for_ga(t.doc), updated_at = now()
+  from public.tours t
+ where t.id = p.id and p.doc is distinct from public.tour_for_ga(t.doc);
+
 notify pgrst, 'reload schema';
 
 -- ============================== To roll back ==============================
@@ -266,6 +303,8 @@ notify pgrst, 'reload schema';
 --   drop function if exists public.buyout_ask_ok(text, text);
 --   drop function if exists public.buyout_trackers(text);
 --   drop function if exists public.tour_manager_title(text);
+--   put back 0028's tour_for_ga (its text is in that file) and run part 4's
+--   update again, which takes the buyoutLogged marks out of crew copies;
 --   notify pgrst, 'reload schema';
 -- The ticks written by part 3 stay (each is a mark a show already held);
 -- to take exactly those back, delete the buyout_tracks rows of shows dated

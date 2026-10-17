@@ -437,6 +437,17 @@
     eq(G.buyoutOwedTo(shows, { 'b|u1': true, 'd|u1': true }, 'u1').length, 0, 'tracked everywhere: the glow stops');
   });
 
+  test('a crew copy of the tour shows its buyout nights by a mark alone, no money', function () {
+    var t = { shows: {
+      a: { date: '2026-10-15', city: 'Oklahoma City, OK', buyoutLogged: true },
+      b: { date: '2026-10-16', city: 'Houston, TX', buyoutLogged: true },
+      c: { date: '2026-10-17', city: 'Dallas, TX' },
+      d: { date: '2026-10-18', city: 'Austin, TX', buyoutLogged: 'yes' } } };
+    eq(G.buyoutShows(t).map(function (s) { return s.id; }).join(','), 'b',
+      'the mark counts from the fresh start on, only as true, and no mark is no buyout');
+    eq(G.buyoutOwedTo(G.buyoutShows(t), {}, 'u1').length, 1, 'so crew glow until they are tracked');
+  });
+
   test('the Tour Manager keeps the buyout track; nobody titled, the creator and Managers do', function () {
     eq(G.tourManagerTitle('Tour manager'), true, 'his CREW_ROLES spelling');
     eq(G.tourManagerTitle(' TOUR MANAGER '), true, 'capitals and spaces aside');

@@ -575,7 +575,9 @@
   // The shows whose buyout money is logged, from the fresh start on, oldest first.
   function buyoutShows(t) {
     return rows(t && t.shows).filter(function (sh) {
-      return !!parseDay(sh.date) && sh.date >= BUYOUT_FROM && num(isObj(sh.income) ? sh.income.buyouts : 0) > 0;
+      // Crew's copy of a show carries no money, only buyoutLogged (0176).
+      return !!parseDay(sh.date) && sh.date >= BUYOUT_FROM &&
+        (num(isObj(sh.income) ? sh.income.buyouts : 0) > 0 || sh.buyoutLogged === true);
     }).sort(byDate);
   }
   // A job title that says Tour manager: any one of its comma-separated roles, capitals aside.

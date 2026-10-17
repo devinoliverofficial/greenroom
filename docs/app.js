@@ -756,12 +756,13 @@
       if (S.mode === 'db') {
         try {
           await enqueue(id, function () { return withRetry(function () { return store.db.doc('tours/' + id).update(patch); }); });
+          tasksOwnWrite(id, patch);
           return true;
         } catch (e) { onWriteError(e); return false; }
       }
       var cur = store.local.tours[id];
       if (!cur) return false;
-      store.local.tours[id] = deepMerge(clone(cur), patch); saveLocal(); render(); return true;
+      store.local.tours[id] = deepMerge(clone(cur), patch); saveLocal(); tasksOwnWrite(id, patch); render(); return true;
     },
     async remove(id) {
       if (!canWrite()) { toast(VIEW_ONLY); return false; }
@@ -3135,6 +3136,12 @@
       : h('button', { class: 'pf-btn go', type: 'button', onclick: function () { setFollow(true); } },
           card.followsMe ? 'Follow back' : 'Follow');
     var tab = (S.vpTab && S.vpTab.uid === uid && S.vpTab.tab) || 'artists';
+    // Their Top 10 (0159) on a tab of its own beside Stats (Devin,
+    // 2026-10-17: "the 'top 10 artists' should be in a tab next to stats and
+    // tours and artists. simliar to how it is on the 'user' experience"),
+    // there whenever the table is live, as on your own profile.
+    var topTab = favsOn();
+    if (tab === 'top10' && !topTab) tab = 'artists';
     var pickTab = function (t) { S.vpTab = { uid: uid, tab: t }; render(true); };
     var tabBtn = function (key, label, ic) {
       return h('button', { class: 'vp-tab' + (tab === key ? ' on' : ''), type: 'button', role: 'tab',
@@ -3247,19 +3254,18 @@
           h('button', { class: 'pf-btn', type: 'button',
             onclick: preview ? justLooking('This is where people message you.') : function () { openDm(uid, peer); } }, 'Message'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openContact(uid, card); } }, 'Contact'))),
-      // Their Top 10 (0159), the MySpace way: pinned above the tabs, as anyone gets it.
-      topTenStrip(uid, false),
-      h('div', { class: 'vp-tabs three', role: 'tablist' }, tabBtn('artists', 'Artists', 'people'), tabBtn('tours', 'Tours', 'tabmap'),
-        tabBtn('stats', 'Stats', 'tabstats')),
+      h('div', { class: 'vp-tabs ' + (topTab ? 'four' : 'three'), role: 'tablist' }, tabBtn('artists', 'Artists', 'people'), tabBtn('tours', 'Tours', 'tabmap'),
+        tabBtn('stats', 'Stats', 'tabstats'), topTab ? tabBtn('top10', 'Top 10', 'star') : null),
       tab === 'artists'
         ? (artistRows.length ? h('ul', { class: 'tour-list rows vp-list' }, artistRows)
             : emptyState('No artists yet', first + ' hasn\u2019t added any artists yet.'))
         : tab === 'stats' ? personFlowers(card)
+        : tab === 'top10' ? vpTopTen(uid, first)
         : (tourRows.length ? h('ul', { class: 'tour-list rows vp-list' }, tourRows)
             : emptyState('No tours yet', first + ' hasn\u2019t been on a tour in Greenroom yet.')),
       // Confirmed credits count nights from an artist's synced history: its
       // source gets its line, under the Tours list alone (Devin, 2026-10-15).
-      tab !== 'stats' && tab !== 'artists' && Array.isArray(card.credits) && card.credits.length ? setlistCredit() : null,
+      tab === 'tours' && Array.isArray(card.credits) && card.credits.length ? setlistCredit() : null,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(''));
   }
@@ -4301,7 +4307,9 @@
            // Under the tours, for whoever runs the page: a rescan any time, and the search's own status.
            manage && card.verified && hc0.row ? rescanButton(id) : null,
            tourFinderBlock(id, card, manage, unclaimed)],
-      historyCredit(id),
+      // Tour data's credit, under the Tours tab alone (Devin, 2026-10-17:
+      // "get rid of setlist.fm tag on EVERYTHING besides the tour tab").
+      tab === 'tours' ? historyCredit(id) : null,
       h('span', { class: 'logo-mark home-mark', 'aria-hidden': 'true' }),
       socialBar(manage && id === actingAs() ? 'me' : ''));
   }
@@ -4697,8 +4705,8 @@
   /* ---- Favorite Local Spots (0153, Devin's name): the restaurants, coffee
      shops, bars, clubs and things to do people love in each city. Saved and
      kept on the profile's own tab; a place shared with a tour shows on that
-     tour's day sheet for its city under PLACES RECOMMENDED BY TOUR, read-only,
-     with who recommends it. Typed entries only in this first cut. Nothing
+     tour's day sheet for its city under TOUR SPOTS, with who recommends it,
+     and every spot opens its card (0175). Nothing
      here renders before migration 0153 is live: spotsOn() stays false until
      the backend finds the table. ---- */
   var SPOT_KINDS = [['food', 'Food'], ['coffee', 'Coffee'], ['bar', 'Bar'],
@@ -4750,6 +4758,15 @@
     var s = entry.show, off = s ? null : offDayFor(t, entry.date);
     return String((s ? s.city : off && off.city) || '').trim();
   }
+  // Where a picked place is (0175), while the Name still reads its name:
+  // { lat, lon, address, osmRef } for the save, or null.
+  function spotGeoFrom(p, nameNow) {
+    if (!p || String(p.name || '').trim().slice(0, 80) !== nameNow) return null;
+    if (typeof p.lat !== 'number' || typeof p.lon !== 'number' || !isFinite(p.lat) || !isFinite(p.lon)) return null;
+    return { lat: p.lat, lon: p.lon,
+      address: [String(p.street || '').trim(), String(p.postcode || '').trim()].filter(Boolean).join(', ').slice(0, 160),
+      osmRef: /^[NWR]\d{1,20}$/.test(String(p.osmRef || '')) ? String(p.osmRef) : '' };
+  }
   // What OpenStreetMap calls a place, turned into the Spots kinds. Only the
   // words that map cleanly; any other word leaves the picker as it stands.
   var SPOT_OSM_KINDS = { restaurant: 'food', fast_food: 'food', food_court: 'food',
@@ -4769,10 +4786,10 @@
     return country && country !== 'United States' ? city + ', ' + country : city;
   }
   // One place: the name, its kind as a small tag, the note under it. Tapping
-  // the row opens the edit sheet (your own rows are all this tab holds).
+  // the row opens its card (0175), where your own spot has its Edit button.
   function spotRowEl(x) {
     return h('li', { class: 'am-li td-li' },
-      h('button', { class: 'fl-row td-open', type: 'button', onclick: function () { openSpotEdit(x); } },
+      h('button', { class: 'fl-row td-open', type: 'button', onclick: function () { openSpotCard(x, { own: true }); } },
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title' }, x.name, h('span', { class: 'fw-cat' }, spotKindLabel(x.kind))),
           x.note ? h('span', { class: 'lr-sub' }, x.note) : null)));
@@ -4823,7 +4840,8 @@
               h('span', { class: 'lr-title' }, g.city),
               h('span', { class: 'lr-sub' }, plural(g.items.length, 'spot'))),
             icon('chevron', 16)),
-          open ? h('ul', { class: 'rows td-list' }, g.items.map(spotRowEl)) : null);
+          // (sp-list: the spots under a city read smaller than the city, Devin, 2026-10-17.)
+          open ? h('ul', { class: 'rows td-list sp-list' }, g.items.map(spotRowEl)) : null);
       }),
       addBtn
     ];
@@ -4864,6 +4882,9 @@
          answer shows nothing. Without the search functions the sheet is
          exactly as it always was. */
       var nameField = field('Name', nameIn);
+      // The found place last picked (0175): where it is rides the save while
+      // the Name still reads the picked name.
+      var picked = null;
       if (placeFindOn()) {
         var drop = h('div', { class: 'sp-drop', hidden: true, 'aria-label': 'Places found' });
         var findTimer = 0, findSeq = 0, dropAway = 0;
@@ -4871,6 +4892,7 @@
         var pick = function (p) {
           clearTimeout(dropAway);
           closeDrop();
+          picked = p;
           nameIn.value = String(p.name || '').trim().slice(0, 80);
           var where = spotPlaceCity(p);
           if (where) cityIn.value = where.slice(0, 60);
@@ -4956,6 +4978,7 @@
         if (busy) return;
         busy = true; btn.disabled = true;
         var wantTour = f.share && shareTour ? shareTour : null;
+        var geo = spotGeoFrom(picked, name);
         try {
           if (item) {
             var patch = {}; // only what changed rides the save
@@ -4964,9 +4987,16 @@
             if (f.kind !== item.kind) patch.kind = f.kind;
             if (noteIn.value.trim() !== (item.note || '')) patch.note = noteIn.value.trim();
             if (wantTour !== (item.tourId || null)) patch.tourId = wantTour;
+            var movedTown = 'city' in patch && G.roadCityKey(city.split(',')[0]) !== G.roadCityKey(String(item.city || '').split(',')[0]);
+            if (geo) {
+              if (geo.osmRef !== (item.osmRef || '') || geo.lat !== item.lat || geo.lon !== item.lon) Object.assign(patch, geo);
+            } else if (('name' in patch || movedTown) && (item.lat != null || item.osmRef)) {
+              // Renamed or moved by hand: where it was no longer holds, and the card looks it up again.
+              Object.assign(patch, { lat: null, lon: null, address: null, osmRef: null });
+            }
             if (Object.keys(patch).length) await B.spotSave(item.id, patch);
           } else {
-            await B.spotAdd({ city: city, name: name, kind: f.kind, note: noteIn.value.trim(), tourId: wantTour });
+            await B.spotAdd(Object.assign({ city: city, name: name, kind: f.kind, note: noteIn.value.trim(), tourId: wantTour }, geo || {}));
           }
         } catch (x) { busy = false; btn.disabled = false; saveFailed('spot', x); return; }
         closeSheet(); render(true);
@@ -4997,9 +5027,204 @@
       ];
     }, { label: item ? 'Edit spot' : 'Add a spot' });
   }
-  /* The day sheet's PLACES RECOMMENDED BY TOUR (Devin, 2026-10-15): the
-     places people on this tour shared for the day's city, each with its kind
-     and who recommends it, read-only, and only when there are any. */
+  /* ---- Spot cards (0175, Devin, 2026-10-17, with a photo of a map app's
+     place card: "after you log a spot if you click on it, it should show
+     information on the spot ... Ratings, how far it is from where we are,
+     website, number, etc"). A tap on a spot anywhere (the Spots tab, the day
+     sheet's TOUR SPOTS, Today's spots from people you follow) opens its card
+     at once from what the row carries, and the card fills in as the
+     server's details road answers: where the spot is (a spot saved before
+     0175 is looked up once by its name and town), then OpenStreetMap's
+     website, phone, hours and neighbourhood. How far it is comes from the
+     phone's own location: shown at once when the phone already allows it,
+     else a quiet How far? that asks on a tap; a card never asks on open.
+     Before 0175 is live a card shows what its row has. ---- */
+  ICONS.walk = '<circle cx="13" cy="4.2" r="1.9"/><path d="M12.4 7.6L11 13.4l-2.2 3.8L7 21"/>' +
+    '<path d="M11 13.4l2.6 3.2.6 4.4"/><path d="M12.1 8.6L9.1 10.6 8.2 13.2"/><path d="M12.1 8.6l2.3 2.7 2.6 1"/>';
+  ICONS.globe = '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
+    '<path d="M12 3a14 14 0 0 1 3.6 9A14 14 0 0 1 12 21a14 14 0 0 1-3.6-9A14 14 0 0 1 12 3z"/>';
+  // The phone's location for the cards, held five minutes. Read on open
+  // only when the phone already allows it; state is 'granted', 'prompt',
+  // 'denied', 'failed' or 'none' (a phone with no location at all).
+  function spotHereQuiet(cb) {
+    var was = S.spotHere;
+    if (was && Date.now() - was.at < 300e3) { cb(was, 'granted'); return; }
+    try {
+      if (!navigator.geolocation) { cb(null, 'none'); return; }
+      if (!navigator.permissions || !navigator.permissions.query) { cb(null, 'prompt'); return; }
+      navigator.permissions.query({ name: 'geolocation' }).then(function (r) {
+        var st = (r && r.state) || 'prompt';
+        if (st === 'granted') spotHereAsk(cb); else cb(null, st);
+      }, function () { cb(null, 'prompt'); });
+    } catch (e) { cb(null, 'prompt'); }
+  }
+  // Where the phone is, asked of the phone (the How far? tap, or a phone
+  // that already said yes).
+  function spotHereAsk(cb) {
+    try {
+      navigator.geolocation.getCurrentPosition(function (p) {
+        S.spotHere = { lat: p.coords.latitude, lon: p.coords.longitude, at: Date.now() };
+        cb(S.spotHere, 'granted');
+      }, function (e) { cb(null, e && e.code === 1 ? 'denied' : 'failed'); },
+      { enableHighAccuracy: false, maximumAge: 120000, timeout: 12000 });
+    } catch (e) { cb(null, 'failed'); }
+  }
+  // "Coffee shop" from the map's "coffee_shop"; two words at most ("Mexican, tex-mex").
+  function spotCuisine(c) {
+    var s = String(c || '').split(';').map(function (w) { return w.trim().replace(/_/g, ' '); })
+      .filter(Boolean).slice(0, 2).join(', ');
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  }
+  // Open or Closed is said only by a clock in the spot's own town: the
+  // phone within 150 km of it, or the spot in tonight's town on a live run.
+  // Anywhere else the card says the day's hours instead.
+  function spotIsLocal(st, pt, town) {
+    if (pt && st.here) return G.geoMeters(st.here.lat, st.here.lon, pt.lat, pt.lon) < 150000;
+    var near = placeNearNow();
+    return !!town && !!near && G.roadCityKey(town) === G.roadCityKey(near.split(',')[0]);
+  }
+  function spotFact(label, value, tone, sub) {
+    return h('div', { class: 'spc-fact' },
+      h('span', { class: 'spc-fact-k' }, label),
+      h('span', { class: 'spc-fact-v' + (tone ? ' ' + tone : '') }, value),
+      sub ? h('span', { class: 'spc-fact-s' }, sub) : null);
+  }
+  function spotLine(label, value) {
+    return h('div', { class: 'spc-line' }, h('span', { class: 'spc-k' }, label), value);
+  }
+  // RATINGS AND PHOTOS SLOT: Apple's own place card (MapKit JS PlaceDetail)
+  // goes here once the Apple Maps key is in, looked up by the spot's
+  // coordinates and name. Until then there is nothing to put in it.
+  function spotCardApple(st) { return null; }
+  /* The card itself, drawn again each time more is known. */
+  function spotCardParts(st, own, redraw) {
+    var B = window.GR_BACKEND, sp = st.spot, d = st.details || {};
+    var name = String(sp.name || '').trim() || 'Spot';
+    var city = String(sp.city || '').trim(), town = city.split(',')[0].trim();
+    var area = String(d.area || '').trim();
+    var where = area && town && area.toLowerCase() !== town.toLowerCase() ? area + ', ' + town : (area || city);
+    var pt = typeof sp.lat === 'number' && typeof sp.lon === 'number' && isFinite(sp.lat) && isFinite(sp.lon) ? sp : null;
+    var address = String(sp.address || '').trim() ||
+      [String(d.street || '').trim(), String(d.postcode || '').trim()].filter(Boolean).join(', ');
+    var far = pt && st.here ? G.geoMeters(st.here.lat, st.here.lon, pt.lat, pt.lon) : null;
+    var mins = far != null ? G.walkMinutes(far) : 0;
+    // Walk: Apple Maps' walking directions, to the spot's own point when it
+    // is known, else to its name and town.
+    var dest = pt ? pt.lat + ',' + pt.lon : encodeURIComponent([name, address, city].filter(Boolean).join(', '));
+    var web = /^https?:\/\/[^\s<>"]+$/i.test(String(d.website || '')) ? String(d.website) : '';
+    var tel = String(d.phone || '').replace(/[^0-9+]/g, '');
+    var acts = h('div', { class: 'spc-acts' },
+      h('a', { class: 'spc-act go', href: 'https://maps.apple.com/?daddr=' + dest + '&dirflg=w', target: '_blank', rel: 'noopener' },
+        icon('walk', 20), h('span', null, mins && mins <= 90 ? mins + ' min' : 'Walk')),
+      web ? h('a', { class: 'spc-act', href: web, target: '_blank', rel: 'noopener' }, icon('globe', 20), h('span', null, 'Website')) : null,
+      tel.length >= 5 ? h('a', { class: 'spc-act', href: 'tel:' + tel }, icon('phone', 20), h('span', null, 'Call')) : null);
+    var facts = [];
+    var hrs = d.hours ? G.hoursNow(d.hours, new Date()) : null;
+    if (hrs) {
+      facts.push(spotIsLocal(st, pt, town)
+        ? spotFact('Hours', hrs.open ? 'Open' : 'Closed', hrs.open ? 'pos' : 'neg', hrs.today === 'Closed' ? '' : hrs.today)
+        : spotFact('Hours today', hrs.today));
+    }
+    if (pt && far != null) {
+      facts.push(spotFact('Distance', G.distanceText(far, G.usesMiles(navigator.language)), '', G.walkText(far)));
+    } else if (pt && (st.hereState === 'prompt' || st.hereState === 'failed')) {
+      facts.push(h('button', { class: 'spc-fact spc-ask', type: 'button',
+        onclick: function () {
+          st.hereState = 'asking'; redraw();
+          spotHereAsk(function (here, state) { st.here = here; st.hereState = state; redraw(); });
+        } },
+        h('span', { class: 'spc-fact-k' }, 'Distance'),
+        h('span', { class: 'spc-fact-v pos' }, 'How far?')));
+    } else if (pt && st.hereState === 'asking') {
+      facts.push(spotFact('Distance', 'Finding you…'));
+    }
+    var week = d.hours ? G.hoursWeek(d.hours) : [];
+    var lines = [
+      address ? spotLine('Address', h('a', { class: 'spc-v spc-link', target: '_blank', rel: 'noopener',
+        href: pt ? 'https://maps.apple.com/?q=' + encodeURIComponent(name) + '&ll=' + pt.lat + ',' + pt.lon
+          : mapsHref([name, address, city].filter(Boolean).join(', ')) }, address)) : null,
+      d.hours ? spotLine('Hours', week.length
+        ? h('span', { class: 'spc-v spc-week' }, week.map(function (w) {
+            return h('span', { class: 'spc-wk' }, h('span', null, w.days), h('span', null, w.hours));
+          }))
+        : h('span', { class: 'spc-v' }, d.hours)) : null,
+      tel.length >= 5 ? spotLine('Phone', h('a', { class: 'spc-v spc-link', href: 'tel:' + tel }, String(d.phone).trim())) : null,
+      web ? spotLine('Website', h('a', { class: 'spc-v spc-link', href: web, target: '_blank', rel: 'noopener' },
+        web.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, ''))) : null
+    ].filter(Boolean);
+    var whoName = String(st.who || '').trim() || 'Someone';
+    var sdOn = !!(B && B.spotDetailsOn && B.spotDetailsOn());
+    return [
+      h('h2', { class: 'sh-title spc-name' }, name),
+      h('p', { class: 'spc-kind' }, [spotCuisine(d.cuisine) || spotKindLabel(sp.kind), where].filter(Boolean).join(' · ')),
+      acts,
+      facts.length ? h('div', { class: 'spc-facts' }, facts) : null,
+      st.waiting && sdOn ? h('p', { class: 'hint spc-wait' }, 'Looking up the details…') : null,
+      spotCardApple(st),
+      lines.length ? h('div', { class: 'spc-info' }, lines) : null,
+      h('div', { class: 'spc-rec' },
+        h('span', { class: 'spc-k' }, 'Recommended by'),
+        h('div', { class: 'spc-who' },
+          personPhoto({ name: whoName, avatar: st.avatar || '' }, 'xs spc-face'),
+          h('div', { class: 'spc-who-t' },
+            h('span', { class: 'spc-who-n' }, whoName),
+            sp.note ? h('span', { class: 'spc-note' }, sp.note) : null))),
+      own && sp.id != null && B && B.spotSave ? h('button', { class: 'btn ghost block spc-edit', type: 'button',
+        onclick: function () { openSpotEdit(st.spot); } }, 'Edit spot') : null,
+      pt || st.details ? h('p', { class: 'hint spc-credit' }, 'Map details © ',
+        h('a', { class: 'hist-src', href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener' }, 'OpenStreetMap contributors')) : null
+    ];
+  }
+  /* Open one spot's card. x is the row as its list holds it; o.own says it
+     is the account's own (the Spots tab), o.face is the recommender's photo
+     when the list already has it (the day sheet's crew photos). */
+  function openSpotCard(x, o) {
+    o = o || {};
+    var B = window.GR_BACKEND;
+    var me = B && B.uid ? B.uid() : null;
+    var own = !!o.own || (!!me && !!x.userId && x.userId === me);
+    var st = { spot: Object.assign({}, x), who: own ? (profileName() || x.who || '') : (x.who || ''),
+      avatar: own ? myCard().photo : (o.face || ''), details: null, waiting: false,
+      here: null, hereState: 'idle', alive: true };
+    var box = h('div', { class: 'spc' });
+    var redraw = function () {
+      if (st.alive) fillEl(box, spotCardParts(st, own, redraw));
+    };
+    openSheet(function () {
+      if (S.mode === 'db' && B && B.spotDetails && x.id != null) {
+        if (B.spotDetailsOn) B.spotDetailsOn();
+        st.waiting = true;
+        B.spotDetails(x.id, function (a) {
+          if (!st.alive) return;
+          if (a) {
+            var g = a.spot || {};
+            if (typeof g.lat === 'number' && typeof g.lon === 'number') { st.spot.lat = g.lat; st.spot.lon = g.lon; }
+            if (g.address && !st.spot.address) st.spot.address = g.address;
+            if (g.osmRef) st.spot.osmRef = g.osmRef;
+            // (A tour list says the first name; the card says the whole one.)
+            if (a.who && !own) st.who = a.who;
+            if (a.avatar && !st.avatar) st.avatar = a.avatar;
+            if (a.details) st.details = a.details;
+            st.waiting = !!a.waiting;
+          } else st.waiting = false;
+          redraw();
+        }, !own && !st.avatar);
+      }
+      spotHereQuiet(function (here, state) {
+        if (!st.alive) return;
+        st.here = here; st.hereState = state;
+        redraw();
+      });
+      redraw();
+      return [box];
+    }, { label: String(x.name || 'Spot'), cls: 'spc-sheet', onClose: function () { st.alive = false; } });
+  }
+  /* The day sheet's TOUR SPOTS (Devin, 2026-10-15; the name, the green and
+     the heart, 2026-10-17: "it should say "TOUR SPOTS" in green with the
+     heart icon that you have on the tab ... Put the persons profile picture
+     who recommended it"): the places people on this tour shared for the
+     day's city, each with its recommender's photo, its kind and who
+     recommends it, only when there are any. A tap opens the spot's card. */
   function spotsRecommended(tourId, city) {
     if (!spotsOn()) return null;
     var B = window.GR_BACKEND;
@@ -5008,12 +5233,18 @@
     // Towns match as towns (0171): the ask carries the town before the comma.
     var rows = B.tourSpots(tourId, G.roadCityKey(city.split(',')[0]));
     if (!rows || !rows.length) return null;
+    // The crew's photos, the ones the Overview's crew list wears.
+    var faces = (B.facesFor && B.facesFor(tourId)) || {};
     return h('section', { class: 'ds-sec sp-rec' },
-      h('h3', { class: 'ds-sec-h' }, 'PLACES RECOMMENDED BY TOUR'),
+      h('h3', { class: 'ds-sec-h sp-rec-h' }, icon('heart', 18), 'TOUR SPOTS'),
       h('div', { class: 'ledger' }, rows.map(function (x) {
-        return h('div', { class: 'row ds-row' },
+        var face = (x.userId && faces[x.userId]) || '';
+        return h('button', { class: 'row ds-row sp-row', type: 'button',
+          onclick: function () { openSpotCard(x, { face: face }); } },
+          personPhoto({ name: x.who || 'Someone', avatar: face }, 'xs sp-face'),
           h('div', { class: 'row-label' }, x.name,
-            h('span', { class: 'hint' }, spotKindLabel(x.kind) + ' · ' + (x.who || 'Someone') + ' recommends it')));
+            h('span', { class: 'hint' }, spotKindLabel(x.kind) + ' · ' + (x.who || 'Someone') + ' recommends it')),
+          icon('chevron', 16));
       })));
   }
   /* ---- ALSO IN TOWN TONIGHT (0157, Devin's ask): on a show day the day
@@ -5103,19 +5334,31 @@
     var a = n % 100, b = n % 10;
     return n + (a >= 11 && a <= 13 ? 'th' : b === 1 ? 'st' : b === 2 ? 'nd' : b === 3 ? 'rd' : 'th');
   }
-  /* The line itself, for tonight's show only. inSheet: it sits inside the
-     day sheet's glowing venue block, whose big type it must not take on. */
-  function venueHistLine(tourId, s, inSheet) {
+  // The server's answer for tonight's show, or null (not tonight, no venue or city, nothing to say).
+  function venueHistFor(tourId, s) {
     if (!s || !s.id || s.date !== G.tourToday() || !venueHistOn()) return null;
     var venue = String(s.venue || '').trim();
     if (!venue || !String(s.city || '').trim()) return null;
     var sig = venue.toLowerCase() + '|' + String(s.city).trim().toLowerCase();
     var a = window.GR_BACKEND.venueHistory(tourId, s.id, sig);
-    if (!G.isObj(a) || !a.artistId) return null;
-    var n = Math.max(0, Math.round(G.num(a.count))), nights = Array.isArray(a.nights) ? a.nights : [];
-    var words = n > 0 ? 'Your ' + ordinalNum(n + 1) + ' time at ' + venue : 'Your first time at ' + venue;
+    return G.isObj(a) && a.artistId ? a : null;
+  }
+  function venueHistWords(venue, a) {
+    var n = Math.max(0, Math.round(G.num(a.count)));
+    return n > 0 ? 'Your ' + ordinalNum(n + 1) + ' time at ' + venue : 'Your first time at ' + venue;
+  }
+  // Earlier nights to list: a tap on the line opens them.
+  function venueHistTaps(a) {
+    return Math.round(G.num(a.count)) > 0 && Array.isArray(a.nights) && a.nights.length > 0;
+  }
+  /* The line itself, for tonight's show only. inSheet: it sits inside the
+     day sheet's glowing venue block, whose big type it must not take on. */
+  function venueHistLine(tourId, s, inSheet) {
+    var a = venueHistFor(tourId, s);
+    if (!a) return null;
+    var venue = String(s.venue).trim(), words = venueHistWords(venue, a);
     return h('p', { class: 'hist-fans', style: inSheet ? 'font-weight:500;letter-spacing:0;line-height:1.35' : null },
-      n > 0 && nights.length
+      venueHistTaps(a)
         ? h('button', { class: 'hf-btn', type: 'button', 'aria-label': words + '. See the nights before tonight',
             onclick: function () { openVenueHistory(venue, a); } }, words)
         : words);
@@ -5142,30 +5385,49 @@
   }
   /* THE TODAY HISTORY SECTION (Devin, 2026-10-16: "there should just be a
      history section at the bottom of the 'today' tab that says how many
-     times we've played this venue, what the rating was"; later the same
-     day: "'History' should look a lot like 'Notes'"). The same lines as
-     before, now in the day sheet's Notes dress: the same centred ds-sec-h
-     heading and the same ds-notes card around the lines, at the foot of the
-     profile's Today tab. Under the times-played line, when the server's
-     answer carries the band's stars (0165 hands them to the band alone),
-     the stars drawn small with how many ratings they stand on. Absent keys,
-     no stars line: a crew phone sees the history alone, and before 0165
-     nothing changes. */
+     times we've played this venue, what the rating was"; that night: "give
+     the information the same look as the rest of the schedule. put history
+     above notes", and Notes went). Dressed as the schedule is: the same
+     centred heading, one card of label-and-value rows. The venue line (a
+     tap lists the nights before tonight), then from 0174 the town: how
+     many nights there before tonight, the last of them with its tour, and
+     the averages Greenroom's own books hold for that town, merch for the
+     tour, the guarantee for the band alone; then the band's stars (0165).
+     A key the server did not send is a row that is not there, so a crew
+     phone sees no guarantee and no stars, and before 0174 is live the card
+     holds the venue line and the stars alone. */
   function todayHistory(tourId, s) {
-    var line = venueHistLine(tourId, s);
-    if (!line) return null;
-    var venue = String(s.venue || '').trim();
-    var sig = venue.toLowerCase() + '|' + String(s.city).trim().toLowerCase();
-    var a = window.GR_BACKEND.venueHistory(tourId, s.id, sig);
-    var st = G.isObj(a) ? G.num(a.stars) : 0, rn = G.isObj(a) ? Math.round(G.num(a.ratings)) : 0;
-    return h('section', { class: 'ds-page pt-hist', 'aria-label': 'History' },
+    var a = venueHistFor(tourId, s);
+    if (!a) return null;
+    var venue = String(s.venue).trim(), words = venueHistWords(venue, a);
+    var town = String(s.city).split(',')[0].trim();
+    var row = function (label, val) {
+      return h('div', { class: 'row ds-row' }, h('span', { class: 'row-label' }, label), val);
+    };
+    var val = function (v) { return h('span', { class: 'ds-val' }, v); };
+    var over = function (n) { return ' (over ' + plural(n, 'show') + ')'; };
+    var cn = a.cityCount == null ? null : Math.max(0, Math.round(G.num(a.cityCount)));
+    var last = G.isObj(a.cityLast) && cn > 0 ? a.cityLast : null;
+    var mn = Math.round(G.num(a.merchN)), gn = Math.round(G.num(a.guaranteeN));
+    var st = G.num(a.stars), rn = Math.round(G.num(a.ratings));
+    return h('section', { class: 'ds-page pt-history', 'aria-label': 'History' },
       h('section', { class: 'ds-sec' },
         h('h3', { class: 'ds-sec-h' }, 'History'),
-        h('div', { class: 'ds-notes pt-hist-box' },
-          line,
-          st > 0 && rn > 0 ? h('p', { class: 'pt-hist-stars', 'aria-label': st + ' stars from ' + plural(rn, 'rating') },
-            rwStarRow(Math.round(st * 2) / 2, 15),
-            h('span', { class: 'pt-hist-n' }, 'from ' + plural(rn, 'rating'))) : null)));
+        h('div', { class: 'ledger ds-block' },
+          venueHistTaps(a)
+            ? h('button', { class: 'row ds-row rowbtn', type: 'button', 'aria-label': words + '. See the nights before tonight',
+                onclick: function () { openVenueHistory(venue, a); } },
+                h('span', { class: 'row-label' }, words), icon('chevron', 16))
+            : row(words, null),
+          town && cn != null ? row('Times in ' + town, val(cn > 0 ? cn + ' before tonight' : 'First time')) : null,
+          town && last ? row('Last time in ' + town, val(
+            (String(last.name || '').trim() || (last.kind === 'shows' ? 'Shows outside a tour' : 'A tour')) +
+            ' \u00b7 ' + dayMD(last.date) + ', ' + String(last.date).slice(0, 4))) : null,
+          mn > 0 && G.num(a.merchAvg) > 0 ? row('Average merch', val(G.money(a.merchAvg) + over(mn))) : null,
+          gn > 0 && G.num(a.guaranteeAvg) > 0 ? row('Average guarantee', val(G.money(a.guaranteeAvg) + over(gn))) : null,
+          st > 0 && rn > 0 ? row('Rating', h('span', { class: 'ds-val pt-hist-stars', 'aria-label': st + ' stars from ' + plural(rn, 'rating') },
+            rwStarRow(Math.round(st * 2) / 2, 14),
+            h('span', { class: 'pt-hist-n' }, 'from ' + plural(rn, 'rating')))) : null)));
   }
   /* SPOTS FROM PEOPLE YOU FOLLOW (0169, Devin, 2026-10-16: "if someone
      follows another person outside the tour it will show up at the bottom of
@@ -5189,10 +5451,12 @@
       h('section', { class: 'ds-sec' },
         h('h3', { class: 'ds-sec-h' }, 'Spots'),
         h('div', { class: 'ledger' }, rows.slice(0, 8).map(function (x) {
-          return h('div', { class: 'row ds-row' },
+          // A tap opens the spot's card (0175); its id comes with the row once 0175 is live.
+          return h('button', { class: 'row ds-row sp-row', type: 'button', onclick: function () { openSpotCard(x); } },
             h('div', { class: 'row-label' }, x.name,
               h('span', { class: 'hint' }, spotKindLabel(x.kind) +
-                (x.note ? ' · ' + x.note : '') + ' · from ' + (x.who || 'Someone'))));
+                (x.note ? ' · ' + x.note : '') + ' · from ' + (x.who || 'Someone'))),
+            icon('chevron', 16));
         }))));
   }
   /* ---- Endorsing, and the role that goes with it. The artist's page says
@@ -5466,8 +5730,7 @@
         fresh.length ? h('div', { class: 'ledger' }, fresh.map(function (g) { return line(g, 'waiting'); }))
           : pend.length ? h('p', { class: 'note' }, d.pendingAll ? 'ALL TOURS, every show.' : 'A change to what is confirmed above.') : null,
         a.state === 'approved' && a.declinedAt ? h('p', { class: 'note' }, artist + ' sent back the last thing you added. What is confirmed stays.') : null,
-        h('p', { class: 'note' }, 'Add another from ' + artist + '’s page: tap I was on this tour under a tour, or I played this festival under a festival.'),
-        setlistCredit(d.url)
+        h('p', { class: 'note' }, 'Add another from ' + artist + '’s page: tap I was on this tour under a tour, or I played this festival under a festival.')
       ]);
     }
     var here = !!(S.route && S.route.name === 'act' && S.route.id === a.artistId);
@@ -6567,8 +6830,9 @@
      On your own profile the Top 10 lives on its own tab since 2026-10-16
      (Devin: "Let's move the 'top 10' artists into its own tab on the user
      profile so it's not just randomly hovering over the tabs"), with the
-     door to pick and reorder it; on the page others see it stays pinned
-     above the tabs, each spot opening its artist's page. Top Fans is a
+     door to pick and reorder it; on the page others see it is a tab too
+     since 2026-10-17, beside Stats, the same list without the door, each
+     spot opening its artist's page. Top Fans is a
      quiet word beside an artist page's fan count, for visitors, opening the
      ranked list. Nothing here renders before migration 0159 is live:
      favsOn() stays false until the backend finds the table, and the Top
@@ -6613,6 +6877,13 @@
   function pfTopTen() {
     var uid = socialOn() ? window.GR_BACKEND.uid() : null;
     return topTenStrip(uid, true) || h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading…');
+  }
+  // Someone else's Top 10 tab: the same list, read only. An empty list says
+  // so; one still on its way says it is loading.
+  function vpTopTen(uid, first) {
+    var rows = favsOn() ? window.GR_BACKEND.favoritesOf(uid) : null;
+    if (!Array.isArray(rows)) return h('p', { class: 'note', style: 'margin-top:24px' }, 'Loading…');
+    return topTenStrip(uid, false) || emptyState('No Top 10 yet', first + ' hasn’t picked a Top 10 yet.');
   }
   /* The sheet where a Top 10 is made and kept: the spots in order, each with
      its arrows and its off button; under them the same artist search the
@@ -7499,9 +7770,7 @@
         named.length ? h('h3', { class: 'sh-h3' }, 'Or tour by tour') : null,
         named.map(groupRow),
         loose.length ? h('h3', { class: 'sh-h3' }, 'Shows outside a tour') : null,
-        loose.map(groupRow),
-        // Their data, their credit.
-        setlistCredit(d.url)
+        loose.map(groupRow)
       ]);
       var t = G.creditTally(gs, st.sel);
       fillEl(foot, [
@@ -7612,8 +7881,7 @@
         h('div', { class: 'ledger' }, pend.map(function (g) { return line(g, keeps && !same(g)); }),
           h('div', { class: 'row total' }, h('span', null, tallyText(t)), h('strong', { class: 'amt num' }, plural(t.shows, 'show')))),
         had.length ? h('p', { class: 'note' }, keeps ? 'Everything you approved before (' + tallyText(total(had)) + ') is still in it. The lines marked new are what was added.'
-          : 'This replaces what you approved before (' + tallyText(total(had)) + ').') : null,
-        setlistCredit(d.url)
+          : 'This replaces what you approved before (' + tallyText(total(had)) + ').') : null
       ]);
       fillEl(foot, [
         h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || null,
@@ -7965,16 +8233,16 @@
     if (!row) return '';
     if (row.status === 'checking') return 'Looking the act up…';
     if (row.status === 'idle') return '';
-    if (row.status === 'finding') return 'Finding the band on setlist.fm…';
+    if (row.status === 'finding') return 'Finding the band’s road history…';
     if (row.status === 'syncing') {
-      if (histWaiting(row)) return 'Greenroom has read its fill from setlist.fm for today. The rest of the road history comes in tomorrow.';
+      if (histWaiting(row)) return 'Greenroom has read its fill for today. The rest of the road history comes in tomorrow.';
       return 'Reading the road history…' +
         (row.pages > 0 ? ' page ' + Math.min(G.num(row.next_page) || 1, row.pages) + ' of ' + row.pages : '');
     }
-    if (row.status === 'bad_token') return 'setlist.fm refused the key — replace it.';
+    if (row.status === 'bad_token') return 'setlist.fm refused the key. Replace it.';
     if (row.status === 'error') {
-      return row.auto ? 'setlist.fm had trouble, so this isn’t the whole story yet. It tries again on its own.'
-        : (row.detail || 'setlist.fm had trouble. It tries again on its own.');
+      return row.auto ? 'The road history had trouble loading, so this isn’t the whole story yet. It tries again on its own.'
+        : (row.detail || 'The road history had trouble loading. It tries again on its own.');
     }
     if (row.status === 'ok') {
       var sum = G.isObj(row.summary) ? row.summary : {};
@@ -8614,9 +8882,6 @@
             try { await B.historyNudge(id, true); } catch (x) { b.disabled = false; saveFailed('history', x); return; }
             histOf(id, true); closeSheet(); toast('Reading it fresh');
           } }, 'Sync fresh')));
-        kids.push(h('p', { class: 'note' }, 'Fan-logged data from ',
-          h('a', { class: 'hist-src', href: 'https://www.setlist.fm', target: '_blank', rel: 'noopener' }, 'setlist.fm'),
-          ' — a missing night just hasn’t been logged there yet.'));
       } else if (!got.row && !got.verified) {
         // A page made by hand isn't tied to a known act, so it can't borrow one's road story.
         kids.push(h('p', { class: 'note' }, 'Tour history is for verified pages, so nobody can borrow another band\u2019s road story. ' +
@@ -8661,10 +8926,6 @@
                 } });
             } }, 'Turn off')));
         }
-        // Their data, their credit — the link rides along in the sheet too.
-        kids.push(h('p', { class: 'note' }, 'Fan-logged data from ',
-          h('a', { class: 'hist-src', href: 'https://www.setlist.fm', target: '_blank', rel: 'noopener' }, 'setlist.fm'),
-          ' — a missing night just hasn’t been logged there yet.'));
       }
       fillEl(host, kids);
     }
@@ -8672,8 +8933,7 @@
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'Tour history'),
-        h('p', { class: 'sh-sub' }, 'The band’s whole road story — every show, tour, country and city — ' +
-          'read from setlist.fm, the fans’ setlist archive, and counted on the page by itself.'),
+        h('p', { class: 'sh-sub' }, 'The band’s whole road story: every show, tour, country and city, counted on the page by itself.'),
         host
       ];
     }, { label: 'Tour history' });
@@ -11000,9 +11260,9 @@
       // The day sheet tab's own schedule style, word for word (Devin,
       // 2026-10-16: "the entire day sheet text style under schedule").
       sheet ? h('div', { class: 'ds-page pt-ds' }, sheet) : null,
-      // HISTORY (Devin, 2026-10-16): tonight's room in the band's own story,
-      // in its own quiet section at the bottom of the tab, with what the
-      // rating was under it when the server says (the band alone hears it).
+      // HISTORY (Devin, 2026-10-16): tonight's room and town in the band's
+      // own story, right under the schedule where Notes was ("put history
+      // above notes. Honestly just get rid of notes").
       s && isToday ? todayHistory(id, s) : null,
       // SPOTS (0169): tonight's town through the people you follow, the
       // viewer's own quiet section under History (and above the Bus Check in
@@ -11426,8 +11686,11 @@
       // (Your Top 10 left this spot for its own tab, Devin, 2026-10-16.)
       profileTabs(entries, byArtist, loose, declared),
       // Your numbers count nights from an artist's synced history once it
-      // confirms them: that data's source gets its line, on every tab.
+      // confirms them: that data's source gets its line, under the Tours tab
+      // alone (Devin, 2026-10-17: "get rid of setlist.fm tag on EVERYTHING
+      // besides the tour tab"). Tours is always on the row, so the pick is it.
       (function () {
+        if (S.pfTab !== 'tours') return null;
         var B = window.GR_BACKEND, mc = socialOn() && B && B.uid ? cardOf(B.uid()).card : null;
         return mc && Array.isArray(mc.credits) && mc.credits.length ? setlistCredit() : null;
       })(),
@@ -13330,6 +13593,8 @@
   function tabExpenses(id, t, c, o) {
     var off = !!(o && o.off), partsOnly = !!(o && o.parts), readOnly = !!(o && o.readOnly);
     if (!off && !partsOnly) syncCrew(id);
+    // Expenses open: the new charges counted on it have been seen, and leave Tasks' New expenses.
+    if (!partsOnly && !readOnly) tasksSeen(id, taskCharges(t).map(function (x) { return 'exp:' + x.ch.id; }));
     // (Money under an added category this book has no name for: the artist's name for it is written on, once.)
     if (!partsOnly) healCatNames(id);
     // The Off Tour book leaves out what only a tour has.
@@ -15824,12 +16089,14 @@
     };
     /* BUYOUTS beside them (0151, Devin: everyone sees on MY PAY which days
        they received a buyout and which they did not). No money on the tab:
-       the days are the news, and the amounts are the tour's own book. */
+       the days are the news, and the amounts are the tour's own book. It
+       glows green from the moment a buyout is logged until this account is
+       tracked on it (Devin, 2026-10-17). */
     var bo = boOn ? myBuyoutDays(id, t) : null;
     var boTab = null;
     if (bo) {
       var boSel = tab === 'buyouts';
-      boTab = h('button', { class: 'pay-sum-tab' + (boSel ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': boSel ? 'true' : 'false',
+      boTab = h('button', { class: 'pay-sum-tab' + (boSel ? ' on' : '') + (bo.lit ? ' bo-lit' : ''), type: 'button', role: 'tab', 'aria-selected': boSel ? 'true' : 'false',
         onclick: function () { S.payTab[id] = 'buyouts'; render(true); } },
         h('span', { class: 'pay-sum-k' }, 'BUYOUTS'),
         h('strong', { class: 'pay-sum-v num' }, !bo.shows.length ? '\u2014' : bo.loading ? '\u2026' : bo.got + ' of ' + bo.shows.length));
@@ -15850,10 +16117,9 @@
       // BUYOUT ALERT lives at the top of this tab now, and only here - it
       // left the Overview's grid (Devin, 2026-10-16: "move the 'Buyout
       // Alert' Button to the buyout tab... but only located on the buyouts
-      // tab"). Same button, same ways: Managers and the tour's creator
-      // only (everyone else gets nothing), glowing while someone is still
-      // owed, opening the tick list. The words that used to describe the
-      // page are gone, his same note.
+      // tab"). The Tour Manager's opens the tick list; everyone else's
+      // opens their own buyouts (buyoutAlertBtn). The words that used to
+      // describe the page are gone, his same note.
       return [head,
         (function () { var b = buyoutAlertBtn(id, t); return b ? h('div', { class: 'bo-tab' }, b) : null; })(),
         h('h3', { class: 'mn-h mn-over' }, 'My buyouts'),
@@ -16448,6 +16714,35 @@
     reimbLive = draw;
   }
 
+  /* Paid back out of the merch cash: the merch cash log's line for it,
+     Handed off (G.CASH_MOVES: cash that moved, never a tour cost, since the
+     reimbursement already is one), tied to the ask (reimbId) so Not paid
+     takes the same line back. One payment, one tap, and the Merch cash card
+     in Tasks agrees with the Reimbursements card. */
+  function reimbHandoffLine(r, day) {
+    return { date: day, amount: Math.round(G.num(r.amount) * 100) / 100, label: 'Paid back to ' + (r.name || 'someone on the tour'),
+      category: 'handoff', reimbId: r.id, createdAt: Date.now() };
+  }
+  function reimbHandoffIds(t, rid) {
+    return G.rows(t && t.cashLog).filter(function (x) { return x.reimbId === rid; }).map(function (x) { return x.id; });
+  }
+  // Offered only while the log has that much merch cash still to account for: the log's own rule for any entry.
+  // (Its line already there, from a Not paid whose removal didn't save: paying again uses that line.)
+  function reimbFromMerchOk(tourId, r) {
+    var t = getTour(tourId);
+    if (!t || isOffTour(t) || !canEditTour(tourId)) return false;
+    return reimbHandoffIds(t, r.id).length > 0 || G.cashSummary(t).left + 0.004 >= G.num(r.amount);
+  }
+  // The line written (or already there): true. A save that failed has said so already.
+  async function reimbLogHandoff(tourId, r) {
+    var t = getTour(tourId);
+    if (!t) return false;
+    if (reimbHandoffIds(t, r.id).length) return true;
+    if (G.cashSummary(t).left + 0.004 < G.num(r.amount)) return false;
+    var patch = { cashLog: {} };
+    patch.cashLog[newId()] = reimbHandoffLine(r, G.tourToday());
+    return !!(await api.update(tourId, patch));
+  }
   // "Paid Oct 12 · cash · by Devin", for the Managers' list.
   function reimbPaidLine(r) {
     var day = rbDay(r.paidAt);
@@ -16466,7 +16761,7 @@
     var B = window.GR_BACKEND;
     // asking: the ask whose "How did you pay?" is open. arm: the one whose "Not a tour cost" is armed.
     // unpay: the paid one whose "Not paid" is armed.
-    // told: asks marked paid in this visit and how ('cash' or 'card'), which get the grey line about counting twice.
+    // told: asks marked paid in this visit and how ('cash', 'merch' or 'card'), which get the grey line about counting twice.
     var st = { asking: null, arm: null, unpay: null, busy: null, told: {} };
     var box = h('div', { class: 'rb-box' });
     var say = function (out, doing) { toast(reimbWhy(out && out.why, doing), 5200); };
@@ -16485,13 +16780,37 @@
         toast('Marked paid back');
       });
     };
+    // Paid out of the merch cash: marked paid in cash, then its Handed off line in the merch cash log, in one tap.
+    var markFromMerch = function (r) {
+      var logged = false;
+      run(r, async function () {
+        var out = await B.reimburseMark(r.id, true, 'cash', '');
+        if (out && out.ok) logged = await reimbLogHandoff(tourId, r);
+        return out;
+      }, function () {
+        st.told[r.id] = logged ? 'merch' : 'cash';
+        if (logged) toast('Marked paid back · taken out of the merch cash');
+        else toast('Marked paid back. It isn’t in the merch cash log yet: tap Not paid, then Merch cash again.', 6500);
+      });
+    };
     // Only from the "Yes" under "Mark it not paid?". (The card charge is read first, as it stands now: the mark clears it.)
+    // A Handed off line the merch cash tap wrote goes with it, so the cash is back to account for.
     var markNot = function (r) {
       var now = reimbRows(tourId).filter(function (x) { return x.id === r.id; })[0] || r;
-      var matched = !!now.feedId;
-      run(r, function () { return B.reimburseMark(r.id, false, '', ''); }, function () {
+      var matched = !!now.feedId, lines = reimbHandoffIds(getTour(tourId), r.id), unlogged = false;
+      run(r, async function () {
+        var out = await B.reimburseMark(r.id, false, '', '');
+        if (out && out.ok && lines.length) {
+          var patch = { cashLog: {} };
+          lines.forEach(function (k) { patch.cashLog[k] = null; });
+          unlogged = !!(await api.update(tourId, patch));
+        }
+        return out;
+      }, function () {
         delete st.told[r.id];
         if (matched) toast('Marked not paid. The card charge it was matched to stays set aside.', 6500);
+        else if (lines.length && !unlogged) toast('Back in To pay back. Its Handed off line is still in the merch cash log: remove it there.', 6500);
+        else if (lines.length) toast('Back in To pay back. The merch cash log has it to account for again.', 5200);
         else toast('Back in To pay back');
       });
     };
@@ -16511,6 +16830,7 @@
         under = h('div', { class: 'rb-how', role: 'group', 'aria-label': 'How did you pay ' + (r.name || 'them') + '?' },
           h('span', { class: 'rb-how-q' }, busy ? 'Saving…' : 'How did you pay?'),
           h('span', { class: 'rb-acts' },
+            reimbFromMerchOk(tourId, r) ? h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { markFromMerch(r); } }, 'Merch cash') : null,
             h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { markPaid(r, 'cash'); } }, 'Cash'),
             h('button', { class: 'btn sm primary', type: 'button', disabled: off, onclick: function () { markPaid(r, 'card'); } }, 'Card or bank'),
             h('button', { class: 'linkbtn rb-link', type: 'button', disabled: off, onclick: function () { st.asking = null; draw(); } }, 'Not yet')));
@@ -16521,10 +16841,11 @@
             busy ? 'Taking it off…' : st.arm === r.id ? 'Take it off the tour’s costs?' : 'Not a tour cost'));
       } else if (r.status === 'paid') {
         // The grey line, for this visit, after saying how: where the same money could be counted a second time.
+        // (Paid out of the merch cash, the one tap logged it there too: Merch cash.)
         var note = st.told[r.id] === 'card' && r.how === 'card' && !r.feedId
           ? 'If this payment shows up in this tour’s card charges for the same amount, the app offers to match it, so it is not counted twice.'
-          : st.told[r.id] === 'cash' && r.how === 'cash'
-            ? 'If the cash came out of the merch cash, log it there as Handed off, so it is not counted twice.' : '';
+          : st.told[r.id] === 'merch' && r.how === 'cash'
+            ? 'Also in the merch cash log as Handed off, so it is counted once.' : '';
         var unpay = st.unpay === r.id;
         under = [h('span', { class: 'rb-state' }, h('span', { class: 'hint done' }, reimbPaidLine(r)),
           unpay ? null : h('button', { class: 'linkbtn rb-link', type: 'button', disabled: off,
@@ -17358,7 +17679,7 @@
      and the tour's owner only; the database holds the rows to the band, so
      the artist page and the tour show nothing public. ---- */
   // The night that can be rated now: tonight once doors have passed, else
-  // yesterday's show (still changeable today), else nothing.
+  // yesterday's show, else nothing.
   function rateShowOf(t) {
     var today = G.tourToday();
     var shows = G.rows(t && t.shows).filter(function (x) { return G.parseDay(x.date); });
@@ -17392,12 +17713,16 @@
   /* The calendar's Rate button (Devin, 2026-10-16: "So it'll be 'rate'
      'vote' 'requests'", and later the same day: "I should be able to see
      'rate' on all previous shows on the current tour"). Every played show
-     row carries it, for the band alone - the database lets the band write
-     and change a rating on any show of the tour, with no date rule (0154's
-     policies check the person and the show, never the night). Tonight's row
-     keeps its after-doors rule. Sent, a row's button goes quiet but stays
-     tappable. Drawing it warms the review-column probe, so the tap already
-     knows which sheet to open. */
+     row carries it, for the band alone - the database lets the band rate
+     any show of the tour, with no date rule (0154's policies check the
+     person and the show, never the night). Tonight's row keeps its
+     after-doors rule. A show is rated once, for good (Devin, 2026-10-17:
+     "Once you rate the show you can't rate again (obviously until next time
+     you play)"): rated, the row reads Rated with a check and nothing opens;
+     the next night is a new show and rates fresh. Until the band's rows are
+     in, the slot stays empty, so a rated show never reads as one to rate.
+     Drawing it warms the review-column probe, so the tap already knows
+     which sheet to open. */
   function rateCalBtn(tourId, s) {
     var t = getTour(tourId);
     if (!t || !s || !s.id || !bandOnTour(tourId, t)) return null;
@@ -17406,19 +17731,40 @@
       var r = rateShowOf(t);
       if (!r || r.id !== s.id) return null;
     }
-    var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
+    var B = window.GR_BACKEND;
     if (B.showReviewOn) B.showReviewOn();
-    var mine = (B.showRatings(tourId) || []).filter(function (x) { return x.showId === s.id && x.userId === uid; })[0];
-    return h('button', { class: 'cal-btn' + (mine ? ' idle' : ''), type: 'button',
-      'aria-label': mine ? 'Rate this show, sent' : 'Rate this show',
+    var done = rateDone(tourId, s.id);
+    if (done == null) return null;
+    if (done) return h('span', { class: 'cal-btn cal-rated', role: 'img', 'aria-label': 'You rated this show' }, icon('check', 11), 'Rated');
+    return h('button', { class: 'cal-btn', type: 'button', 'aria-label': 'Rate this show',
       onclick: function () { openRateShow(tourId, s.id); } }, 'Rate');
+  }
+  // Has this account rated this show? true or false, or null while the
+  // band's rows are still on their way (never guessed as unrated).
+  function rateDone(tourId, showId) {
+    var B = window.GR_BACKEND, uid = B && B.uid ? B.uid() : '';
+    var rows = uid && B.showRatings ? B.showRatings(tourId) : null;
+    if (!Array.isArray(rows)) return null;
+    return rows.some(function (r) { return r.showId === showId && r.userId === uid; });
+  }
+  var RATED_ONCE = 'You already rated this show';
+  // Rated already: whatever sheet is up closes, one quiet line says so, and
+  // the row redraws as Rated. Answers whether it stepped in.
+  function rateRefused(tourId, showId) {
+    if (rateDone(tourId, showId) !== true) return false;
+    closeSheet();
+    toast(RATED_ONCE);
+    render(true);
+    return true;
   }
   /* Which sheet a tap opens: the one-question wizard once the database
      carries the review column (0165), else the old three-slider sheet, kept
      whole below. The probe is warmed where the button draws, so the answer
-     is usually in before anyone taps. */
+     is usually in before anyone taps. A show already rated opens nothing. */
   function openRateShow(tourId, showId) {
     var B = window.GR_BACKEND;
+    if (rateDone(tourId, showId) == null) { toast('The band\u2019s ratings are still loading. Try again in a moment.'); return; }
+    if (rateRefused(tourId, showId)) return;
     if (B && B.showReviewOn && B.showReviewOn()) openRateWizard(tourId, showId);
     else openRateShowSliders(tourId, showId);
   }
@@ -17552,6 +17898,7 @@
   // The ask itself: where the night was, and the two ways out. Rate the
   // show opens the same wizard the calendar's button does, on that show.
   function openRateAsk(tourId, s) {
+    if (!s || rateDone(tourId, s.id) === true) return;
     openSheet(function () {
       return [
         h('h2', { class: 'sh-title' }, 'How was the show?'),
@@ -17563,11 +17910,14 @@
       ];
     }, { label: 'Rate the show' });
   }
-  // The 0154 sheet, word for word: what a build ahead of 0165 still opens.
+  // The 0154 sheet: what a build ahead of 0165 still opens. Sent once, for
+  // good: it never opens on a show already rated, and a rating that lands
+  // while it is open (another phone) leaves nothing to send.
   function openRateShowSliders(tourId, showId) {
+    if (rateRefused(tourId, showId)) return;
     var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
     var CATS = [['crowd', 'Crowd'], ['venue', 'Venue'], ['city', 'City']];
-    var st = { busy: false, touched: false, seeded: false, waits: 0 };
+    var st = { busy: false, waits: 0 };
     var f = { crowd: 0, venue: 0, city: 0 };
     var host = h('div', { class: 'rt-host' });
     var foot = h('div', { class: 'stack' });
@@ -17583,11 +17933,6 @@
       var t = getTour(tourId) || {}, s = showNow() || {};
       var rows = rowsNow();
       var mine = (rows || []).filter(function (r) { return r.userId === uid; })[0];
-      // What you sent before, preselected once it arrives (unless you've tapped already).
-      if (mine && !st.seeded && !st.touched) {
-        st.seeded = true;
-        CATS.forEach(function (c) { if (G.num(mine[c[0]]) >= 1) f[c[0]] = G.num(mine[c[0]]); });
-      }
       // The band's rows may still be on their way: drawn again when they land.
       if (rows == null && st.waits < 20 && !st.busy) {
         st.waits += 1;
@@ -17595,7 +17940,7 @@
       }
       var kids = CATS.map(function (c) {
         return [h('p', { class: 'field-label' }, c[1]),
-          tenRow(f[c[0]], function (n) { if (st.busy) return; st.touched = true; f[c[0]] = n; draw(); }, c[1] + ', 1 to 10')];
+          tenRow(f[c[0]], function (n) { if (st.busy) return; f[c[0]] = n; draw(); }, c[1] + ', 1 to 10')];
       });
       var line = CATS.map(function (c) {
         var vals = (rows || []).map(function (r) { return G.num(r[c[0]]); }).filter(function (v) { return v >= 1; });
@@ -17610,16 +17955,24 @@
         m10 != null ? h('p', { class: 'note' }, 'Merch ' + m10 + ' of 10 · the app’s score, this night against the tour’s average.') : null));
       fillEl(host, kids);
       var any = f.crowd || f.venue || f.city;
-      fillEl(foot, [
+      fillEl(foot, mine && !st.busy ? [
+        h('p', { class: 'note' }, RATED_ONCE + '.'),
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Close')] : [
         h('button', { class: 'btn primary block', type: 'button', disabled: st.busy || !any || null, onclick: send },
-          st.busy ? 'Sending…' : mine ? 'Save changes' : 'Send'),
+          st.busy ? 'Sending…' : 'Send'),
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now')]);
     }
     async function send() {
       if (st.busy || !(f.crowd || f.venue || f.city)) return;
+      if (rateRefused(tourId, showId)) return;
       st.busy = true; draw();
       try { await B.showRate(tourId, showId, f); }
-      catch (x) { st.busy = false; draw(); toast(x && x.code === 'offline' ? NO_SIGNAL : 'Couldn’t send that. Try again.'); return; }
+      catch (x) {
+        st.busy = false;
+        // Rated already after all (another phone): taken as rated, not as a failure.
+        if (x && x.code === 'already-rated') { closeSheet(); toast(RATED_ONCE); render(true); return; }
+        draw(); toast(x && x.code === 'offline' ? NO_SIGNAL : 'Couldn’t send that. Try again.'); return;
+      }
       closeSheet();
       toast('Sent to the band');
       render(true);
@@ -17630,7 +17983,7 @@
       return [
         h('h2', { class: 'sh-title' }, 'Rate the show'),
         h('p', { class: 'sh-sub' }, [[s.city, s.venue].filter(Boolean).join(' · '),
-          'The band sees this, nobody else. You can change it any time.'].filter(Boolean).join('. ')),
+          'The band sees this, nobody else. You rate each show once.'].filter(Boolean).join('. ')),
         host, foot
       ];
     }, { label: 'Rate the show' });
@@ -17721,8 +18074,10 @@
      nothing. Done builds the review with only the answered questions,
      shaped exactly as show_review_ok wants, mirrors crowd and venue into
      the old 1-10 ints (stars times two) so the 0154 averages stay alive,
-     and sends it all on the one show_ratings row. */
+     and sends it all on the one show_ratings row, once for good (0173): it
+     never opens on a show already rated, and checks again before sending. */
   function openRateWizard(tourId, showId) {
+    if (rateRefused(tourId, showId)) return;
     var B = window.GR_BACKEND;
     var at = 0, busy = false;
     var ans = {};
@@ -17751,6 +18106,7 @@
       if (busy) return;
       var review = buildReview();
       if (!Object.keys(review).length) { toast('Pick at least one answer first.'); return; }
+      if (rateRefused(tourId, showId)) return;
       busy = true; draw();
       // The old 1-10 ints mirror the three scores a review gives (venue is
       // the mean of the venue-based questions, city the area's stars, crowd
@@ -17765,6 +18121,9 @@
         // The column is not there after all (a build ahead of 0165): the
         // old sheet opens instead, and the session remembers.
         if (x && x.code === 'review-missing') { openRateShowSliders(tourId, showId); return; }
+        // Rated already after all (another phone, a double tap): taken as
+        // rated, not as a failure; the row redraws as Rated.
+        if (x && x.code === 'already-rated') { closeSheet(); toast(RATED_ONCE); render(true); return; }
         draw();
         toast(x && x.code === 'offline' ? NO_SIGNAL : 'Couldn’t send that. Try again.');
         return;
@@ -17848,11 +18207,9 @@
     openSheet(function () {
       var t = getTour(tourId) || {}, s = (G.isObj(t.shows) && t.shows[showId]) || {};
       return [
-        // Truthful for tonight and for an old show alike: the database lets
-        // the band change a rating any time (0154's update policy has no
-        // date rule), so no midnight clause.
+        // Said before the first answer: a rating stands once sent (0173).
         h('p', { class: 'sh-sub rw-where' }, [[s.city, s.venue].filter(Boolean).join(' · '),
-          'The band sees this, nobody else. You can change it any time.'].filter(Boolean).join('. ')),
+          'The band sees this, nobody else. You rate each show once.'].filter(Boolean).join('. ')),
         host
       ];
     }, { label: 'Rate the show', cls: 'rw-sheet' });
@@ -18323,10 +18680,14 @@
      app: swipe right to handle it now (it takes you there), left to deal with
      it later. Anything new stays in the deck until it's swiped right; things
      still open (a request with no answer, money still to land) stay until
-     they're done. The button glows green while something's new since you last
-     looked, or on a new day with tasks still waiting, and greys out once
-     you've looked. Each person's looks and "later" pile are their own, kept
-     with their account. */
+     they're done, whichever door they are done through. The button glows
+     green while something's new since you last looked, or on a new day with
+     tasks still waiting, and greys out once you've looked. Each person's
+     looks and "later" pile are their own, kept with their account.
+     Devin, 2026-10-17: "you should never do a task twice. Whether you've
+     done it through the task button or did it through the app." So the
+     doors that do a card's job tell the deck (tasksSeen), and a card about
+     money or an answer still owed reads the same data those doors write. */
   function seenKey() {
     var B = window.GR_BACKEND;
     var uid = S.mode === 'db' && B && B.uid ? B.uid() : '';
@@ -18358,6 +18719,92 @@
       Promise.resolve(store.db.doc('labels/' + wnKey(tourId)).set({ kind: 'seen', at: rec.at, held: rec.held, later: rec.later, done: rec.done }))
         .catch(function () { /* this phone still remembers */ });
     }
+  }
+  /* Cards about you rather than one tour (tours to confirm, credits to
+     approve, people who joined a page you run, page claims, your bank lines)
+     keep one memory for every tour's Tasks: what you did about one on this
+     tour's deck holds on every other. */
+  var TASKS_EVERY = 'everywhere';
+  function taskAnyKey(k) { return k === 'banklines' || /^(credit|creditq|joined|claim):/.test(String(k)); }
+  // The deck's memory for a tour: its own record, with the cards about you read from the one record they share.
+  // anyAt: when you last looked at any tour's Tasks.
+  function taskRec(tourId) {
+    var own = seenRec(tourId), any = seenRec(TASKS_EVERY), out = { at: own.at, anyAt: any.at, held: {}, later: {}, done: {} };
+    ['held', 'later', 'done'].forEach(function (k) {
+      // (One kept on a tour's own record before there was a shared one counts until the shared one has it: the next save moves it.)
+      Object.keys(own[k]).forEach(function (key) { if (!taskAnyKey(key) || any[k][key] == null) out[k][key] = own[k][key]; });
+      Object.keys(any[k]).forEach(function (key) { if (taskAnyKey(key)) out[k][key] = any[k][key]; });
+    });
+    return out;
+  }
+  function saveTaskRec(tourId, rec) {
+    var own = { at: rec.at, held: {}, later: {}, done: {} }, any = seenRec(TASKS_EVERY);
+    var anyNow = { at: Math.max(any.at, G.num(rec.anyAt)), held: {}, later: {}, done: {} }, wrote = false;
+    ['held', 'later', 'done'].forEach(function (k) {
+      Object.keys(rec[k]).forEach(function (key) { (taskAnyKey(key) ? anyNow : own)[k][key] = rec[k][key]; });
+      // (A record only rewritten when something in it changed: the shared one is written by every tour's deck.)
+      if (JSON.stringify(anyNow[k]) !== JSON.stringify(any[k])) wrote = true;
+    });
+    saveSeen(tourId, own);
+    if (wrote || anyNow.at !== any.at) saveSeen(TASKS_EVERY, anyNow);
+  }
+  // New enough for a notice card: logged in the last week.
+  var TASK_WEEK = 7 * 864e5;
+  function taskNew(at) { return G.num(at) > Date.now() - TASK_WEEK; }
+  // A stamp as a number: milliseconds as they are, a date's words read.
+  function taskWhen(v) { return typeof v === 'number' ? v : Date.parse(v) || 0; }
+  /* Another door did what a notice card is about (the guest list looked at,
+     Expenses opened, the night reviewed in Log income, a charge you logged
+     yourself): it leaves this account's Tasks, the same as Handle now.
+     Only what is new and not yet marked is written, so a second look
+     writes nothing. keys: the cards' item keys ('guest:<id>', 'exp:<id>',
+     'merch:<import>'). */
+  // (Run while pages draw and after money saves: the deck's memory never stops either.)
+  function tasksSeen(tourId, keys) {
+    try {
+      if (!tourId || !keys || !keys.length || !moneyLead(tourId)) return;
+      var rec = taskRec(tourId), now = Date.now(), n = 0;
+      keys.forEach(function (k) {
+        if (rec.done[k]) return;
+        delete rec.held[k]; delete rec.later[k]; rec.done[k] = now; n += 1;
+      });
+      if (n) saveTaskRec(tourId, rec);
+    } catch (e) { /* a convenience: the page and the save go on */ }
+  }
+  // The charges the New expenses card is about: still counting, not zero, logged in the last week.
+  function taskCharges(t) {
+    var imps = G.isObj(t && t.imports) ? t.imports : {};
+    return G.rows(t && t.charges).map(function (ch) {
+      var im = ch.importId ? imps[ch.importId] : null;
+      return { ch: ch, at: G.num(ch.createdAt) || G.num(im && im.createdAt) };
+    }).filter(function (x) { return !x.ch.accounted && G.num(x.ch.amount) !== 0 && taskNew(x.at); });
+  }
+  // Charges this account writes (logged by hand, a statement imported, one edited or sorted) are its own: never new to it.
+  // (Called after a save has landed: nothing here may make that save read as failed.)
+  function tasksOwnWrite(tourId, patch) {
+    try {
+      var add = patch && G.isObj(patch.charges) ? patch.charges : null;
+      if (!add) return;
+      var t = getTour(tourId) || {}, had = G.isObj(t.charges) ? t.charges : {};
+      tasksSeen(tourId, taskCharges({ imports: t.imports, charges: Object.keys(add).reduce(function (o, k) {
+        if (G.isObj(add[k])) o[k] = Object.assign({ id: k }, G.isObj(had[k]) ? had[k] : {}, add[k]);
+        return o;
+      }, {}) }).map(function (x) { return 'exp:' + x.ch.id; }));
+    } catch (e) { /* the deck's memory is a convenience */ }
+  }
+  /* The name the bank feed writes on a charge it filed for you ("sorted by"):
+     your profile's full name, else your username, as the server reads it. */
+  function mySortName() {
+    var B = window.GR_BACKEND, p = S.mode === 'db' && B && B.myProfile ? B.myProfile() : null;
+    return p ? String(p.fullName || p.username || '').trim().slice(0, 60).toLowerCase() : '';
+  }
+  // Ari's question about a night's merch that her Yes can no longer act on: the night has gone, or its merch
+  // is not the number she asked about (typed in Log income, say). The server's own rule ('moved' in ari_answer).
+  function ariAskMoved(t, a) {
+    var s = t && G.isObj(t.shows) && G.isObj(t.shows[a.showId]) ? t.shows[a.showId] : null;
+    if (!s) return true;
+    var m = G.isObj(s.income) && typeof s.income.merch === 'number' ? s.income.merch : 0;
+    return Math.round(m * 100) !== Math.round(G.num(a.was) * 100);
   }
   /* The tour's managers: the creator, and anyone the creator made a Manager
      (everything on the tour, plus the card refresh, the polls, Ari's questions, alerts
@@ -18418,12 +18865,12 @@
   function tourTasks(tourId, rec) {
     var t = getTour(tourId) || {};
     var B = window.GR_BACKEND, live = S.mode === 'db' && B;
-    var now = Date.now(), since = rec.at, week = now - 7 * 864e5;
+    var now = Date.now(), since = rec.at, week = now - TASK_WEEK;
     var shows = G.rows(t.shows).filter(function (x) { return G.parseDay(x.date); }).sort(G.byDate);
     var byDate = {};
     shows.forEach(function (x) { byDate[x.date] = x; });
     var imps = G.isObj(t.imports) ? t.imports : {};
-    var when = function (v) { return typeof v === 'number' ? v : Date.parse(v) || 0; };
+    var when = taskWhen;
     var place = function (x) { return dayMD(x.date) + ' · ' + (String(x.city || '').split(',')[0] || x.venue || 'Show'); };
     var view = function (v) { return function () { go({ name: 'tour', id: tourId, view: v }); }; };
     var onDay = function (v, date) {
@@ -18442,22 +18889,36 @@
     var incomeLog = function (showId) {
       return canEditTour(tourId) ? function () { openIncome(tourId, showId); } : view('money');
     };
+    /* Money still to land on a night, while deposits wait in Guarantees to
+       sort or Merch to sort: the card opens that list, never Log income,
+       where ticking Received would count the same money a second time.
+       Asked at the tap, so the card goes where the money stands then. */
+    var owedLog = function (showId, kind) {
+      return function () {
+        var tt = getTour(tourId), merch = kind === 'merch';
+        var parked = merch ? merchToSortRows(tourId).map(function (x) { return { id: x.id, date: x.date, amount: x.amount, of: x.of, kind: 'merch' }; })
+          : unsortedRows(G.calc(tt));
+        if (!parked.length) { incomeLog(showId)(); return; }
+        if (S.mode === 'db' && moneyLead(tourId) && B && (merch ? B.sortMerch : B.sortGuarantee)) openIncomeReview(tourId, { place: parked });
+        else view('money')();
+      };
+    };
     var tasks = [];
 
-    // Ari's questions, waiting on the tour manager.
+    // Ari's questions, waiting on the tour manager. (Not one whose night's merch was since changed by hand:
+    // the number she asked about is gone, so the answer is in. Nothing is written for it.)
     var asks = live && B.asksFor ? B.asksFor(tourId) : [];
-    asks.filter(function (a) { return a.status === 'open'; }).forEach(function (a) {
+    asks.filter(function (a) { return a.status === 'open' && !ariAskMoved(t, a); }).forEach(function (a) {
       tasks.push({ key: 'ask:' + a.id, standing: true, at: when(a.at), emoji: '🤖', title: 'Ari needs an answer',
         main: a.place + ' merch', sub: 'Logged ' + G.moneyCents(a.was) + ' · the settlement says ' + G.moneyCents(a.fix),
         open: function () { openAriSheet(tourId); } });
     });
-    // Special requests: waiting on an answer, or answered since you looked.
+    // Special requests waiting on an answer. (An answered one was the job; one you asked yourself is not yours to answer.)
     if (live && B.requestsFor) shows.forEach(function (x) {
       B.requestsFor(tourId, x.date).forEach(function (r) {
-        var at = when(r.at), open = r.status === 'pending', key = 'req:' + r.id;
-        if (!open && !pending(key, at)) return;
-        tasks.push({ key: key, standing: open, at: at, emoji: '🙋', title: 'Special request', main: r.body,
-          sub: [place(x), r.author, open ? 'Waiting for an answer' : r.status === 'accepted' ? 'Accepted' : 'Denied'].filter(Boolean).join(' · '),
+        if (r.status !== 'pending' || r.mine) return;
+        tasks.push({ key: 'req:' + r.id, standing: true, at: when(r.at), emoji: '🙋', title: 'Special request', main: r.body,
+          sub: [place(x), r.author, 'Waiting for an answer'].filter(Boolean).join(' · '),
           open: function () { openRequests(tourId, x); } });
       });
     });
@@ -18480,14 +18941,13 @@
     // until both are clear, on whichever tour these Tasks belong to.
     var bankCard = live ? bankTask(tourId) : null;
     if (bankCard) tasks.push(bankCard);
-    // New expenses: what was logged, whoever sorted it, for both of you to see.
+    // New expenses: what the other Managers and the linked cards logged, for both of you to see. Never
+    // your own: a charge the bank feed filed with your name on it, or one you logged (tasksOwnWrite).
     var cats = {};
     chargeCats(t).forEach(function (c) { cats[c.key] = c.label; });
-    var fresh = [];
-    G.rows(t.charges).forEach(function (ch) {
-      var im = ch.importId ? imps[ch.importId] : null;
-      var at = G.num(ch.createdAt) || G.num(im && im.createdAt);
-      if (!ch.accounted && G.num(ch.amount) !== 0 && pending('exp:' + ch.id, at)) fresh.push({ ch: ch, at: at });
+    var meSort = mySortName();
+    var fresh = taskCharges(t).filter(function (x) {
+      return pending('exp:' + x.ch.id, x.at) && !(meSort && String(x.ch.by || '').trim().toLowerCase() === meSort);
     });
     if (fresh.length) {
       fresh.sort(function (a, b) { return String(a.ch.date).localeCompare(String(b.ch.date)); });
@@ -18530,13 +18990,13 @@
       // (Not for a show still to come: its guarantee was set at the start of the
       // tour as what the promoter owes, and nothing is late until the night has happened.)
       if (g > 0 && x.guaranteeReceived === false && x.date <= G.tourToday()) tasks.push({ key: 'inc:' + x.id + ':g', standing: true, at: 0,
-        emoji: '⏳', title: 'Income not received yet', main: gd > 0 ? 'Guarantee deposit' : 'Guarantee', amount: gd > 0 ? gd : g, sub: place(x), open: incomeLog(x.id) });
+        emoji: '⏳', title: 'Income not received yet', main: gd > 0 ? 'Guarantee deposit' : 'Guarantee', amount: gd > 0 ? gd : g, sub: place(x), open: owedLog(x.id, 'guarantee') });
       // Deposited short, with the rest still owed by the promoter.
       else if (G.guaranteeOwed(x) > 0) tasks.push({ key: 'inc:' + x.id + ':go', standing: true, at: 0,
         emoji: '\u23f3', title: 'Income not received yet', main: 'Rest of the guarantee', amount: G.guaranteeOwed(x),
-        sub: place(x), open: incomeLog(x.id) });
+        sub: place(x), open: owedLog(x.id, 'guarantee') });
       if (md > 0 && x.merchReceived === false) tasks.push({ key: 'inc:' + x.id + ':m', standing: true, at: 0,
-        emoji: '⏳', title: 'Income not received yet', main: 'Merch deposit', amount: md, sub: place(x), open: incomeLog(x.id) });
+        emoji: '⏳', title: 'Income not received yet', main: 'Merch deposit', amount: md, sub: place(x), open: owedLog(x.id, 'merch') });
     });
     // Merch cash still not accounted for.
     var cs = G.cashSummary(t);
@@ -18554,18 +19014,21 @@
           open: moneyLead(tourId) ? function () { openPollEditor(tourId, x.date, null); } : view('calendar') });
       });
     }
-    // New names on the guest list, a card per night.
+    // New names on the guest list, a card per night (never one you put on yourself).
+    var meId = live && B.uid ? B.uid() : null;
     shows.forEach(function (x) {
       var names = [], keys = [], newest = 0;
       guestsFor(t, tourId, x.id).forEach(function (g) {
         var at = when(g.at || g.createdAt);
-        if (!pending('guest:' + g.id, at)) return;
+        if ((meId && g.addedBy === meId) || !pending('guest:' + g.id, at)) return;
         names.push([g.firstName, g.lastName].filter(Boolean).join(' ') + (G.num(g.qty) > 1 ? ' +' + (G.num(g.qty) - 1) : ''));
         keys.push('guest:' + g.id);
         newest = Math.max(newest, at);
       });
+      // (The guest list opens on that night, where looking at it counts as seeing them: guestRowsFor.)
       if (keys.length) tasks.push({ key: 'guests:' + x.id, keys: keys, at: newest, emoji: '🎟️',
-        title: 'New on the guest list', main: names.join(', '), sub: place(x), open: onDay('guests', x.date) });
+        title: 'New on the guest list', main: names.join(', '), sub: place(x),
+        open: function () { S.glTour = tourId; S.glShow = x.id; onDay('guests', x.date)(); } });
     });
     // Not this tour's, but yours: tours to confirm with an artist that endorsed
     // you, and (for an artist page you run) credits waiting on your yes.
@@ -18598,10 +19061,12 @@
       tasks.push({ key: 'claim:' + x.id + ':' + (x.at || ''), standing: true, at: when(x.at), emoji: '\ud83c\udfa4', title: 'Page claim',
         main: (x.name || 'Someone') + ' \u00b7 ' + x.artist, sub: 'Asking to run the page', open: function () { openClaimReview(x); } });
     });
-    tasks.forEach(function (c) { c.keys = c.keys || [c.key]; c.fresh = c.at > since; });
-    // Handled is handled. Then the ones you haven't decided on, in order;
+    // (A card about you, not this tour, is new since you last looked at any tour's Tasks.)
+    tasks.forEach(function (c) { c.keys = c.keys || [c.key]; c.fresh = c.at > (c.keys.every(taskAnyKey) ? G.num(rec.anyAt) : since); });
+    // Handled is handled. A standing card is only ever handled by doing its job, so no
+    // tap of the deck's hides it. Then the ones you haven't decided on, in order;
     // then the ones you put off, oldest "later" first.
-    tasks = tasks.filter(function (c) { return !c.keys.every(function (k) { return rec.done[k]; }); });
+    tasks = tasks.filter(function (c) { return c.standing || !c.keys.every(function (k) { return rec.done[k]; }); });
     var laterAt = function (c) { return Math.max.apply(null, c.keys.map(function (k) { return G.num(rec.later[k]); })); };
     var undecided = tasks.filter(function (c) { return !(laterAt(c) > 0); });
     var put = tasks.filter(function (c) { return laterAt(c) > 0; }).sort(function (a, b) { return laterAt(a) - laterAt(b); });
@@ -18622,7 +19087,7 @@
     return out;
   }
   function taskState(tourId) {
-    var rec = seenRec(tourId), tasks = tourTasks(tourId, rec);
+    var rec = taskRec(tourId), tasks = tourTasks(tourId, rec);
     var fresh = tasks.filter(function (c) { return c.fresh; }).length;
     // Green while something's new, or on a new day with tasks still waiting.
     var glow = fresh > 0 || (tasks.length > 0 && (!rec.at || G.ymd(new Date(rec.at)) < G.ymd(new Date())));
@@ -18632,21 +19097,26 @@
   /* The deck: one task at a time. Right (or "Handle now") goes there; left
      (or "Later") keeps it for later. Arrow keys work too. */
   function openTaskDeck(tourId) {
-    var rec = seenRec(tourId);
+    var rec = taskRec(tourId);
     var tasks = tourTasks(tourId, rec);
     // Everything new waits in the deck until you decide on it.
     tasks.forEach(function (c) {
       if (!c.standing) c.keys.forEach(function (k) { if (!rec.later[k]) rec.held[k] = c.at || Date.now(); });
     });
-    rec.at = Date.now();
-    saveSeen(tourId, rec);
+    rec.at = rec.anyAt = Date.now();
+    saveTaskRec(tourId, rec);
     var decided = function (c, how) {
-      var r2 = seenRec(tourId), now = Date.now();
+      var r2 = taskRec(tourId), now = Date.now();
       c.keys.forEach(function (k) {
         delete r2.held[k];
-        if (how === 'done') { delete r2.later[k]; r2.done[k] = now; } else r2.later[k] = now;
+        if (how !== 'done') r2.later[k] = now;
+        else {
+          delete r2.later[k];
+          // (A standing card leaves only when its job is done, by whichever door: going to it is not doing it.)
+          if (!c.standing) r2.done[k] = now;
+        }
       });
-      saveSeen(tourId, r2);
+      saveTaskRec(tourId, r2);
     };
 
     var i = 0, deferred = 0, busy = false;
@@ -18721,7 +19191,8 @@
         top.style.opacity = '0';
       }
       if (dir > 0) {
-        // Handled: gone from the deck for good, and off to it (today's list stays until it's all logged).
+        // Handled: off to it. A notice is gone from the deck for good; a standing card (and today's list)
+        // stays until its job is done.
         if (!c.keep) decided(c, 'done');
         setTimeout(function () { close(); setTimeout(c.open, 280); }, 240);
       } else {
@@ -18769,7 +19240,7 @@
 
   // The same tasks as a plain list, grouped, for a look at everything at once.
   function openTaskList(tourId) {
-    var tasks = tourTasks(tourId, seenRec(tourId));
+    var tasks = tourTasks(tourId, taskRec(tourId));
     var groups = [], byTitle = {};
     tasks.forEach(function (c) {
       if (!byTitle[c.title]) { byTitle[c.title] = { emoji: c.emoji, title: c.title, list: [] }; groups.push(byTitle[c.title]); }
@@ -18784,9 +19255,10 @@
             h('h3', { class: 'wn-h' }, h('span', { 'aria-hidden': 'true' }, g.emoji), g.title),
             h('div', { class: 'ledger' }, g.list.map(function (c) {
               return h('button', { class: 'row wn-row', type: 'button', onclick: function () {
-                var r2 = seenRec(tourId), now = Date.now();
-                if (!c.keep) c.keys.forEach(function (k) { delete r2.held[k]; delete r2.later[k]; r2.done[k] = now; });
-                saveSeen(tourId, r2);
+                var r2 = taskRec(tourId), now = Date.now();
+                // (As Handle now: a standing card stays until its job is done.)
+                if (!c.keep) c.keys.forEach(function (k) { delete r2.held[k]; delete r2.later[k]; if (!c.standing) r2.done[k] = now; });
+                saveTaskRec(tourId, r2);
                 closeSheet(); setTimeout(c.open, 320);
               } },
                 h('span', { class: 'row-label' }, c.main, c.fresh ? h('span', { class: 'wn-new' }, 'New') : null,
@@ -18809,22 +19281,43 @@
      right or left, or tap Skip. */
   var TODAY_ITEMS = [['sheet', 'Import Day Sheet'], ['buyouts', 'Log in buyouts'], ['who', 'Who received?'],
     ['guarantee', 'Log in Guarantees'], ['merch', 'Log In Merch']];
+  // (The show carries its tour's id as _tour, so todayState can read the ticks table.)
   function todayShow(tourId) {
     var t = getTour(tourId), today = G.tourToday();
-    return G.rows(t && t.shows).filter(function (x) { return x.date === today; })[0] || null;
+    var x = G.rows(t && t.shows).filter(function (r) { return r.date === today; })[0] || null;
+    if (x) x._tour = tourId;
+    return x;
   }
-  // Which of the five are in for this show. "who" is null while there are no buyouts to hand out.
-  function todayState(x) {
+  /* Which of the five are in for this show. "who" is null while there are
+     no buyouts to hand out, and for anyone who doesn't keep the buyout
+     track. "sheet" is in however the day sheet came (posted from the
+     editor, or filled by a Master Tour or photo import that never posts),
+     and "buyouts" by a total or by "No buyouts tonight". */
+  function todayState(x, tourId) {
     var inc = G.isObj(x.income) ? x.income : {};
     var total = G.num(inc.buyouts), tr = G.isObj(x.buyoutTrack) ? x.buyoutTrack : null;
     var per = tr ? G.num(tr.perHead) : 0, paid = buyoutPaidCount(tr);
+    var live = total > 0 ? todayWhoLive(tourId || x._tour, x.id) : undefined;
     return {
-      sheet: !!(G.isObj(x.daySheet) && x.daySheet.postedAt),
-      buyouts: total > 0,
-      who: total > 0 ? (paid > 0 && (!(per > 0) || paid >= Math.round(total / per))) : null,
+      sheet: daySheetAdded(x),
+      buyouts: total > 0 || x.buyoutsNone === true,
+      who: !(total > 0) ? null : live !== undefined ? live : (paid > 0 && (!(per > 0) || paid >= Math.round(total / per))),
       guarantee: G.num(inc.guarantee) > 0 || x.guaranteeNone === true,
       merch: G.num(inc.merch) > 0 || x.merchNone === true
     };
+  }
+  /* "Who received?" read from the ticks table, the BUYOUT ALERT's own truth:
+     in when everyone owed a buyout is tracked on tonight's show, so a tick
+     in either place clears both. undefined before the table (the show's
+     own marks answer, as before); null for anyone who doesn't keep the
+     track (not theirs to do); false while the lists are on their way. */
+  function todayWhoLive(id, showId) {
+    if (!id || !buyoutsOn()) return undefined;
+    var role = buyoutRole(id);
+    if (role === 'own') return null;
+    var people = buyoutPeople(id), got = buyoutTicked(id);
+    if (!role || !people || !got) return false;
+    return people.every(function (p) { return !!got[showId + '|' + p.userId]; });
   }
   // Back from the day sheet (posted, or put down) to the question it was opened from.
   function todayBack(tourId, showId, posted) {
@@ -18841,7 +19334,7 @@
     var i = Math.max(0, G.num(startAt)), busy = false;
     var cur = function () {
       var t = getTour(tourId);
-      return t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? Object.assign({}, t.shows[showId], { id: showId }) : null;
+      return t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? Object.assign({}, t.shows[showId], { id: showId, _tour: tourId }) : null;
     };
     var s0 = cur();
     if (!s0) return;
@@ -18896,15 +19389,23 @@
         }
         if (kind === 'buyouts') {
           var v = G.num(G.isObj(s.income) ? s.income.buyouts : 0);
+          var none = !(v > 0) && s.buyoutsNone === true;
           return [
-            h('p', { class: 'td-note' }, st.buyouts ? '✓ Logged. Change the total here if it’s different.' : 'The total the venue paid in buyouts tonight.'),
+            h('p', { class: none ? 'td-done' : 'td-note' }, none ? '✓ No buyouts tonight'
+              : st.buyouts ? '✓ Logged. Change the total here if it’s different.' : 'The total the venue paid in buyouts tonight.'),
             moneyInput({ id: 'td-buyouts', value: v, label: 'Buyouts from the venue', last: true, big: true, onValue: function (n) { v = n; } }),
+            // A night with no buyouts is an answer too, kept on the show the
+            // way "nothing to wait for" is for the guarantee and the merch.
+            !(v > 0) && !none ? h('button', { class: 'btn quiet block', type: 'button', onclick: function () {
+              save({ buyoutsNone: true }, 'No buyouts tonight');
+            } }, 'No buyouts tonight') : null,
             acts(st.buyouts ? 'Next' : 'Skip', function () {
               if (!(v > 0)) { toast('Type the buyouts total first'); return; }
-              save({ income: incomeWith(s, 'buyouts', v), loggedAt: Date.now() }, 'Buyouts · ' + money(v));
+              save({ income: incomeWith(s, 'buyouts', v), loggedAt: Date.now(), buyoutsNone: null }, 'Buyouts · ' + money(v));
             })
           ];
         }
+        if (kind === 'who' && st.who !== null && todayWhoLive(tourId, s.id) !== undefined) return whoLive(s, st);
         if (kind === 'who') {
           var total = G.num(G.isObj(s.income) ? s.income.buyouts : 0), paid = buyoutPaidCount(s.buyoutTrack);
           return [
@@ -18945,6 +19446,39 @@
             patch.merchReceived = !(due > 0); patch.merchNone = null;
             save(patch, 'Merch · ' + money(amt));
           })
+        ];
+      }
+      /* "Who received?" once the ticks table is on: tonight's people, ticked
+         right here through the same one tick the BUYOUT ALERT makes, so the
+         two never disagree. */
+      var whoPend = {};
+      function whoLive(s, st) {
+        var people = buyoutPeople(tourId), got = buyoutTicked(tourId), asked = buyoutAsked(tourId) || {};
+        var sh = buyoutShows(getTour(tourId) || {}).filter(function (x) { return x.id === s.id; })[0] ||
+          { id: s.id, city: s.city, income: s.income };
+        if (!people || !got) {
+          // (The lists are on their way: this question draws again once they land.)
+          setTimeout(function () { if (host.isConnected && TODAY_ITEMS[i] && TODAY_ITEMS[i][0] === 'who') draw(); }, 700);
+          return [h('p', { class: 'td-note' }, 'Loading…'), acts('Skip')];
+        }
+        var has = function (p) { var k = s.id + '|' + p.userId; return whoPend[k] != null ? whoPend[k] : !!got[k]; };
+        var n = people.filter(has).length;
+        return [
+          h('p', { class: st.who ? 'td-done' : 'td-note' }, st.who ? '✓ Everyone has theirs'
+            : money(G.num(G.isObj(s.income) ? s.income.buyouts : 0)) + ' from the venue. Tick each person as they get theirs.' +
+              (n ? ' ' + n + ' of ' + people.length + ' so far.' : '')),
+          people.length ? h('div', { class: 'ledger bo-list td-who' }, people.map(function (p) {
+            return buyoutPersonRow(sh, p, has(p), !!asked[s.id + '|' + p.userId], async function (want) {
+              var k = s.id + '|' + p.userId;
+              whoPend[k] = want; draw();
+              try { await buyoutTick(tourId, s.id, p.userId, want); }
+              catch (e) { if (buyoutsOn()) toast('Couldn’t save that. Try again.'); }
+              delete whoPend[k];
+              if (host.isConnected) draw();
+              render(true);
+            });
+          })) : h('p', { class: 'hint' }, 'Nobody on the crew list has signed up yet, so there is nobody to tick.'),
+          acts(st.who ? 'Next' : 'Skip')
         ];
       }
       /* Log in Guarantees with the SAME numbers Log income keeps (Devin,
@@ -19312,6 +19846,8 @@
   // A night's guests as rows, by last name; yours (or anyone's, for the tour
   // manager) open with a tap to be changed or taken off.
   function guestRowsFor(id, s, list, backend, myUid, refresh) {
+    // The night's list on screen: its new names have been seen, and leave Tasks' New on the guest list.
+    tasksSeen(id, list.filter(function (g) { return taskNew(taskWhen(g.at || g.createdAt)); }).map(function (g) { return 'guest:' + g.id; }));
     return list.slice().sort(function (a, b) {
       return String(a.lastName || '').localeCompare(String(b.lastName || '')) ||
         String(a.firstName || '').localeCompare(String(b.firstName || ''));
@@ -20578,9 +21114,24 @@
      the profile's Today, which has the address above it already: only what
      someone filled in counts (the address and phone the app looks up by
      itself don't make a sheet), the address isn't said twice, and the
-     amenities nobody answered are left out instead of a row of dashes. */
+     amenities nobody answered are left out instead of a row of dashes.
+     A show's Notes are not shown anywhere (Devin, 2026-10-16 night: "just
+     get rid of notes on both main day sheet and the today tab"); the text
+     stays in the sheet's data, and a sheet holding notes alone reads as no
+     sheet. */
+  function sheetLinesShown(s) {
+    return G.daySheetSections(s).filter(function (x) { return x.key !== 'notes'; })
+      .reduce(function (all, x) { return all.concat(x.lines); }, []);
+  }
+  // A day sheet is "added" once someone posted or filled one in: the venue's
+  // address and phone the app pencils in by itself when shows are added
+  // don't count, nor do Notes, which nothing shows any more.
+  function daySheetAdded(s) {
+    if (!s || !G.isObj(s.daySheet)) return false;
+    return !!s.daySheet.postedAt || sheetLinesShown(s).some(function (l) { return !/^(Address|Venue phone): /.test(l); });
+  }
   function daySheetNodes(s, off, o) {
-    var lines = s ? G.daySheetLines(s) : G.offDayLines(off || {});
+    var lines = s ? sheetLinesShown(s) : G.offDayLines(off || {});
     if (o && o.onlySet && s) lines = lines.filter(function (x) { return !/^(Address|Venue phone): /.test(x); });
     if (!lines.length) return null;
     var d = s && G.isObj(s.daySheet) ? s.daySheet : {};
@@ -20602,12 +21153,13 @@
         return v ? dsRow(label, h('span', { class: 'ds-time num' }, v)) : null;
       };
       // Soundchecks and set times: a small heading, then one row per band.
-      var bandRows = function (title, list) {
+      // out: the heading sits above its card instead of inside it (Today).
+      var bandRows = function (title, list, out) {
         var got = (Array.isArray(list) ? list : []).filter(function (r) {
           return r && (String(r.band || '').trim() || String(r.time || '').trim() || String(r.end || '').trim());
         });
         if (!got.length) return [];
-        return [h('div', { class: 'row ds-sub' }, title)].concat(got.map(function (r) {
+        return [out ? h('p', { class: 'ds-sub-out' }, title) : h('div', { class: 'row ds-sub' }, title)].concat(got.map(function (r) {
           return h('div', { class: 'row ds-row ds-band-row' },
             h('span', { class: 'row-label' }, String(r.band || '').trim() || 'TBA'),
             h('span', { class: 'ds-time num' }, G.timeSpan(r.time, r.end) || 'TBA'));
@@ -20623,7 +21175,10 @@
       var blocks = function (title, groups) {
         var cards = groups.map(function (g) { return [].concat.apply([], g).filter(Boolean); })
           .filter(function (g) { return g.length; })
-          .map(function (g) { return h('div', { class: 'ledger ds-block' }, g); });
+          .map(function (g) {
+            var lead = g[0] && g[0].classList && g[0].classList.contains('ds-sub-out') ? g.shift() : null;
+            return [lead, h('div', { class: 'ledger ds-block' }, g)];
+          });
         return cards.length ? h('section', { class: 'ds-sec' }, title ? h('h3', { class: 'ds-sec-h' }, title) : null, cards) : null;
       };
       /* o.cliff is the profile's Today as cliff notes (Devin, 2026-10-16:
@@ -20668,9 +21223,11 @@
           // The cliff notes: lobby call, last call, load out and the drive
           // stay on the Day sheet tab, untouched.
           [clockRow('Load in', d.loadIn, d.loadInEnd)],
-          [bandRows('Soundcheck', bandKeep(d.soundchecks))],
+          // Today shows only the viewer's band, so its set time reads singular,
+          // and both headings sit outside their cards (Devin, 2026-10-17).
+          [bandRows('Soundcheck', bandKeep(d.soundchecks), true)],
           [textRow('VIP', vipKeep(d.vip)), clockRow('Doors', d.doors)],
-          [bandRows('Set times', bandKeep(d.setTimes))],
+          [bandRows('Set time', bandKeep(d.setTimes), true)],
           [clockRow('Bus call', d.busCall)]] : [
           [clockRow('Lobby call', d.lobbyCall), clockRow('Load in', d.loadIn, d.loadInEnd)],
           [bandRows('Soundcheck', d.soundchecks)],
@@ -20690,9 +21247,7 @@
         cliff ? null : section('More from the sheet', G.dsExtras(d.extras).map(function (r) {
           return dsRow(r.label || r.value,
             r.label && r.value ? h('span', { class: 'ds-val' }, r.value) : null);
-        })),
-        String(d.notes || '').trim() ? h('section', { class: 'ds-sec' },
-          h('h3', { class: 'ds-sec-h' }, 'Notes'), h('p', { class: 'ds-notes' }, String(d.notes).trim())) : null
+        }))
       ];
     } else {
       // An off day: the hotel and the plans.
@@ -20749,7 +21304,7 @@
     var s = entry.show;
     var today = G.tourToday();
     var off = s ? null : offDayFor(t, entry.date);
-    var lines = s ? G.daySheetLines(s) : G.offDayLines(off);
+    var lines = s ? sheetLinesShown(s) : G.offDayLines(off);
     var d = s && G.isObj(s.daySheet) ? s.daySheet : {};
 
     // The centerpiece: where you are, when.
@@ -20784,19 +21339,36 @@
       body.classList.add('ds-empty');
     }
 
-    var copyBtn = null;
+    /* Copy is an icon now (Devin, 2026-10-16 night: "Get rid of 'copy day
+       sheet' and just put the copy icon underneath the pencil icon but
+       paralell with the 'schedule' text"): under the pencil, on the line of
+       the Schedule heading (the sheet's first heading when it has no
+       schedule; a line of its own when it has no heading at all). The
+       Notes nobody sees any more stay out of what it copies. */
     if (lines.length) {
-      var copyText2 = s ? G.daySheetText(s) : G.offDayText(entry.date, off);
-      copyBtn = h('button', {
-        class: 'btn ghost block', type: 'button', style: 'margin-top:14px',
+      var copyText2 = s ? G.daySheetText(Object.assign({}, s, { daySheet: Object.assign({}, d, { notes: '' }) }))
+        : G.offDayText(entry.date, off);
+      var copyIcon = h('button', {
+        class: 'iconbtn sm ds-copy', type: 'button', 'aria-label': 'Copy this day sheet',
         onclick: async function () {
           var ta = h('textarea', { class: 'sr', readonly: true, value: copyText2 });
           document.body.appendChild(ta);
           var ok = await copyText(copyText2, ta);
           ta.remove();
-          toast(ok ? 'Copied \u2014 paste it in the group chat' : 'Press and hold to copy');
+          toast(ok ? 'Copied. Paste it in the group chat.' : 'Press and hold to copy');
         }
-      }, icon('copy', 18), 'Copy day sheet');
+      }, icon('copy', 18));
+      // A show's sheet is built sections, each under its heading; an off day's has no Schedule.
+      var heads = s ? [].concat(body).map(function (n) { return n && n.querySelector ? n.querySelector('h3.ds-sec-h') : null; })
+        .filter(function (x) { return x && x.textContent.trim(); }) : [];
+      var head = heads.filter(function (x) { return x.textContent.trim() === 'Schedule'; })[0] || heads[0];
+      if (head) {
+        var headRow = h('div', { class: 'ds-sec-hrow' });
+        head.parentNode.insertBefore(headRow, head);
+        headRow.append(head, copyIcon);
+      } else {
+        body = [h('div', { class: 'ds-sec-hrow ds-copy-only' }, copyIcon)].concat(body);
+      }
     }
 
     var guestBtn = null;
@@ -20834,14 +21406,19 @@
       if (sel && sel.scrollIntoView) sel.scrollIntoView({ inline: 'center', block: 'nearest' });
     });
 
-    var editRow = canEditTour(id) ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
+    // The big button only while there is no sheet yet (Devin, 2026-10-16
+    // night: "get rid of 'edit day sheet' button at the bottom if the day
+    // sheet is already added"); once there is one, the pencil edits it.
+    var editRow = canEditTour(id) && !(s ? daySheetAdded(s) : lines.length) ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
       s
         ? h('button', { class: 'btn quiet glow', type: 'button',
             onclick: function () { openDaySheetEditor(id, s.id); } },
-            icon('edit', 18), lines.length ? 'Edit day sheet' : 'Fill in the day sheet')
+            icon('edit', 18), 'Fill in the day sheet')
         : h('button', { class: 'btn quiet glow', type: 'button',
             onclick: function () { openOffDaySheet(id, entry.date); } },
-            icon('edit', 18), lines.length ? 'Edit the off day' : 'Fill in the off day'),
+            icon('edit', 18), 'Fill in the off day')) : null;
+    // Import from Master Tour, at the foot of the sheet under the spots ("put that under the spots and notes").
+    var importRow = canEditTour(id) ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
       tourImportControl(id)) : null;
 
     // The night's venue, filled in from the show, centred over its day sheet.
@@ -20879,19 +21456,19 @@
     // the day being played, only when there are rows (and never before
     // migration 0157 is live).
     var alsoTonight = s ? cityTonight(id, s) : null;
-    // PLACES RECOMMENDED BY TOUR, the day sheet's last word (Devin,
-    // 2026-10-16: "At the bottom of the daysheet, it should show everyone on
-    // the crews 'spots' for that city"): the places shared with this tour
-    // for the day's city, after Notes and every other section, only when
-    // there are any (and never before migration 0153 is live).
+    // PLACES RECOMMENDED BY TOUR (Devin, 2026-10-16: "At the bottom of the
+    // daysheet, it should show everyone on the crews 'spots' for that
+    // city"; that night: "Also put this above the notes"): the places shared
+    // with this tour for the day's city, right under the sheet where Notes
+    // was, only when there are any (and never before migration 0153 is live).
     var spotsRec = spotsRecommended(id, s ? s.city : off.city);
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
     // Check In sits right under the venue's name.
-    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, copyBtn, alsoTonight, spotsRec];
+    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, spotsRec, alsoTonight, importRow];
 
-    return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn, alsoTonight, spotsRec];
+    return [hero, rail, placeEl, body, pollRow, editRow, guestBtn, spotsRec, alsoTonight, importRow];
   }
 
   function clearDaySheet(tourId, show, date, off) {
@@ -21969,7 +22546,7 @@
           h('h3', { class: 'ds-sec-h' }, 'More from the sheet'),
           // Lines of the sheet the boxes above don't cover, in its own words.
           h('div', { class: 'field' }, extrasHost),
-          field('Anything else', textIn('notes', 'Optional')),
+          // No Notes box (2026-10-16 night): notes already saved ride along untouched in f.notes.
           h('div', { class: 'stack' },
             h('button', { class: 'btn primary block', type: 'submit' }, 'Post day sheet'),
             h('button', { class: 'btn ghost block', type: 'button',
@@ -22051,22 +22628,26 @@
     var p = G.isObj(track) && G.isObj(track.paid) ? track.paid : {};
     return Object.keys(p).filter(function (k) { return G.isObj(p[k]); }).length;
   }
-  // Shows before today whose buyouts aren't all handed out: nobody ticked
-  // yet, or fewer ticked than the venue paid for.
+  // Before the ticks table: the buyout shows from the fresh start on,
+  // tonight's included, whose buyouts aren't all handed out (nobody ticked
+  // yet, or fewer ticked than the venue paid for).
   function buyoutsOwed(t) {
-    var today = G.tourToday();
-    return G.rows(t && t.shows).filter(function (sh) {
-      var total = G.num(G.isObj(sh.income) ? sh.income.buyouts : 0);
-      if (!G.parseDay(sh.date) || sh.date >= today || !(total > 0)) return false;
+    return buyoutShows(t).filter(function (sh) {
+      var total = G.num(sh.income.buyouts);
       var per = G.isObj(sh.buyoutTrack) ? G.num(sh.buyoutTrack.perHead) : 0;
       var paid = buyoutPaidCount(sh.buyoutTrack);
       return !paid || (per > 0 && paid < Math.round(total / per));
-    }).sort(G.byDate);
+    });
   }
   function saveBuyouts(id, sh, next) {
     var patch = { shows: {} };
     patch.shows[sh.id] = { buyoutTrack: next };
-    api.update(id, patch).then(function (ok) { if (ok) { toast('Buyouts saved'); render(true); } });
+    var prev = sh.buyoutTrack;
+    api.update(id, patch).then(function (ok) {
+      if (!ok) return;
+      buyoutDbMirror(id, sh.id, prev, next);
+      toast('Buyouts saved'); render(true);
+    });
   }
   /* Buyout ticks (0151): once the table is there, the database remembers,
      person by person, who has been handed the buyout a show logged. The
@@ -22079,81 +22660,126 @@
     var B = window.GR_BACKEND;
     return S.mode === 'db' && !!(B && B.buyoutsOn && B.buyoutTracks && B.buyoutTrack && B.buyoutUntrack && B.buyoutsOn());
   }
-  // The shows whose buyout money is logged, oldest first.
-  function buyoutShows(t) {
-    return G.rows(t && t.shows).filter(function (sh) {
-      return G.parseDay(sh.date) && G.num(G.isObj(sh.income) ? sh.income.buyouts : 0) > 0;
-    }).sort(G.byDate);
+  // The shows whose buyout money is logged, oldest first, from the fresh
+  // start on (G.BUYOUT_FROM): nothing older counts anywhere in buyouts.
+  function buyoutShows(t) { return G.buyoutShows(t); }
+  /* Who sees what (Devin, 2026-10-17): the Tour Manager keeps the track,
+     "including me. I don't want to see the track I want to see my own
+     buyout status". 'track': this account keeps the tick list. 'own': it
+     sees its own buyouts, with a ping to the Tour Manager. null: not known
+     yet (the crew list is on its way). Crew never write ticks, so they
+     never wait on the list. */
+  function buyoutRole(id) {
+    if (!canEditTour(id)) return 'own';
+    var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
+    var c = S.crewCache && S.crewCache[id];
+    if (!c) { buyoutPeople(id); return null; }
+    var tr = G.buyoutTrackers(c.rows);
+    if (tr.titled) return me && tr.ids.indexOf(me) >= 0 ? 'track' : 'own';
+    return moneyLead(id) ? 'track' : 'own';
+  }
+  // The crew list, fetched if this phone doesn't hold it yet ([] when it can't be had).
+  function buyoutCrewRows(id) {
+    var c = S.crewCache && S.crewCache[id], B = window.GR_BACKEND;
+    if (c) return Promise.resolve(c.rows);
+    if (!B || !B.crew) return Promise.resolve([]);
+    return B.crew(id).then(function (rows) {
+      S.crewCache = S.crewCache || {};
+      S.crewCache[id] = { rows: rows, at: Date.now() };
+      return rows;
+    }, function () { return []; });
   }
   // Everyone with a seat: the crew list's signed-up rows, the owner among
   // them. null while the list is still being fetched (the ask is made here
   // too: the tour's creator never goes through moneyLead's own one).
-  /* One truth for buyouts (the reviewer's catch): a tick in the new list
-     also writes the money mark on the show - but ONLY when the show already
-     has a per-head figure from the old tracker, because inventing one would
-     invent income. The old tracker mirrors into the database the same way,
-     so the two can never drift apart. */
+  /* One truth for buyouts: a tick in the new list also writes the mark on
+     the show, so the Today card's "Who received?" and Log income's Track
+     agree with it. The per-head figure is never invented here: with none
+     set, a mark counts no income (G.buyoutIncome reads perHead), and the
+     Artists' share counts once one is set in Log income's Track. The old
+     tracker mirrors into the database the same way. */
   function buyoutDocMark(id, showId, userId, want) {
     var t = getTour(id); if (!t || !canEditTour(id)) return;
     var s = G.isObj(t.shows) ? t.shows[showId] : null; if (!s) return;
-    var tr = G.isObj(s.buyoutTrack) ? s.buyoutTrack : null;
-    if (!tr || !(G.num(tr.perHead) > 0)) return;
+    var tr = G.isObj(s.buyoutTrack) ? s.buyoutTrack : { perHead: null };
     var c = S.crewCache && S.crewCache[id];
     var row = c && c.rows.filter(function (m) { return m.userId === userId; })[0];
-    var email = row ? String(row.email || '').trim().toLowerCase() : '';
+    var low = function (v) { return String(v || '').trim().toLowerCase(); };
+    var email = row ? low(row.email) : '';
     // The old tracker keys people by the crew map's own key, else by
-    // 'n:' + the lowercased name: the mirror writes the SAME keys.
+    // 'e:' + email for a seat, else 'n:' + the lowercased name: the mirror
+    // looks under all three and writes the crew map's key when there is one.
     var ent = G.rows(t.crew).filter(function (e) {
-      return (email && String(e.email || '').trim().toLowerCase() === email) ||
+      return (email && low(e.email) === email) ||
         (row && row.name && e.name && String(e.name).trim() === String(row.name).trim());
     })[0];
-    var nk = 'n:' + String((row && row.name) || '').trim().toLowerCase();
-    var key = ent ? ent.id : nk;
+    var nk = 'n:' + low(row && row.name);
+    var ek = email ? 'e:' + email : '';
+    var key = ent ? ent.id : ek || nk;
+    if (key === 'n:') return;   // nobody this phone can name
     var paid = Object.assign({}, G.isObj(tr.paid) ? tr.paid : {});
-    var had = !!(G.isObj(paid[key]) || (nk !== 'n:' && G.isObj(paid[nk])));
+    var keys = [key, nk !== 'n:' ? nk : '', ek].filter(Boolean);
+    var had = keys.some(function (k) { return G.isObj(paid[k]); });
     if (want === had) return;
     if (want) paid[key] = { name: (ent && ent.name) || (row && row.name) || 'Someone', artist: !!(ent && G.isMember(ent)) };
     // The deep merge keeps what a patch leaves out: only a null removes.
-    else { paid[key] = null; if (nk !== 'n:') paid[nk] = null; }
+    else keys.forEach(function (k) { if (G.isObj(paid[k])) paid[k] = null; });
     var patch = {}; patch[showId] = { buyoutTrack: Object.assign({}, tr, { paid: paid }) };
     api.update(id, { shows: patch }).then(function () { render(true); });
   }
-  // The other direction: the old tracker's save mirrors into the database,
-  // quietly, by the same email-first match. Nothing happens before 0151.
+  /* The other direction: the old tracker's save mirrors into the database,
+     quietly, by the same email-first match, once the save itself is in.
+     Its keys are a crew map key, 'e:' + a seat's email (the owner's
+     included), or 'n:' + a name; the crew list is fetched first when this
+     phone doesn't hold it, so no tick is lost to a list still on its way.
+     Nothing happens before 0151, or for a seat without an account. */
   function buyoutDbMirror(id, showId, prev, next) {
     var B = window.GR_BACKEND;
     if (!buyoutsOn() || !B || !B.buyoutTrack) return;
     var t = getTour(id); if (!t) return;
-    var c = S.crewCache && S.crewCache[id];
-    var rows = (c && c.rows) || [];
-    var uidOf = function (key) {
-      if (/^u:/.test(key)) return key.slice(2);
-      if (/^n:/.test(key)) {
-        var nm = key.slice(2);
-        var byName = rows.filter(function (m) {
-          return String(m.name || '').trim().toLowerCase() === nm;
-        })[0];
-        return byName ? byName.userId : null;
-      }
-      var ent = G.rows(t.crew).filter(function (e) { return e.id === key; })[0];
-      if (!ent) return null;
-      var email = String(ent.email || '').trim().toLowerCase();
-      var row = rows.filter(function (m) {
-        return (email && String(m.email || '').trim().toLowerCase() === email) ||
-          (ent.name && m.name && String(m.name).trim() === String(ent.name).trim());
-      })[0];
-      return row ? row.userId : null;
-    };
     var a = G.isObj(prev) && G.isObj(prev.paid) ? prev.paid : {};
     var b = G.isObj(next) && G.isObj(next.paid) ? next.paid : {};
-    Object.keys(b).forEach(function (k) {
-      // A null is a tombstone - someone UNTICKED. Only a real mark ticks.
-      if (!G.isObj(b[k]) || G.isObj(a[k])) return; var u = uidOf(k);
-      if (u) B.buyoutTrack(id, showId, u).catch(function () { /* the backfill or the next tick catches it */ });
-    });
-    Object.keys(a).forEach(function (k) {
-      if (!G.isObj(a[k]) || G.isObj(b[k])) return; var u = uidOf(k);
-      if (u) B.buyoutUntrack(id, showId, u).catch(function () { /* same */ });
+    // A null is a tombstone - someone UNTICKED. Only a real mark ticks.
+    var on = Object.keys(b).filter(function (k) { return G.isObj(b[k]) && !G.isObj(a[k]); });
+    // A tombstone counts only when it is new in this save: one stored from an
+    // earlier untick is history, and must not untick a person ticked since.
+    var off = Object.keys(a).filter(function (k) { return G.isObj(a[k]) && !G.isObj(b[k]); })
+      .concat(Object.keys(b).filter(function (k) { return b[k] === null && a[k] === undefined; }));
+    if (!on.length && !off.length) return;
+    var low = function (v) { return String(v || '').trim().toLowerCase(); };
+    buyoutCrewRows(id).then(function (rows) {
+      var byEmail = function (email) {
+        email = low(email);
+        return email ? rows.filter(function (m) { return m.userId && (low(m.email) === email || low(m.invitedEmail) === email); })[0] : null;
+      };
+      var uidOf = function (key) {
+        if (/^u:/.test(key)) return key.slice(2);
+        if (/^e:/.test(key)) { var r = byEmail(key.slice(2)); return r ? r.userId : null; }
+        if (/^n:/.test(key)) {
+          var nm = key.slice(2);
+          var byName = rows.filter(function (m) { return m.userId && low(m.name) === nm; });
+          // (Two accounts wearing one name would be a guess: then nobody.)
+          return byName.length === 1 ? byName[0].userId : null;
+        }
+        var ent = G.rows(t.crew).filter(function (e) { return e.id === key; })[0];
+        if (!ent) return null;
+        var row = byEmail(ent.email) || rows.filter(function (m) {
+          return m.userId && ent.name && m.name && String(m.name).trim() === String(ent.name).trim();
+        })[0];
+        return row ? row.userId : null;
+      };
+      on.forEach(function (k) {
+        var u = uidOf(k);
+        if (u) B.buyoutTrack(id, showId, u).catch(function () { /* the next tick catches it */ });
+      });
+      // One person can sit under two keys (an old name key and their crew
+      // key): while any live mark still names them, they stay ticked.
+      var still = {};
+      Object.keys(b).forEach(function (k) { if (G.isObj(b[k])) { var u = uidOf(k); if (u) still[u] = true; } });
+      off.forEach(function (k) {
+        var u = uidOf(k);
+        if (u && !still[u]) B.buyoutUntrack(id, showId, u).catch(function () { /* same */ });
+      });
     });
   }
   function buyoutPeople(id) {
@@ -22188,27 +22814,43 @@
     rows.forEach(function (r) { got[r.showId + '|' + r.userId] = true; });
     return got;
   }
-  /* MY PAY's own view of them: the days this tour logged a buyout and
+  // The pings (0176). Until that table is there, nothing to show.
+  function buyoutAsksOn() {
+    var B = window.GR_BACKEND;
+    return buyoutsOn() && !!(B && B.buyoutAsksOn && B.buyoutAsks && B.buyoutAskSend && B.buyoutAsksOn());
+  }
+  // The pings as "showId|userId" -> when last asked; {} before 0176, null while first fetched.
+  function buyoutAsked(id) {
+    if (!buyoutAsksOn()) return {};
+    var rows = window.GR_BACKEND.buyoutAsks(id);
+    if (!rows) return null;
+    var out = {};
+    rows.forEach(function (r) { var k = r.showId + '|' + r.userId; if (!out[k] || r.at > out[k]) out[k] = r.at; });
+    return out;
+  }
+  /* MY PAY's own view of them: the buyout shows from the fresh start on and
      whether this account's tick is in. Only your own rows are read (the
-     database hands Crew nothing else), and no amounts ride along. The tab
-     starts fresh from today (Devin, 2026-10-16: "our tour is playing catch
-     up these can go for now and start fresh on today"): days before today
-     no longer show here - the count on the tab follows the same list - and
-     the Managers' tick list keeps every day as it always has. */
+     database hands Crew nothing else), and no amounts ride along. lit: one
+     is still waiting, so the tab and the button glow green until you are
+     tracked on every one (Devin, 2026-10-17: "It stops glowing when it has
+     been given and tracked to that person"). */
   function myBuyoutDays(id, t) {
     var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
-    var today = G.tourToday();
-    var shows = buyoutShows(t).filter(function (sh) { return sh.date >= today; });
+    var shows = buyoutShows(t);
     var rows = shows.length ? B.buyoutTracks(id) : [];
     var mine = {};
     (rows || []).forEach(function (r) { if (r.userId === me) mine[r.showId] = true; });
-    return { shows: shows, mine: mine, loading: !!shows.length && !rows,
-      got: shows.filter(function (sh) { return mine[sh.id]; }).length };
+    var got = shows.filter(function (sh) { return mine[sh.id]; }).length;
+    var loading = !!shows.length && !rows;
+    return { shows: shows, mine: mine, loading: loading, got: got, lit: !loading && !!me && got < shows.length };
   }
-  /* The same button once the ticks live in the database (Devin, 2026-10-15):
-     green the moment buyout money is logged on a date while anyone on the
-     crew list still hasn't been ticked, and until everyone has. Managers
-     only; a tap opens the tick list. */
+  function buyoutBtn(lit, onclick) {
+    return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (lit ? ' on' : ''), type: 'button', onclick: onclick },
+      icon('bell', 15), 'BUYOUT ALERT'));
+  }
+  /* The Tour Manager's button: green from the moment buyout money is logged
+     on a show until everyone owed one is tracked on it; a tap opens the
+     tick list. */
   function buyoutTickBtn(id, t) {
     var shows = buyoutShows(t);
     var people = buyoutPeople(id);
@@ -22216,11 +22858,14 @@
     var lit = !!(shows.length && people && people.length && got) && shows.some(function (sh) {
       return people.some(function (p) { return !got[sh.id + '|' + p.userId]; });
     });
-    return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (lit ? ' on' : ''), type: 'button',
-      onclick: function () {
-        if (!buyoutShows(getTour(id) || {}).length) { toast('No buyouts logged on a date yet'); return; }
-        openBuyoutTicks(id);
-      } }, icon('bell', 15), 'BUYOUT ALERT'));
+    return buyoutBtn(lit, function () {
+      if (!buyoutShows(getTour(id) || {}).length) { toast('No buyouts logged yet'); return; }
+      openBuyoutTicks(id);
+    });
+  }
+  // Everyone else's: green while their own buyout is still waiting; a tap opens their own.
+  function buyoutMineBtn(id, t) {
+    return buyoutBtn(myBuyoutDays(id, t).lit, function () { openBuyoutMine(id); });
   }
   // A tick list that is up draws itself again when fresh ticks land (a poke,
   // or this phone's own tick answered).
@@ -22231,25 +22876,49 @@
     if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(buyoutTicksRedraw, 400); return; }
     try { buyoutLive(); } catch (e) { /* it draws again on its next tap */ }
   }
-  /* The tick list: every show with buyout money logged, each opening to the
-     people on the crew list. Tick someone as they get theirs; tap the tick
-     again to undo it. The database pokes the person either way, so their
-     MY PAY follows along live. */
-  function openBuyoutTicks(id) {
+  /* One tick or its undo, from the tick list or the Today card: the table,
+     then the mark on the show, then the ticked person's phone hears it, if
+     it asked to (the undo stays quiet; the poke already redraws MY PAY). */
+  async function buyoutTick(id, showId, userId, want) {
     var B = window.GR_BACKEND;
+    if (want) await B.buyoutTrack(id, showId, userId); else await B.buyoutUntrack(id, showId, userId);
+    buyoutDocMark(id, showId, userId, want);
+    if (want) {
+      var bsh = buyoutShows(getTour(id) || {}).filter(function (x) { return x.id === showId; })[0];
+      sendNotify(id, 'buyout', { to: userId, city: (bsh && bsh.city) || '' });
+    }
+  }
+  // One person under a show: the tick, name and role, Asked when they pinged, Received or Not yet.
+  function buyoutPersonRow(sh, p, on, asked, onTick) {
+    var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: on,
+      'aria-label': p.name + ' received their buyout · ' + (sh.city || 'Show'),
+      onchange: function (e) { onTick(!!e.target.checked); } });
+    return h('label', { class: 'row bo-row' }, cb,
+      h('span', { class: 'row-label' }, p.name, h('span', { class: 'hint' }, p.role)),
+      !on && asked ? h('span', { class: 'bo-asked' }, 'Asked') : null,
+      h('span', { class: 'bus-word' + (on ? ' on' : '') }, on ? 'Received' : 'Not yet'));
+  }
+  /* The tick list, the Tour Manager's alone: every buyout show from the
+     fresh start on, each opening to the people owed one. Tick someone as
+     they get theirs; tap the tick again to undo it. The database pokes the
+     person either way, so their MY PAY follows along live, and a ping from
+     someone still waiting shows as Asked by their name. */
+  function openBuyoutTicks(id) {
     var open = {}, pend = {};
     var first = buyoutShows(getTour(id) || {});
     if (first.length === 1) open[first[0].id] = true;
     var box = h('div', { class: 'ledger bo-list' });
     function draw() {
-      // The table went away under us (a migration rolled back), or the seat
+      // The table went away under us (a migration rolled back), or the job
       // did: the sheet goes quietly, the way the button already has.
-      if (!buyoutsOn() || !moneyLead(id)) { if (buyoutLive === draw) closeSheet(); return; }
+      var role = buyoutRole(id);
+      if (!buyoutsOn() || role === 'own') { if (buyoutLive === draw) closeSheet(); return; }
       var shows = buyoutShows(getTour(id) || {});
       if (!shows.length) { if (buyoutLive === draw) closeSheet(); return; }
       var people = buyoutPeople(id);
       var got = buyoutTicked(id);
-      if (!people || !got) {
+      var asked = buyoutAsked(id) || {};
+      if (!role || !people || !got) {
         box.replaceChildren(h('p', { class: 'note' }, 'Loading…'));
         // (The crew list answers to the page, not to this sheet: look again in a moment.)
         setTimeout(function () { if (buyoutLive === draw) draw(); }, 700);
@@ -22264,20 +22933,16 @@
       var kids = [];
       shows.forEach(function (sh) {
         var ticked = people.filter(function (p) { return has(sh, p); }).length;
+        var waiting = people.filter(function (p) { return !has(sh, p) && asked[sh.id + '|' + p.userId]; }).length;
         kids.push(h('button', { class: 'row rowbtn', type: 'button',
           'aria-expanded': open[sh.id] ? 'true' : 'false',
           onclick: function () { open[sh.id] = !open[sh.id]; draw(); } },
           h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date),
-            h('span', { class: 'hint' }, ticked === people.length ? 'Everyone has theirs' : ticked + ' of ' + people.length + ' tracked')),
+            h('span', { class: 'hint' }, (ticked === people.length ? 'Everyone has theirs' : ticked + ' of ' + people.length + ' tracked') +
+              (waiting ? ' · ' + waiting + ' asked' : ''))),
           h('span', { class: 'amt num' }, money(G.num(sh.income.buyouts))), icon('chevron', 18)));
         if (open[sh.id]) people.forEach(function (p) {
-          var on = has(sh, p);
-          var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: on,
-            'aria-label': p.name + ' received their buyout · ' + (sh.city || 'Show'),
-            onchange: function (e) { tick(sh.id, p.userId, !!e.target.checked); } });
-          kids.push(h('label', { class: 'row bo-row' }, cb,
-            h('span', { class: 'row-label' }, p.name, h('span', { class: 'hint' }, p.role)),
-            h('span', { class: 'bus-word' + (on ? ' on' : '') }, on ? 'Received' : 'Not yet')));
+          kids.push(buyoutPersonRow(sh, p, has(sh, p), !!asked[sh.id + '|' + p.userId], function (want) { tick(sh.id, p.userId, want); }));
         });
       });
       box.replaceChildren.apply(box, kids);
@@ -22286,19 +22951,12 @@
       var key = showId + '|' + userId;
       pend[key] = want;
       draw();
-      try { if (want) await B.buyoutTrack(id, showId, userId); else await B.buyoutUntrack(id, showId, userId); }
+      try { await buyoutTick(id, showId, userId, want); }
       catch (e) {
         delete pend[key];
         draw();
         if (buyoutsOn()) toast('Couldn’t save that. Try again.');
         return;
-      }
-      buyoutDocMark(id, showId, userId, want);
-      // The ticked person's phone hears their buyout is marked received, if
-      // it asked to (the undo stays quiet; the poke already redraws MY PAY).
-      if (want) {
-        var bsh = buyoutShows(getTour(id) || {}).filter(function (x) { return x.id === showId; })[0];
-        sendNotify(id, 'buyout', { to: userId, city: (bsh && bsh.city) || '' });
       }
       delete pend[key];
       draw();
@@ -22315,12 +22973,73 @@
     }, { label: 'Buyout alert', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
     buyoutLive = draw;
   }
-  /* BUYOUT ALERT, at the top of the Budget's Buyouts tab and nowhere else
-     since 2026-10-16 (it lived on the Overview's button grid before that):
-     it glows and pulses while someone from an earlier show still hasn't had
-     their buyout. */
+  /* Everyone else's BUYOUT ALERT (Devin, 2026-10-17: "I want to see my own
+     buyout status"): each buyout show from the fresh start on, Received or
+     Not yet, for this account alone, and on a Not yet a ping to the Tour
+     Manager ("In the buyout alert button you can ping the TM to get you
+     your buyout"). The ping waits on 0176; one an hour per show is plenty,
+     and the row says Sent until then. */
+  function openBuyoutMine(id) {
+    var B = window.GR_BACKEND, sending = {};
+    if (buyoutRole(id) === 'track') { openBuyoutTicks(id); return; }
+    var box = h('div', { class: 'ledger bo-list' });
+    function draw() {
+      if (!buyoutsOn()) { if (buyoutLive === draw) closeSheet(); return; }
+      var role = buyoutRole(id);
+      // (The crew list came in and says this account keeps the track after all.)
+      if (role === 'track') { if (buyoutLive === draw) openBuyoutTicks(id); return; }
+      var bo = myBuyoutDays(id, getTour(id) || {});
+      // (The pings are read alongside: Ping the TM shows once they are in, so Sent is never missed.)
+      var asksOn = buyoutAsksOn(), askedNow = asksOn ? buyoutAsked(id) : {}, asked = askedNow || {};
+      if (!role || bo.loading) {
+        box.replaceChildren(h('p', { class: 'note' }, 'Loading…'));
+        setTimeout(function () { if (buyoutLive === draw) draw(); }, 700);
+        return;
+      }
+      if (!bo.shows.length) { box.replaceChildren(h('p', { class: 'note' }, 'No buyouts logged yet.')); return; }
+      var me = B && B.uid ? B.uid() : null;
+      box.replaceChildren.apply(box, bo.shows.map(function (sh) {
+        var got = !!bo.mine[sh.id];
+        var at = asked[sh.id + '|' + me];
+        var sent = !!sending[sh.id] || !!(at && Date.now() - Date.parse(at) < 3600e3);
+        return h('div', { class: 'row bo-mine' },
+          h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date)),
+          !got && asksOn && askedNow ? h('button', { class: 'btn sm quiet bo-ping', type: 'button', disabled: sent,
+            onclick: function () { ping(sh); } }, sent ? 'Sent' : 'Ping the TM') : null,
+          h('span', { class: 'bus-word' + (got ? ' on' : '') }, got ? 'Received' : 'Not yet'));
+      }));
+    }
+    async function ping(sh) {
+      if (sending[sh.id]) return;
+      sending[sh.id] = true;
+      draw();
+      try { await B.buyoutAskSend(id, sh.id); }
+      catch (e) {
+        delete sending[sh.id];
+        draw();
+        toast(e && e.code === 'permission' ? 'That buyout is already tracked.' : 'Couldn’t send that. Try again.');
+        return;
+      }
+      // The push to the Tour Manager's phone, once the notify function knows the kind.
+      sendNotify(id, 'buyoutask', { showId: sh.id });
+    }
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, 'BUYOUT ALERT'),
+        box,
+        h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
+      ];
+    }, { label: 'Buyout alert', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
+    buyoutLive = draw;
+  }
+  /* BUYOUT ALERT, at the top of MY PAY's Buyouts tab and nowhere else since
+     2026-10-16. With the ticks table: the Tour Manager's opens the tick
+     list, everyone else's opens their own buyouts, and each glows green
+     while what it is about is still waiting. Before the table, the old
+     document-only list, for the people who can edit the tour. */
   function buyoutAlertBtn(id, t) {
-    if (buyoutsOn() && moneyLead(id)) return buyoutTickBtn(id, t);
+    if (buyoutsOn()) return buyoutRole(id) === 'track' ? buyoutTickBtn(id, t) : buyoutMineBtn(id, t);
     if (!canEditTour(id)) return null;
     var owed = buyoutsOwed(t);
     return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (owed.length ? ' on' : ''), type: 'button',
@@ -22357,6 +23076,11 @@
     var cur = { perHead: G.isObj(track) ? track.perHead : null, paid: {} };
     var before = G.isObj(track) && G.isObj(track.paid) ? track.paid : {};
     Object.keys(before).forEach(function (k) { if (G.isObj(before[k])) cur.paid[k] = before[k]; });
+    var seeded = {};   // ticked here from the ticks table, not from the show's own marks
+    // Unticked earlier in this same Log income visit (not saved yet): the table
+    // still has them, but the person here just said no.
+    var savedPaid = G.isObj(show && show.buyoutTrack) && G.isObj(show.buyoutTrack.paid) ? show.buyoutTrack.paid : {};
+    var untickedHere = function (k) { return before[k] === null && savedPaid[k] !== null; };
     var people = [];
     var seen = {};
     /* Whose buyout is income: the people in the band. member: the tour's own
@@ -22410,7 +23134,7 @@
     function close(save) {
       if (save) {
         cur.perHead = perHead();
-        Object.keys(before).forEach(function (k) { if (!cur.paid[k]) cur.paid[k] = null; });
+        Object.keys(before).concat(Object.keys(seeded)).forEach(function (k) { if (!cur.paid[k]) cur.paid[k] = null; });
         done(cur);
       }
       pop.classList.remove('on');
@@ -22436,6 +23160,16 @@
     var cached = S.crewCache && S.crewCache[id];
     function fromMembers(rows) {
       (rows || []).forEach(function (m) { add(m.name || m.username || m.email, m.tourRole, m.email ? 'e:' + String(m.email).toLowerCase() : null); });
+      // One truth: once the ticks table is on, whoever it says has theirs
+      // shows ticked here too, though the show's own marks missed them.
+      var got = buyoutsOn() ? buyoutTicked(id) : null;
+      if (got) (rows || []).forEach(function (m) {
+        if (!m.userId || !got[show.id + '|' + m.userId]) return;
+        var nm = String(m.name || m.username || m.email || '').trim().toLowerCase();
+        var ek = m.email ? 'e:' + String(m.email).trim().toLowerCase() : '';
+        var p = people.filter(function (x) { return (ek && x.key === ek) || x.name.toLowerCase() === nm; })[0];
+        if (p && !cur.paid[p.key] && !untickedHere(p.key)) { cur.paid[p.key] = { name: p.name, artist: p.artist }; seeded[p.key] = true; }
+      });
       people.sort(function (a, b) { return (b.artist ? 1 : 0) - (a.artist ? 1 : 0) || a.name.localeCompare(b.name); });
       if (!(G.num(cur.perHead) > 0) && perIn) {
         var inp = perIn.querySelector ? perIn.querySelector('input') : null;
@@ -22798,6 +23532,10 @@
     var t = getTour(id);
     var s = t && G.isObj(t.shows) && G.isObj(t.shows[showId]) ? t.shows[showId] : null;
     if (!s) return;
+    // The night open here has been reviewed: the atVenu settlement's "Merch logged automatically" card for it leaves Tasks.
+    tasksSeen(id, Object.keys(G.isObj(t.imports) ? t.imports : {}).filter(function (k) {
+      return s.date && k.indexOf('em-' + s.date + '-') === 0 && taskNew(G.num(t.imports[k] && t.imports[k].createdAt));
+    }).map(function (k) { return 'merch:' + k; }));
     var ini = incomeInit(s, t);
     if (carry) guaranteeQuickApply(ini, { gross: carry.gross, dep: carry.dep, tax: carry.tax, recv: carry.recv, show: s });
     var draft = ini.draft, tax = ini.tax, gross = ini.gross, why = ini.why, whyNote = ini.whyNote,
@@ -22872,6 +23610,7 @@
         var patch = {};
         patch[showId] = incomePatchFor(s, ctxNow());
         if (!(await api.update(id, { shows: patch }))) return;
+        if (patch[showId].buyoutTrack) buyoutDbMirror(id, showId, ini.track, patch[showId].buyoutTrack);
         closeSheet();
         var after = G.calc(getTour(id) || t, { override: { showId: showId, income: draft, flags: flagsNow } }).net;
         var r = G.round(after);
@@ -23372,7 +24111,8 @@
               buyoutHint),
             h('button', { class: 'btn sm quiet bo-track', type: 'button', onclick: function () {
               if (!(draft.buyouts > 0)) { toast('Log the buyout total first'); return; }
-              openBuyoutTracker(id, s, draft.buyouts, track, function (next) { buyoutDbMirror(id, s.id, track, next); track = next; updateBuyouts(); refresh(); });
+              // (The ticks reach the database when Save income does, not before: Cancel keeps them out.)
+              openBuyoutTracker(id, s, draft.buyouts, track, function (next) { track = next; updateBuyouts(); refresh(); });
             } }, 'Track'),
             mkInput));
         } else if (f.key === 'guarantee') {
@@ -23951,7 +24691,7 @@
             onclick: async function () {
               var r = await sendUpdate(text, ta);
               if (r === 'sent') toast('Update sent');
-              else if (r === 'copied') toast('Copied — paste it in the group chat');
+              else if (r === 'copied') toast('Copied. Paste it in the group chat.');
               else if (r === 'manual') toast('Press and hold the text to copy it');
             }
           }, icon('share', 18), 'Send today’s update'),

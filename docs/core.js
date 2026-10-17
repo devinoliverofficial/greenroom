@@ -567,6 +567,47 @@
     var artists = Object.keys(paid).filter(function (k) { return isObj(paid[k]) && paid[k].artist; }).length;
     return Math.min(total, round(num(tr.perHead) * artists * 100) / 100);
   }
+  /* Buyouts start fresh on 2026-10-16 (Devin, that day: "our tour is
+     playing catch up these can go for now and start fresh on today"). A
+     fixed day, not a rolling today: a buyout logged yesterday and still not
+     handed out keeps counting until it is. */
+  var BUYOUT_FROM = '2026-10-16';
+  // The shows whose buyout money is logged, from the fresh start on, oldest first.
+  function buyoutShows(t) {
+    return rows(t && t.shows).filter(function (sh) {
+      // Crew's copy of a show carries no money, only buyoutLogged (0176).
+      return !!parseDay(sh.date) && sh.date >= BUYOUT_FROM &&
+        (num(isObj(sh.income) ? sh.income.buyouts : 0) > 0 || sh.buyoutLogged === true);
+    }).sort(byDate);
+  }
+  // A job title that says Tour manager: any one of its comma-separated roles, capitals aside.
+  function tourManagerTitle(title) {
+    return String(title || '').split(',').some(function (r) { return r.trim().toLowerCase() === 'tour manager'; });
+  }
+  /* Who keeps a tour's buyout track (Devin, 2026-10-17: "The only person
+     who sees the track in the buyout alert button is the tour manager"):
+     the accounts on the crew list that may write the ticks (the tour's
+     creator, or a Manager) whose title, wherever a title is kept, says Tour
+     manager. When nobody is titled so, the creator and the Managers keep
+     it, or nobody could. list: the crew list as the backend reads it. */
+  function buyoutTrackers(list) {
+    var leads = (Array.isArray(list) ? list : []).filter(function (m) {
+      return !!(m && m.userId && (m.owner || (m.role === 'editor' && m.manager)));
+    });
+    var titled = leads.filter(function (m) {
+      return [m.tourRole, isObj(m.base) ? m.base.tourRole : null].concat(Array.isArray(m.titles) ? m.titles : [])
+        .some(tourManagerTitle);
+    });
+    var seen = {};
+    var ids = (titled.length ? titled : leads).map(function (m) { return m.userId; })
+      .filter(function (u) { if (seen[u]) return false; seen[u] = true; return true; });
+    return { titled: titled.length > 0, ids: ids };
+  }
+  // The buyout shows one person is still waiting on. got: { 'showId|userId': true }.
+  function buyoutOwedTo(shows, got, userId) {
+    var g = isObj(got) ? got : {};
+    return (shows || []).filter(function (sh) { return !g[sh.id + '|' + userId]; });
+  }
   // One income stream of a show, as it counts. (The part of a guarantee a
   // venue or a bank kept never arrives, so it's not the show's money.)
   function incomeOf(show, key) {
@@ -2158,6 +2199,152 @@
       .replace(/^new york city$/, 'new york').replace(/^nyc$/, 'new york').replace(/^washington dc$/, 'washington');
   }
 
+  /* ---------------- Spot cards (0175) ---------------- */
+
+  // How far apart two points are, in meters (the great-circle way).
+  function geoMeters(aLat, aLon, bLat, bLon) {
+    var r = Math.PI / 180;
+    var dLat = (bLat - aLat) * r, dLon = (bLon - aLon) * r;
+    var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 6371008.8 * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+  }
+  // Miles where people count in miles (the US, the UK, Liberia, Myanmar, or
+  // plain English with no country said), kilometers everywhere else.
+  function usesMiles(lang) {
+    var parts = String(lang || '').trim().split(/[-_]/);
+    var region = parts.slice(1).filter(function (x) { return /^[a-z]{2}$/i.test(x); })[0];
+    if (!region) return !parts[0] || /^en$/i.test(parts[0]);
+    return ['US', 'GB', 'LR', 'MM'].indexOf(region.toUpperCase()) >= 0;
+  }
+  // "0.2 mi" / "12 mi", or "350 m" / "1.4 km" / "12 km".
+  function distanceText(m, miles) {
+    m = Number(m);
+    if (!isFinite(m) || m < 0) return '';
+    if (miles) {
+      var mi = m / 1609.344;
+      return (mi < 9.95 ? Math.max(0.1, Math.round(mi * 10) / 10).toFixed(1) : String(Math.round(mi))) + ' mi';
+    }
+    if (m < 950) return Math.max(50, Math.round(m / 50) * 50) + ' m';
+    var km = m / 1000;
+    return (km < 9.95 ? (Math.round(km * 10) / 10).toFixed(1) : String(Math.round(km))) + ' km';
+  }
+  // A walk guessed from the straight line: streets add about a quarter, and
+  // a person walks about 5 km an hour. Whole minutes, one at least.
+  function walkMinutes(m) {
+    m = Number(m);
+    if (!isFinite(m) || m < 0) return 0;
+    return Math.max(1, Math.round(m * 1.25 / (5000 / 60)));
+  }
+  // "about 5 min walk"; nothing past an hour and a half, which is a ride.
+  function walkText(m) {
+    var n = walkMinutes(m);
+    return n && n <= 90 ? 'about ' + n + ' min walk' : '';
+  }
+  var OH_DAYS = ['mo', 'tu', 'we', 'th', 'fr', 'sa', 'su'];
+  var OH_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var OH_D = '(?:mo|tu|we|th|fr|sa|su)';
+  var OH_DR = OH_D + '(?:\\s*-\\s*' + OH_D + ')?';
+  var OH_RULE = new RegExp('^(' + OH_DR + '(?:\\s*,\\s*' + OH_DR + ')*)(?:\\s+(.+))?$', 'i');
+  // "Mo-Fr,Su" as day numbers, Monday 0; a run past Sunday wraps (Sa-Mo).
+  function ohDays(spec) {
+    var out = [];
+    spec.split(',').forEach(function (part) {
+      var m = /^\s*(mo|tu|we|th|fr|sa|su)\s*(?:-\s*(mo|tu|we|th|fr|sa|su))?\s*$/i.exec(part);
+      if (!m) return;
+      var a = OH_DAYS.indexOf(m[1].toLowerCase()), b = m[2] ? OH_DAYS.indexOf(m[2].toLowerCase()) : a;
+      for (var i = a, n = 0; n < 7; i = (i + 1) % 7, n++) {
+        if (out.indexOf(i) < 0) out.push(i);
+        if (i === b) break;
+      }
+    });
+    return out;
+  }
+  // "07:00-12:00,13:00-18:00" as [open, close] minutes; "off" is none;
+  // null for anything else. A close past midnight ("18:00-02:00", or
+  // "18:00-26:00") is kept as the small number.
+  function ohTimes(spec) {
+    var s = String(spec).trim().toLowerCase();
+    if (s === 'off' || s === 'closed') return [];
+    if (s === '24/7') return [[0, 1440]];
+    var out = [];
+    var ok = s.split(',').every(function (part) {
+      var m = /^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$/.exec(part);
+      if (!m || +m[2] > 59 || +m[4] > 59) return false;
+      var a = +m[1] * 60 + +m[2], b = +m[3] * 60 + +m[4];
+      if (a >= 1440 || b > 2880) return false;
+      out.push([a, b > 1440 ? b - 1440 : b]);
+      return true;
+    });
+    return ok ? out : null;
+  }
+  /* OpenStreetMap's opening_hours, the common forms only ("Mo-Fr
+     07:00-18:00; Sa 08:00-17:00; Su off", "24/7", hours with no days for
+     every day, a night that runs past midnight): the week as seven lists
+     of [open, close] minutes, Monday first, or null for anything else
+     (months, comments, sunrise, open-ended "18:00+"). A later rule wins
+     for its days; days no rule names are closed. Holiday rules are passed
+     over: there is no holiday calendar here. */
+  function openingHours(text) {
+    var s = String(text == null ? '' : text).trim();
+    if (!s || s.length > 255) return null;
+    // "Mo-Fr 07:00-18:00, Sa 08:00-12:00": a comma before a new day starts a new rule.
+    s = s.replace(/(\d)\s*,\s*(?=(?:mo|tu|we|th|fr|sa|su|ph|sh)\b)/gi, '$1;');
+    var week = [[], [], [], [], [], [], []];
+    var rules = s.split(';');
+    for (var i = 0; i < rules.length; i++) {
+      var r = rules[i].trim();
+      if (!r || /^(ph|sh)\b/i.test(r)) continue;
+      var m = OH_RULE.exec(r);
+      var days = m ? ohDays(m[1]) : [0, 1, 2, 3, 4, 5, 6];
+      var times = m ? (m[2] == null ? [[0, 1440]] : ohTimes(m[2])) : ohTimes(r);
+      if (!times || !days.length) return null;
+      days.forEach(function (d) { week[d] = times.slice(); });
+    }
+    return week;
+  }
+  function hoursOpenAt(week, day, min) {
+    return week[day].some(function (iv) { return iv[1] > iv[0] ? min >= iv[0] && min < iv[1] : min >= iv[0]; }) ||
+      week[(day + 6) % 7].some(function (iv) { return iv[1] <= iv[0] && min < iv[1]; });
+  }
+  function clockWords(min) {
+    min = ((min % 1440) + 1440) % 1440;
+    if (min === 0) return 'midnight';
+    if (min === 720) return 'noon';
+    var hr = Math.floor(min / 60), mn = min % 60;
+    return (hr % 12 || 12) + (mn ? ':' + pad(mn) : '') + (hr < 12 ? ' AM' : ' PM');
+  }
+  function hoursSpan(list) {
+    if (!list.length) return 'Closed';
+    if (list.length === 1 && list[0][0] === 0 && (list[0][1] === 1440 || list[0][1] === 0)) return 'Open all day';
+    return list.map(function (iv) { return clockWords(iv[0]) + ' to ' + clockWords(iv[1]); }).join(', ');
+  }
+  // Open or closed at a moment by that clock, with the day's hours in
+  // words: { open, today }, or null when the hours aren't a form read here.
+  function hoursNow(text, now) {
+    var week = openingHours(text);
+    if (!week) return null;
+    var d = now instanceof Date ? now : new Date();
+    var day = (d.getDay() + 6) % 7, min = d.getHours() * 60 + d.getMinutes();
+    return { open: hoursOpenAt(week, day, min), today: hoursSpan(week[day]) };
+  }
+  // The week in words, days with the same hours run together:
+  // [{ days: 'Mon to Fri', hours: '7 AM to 3 PM' }, { days: 'Sat and Sun', ... }].
+  function hoursWeek(text) {
+    var week = openingHours(text);
+    if (!week) return [];
+    var out = [], same = function (a, b) { return JSON.stringify(a) === JSON.stringify(b); };
+    for (var i = 0; i < 7;) {
+      var j = i;
+      while (j + 1 < 7 && same(week[j + 1], week[i])) j++;
+      out.push({ days: i === 0 && j === 6 ? 'Every day' : j === i ? OH_NAMES[i]
+        : j === i + 1 ? OH_NAMES[i] + ' and ' + OH_NAMES[j] : OH_NAMES[i] + ' to ' + OH_NAMES[j],
+        hours: hoursSpan(week[i]) });
+      i = j + 1;
+    }
+    return out;
+  }
+
   /* ---------------- Guest list ---------------- */
 
   var GUEST_PASSES = ['GA', 'VIP', 'All Access', 'Photo Pass'];
@@ -2528,6 +2715,8 @@
     TYPED_CATEGORIES: TYPED_CATEGORIES,
     COMMISSION_LINES: COMMISSION_LINES, commissionLines: commissionLines,
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
+    BUYOUT_FROM: BUYOUT_FROM, buyoutShows: buyoutShows, tourManagerTitle: tourManagerTitle,
+    buyoutTrackers: buyoutTrackers, buyoutOwedTo: buyoutOwedTo,
     yearSlice: yearSlice, bookYears: bookYears,
     OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
     OTHER_NOTE_MAX: OTHER_NOTE_MAX, otherNote: otherNote, otherEntryLabel: otherEntryLabel,
@@ -2581,6 +2770,8 @@
     parseGuestList: parseGuestList,
     normalizeTourImport: normalizeTourImport, mergeDaySheet: mergeDaySheet,
     budgetFrom: budgetFrom, hasBudget: hasBudget, crewKey: crewKey, roadCityKey: roadCityKey,
+    geoMeters: geoMeters, usesMiles: usesMiles, distanceText: distanceText, walkMinutes: walkMinutes, walkText: walkText,
+    openingHours: openingHours, hoursNow: hoursNow, hoursWeek: hoursWeek,
     dailyUpdate: dailyUpdate
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

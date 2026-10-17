@@ -19299,7 +19299,7 @@
     var per = tr ? G.num(tr.perHead) : 0, paid = buyoutPaidCount(tr);
     var live = total > 0 ? todayWhoLive(tourId || x._tour, x.id) : undefined;
     return {
-      sheet: !!(G.isObj(x.daySheet) && (x.daySheet.postedAt || G.daySheetLines(x).length > 0)),
+      sheet: daySheetAdded(x),
       buyouts: total > 0 || x.buyoutsNone === true,
       who: !(total > 0) ? null : live !== undefined ? live : (paid > 0 && (!(per > 0) || paid >= Math.round(total / per))),
       guarantee: G.num(inc.guarantee) > 0 || x.guaranteeNone === true,
@@ -21123,6 +21123,13 @@
     return G.daySheetSections(s).filter(function (x) { return x.key !== 'notes'; })
       .reduce(function (all, x) { return all.concat(x.lines); }, []);
   }
+  // A day sheet is "added" once someone posted or filled one in: the venue's
+  // address and phone the app pencils in by itself when shows are added
+  // don't count, nor do Notes, which nothing shows any more.
+  function daySheetAdded(s) {
+    if (!s || !G.isObj(s.daySheet)) return false;
+    return !!s.daySheet.postedAt || sheetLinesShown(s).some(function (l) { return !/^(Address|Venue phone): /.test(l); });
+  }
   function daySheetNodes(s, off, o) {
     var lines = s ? sheetLinesShown(s) : G.offDayLines(off || {});
     if (o && o.onlySet && s) lines = lines.filter(function (x) { return !/^(Address|Venue phone): /.test(x); });
@@ -21402,7 +21409,7 @@
     // The big button only while there is no sheet yet (Devin, 2026-10-16
     // night: "get rid of 'edit day sheet' button at the bottom if the day
     // sheet is already added"); once there is one, the pencil edits it.
-    var editRow = canEditTour(id) && !lines.length ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
+    var editRow = canEditTour(id) && !(s ? daySheetAdded(s) : lines.length) ? h('div', { class: 'btnrow ov-actions', style: 'margin-top:14px' },
       s
         ? h('button', { class: 'btn quiet glow', type: 'button',
             onclick: function () { openDaySheetEditor(id, s.id); } },
@@ -22734,8 +22741,10 @@
     var b = G.isObj(next) && G.isObj(next.paid) ? next.paid : {};
     // A null is a tombstone - someone UNTICKED. Only a real mark ticks.
     var on = Object.keys(b).filter(function (k) { return G.isObj(b[k]) && !G.isObj(a[k]); });
+    // A tombstone counts only when it is new in this save: one stored from an
+    // earlier untick is history, and must not untick a person ticked since.
     var off = Object.keys(a).filter(function (k) { return G.isObj(a[k]) && !G.isObj(b[k]); })
-      .concat(Object.keys(b).filter(function (k) { return b[k] === null && !G.isObj(a[k]); }));
+      .concat(Object.keys(b).filter(function (k) { return b[k] === null && a[k] === undefined; }));
     if (!on.length && !off.length) return;
     var low = function (v) { return String(v || '').trim().toLowerCase(); };
     buyoutCrewRows(id).then(function (rows) {
@@ -22763,9 +22772,13 @@
         var u = uidOf(k);
         if (u) B.buyoutTrack(id, showId, u).catch(function () { /* the next tick catches it */ });
       });
+      // One person can sit under two keys (an old name key and their crew
+      // key): while any live mark still names them, they stay ticked.
+      var still = {};
+      Object.keys(b).forEach(function (k) { if (G.isObj(b[k])) { var u = uidOf(k); if (u) still[u] = true; } });
       off.forEach(function (k) {
         var u = uidOf(k);
-        if (u) B.buyoutUntrack(id, showId, u).catch(function () { /* same */ });
+        if (u && !still[u]) B.buyoutUntrack(id, showId, u).catch(function () { /* same */ });
       });
     });
   }
@@ -23064,6 +23077,10 @@
     var before = G.isObj(track) && G.isObj(track.paid) ? track.paid : {};
     Object.keys(before).forEach(function (k) { if (G.isObj(before[k])) cur.paid[k] = before[k]; });
     var seeded = {};   // ticked here from the ticks table, not from the show's own marks
+    // Unticked earlier in this same Log income visit (not saved yet): the table
+    // still has them, but the person here just said no.
+    var savedPaid = G.isObj(show && show.buyoutTrack) && G.isObj(show.buyoutTrack.paid) ? show.buyoutTrack.paid : {};
+    var untickedHere = function (k) { return before[k] === null && savedPaid[k] !== null; };
     var people = [];
     var seen = {};
     /* Whose buyout is income: the people in the band. member: the tour's own
@@ -23151,7 +23168,7 @@
         var nm = String(m.name || m.username || m.email || '').trim().toLowerCase();
         var ek = m.email ? 'e:' + String(m.email).trim().toLowerCase() : '';
         var p = people.filter(function (x) { return (ek && x.key === ek) || x.name.toLowerCase() === nm; })[0];
-        if (p && !cur.paid[p.key]) { cur.paid[p.key] = { name: p.name, artist: p.artist }; seeded[p.key] = true; }
+        if (p && !cur.paid[p.key] && !untickedHere(p.key)) { cur.paid[p.key] = { name: p.name, artist: p.artist }; seeded[p.key] = true; }
       });
       people.sort(function (a, b) { return (b.artist ? 1 : 0) - (a.artist ? 1 : 0) || a.name.localeCompare(b.name); });
       if (!(G.num(cur.perHead) > 0) && perIn) {

@@ -91,6 +91,7 @@ declare
   a_id uuid;
   a_name text;
   a_owner uuid;     -- 0165: the account that runs the page, to match tours by name
+  v_mine boolean;   -- 0174: this tour is really the artist's (made by the page's runner or a band Member)
   r_stars numeric;  -- 0165: what the rating was, when reviews match
   r_n int;
   res jsonb;
@@ -153,6 +154,12 @@ begin
   if a_id is null then
     return jsonb_build_object('none', true);
   end if;
+  -- A tour's document can name any page, so only a tour the page's runner or
+  -- one of its band Members made may reach the artist's OTHER tours (their
+  -- ratings and money); any other tour speaks for its own nights alone.
+  v_mine := t.owner_id = a_owner
+         or exists (select 1 from artist_members x
+                     where x.artist_id = a_id and x.user_id = t.owner_id and x.kind = 'band' and x.ended_at is null);
   -- A page with no road history has nothing to say, not "your first time".
   if not exists (select 1 from artist_history_shows h where h.artist_id = a_id and h.date <= public.road_today()) then
     return jsonb_build_object('none', true);
@@ -251,8 +258,14 @@ begin
          and (t2.doc ->> 'deletedAt') is null
          -- this artist's tours, matched as rates_with_band matches them, plus this very tour
          and (t2.id = t_id
-              or (t2.doc ->> 'artistId') = a_id::text
-              or (coalesce(t2.doc ->> 'artistId', '') = ''
+              or (v_mine
+                  and (t2.doc ->> 'artistId') = a_id::text
+                  and (t2.owner_id = a_owner
+                       or exists (select 1 from artist_members x2
+                                   where x2.artist_id = a_id and x2.user_id = t2.owner_id
+                                     and x2.kind = 'band' and x2.ended_at is null)))
+              or (v_mine
+                  and coalesce(t2.doc ->> 'artistId', '') = ''
                   and t2.owner_id = a_owner
                   and btrim(coalesce(t2.doc ->> 'artist', '')) <> ''
                   and lower(btrim(t2.doc ->> 'artist')) = lower(btrim(a_name))))
@@ -374,7 +387,7 @@ begin
   select round(avg(n.m) filter (where n.m > 0), 2), count(*) filter (where n.m > 0),
          round(avg(n.g) filter (where n.g > 0), 2), count(*) filter (where n.g > 0)
     into m_avg, m_n, g_avg, g_n
-    from (select t3.id, t3.doc from public.artist_tours(a_id) t3 where t3.id <> t_id
+    from (select t3.id, t3.doc from public.artist_tours(a_id) t3 where v_mine and t3.id <> t_id
           union all
           select t_id, t.doc) tt
    cross join lateral jsonb_each(case when jsonb_typeof(tt.doc -> 'shows') = 'object' then tt.doc -> 'shows' else '{}'::jsonb end) e(k, v)
@@ -399,10 +412,10 @@ begin
     res := res || jsonb_build_object('merchAvg', m_avg, 'merchN', m_n);
   end if;
   -- The guarantee, to Members only (Devin: "that last one should only be for
-  -- members"): the account that runs the page, the tour's owner, or a current
-  -- band Member of the page. A Manager or Crew seat never gets the keys.
-  if g_n > 0 and (t.owner_id = me
-                  or public.runs_artist(a_id)
+  -- members"): the account that runs the page or a current band Member of
+  -- it. A Manager or Crew seat never gets the keys, nor does an account that
+  -- merely made a tour naming the page.
+  if g_n > 0 and (public.runs_artist(a_id)
                   or exists (select 1 from artist_members am
                               where am.artist_id = a_id and am.user_id = me
                                 and am.kind = 'band' and am.ended_at is null)) then
