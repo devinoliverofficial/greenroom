@@ -17633,6 +17633,16 @@
         h('button', { class: 'btn primary block', type: 'button', disabled: busy || null,
           onclick: function () { if (busy) return; if (at < RW_QS.length - 1) { at += 1; draw(); } else send(); } },
           busy ? 'Sending…' : at < RW_QS.length - 1 ? 'Next' : 'Done'),
+        // Skip, said out loud (Devin, 2026-10-16: "a merch person wouldnt
+        // know how to rate the sound or the stage... there should be an
+        // option to 'Skip this question'"): the question's answer is wiped
+        // so nothing of it is sent, and the flow moves on.
+        h('button', { class: 'btn ghost block rw-skip', type: 'button', disabled: busy || null,
+          onclick: function () {
+            if (busy) return;
+            ans[q.key] = q.yn ? { yn: null, note: '' } : { stars: 0, subs: [], note: '' };
+            if (at < RW_QS.length - 1) { at += 1; draw(); } else send();
+          } }, 'Skip this question'),
         h('p', { class: 'note rw-keep' }, 'Nothing is saved until you tap Done.')));
       fillEl(host, kids);
     }

@@ -1252,6 +1252,10 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 .gl-dock-btns .crew-invite { margin: 0; }
 /* MY PAY's bottom buttons, a size down (Devin, 2026-10-15). */
 .pt-two.mp .pf-btn { min-height: 34px; padding: 0 10px; font-size: 13px; }
+/* MY PAY's bottom pair splits the row evenly, the Overview pill look
+   (Devin, 2026-10-16: "the buttons on the bottom make them look good side
+   by side each other"). */
+.pt-two.mp .btn { flex: 1 1 0; justify-content: center; min-height: 34px; padding: 0 8px; font-size: 11.5px; gap: 4px; white-space: nowrap; min-width: 0; }
 /* Guest list: the Invite crew pill for Add guest and Import list, one round
    share button between them opening the phone's own share sheet. */
 .gl-trio { display: flex; align-items: center; justify-content: center; gap: 10px; }
@@ -3536,7 +3540,6 @@ button.fl-row { cursor: pointer; }
 .rb-need { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 4px 0 16px; }
 .rb-need-btn { min-height: 0; }
 .pt-two.mp { justify-content: center; gap: 10px; }
-.pt-two.mp .btn { flex: none; }
 .rb-need-hint { margin: 0; text-align: center; }
 /* Your own asks, under the form. */
 .rb-sheet .sh-h3 { margin-top: 20px; }
