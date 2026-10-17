@@ -415,6 +415,55 @@ shim = r"""<script>
     if (/[?&]cardfail\b/.test(cardAsk)) window.__harness.cardFail = true;
     if (/[?&]cardempty\b/.test(cardAsk)) window.__harness.cardEmpty = true;
   } catch (e) { /* no address to read */ }
+  /* ---- THE OVERVIEW WHILE IT LOADS (2026-10-17) ----
+     Devin: "The buttons on the top kind appear in random order and the crew is always loading." On a phone the
+     Overview's Bus Check in and Supplies buttons each wait on their own table's first answer of the session, the
+     crew list waits on its own ask, and the page is drawn again many times while they are out.
+       ?ovslow            the worst first open, landing on the harness tour's Overview by itself: the supplies
+                          table answers after 1 s and the bus table after 1.8 s (the order that used to put
+                          Supplies under View calendar and then move it right), every crew ask takes 2.5 s and
+                          the first one fails, and the page is drawn again every 150 ms for the first 6 s.
+                          To see: four cells from the first frame (two quiet blanks; Supplies fills the right
+                          one, then Bus Check in the left), the crew list on Loading (as tall as the list was
+                          last time, from the second open on), then the crew at about 5 s. __harness.crewCalls
+                          reads 2 (the failed ask and the one that answered), not one per drawing.
+       ?ovslow&crewhang   the first ask never answers instead: given up after 10 s and asked again, the crew
+                          lands at about 12.5 s.
+       ?ovslow&crewdown   every ask fails: Loading, then after the second failed ask "Couldn't load the crew."
+                          with Try again. It keeps trying by itself (at once, then 4, 8 and 16 s later, then
+                          every 30 s); __harness.crewFail = 0 and the next try, or Try again, brings the crew.
+     SWITCHES (any time; a list this phone already holds shows at once, so to watch an ask again kick someone
+     off the tour, or reload):
+       __harness.crewLate = ms     each crew ask takes that long.
+       __harness.crewFail = n      the next n asks fail, as with no signal.
+       __harness.crewHang = n      the next n asks never answer.
+       __harness.ovStorm(ms)       the page is drawn again every 150 ms for that long.
+       __harness.crewCalls         how many crew asks have gone out.
+     The app makes one ask at a time per tour, shared by the Overview, the chat and the checks of who manages. */
+  window.__harness.ovStorm = function (ms) {
+    var until = Date.now() + (Number(ms) || 4000);
+    (function tick() { if (Date.now() > until) return; emit(); setTimeout(tick, 150); })();
+    return 'drawing again every 150 ms';
+  };
+  try {
+    var ovAsk = String(location.search || '');
+    if (/[?&]ovslow\b/.test(ovAsk)) {
+      var H0 = window.__harness;
+      H0.crewLate = 2500;
+      if (/[?&]crewhang\b/.test(ovAsk)) H0.crewHang = 1;
+      else H0.crewFail = /[?&]crewdown\b/.test(ovAsk) ? 1e6 : 1;
+      // The two table probes, out until their answers land (busOff / suppliesOff stand for "not yet on").
+      H0.probeWait = { bus: true, supplies: true };
+      H0.busOff = true; H0.suppliesOff = true;
+      setTimeout(function () { H0.suppliesOff = false; delete H0.probeWait.supplies; emit(); }, 1000);
+      setTimeout(function () { H0.busOff = false; delete H0.probeWait.bus; emit(); }, 1800);
+      H0.ovStorm(6000);
+      (function openIt(n) {
+        if (H0.openOverview) { H0.openOverview('t1'); return; }
+        if (n < 40) setTimeout(function () { openIt(n + 1); }, 50);
+      })(0);
+    }
+  } catch (e) { /* no address to read */ }
   /* ---- THE OFF TOUR FRAME: the Off Tour book, and an account with no tour on the road ----
      As the page opens, the harness tour ("Harness run") is on the road today and its artist has an Off Tour
      book (off1 above: five charges and two income entries, Royalties and an "Other" called Sync licence).
@@ -4062,10 +4111,20 @@ shim = r"""<script>
     // __harness.asManager (or ?manager): a Manager with the tour role Tour Manager on every tour, not its creator.
     ownsTour: function () { return !window.__harness.asCrew && !window.__harness.asManager; },
     myRole: function () { return Promise.resolve(window.__harness.asCrew ? 'viewer' : window.__harness.asManager ? 'editor' : 'owner'); },
+    // (The switches under THE OVERVIEW WHILE IT LOADS make an ask come late, fail or never answer.)
     crew: function () {
-      window.__harness.crewCalls = (window.__harness.crewCalls || 0) + 1;
-      return Promise.resolve(window.__harness.asManager && !window.__harness.asCrew ? crewAsManager() : window.__harness.crew);
+      var H = window.__harness, late = Number(H.crewLate) || 0;
+      H.crewCalls = (H.crewCalls || 0) + 1;
+      var rows = function () { return H.asManager && !H.asCrew ? crewAsManager() : H.crew; };
+      if (H.crewHang > 0) { H.crewHang -= 1; return new Promise(function () { /* never answers */ }); }
+      if (H.crewFail > 0) {
+        H.crewFail -= 1;
+        return new Promise(function (res, rej) { setTimeout(function () { rej(Object.assign(new Error('offline'), { code: 'offline' })); }, late); });
+      }
+      return late > 0 ? new Promise(function (res) { setTimeout(function () { res(rows()); }, late); }) : Promise.resolve(rows());
     },
+    // Each Overview button's table probe has answered, unless ?ovslow holds it back (see THE OVERVIEW WHILE IT LOADS).
+    ovProbeAnswered: function (which) { var w = window.__harness.probeWait; return !(w && w[which]); },
     /* Social, in memory. Brent has a profile with a tour you share and one
        you don't; Tasha is still pending, so she has none to open. */
     pushSocial: function (p) { var H = window.__harness; H.social = JSON.parse(JSON.stringify(p)); H.socialPushes = (H.socialPushes || 0) + 1; return Promise.resolve(); },
