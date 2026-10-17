@@ -18786,10 +18786,8 @@
       // until this account taps On Bus, opening the same sheet. A column one
       // button short (the bus waits on its table and a live run) centres
       // what it has beside the other's pair, so nothing sits against a hole.
-      // BUYOUT ALERT left the grid for the Budget's Buyouts tab the same
-      // night (Devin: "move the 'Buyout Alert' Button to the buyout tab...
-      // but only located on the buyouts tab"), so nothing sits between the
-      // pairs anymore. Supplies lives in the grid, so every button wears
+      // Buyout left the grid (it lives on the profile's Today tab since
+      // 2026-10-17), so nothing sits between the pairs. Supplies lives in the grid, so every button wears
       // the same size. Bus Check in and Supplies each hold their cell while
       // their answer is still out (ovButtonHold), so the four never land in
       // a different order.
@@ -23409,11 +23407,11 @@
     var c = S.crewCache && S.crewCache[id], B = window.GR_BACKEND;
     if (c) return Promise.resolve(c.rows);
     if (!B || !B.crew) return Promise.resolve([]);
-    return B.crew(id).then(function (rows) {
-      S.crewCache = S.crewCache || {};
-      S.crewCache[id] = { rows: rows, at: Date.now() };
-      return rows;
-    }, function () { return []; });
+    // (A shared ask that gave up is not an empty crew: ask once more, so a tick
+    // is never mapped against nobody.)
+    return crewAskOnce(id).catch(function (e) {
+      return e && e.code === 'timeout' ? B.crew(id).catch(function () { return []; }) : [];
+    });
   }
   /* One truth for buyouts: a tick in the list also writes the mark on the
      show, so the Today card's "Who received?" and Log income's Track agree
@@ -23524,13 +23522,7 @@
     var B = window.GR_BACKEND;
     var c = S.crewCache && S.crewCache[id];
     if (!c) {
-      S.crewCache = S.crewCache || {};
-      S.crewAsk = S.crewAsk || {};
-      if (!S.crewAsk[id] && B && B.crew) {
-        S.crewAsk[id] = true;
-        B.crew(id).then(function (rows) { S.crewCache[id] = { rows: rows, at: Date.now() }; render(true); })
-          .catch(function () { delete S.crewAsk[id]; /* asked again next time */ });
-      }
+      if (B && B.crew && crewAskDue(id)) crewAskOnce(id, 2).catch(function () { /* asked again next time */ });
       return null;
     }
     var seen = {};
@@ -23541,7 +23533,8 @@
     }).map(function (m) {
       return { userId: m.userId, name: m.name || m.username || m.email || 'Someone',
         email: m.email || '', invitedEmail: m.invitedEmail || '',
-        role: m.tourRole || (m.owner || m.manager ? 'Manager' : 'Crew') };
+        role: m.tourRole || (m.owner || m.manager ? 'Manager' : 'Crew'),
+        seat: m.owner ? 'owner' : m.role };
     });
   }
   // The ticks, as "showId|userId". null while they're first being fetched.
@@ -23562,9 +23555,14 @@
   function buyoutGot(id, t, shows, people) {
     var got = buyoutTicked(id);
     if (!got) return null;
+    // A show's own mark counts only for people whose phone can read it: Crew
+    // read the tour without those marks, so for them only the table counts,
+    // and the Tour Manager still sees Mark received until their row is in.
+    var crewSeat = {};
+    (people || []).forEach(function (p) { if (p.seat === 'viewer') crewSeat[p.userId] = true; });
     (shows || []).forEach(function (sh) {
       var doc = G.buyoutDocGot(sh, t && t.crew, people || []);
-      Object.keys(doc).forEach(function (u) { got[sh.id + '|' + u] = true; });
+      Object.keys(doc).forEach(function (u) { if (!crewSeat[u]) got[sh.id + '|' + u] = true; });
     });
     return got;
   }
@@ -23844,7 +23842,7 @@
       catch (e) {
         delete sending[sh.id];
         draw();
-        toast(e && e.code === 'permission' ? 'That day is already marked received.' : 'Couldn’t send that. Try again.');
+        toast('Couldn’t send that. Try again.');
         return;
       }
       // The push to the Tour Manager's phone, once the notify function knows the kind.

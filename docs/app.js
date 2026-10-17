@@ -11397,7 +11397,7 @@
     return [
       h('div', { class: 'pt-headrow' }, pfLeftChip(t), pfTourBar(id, t, count, 'details'), pfOffChip(t)),
       dayRow(h('span', { class: 'pt-chip' + (isToday ? ' on' : '') }, when), entry.date, s ? '' : city, place, address,
-        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, null),
+        s && s.soldOut ? h('span', { class: 'pt-chip sold' }, 'Sold out') : null, buyoutCorner(id, t, when, entry.date, s ? '' : city, !!(s && s.soldOut))),
       next ? h('p', { class: 'pt-next' }, 'Next show: ' + dayMD(next.date) + ' \u00b7 ' +
         [next.city, next.venue].map(function (x) { return String(x || '').trim(); }).filter(Boolean).join(' \u00b7 ')) : null,
       // The day sheet tab's own schedule style, word for word (Devin,
@@ -16381,14 +16381,14 @@
     };
     /* BUYOUTS beside them (0151, Devin: everyone sees on MY PAY which days
        they received a buyout and which they did not). No money on the tab:
-       the days are the news, and the amounts are the tour's own book. It
-       glows green from the moment a buyout is logged until this account is
-       tracked on it (Devin, 2026-10-17). */
+       the days are the news, and the amounts are the tour's own book. The
+       plain record, with no glow and no button: the Buyout button lives on
+       the Today tab (Devin, 2026-10-17). */
     var bo = boOn ? myBuyoutDays(id, t) : null;
     var boTab = null;
     if (bo) {
       var boSel = tab === 'buyouts';
-      boTab = h('button', { class: 'pay-sum-tab' + (boSel ? ' on' : '') + (bo.lit ? ' bo-lit' : ''), type: 'button', role: 'tab', 'aria-selected': boSel ? 'true' : 'false',
+      boTab = h('button', { class: 'pay-sum-tab' + (boSel ? ' on' : ''), type: 'button', role: 'tab', 'aria-selected': boSel ? 'true' : 'false',
         onclick: function () { S.payTab[id] = 'buyouts'; render(true); } },
         h('span', { class: 'pay-sum-k' }, 'BUYOUTS'),
         h('strong', { class: 'pay-sum-v num' }, !bo.shows.length ? '\u2014' : bo.loading ? '\u2026' : bo.got + ' of ' + bo.shows.length));
@@ -16398,7 +16398,7 @@
       h('div', { class: 'pay-sum-tabs', role: 'tablist' }, sumTab('income', 'INCOME', inc.gross), sumTab('expenses', 'EXPENSES', book.spent), boTab));
     if (tab === 'buyouts' && bo) {
       var boBody = !bo.shows.length
-        ? h('p', { class: 'note pay-note' }, 'No buyouts logged on this tour yet. When a show logs one, the day shows up here.')
+        ? h('p', { class: 'note pay-note' }, 'No buyout days yet. Each show day shows up here, Received or Not yet.')
         : bo.loading ? h('p', { class: 'note pay-note' }, 'Loading…')
         : h('div', { class: 'ledger' }, bo.shows.map(function (sh) {
             var got = !!bo.mine[sh.id];
@@ -16406,14 +16406,7 @@
               h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date)),
               h('span', { class: 'bus-word' + (got ? ' on' : '') }, got ? 'Received' : 'Not yet'));
           }));
-      // BUYOUT ALERT lives at the top of this tab now, and only here - it
-      // left the Overview's grid (Devin, 2026-10-16: "move the 'Buyout
-      // Alert' Button to the buyout tab... but only located on the buyouts
-      // tab"). The Tour Manager's opens the tick list; everyone else's
-      // opens their own buyouts (buyoutAlertBtn). The words that used to
-      // describe the page are gone, his same note.
       return [head,
-        (function () { var b = buyoutAlertBtn(id, t); return b ? h('div', { class: 'bo-tab' }, b) : null; })(),
         h('h3', { class: 'mn-h mn-over' }, 'My buyouts'),
         boBody];
     }
@@ -17273,6 +17266,7 @@
     // Stats, Chat - the photo leads and Search closes the bar.
     var tabs = TOUR_TABS.filter(function (t) { return t.view !== 'money' && t.view !== 'costs'; });
     tabs.splice(1, 0, BUDGET_TAB);
+    crewWarm(id);
     var framed = !!(o && o.off);
     // away: the same bar worn by a page outside the tour (the profile, the
     // menu, Search). A tap opens that page of the tour exactly as the old
@@ -17509,16 +17503,8 @@
      signed-up rows), else whoever has written in it. Never you. */
   function chatPeople(id, list, myUid, faces) {
     var B = window.GR_BACKEND, c = S.crewCache && S.crewCache[id];
-    if (!c && S.mode === 'db' && B && B.crew) {
-      S.crewCache = S.crewCache || {};
-      S.crewAsk = S.crewAsk || {};
-      if (!S.crewAsk[id]) {
-        S.crewAsk[id] = true;
-        // (Not forced: a redraw waits while someone is typing a message.)
-        B.crew(id).then(function (rows) { S.crewCache[id] = { rows: rows, at: Date.now() }; render(); })
-          .catch(function () { delete S.crewAsk[id]; });
-      }
-    }
+    // (Not forced: a redraw waits while someone is typing a message.)
+    if (!c && S.mode === 'db' && B && B.crew && crewAskDue(id)) crewAskOnce(id, 1).catch(function () { /* asked again next time */ });
     var out = [], seen = {};
     var add = function (uid, name) {
       name = String(name || '').trim();
@@ -18177,51 +18163,154 @@
     if (B && B.showReviewOn && B.showReviewOn()) openRateWizard(tourId, showId);
     else openRateShowSliders(tourId, showId);
   }
-  /* The ask on opening the app (Devin, 2026-10-16, evening: "I actually
-     think the rating prompt should happen an hour after the bands set
-     ends"). For the band on the live tour alone: when an hour has passed
-     since the band's own set ended by the most recent played show's day
-     sheet (rateSetEndPassed below - and when that sheet has no readable set
-     end for the band, the older bus-call rule still carries show nights
-     without set times) and this account hasn't rated that show, a small
-     sheet offers the wizard. The phone remembers it asked, per tour and
-     show, the moment the sheet opens: answered, Not now or swiped away, it
-     never nags twice. It waits out the intro and the day's countdown
-     splash, and steps aside if some other sheet is already up (the next
-     open asks instead). */
-  /* The ask on opening the app at bus call (Devin, 2026-10-16: "When bus
-     call hits on everyones app when you open it should prompt 'Bus Check
-     In' splash prompt"): a rider on today's list who hasn't said On Bus,
-     with the bus call passed, gets the Bus Check In sheet itself on open -
-     once per tour day per phone, after the intro and the splashes, never
-     over another sheet. It goes first; a rating ask waits for the next
-     open when this one fires. */
-  var busAskLive = false;
+  /* The two asks of a show night, as splashes (Devin, 2026-10-17: "30min
+     before bus call their needs to be a splash effect that happens when you
+     open the app that says 'BUS CALL 30MIN. CHECK IN?' - This also happens
+     at bus call if someone didn't already check in", and "a splash effect
+     to be prompted an hour after set time to rate the show"). Each rises
+     when the app opens, when it comes back to the front, and while it is
+     open at the moment itself (nightAskTick below). The phone remembers
+     each ask the moment it rises: answered or not, it never asks twice.
+     They wait out the opening drive-by and any other splash, never rise
+     under a finger, over a sheet or the Tasks deck, or while someone types
+     (the next look asks instead), and the bus ask goes first: the rating waits until it is
+     done, and a few seconds more, so the two never land back to back.
+
+     BUS CALL: a rider on today's bus list (riding the bus, and not yet On
+     bus today) gets "BUS CALL 30MIN. CHECK IN?" from thirty minutes before
+     today's bus call, then "BUS CALL. CHECK IN?" from the bus call on if
+     still not aboard; each once per tour day per phone, live tours only.
+     Check in says On bus, exactly as the bus sheet's On Bus does (WE ARE A
+     BUS included, busSayWord). The time reads on the show night's clock:
+     a 1:30 AM bus call belongs to the night before, and so does a phone
+     opened at 1:05 AM (G.busCallLeft). This replaces the at-bus-call ask
+     of 2026-10-16, which opened the Bus Check In sheet itself.
+
+     RATE THE SHOW: for the band on the live tour alone, an hour after the
+     band's own set ended by the most recent played show's day sheet
+     (rateSetEndPassed below - and when that sheet has no readable set end
+     for the band, the older bus-call rule still carries show nights
+     without set times), when this account hasn't rated that show: "RATE
+     THE SHOW?" over the city and venue, Rate (the wizard) or Not now. Once
+     per tour and show per phone. */
+  var nightAskEl = null, nightAskClosed = 0;
+  // The opening drive-by, another splash (or one just answered), or a finger mid-tap.
+  function nightAskBlocked() {
+    return !!(document.getElementById('gr-splash') || document.querySelector('.splash-note') ||
+      (fingerDown && Date.now() - fingerDown < 4000) || Date.now() - nightAskClosed < 15000);
+  }
+  // A sheet or the Tasks deck is up, or someone is typing: the ask steps aside for the next look.
+  function nightAskBusy() {
+    var a = document.activeElement;
+    return !!(sheet || document.querySelector('.deck') || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)));
+  }
+  /* The splash itself: the dimmed screen and big glowing words of INVITE
+     SENT and the countdown, waiting for an answer. Its two buttons are the
+     only things on it that take a tap. o: label, big (the lines of the big
+     words), sub, yes, busyYes (the yes button's words while it works), no,
+     onYes (resolving false keeps the splash up, for a save that failed). */
+  function nightAskSplash(o) {
+    if (nightAskEl) return;
+    var busy = false, el, yes, no;
+    var close = function () {
+      if (nightAskEl !== el) return;
+      nightAskEl = null;
+      nightAskClosed = Date.now();
+      el.classList.remove('on');
+      setTimeout(function () { el.remove(); }, 300);
+    };
+    yes = h('button', { class: 'btn primary block', type: 'button', onclick: async function () {
+      if (busy) return;
+      busy = true;
+      yes.disabled = true; no.disabled = true;
+      if (o.busyYes) yes.textContent = o.busyYes;
+      var stay = false;
+      try { stay = (await o.onYes()) === false; } catch (e) { stay = true; }
+      busy = false;
+      if (stay && nightAskEl === el) {
+        yes.disabled = false; no.disabled = false;
+        yes.textContent = o.yes;
+        return;
+      }
+      close();
+    } }, o.yes);
+    no = h('button', { class: 'btn ghost block', type: 'button', onclick: function () { if (!busy) close(); } }, o.no);
+    el = h('div', { class: 'splash-note night-ask', role: 'dialog', 'aria-modal': 'true', 'aria-label': o.label },
+      h('div', { class: 'sn-card' },
+        h('div', { class: 'sn-big' }, o.big.map(function (x) { return h('span', { class: 'na-line' }, x); })),
+        o.sub ? h('div', { class: 'sn-sub' }, o.sub) : null,
+        h('div', { class: 'na-btns' }, yes, no)));
+    nightAskEl = el;
+    document.body.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('on'); });
+  }
+  // Which bus call ask is due: 'soon' from thirty minutes before today's bus
+  // call, 'call' from the bus call on, '' before then or with no time set.
+  function busAskStage(busCall) {
+    var left = G.busCallLeft(busCall);
+    if (left == null || left > 30) return '';
+    return left > 0 ? 'soon' : 'call';
+  }
+  function busAskKey(id, stage) {
+    return (stage === 'soon' ? 'gr-busask30:' : 'gr-busask:') + id + ':' + G.tourToday();
+  }
+  /* Aboard today: neither bus call ask comes again on this phone today. Kept
+     on the phone because the database keeps each word under the phone's
+     calendar date, so after midnight a word said before it reads as none. */
+  function busAskSettle(id) {
+    try {
+      localStorage.setItem(busAskKey(id, 'soon'), '1');
+      localStorage.setItem(busAskKey(id, 'call'), '1');
+    } catch (e) { /* at most one ask more */ }
+  }
+  var busAskLive = false, busAskQuiet = {};
   function maybeBusAsk(id, t) {
     if (busAskLive || !t || !tourIsLive(t) || !busOn()) return;
     var B = window.GR_BACKEND, me = B.uid ? B.uid() : null;
     var today = G.tourToday();
     var s = G.rows(t.shows).filter(function (x) { return x.date === today; })[0];
     var busCall = s && G.isObj(s.daySheet) ? s.daySheet.busCall : '';
-    if (!busCallDue(busCall)) return;
-    var key = 'gr-busask:' + id + ':' + today;
+    var stage = busAskStage(busCall);
+    if (!stage) return;
+    var key = busAskKey(id, stage);
+    if (busAskQuiet[key]) return;
     try { if (localStorage.getItem(key)) return; } catch (e) { return; }
     busAskLive = true;
     var tries = 0, clear = 0;
     var show = function () {
       if (tries++ > 40) { busAskLive = false; return; }
-      if (document.getElementById('gr-splash') || document.querySelector('.splash-note')) { clear = 0; setTimeout(show, 600); return; }
+      // Two clear looks in a row, so a splash a beat from landing isn't walked over.
+      if (nightAskBlocked()) { clear = 0; setTimeout(show, 600); return; }
       if (clear++ < 1) { setTimeout(show, 600); return; }
-      if (sheet) { busAskLive = false; return; } // something else is up: the next open asks
+      if (nightAskBusy()) { busAskLive = false; return; }
       var data = B.busList(id); // null while the words are on their way
       if (data == null) { setTimeout(show, 600); return; }
       busAskLive = false;
       var mine = ((data && data.people) || []).filter(function (p) { return p.userId === me; })[0];
-      if (!mine || busWordToday(mine) === 'on') return; // not a rider, or already aboard
+      if (!mine) { busAskQuiet[key] = true; return; } // not riding the bus
+      if (busWordToday(mine) === 'on') { busAskSettle(id); return; } // already aboard
       try { localStorage.setItem(key, '1'); } catch (e) { return; }
-      openBusSheet(id, busCall);
+      openBusAsk(id, stage);
     };
     setTimeout(show, 450);
+  }
+  function openBusAsk(id, stage) {
+    nightAskSplash({
+      label: 'Bus call. Check in?',
+      big: stage === 'soon' ? ['BUS CALL 30MIN.', 'CHECK IN?'] : ['BUS CALL.', 'CHECK IN?'],
+      yes: 'Check in', busyYes: 'Checking in…', no: 'Not yet',
+      onYes: async function () {
+        try { await busSayWord(id, 'on'); }
+        catch (e) {
+          if (!busOn()) return true; // the table went away: the splash goes quietly
+          toast('Couldn’t save that. Try again.');
+          return false;
+        }
+        toast('You’re on the bus');
+        render(true);
+        return true;
+      }
+    });
   }
   var rateAskLive = false;
   function maybeRateAsk(id, t) {
@@ -18238,20 +18327,46 @@
     var tries = 0, clear = 0;
     var show = function () {
       if (tries++ > 40) { rateAskLive = false; return; }
-      // The intro overlay and the countdown splash go first; two clear looks
-      // in a row, so a splash a beat from landing isn't walked over.
-      if (document.getElementById('gr-splash') || document.querySelector('.splash-note')) { clear = 0; setTimeout(show, 600); return; }
+      // The bus ask goes first, then the intro, the splashes and a finger mid-tap.
+      if (busAskLive || nightAskBlocked()) { clear = 0; setTimeout(show, 600); return; }
       if (clear++ < 1) { setTimeout(show, 600); return; }
-      if (sheet) { rateAskLive = false; return; } // something else is up: the next open asks
+      if (nightAskBusy()) { rateAskLive = false; return; }
       var rows = B.showRatings(id); // null while the band's rows are on their way
       if (rows == null) { setTimeout(show, 600); return; }
       rateAskLive = false;
-      if (rows.some(function (r) { return r.showId === s.id && r.userId === uid; })) return; // already rated
       try { localStorage.setItem(key, '1'); } catch (e) { return; }
+      // Rated already, and a show is rated once: nothing to ask, ever.
+      if (rows.some(function (r) { return r.showId === s.id && r.userId === uid; })) return;
       openRateAsk(id, s);
     };
     setTimeout(show, 450);
   }
+  /* The moments come to the app, too: while it is in front, a look every
+     twenty seconds, and one as it comes back from the background. The tour
+     is the live one on screen, else the one Today follows. */
+  function nightAskTick(force) {
+    if (!S.loaded || (!force && document.visibilityState === 'hidden')) return;
+    var r = S.route || {}, id = null, t = null;
+    if (r.name === 'tour' && r.id) { t = getTour(r.id); if (t && tourIsLive(t)) id = r.id; }
+    if (!id) { id = profileTourId(); t = id ? getTour(id) : null; }
+    if (!id || !t || !tourIsLive(t)) return;
+    maybeBusAsk(id, t);
+    maybeRateAsk(id, t);
+  }
+  setInterval(nightAskTick, 20 * 1000);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') setTimeout(nightAskTick, 600);
+  });
+  /* Dev harness only: its clock hooks (?busask, ?rateask) look at once, once
+     the app is up, instead of within twenty seconds - and in a preview pane
+     that is out of sight too. The live app has no __harness. */
+  if (window.__harness) window.__harness.nightAskTick = function (tries) {
+    if (!S.loaded) {
+      if ((tries || 0) < 40) setTimeout(function () { window.__harness.nightAskTick((tries || 0) + 1); }, 250);
+      return;
+    }
+    nightAskTick(true);
+  };
   /* Has an hour passed since the band's own set ended? (Devin, 2026-10-16:
      "the rating prompt should happen an hour after the bands set ends".)
      The band's set is the sheet's set-times row naming the tour's "your
@@ -18304,20 +18419,18 @@
     var now = new Date();
     return now.getHours() * 60 + now.getMinutes() + 24 * 60 >= mins - 60;
   }
-  // The ask itself: where the night was, and the two ways out. Rate the
-  // show opens the same wizard the calendar's button does, on that show.
+  // The ask itself: where the night was, and the two ways out. Rate opens
+  // the same wizard the calendar's button does, on that show, under the
+  // splash as it fades.
   function openRateAsk(tourId, s) {
     if (!s || rateDone(tourId, s.id) === true) return;
-    openSheet(function () {
-      return [
-        h('h2', { class: 'sh-title' }, 'How was the show?'),
-        h('p', { class: 'sh-sub' }, [s.city, s.venue].filter(Boolean).join(' · ') || 'The most recent show'),
-        h('div', { class: 'stack', style: 'margin-top:14px' },
-          h('button', { class: 'btn primary block', type: 'button',
-            onclick: function () { openRateShow(tourId, s.id); } }, 'Rate the show'),
-          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
-      ];
-    }, { label: 'Rate the show' });
+    nightAskSplash({
+      label: 'Rate the show?',
+      big: ['RATE THE SHOW?'],
+      sub: [s.city, s.venue].filter(Boolean).join(' · ') || 'The most recent show',
+      yes: 'Rate', no: 'Not now',
+      onYes: function () { openRateShow(tourId, s.id); }
+    });
   }
   // The 0154 sheet: what a build ahead of 0165 still opens. Sent once, for
   // good: it never opens on a show already rated, and a rating that lands
@@ -18673,11 +18786,11 @@
       // until this account taps On Bus, opening the same sheet. A column one
       // button short (the bus waits on its table and a live run) centres
       // what it has beside the other's pair, so nothing sits against a hole.
-      // BUYOUT ALERT left the grid for the Budget's Buyouts tab the same
-      // night (Devin: "move the 'Buyout Alert' Button to the buyout tab...
-      // but only located on the buyouts tab"), so nothing sits between the
-      // pairs anymore. Supplies lives in the grid, so every button wears
-      // the same size.
+      // Buyout left the grid (it lives on the profile's Today tab since
+      // 2026-10-17), so nothing sits between the pairs. Supplies lives in the grid, so every button wears
+      // the same size. Bus Check in and Supplies each hold their cell while
+      // their answer is still out (ovButtonHold), so the four never land in
+      // a different order.
       h('div', { class: 'cal-open cal-grid cal-four' },
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
@@ -18685,11 +18798,34 @@
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { openSetlist(id); } },
           icon('music', 14), 'View Setlist'),
-        ovBusBtn(id, t),
-        suppliesBtn(id)),
+        ovBusBtn(id, t) || ovButtonHold(t, 'bus'),
+        suppliesBtn(id) || ovButtonHold(t, 'supplies')),
 
       (S.mode === 'db' && window.GR_BACKEND && window.GR_BACKEND.crew) ? crewSection(id) : null
     ];
+  }
+  /* Devin, 2026-10-17: "The buttons on the top kind appear in random
+     order". Bus Check in and Supplies each wait on their own table's first
+     answer of the session, and whichever answered first took the free cell
+     under View calendar, then moved right when the other came. Now a quiet
+     blank the size of a button holds the cell while that answer is out; a
+     button that turns out to be off leaves its cell as before. An answer
+     still out after 10 seconds lets the cell go. */
+  var OV_HOLD_MS = 10e3;
+  function ovButtonHold(t, which) {
+    var B = window.GR_BACKEND;
+    if (S.mode !== 'db' || !B || typeof B.ovProbeAnswered !== 'function') return null;
+    // (The bus button is only ever there while the run is on.)
+    if (which === 'bus' && !(t && tourIsLive(t) && typeof B.busOn === 'function')) return null;
+    if (which === 'supplies' && typeof B.suppliesOn !== 'function') return null;
+    if (B.ovProbeAnswered(which)) return null;
+    S.ovHoldSince = S.ovHoldSince || {};
+    var since = S.ovHoldSince[which] || (S.ovHoldSince[which] = Date.now());
+    if (Date.now() - since > OV_HOLD_MS) return null;
+    // (An answer of "no table" draws nothing by itself: the page is drawn again when the hold runs out.)
+    S.ovHoldRedraw = S.ovHoldRedraw || {};
+    if (!S.ovHoldRedraw[which]) S.ovHoldRedraw[which] = setTimeout(function () { render(); }, since + OV_HOLD_MS + 50 - Date.now());
+    return h('span', { class: 'btn quiet sm cal-hold', 'aria-hidden': 'true' });
   }
 
   /* One set list for the whole run, opened from the Overview beside the
@@ -18913,8 +19049,124 @@
   function forgetCrew(tourId) {
     // Asked for again next time it's needed (who manages may have changed).
     if (S.crewAsk) { if (tourId) delete S.crewAsk[tourId]; else S.crewAsk = {}; }
+    // An ask already out may bring the list as it stood before the change:
+    // its answer is not kept, and the next need asks afresh.
+    if (S.crewOut) { if (tourId) delete S.crewOut[tourId]; else S.crewOut = {}; }
+    S.crewGen = S.crewGen || {};
+    if (tourId) S.crewGen[tourId] = (S.crewGen[tourId] || 0) + 1; else S.crewGenAll = (S.crewGenAll || 0) + 1;
     if (!S.crewCache) return;
     if (tourId) delete S.crewCache[tourId]; else S.crewCache = {};
+  }
+  function crewAskGen(tourId) {
+    return (S.crewGenAll || 0) + ':' + ((S.crewGen && S.crewGen[tourId]) || 0);
+  }
+  /* One ask for a tour's crew list at a time, whoever needs it (the
+     Overview's list, the chat, who manages): they share one answer instead
+     of each sending their own on every redraw (Devin, 2026-10-17: "the crew
+     is always loading"). An ask with no answer in 10 seconds is given up,
+     since an iPhone back from sleep can hold a request that never returns,
+     so the next ask can go; its answer still counts if it lands later.
+     redraw: 1 draws the page again when the list lands, 2 even while
+     someone is typing. Every Overview list on screen for the tour paints
+     itself from the answer, or from the failure (crewRepaint). */
+  var CREW_WAIT = 10e3;
+  function crewAskOnce(tourId, redraw) {
+    var B = window.GR_BACKEND;
+    S.crewCache = S.crewCache || {}; S.crewAsk = S.crewAsk || {}; S.crewOut = S.crewOut || {};
+    var out = S.crewOut[tourId];
+    if (out && Date.now() - out.at < CREW_WAIT) {
+      out.redraw = Math.max(out.redraw, redraw || 0);
+      return out.p;
+    }
+    if (S.mode !== 'db' || !B || typeof B.crew !== 'function') return Promise.reject(new Error('unavailable'));
+    var ask = { at: Date.now(), gen: crewAskGen(tourId), redraw: redraw || 0 };
+    S.crewOut[tourId] = ask;
+    S.crewAsk[tourId] = true;
+    var answer = Promise.resolve().then(function () { return B.crew(tourId); }).then(function (rows) {
+      // Asked before the list changed: asked again, and that answer is the one.
+      if (ask.gen !== crewAskGen(tourId)) return crewAskOnce(tourId, ask.redraw);
+      S.crewCache = S.crewCache || {};
+      S.crewCache[tourId] = { rows: Array.isArray(rows) ? rows : [], at: Date.now() };
+      if (S.crewMiss) delete S.crewMiss[tourId];
+      if (S.crewOut[tourId] === ask) delete S.crewOut[tourId];
+      if (ask.redraw === 2) render(true); else if (ask.redraw) render();
+      crewRepaint(tourId);
+      return S.crewCache[tourId].rows;
+    });
+    var late = sleep(CREW_WAIT).then(function () { throw Object.assign(new Error('timeout'), { code: 'timeout' }); });
+    ask.p = Promise.race([answer, late]).catch(function (e) {
+      if (S.crewOut[tourId] === ask) { delete S.crewOut[tourId]; delete S.crewAsk[tourId]; }
+      if (ask.gen === crewAskGen(tourId)) {
+        S.crewMiss = S.crewMiss || {};
+        S.crewMiss[tourId] = { n: ((S.crewMiss[tourId] && S.crewMiss[tourId].n) || 0) + 1, at: Date.now() };
+      }
+      crewRepaint(tourId);
+      throw e;
+    });
+    return ask.p;
+  }
+  // After one failed ask the next goes at once; after more, 4, 8 and 16
+  // seconds later, then every 30.
+  function crewAskWait(tourId) {
+    var m = S.crewMiss && S.crewMiss[tourId];
+    return !m || m.n < 2 ? 0 : Math.min(30e3, 2e3 * Math.pow(2, m.n - 1));
+  }
+  function crewAskDue(tourId) {
+    var m = S.crewMiss && S.crewMiss[tourId];
+    return !m || Date.now() - m.at >= crewAskWait(tourId);
+  }
+  // The Overview crew lists on screen for this tour.
+  function crewListsOn(tourId) {
+    return Array.prototype.filter.call(document.querySelectorAll('.crew-list'), function (el) {
+      return typeof el.crewPaint === 'function' && el.getAttribute('data-tour') === String(tourId);
+    });
+  }
+  // Each list on screen draws what this phone now holds. One still waiting
+  // with nothing to show, and no ask out, is asked for again by itself, for
+  // as long as it is on screen.
+  function crewRepaint(tourId) {
+    var lists = crewListsOn(tourId);
+    lists.forEach(function (el) { el.crewPaint(); });
+    if (!lists.length || (S.crewCache && S.crewCache[tourId]) || (S.crewOut && S.crewOut[tourId])) return;
+    S.crewRetry = S.crewRetry || {};
+    if (S.crewRetry[tourId]) return;
+    var m = S.crewMiss && S.crewMiss[tourId];
+    S.crewRetry[tourId] = setTimeout(function () {
+      delete S.crewRetry[tourId];
+      if (!crewListsOn(tourId).length || (S.crewCache && S.crewCache[tourId])) return;
+      crewAskOnce(tourId).catch(function () { /* painted as it stands, and asked again */ });
+    }, m ? Math.max(0, m.at + crewAskWait(tourId) - Date.now()) : 0);
+  }
+  // The crew list of the tour a bar belongs to, asked for in the background
+  // once, so the Overview has it the moment it opens.
+  function crewWarm(tourId) {
+    var B = window.GR_BACKEND;
+    if (!tourId || S.mode !== 'db' || !B || typeof B.crew !== 'function') return;
+    if ((S.crewCache && S.crewCache[tourId]) || (S.crewOut && S.crewOut[tourId]) || !crewAskDue(tourId)) return;
+    crewAskOnce(tourId).catch(function () { /* the Overview asks again when it opens */ });
+  }
+  /* How many rows each tour's crew list had when it was last drawn (the
+     count alone, kept on this phone under this account), so the list's
+     Loading place is drawn the size the list will be and nothing under it
+     moves when the crew lands. */
+  function crewCountKept(tourId, n) {
+    var B = window.GR_BACKEND, uid = S.mode === 'db' && B && B.uid ? B.uid() : '';
+    var key = 'gr-crewn' + (uid ? ':' + uid : '');
+    if (!S.crewCount || S.crewCount.key !== key) {
+      var got = null;
+      try { got = JSON.parse(lsGet(key) || 'null'); } catch (e) { got = null; }
+      S.crewCount = { key: key, all: G.isObj(got) ? got : {} };
+    }
+    var all = S.crewCount.all;
+    if (n == null) return Math.max(0, Math.min(30, Math.round(G.num(all[tourId]))));
+    n = Math.max(1, n);
+    if (all[tourId] === n) return n;
+    delete all[tourId];
+    all[tourId] = n;
+    var ks = Object.keys(all);
+    ks.slice(0, Math.max(0, ks.length - 40)).forEach(function (k) { delete all[k]; });
+    lsSet(key, JSON.stringify(all));
+    return n;
   }
 
   /* The name column is sized to the widest name, so the badges stand in one
@@ -18977,10 +19229,8 @@
     // The tour manager and Managers can edit someone or kick them off.
     var manages = owns || tourRole(tourId) === 'editor';
     S.crewCache = S.crewCache || {};
-    var cached = S.crewCache[tourId] || null;
     var faces = (S.mode === 'db' && B.facesFor && B.facesFor(tourId)) || {};
-    var list = h('div', { class: 'ledger crew-list crew-sym' },
-      cached ? null : h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Loading\u2026')));
+    var list = h('div', { class: 'ledger crew-list crew-sym', 'data-tour': tourId });
 
     /* The badge column sits centred in the gap between the names and the
        icons: the name column is sized to the widest name (so the gap is the
@@ -19001,6 +19251,9 @@
     }
 
     function draw(rows) {
+      S.crewShown = S.crewShown || {};
+      S.crewShown[tourId] = rows;
+      crewCountKept(tourId, rows.length);
       if (!rows.length) {
         list.replaceChildren(h('div', { class: 'row' },
           h('span', { class: 'hint' }, 'Nobody else on the run yet.')));
@@ -19061,17 +19314,52 @@
               'aria-label': 'Call ' + title }, icon('phone', 17))
               : h('span', { class: 'crew-call empty', 'aria-hidden': 'true' }))));
     }
-    if (cached) draw(cached.rows);
-    if (!cached || Date.now() - cached.at > 60e3) {
-      B.crew(tourId).then(function (rows) {
-        var same = !!cached && JSON.stringify(cached.rows) === JSON.stringify(rows);
-        S.crewCache[tourId] = { rows: rows, at: Date.now() };
-        if (!same) draw(rows);
-      }).catch(function () {
-        if (cached) return; // keep showing what we had
+    /* What the list shows, from what this phone holds, painted again into
+       whichever list is on screen whenever an ask for this tour lands or
+       fails (crewRepaint): the crew; else the rows it last showed, while a
+       fresh list is asked for after a change; else Loading, in a place the
+       size the list was last time; else, after two failed asks in a row,
+       the plain words with Try again (it also tries again by itself).
+       Only a change is drawn. */
+    var showing = null;
+    function paint() {
+      var c = S.crewCache && S.crewCache[tourId];
+      var rows = c ? c.rows : (S.crewShown && S.crewShown[tourId]) || null;
+      var miss = S.crewMiss && S.crewMiss[tourId];
+      var now = rows ? JSON.stringify(rows) : miss && miss.n >= 2 ? 'failed' : 'loading';
+      if (now === showing) return;
+      showing = now;
+      if (rows) {
+        // (A row that can't be drawn still leaves the names, never Loading.)
+        try { draw(rows); } catch (e) {
+          list.replaceChildren.apply(list, rows.map(function (m) {
+            return h('div', { class: 'row crew-row' }, h('span', { class: 'row-label' }, m.name || m.username || m.email || 'Someone'));
+          }));
+        }
+        return;
+      }
+      if (now === 'failed') {
         list.replaceChildren(h('div', { class: 'row' },
-          h('span', { class: 'hint' }, 'Couldn\u2019t load the crew.')));
-      });
+          h('span', { class: 'hint', style: 'flex:1' }, 'Couldn\u2019t load the crew.'),
+          h('button', { class: 'mn-change', type: 'button', onclick: function () {
+            if (S.crewMiss) delete S.crewMiss[tourId];
+            crewAskOnce(tourId).catch(function () { /* painted as it stands */ });
+            crewRepaint(tourId);
+          } }, 'Try again')));
+        return;
+      }
+      var n = crewCountKept(tourId);
+      list.replaceChildren(h('div', { class: 'row', style: n > 1 ? 'min-height:' + n * 62 + 'px' : null },
+        h('span', { class: 'hint' }, 'Loading\u2026')));
+    }
+    list.crewPaint = paint;
+    paint();
+    // Asked for when it isn't held, or was last asked over a minute ago (one ask shared with every screen).
+    var held = S.crewCache[tourId];
+    if (!held || Date.now() - held.at > 60e3) {
+      if (crewAskDue(tourId)) crewAskOnce(tourId).catch(function () { /* painted as it stands, and asked again */ });
+      // (Not due yet after failed asks: once the list is on screen it asks by itself when it is.)
+      else if (!held) setTimeout(function () { crewRepaint(tourId); }, 0);
     }
 
     return [
@@ -19232,13 +19520,8 @@
     if (B && B.ownsTour && B.ownsTour(tourId)) return true;
     var cached = S.crewCache && S.crewCache[tourId];
     if (!cached) {
-      S.crewCache = S.crewCache || {};
-      S.crewAsk = S.crewAsk || {};
-      if (!S.crewAsk[tourId] && B && B.crew) {
-        S.crewAsk[tourId] = true;
-        B.crew(tourId).then(function (rows) { S.crewCache[tourId] = { rows: rows, at: Date.now() }; render(true); })
-          .catch(function () { delete S.crewAsk[tourId]; /* asked again next time */ });
-      }
+      // (The one ask the Overview and the chat share: never held up by an ask some other screen left hanging.)
+      if (B && B.crew && crewAskDue(tourId)) crewAskOnce(tourId, 2).catch(function () { /* asked again next time */ });
       return false;
     }
     return cached.rows.some(function (m) { return !m.owner && m.role === 'editor' && m.manager && isMe(m); });
@@ -19699,36 +19982,40 @@
     if (x) x._tour = tourId;
     return x;
   }
-  /* Which of the five are in for this show. "who" is null while there are
-     no buyouts to hand out, and for anyone who doesn't keep the buyout
-     track. "sheet" is in however the day sheet came (posted from the
-     editor, or filled by a Master Tour or photo import that never posts),
-     and "buyouts" by a total or by "No buyouts tonight". */
+  /* Which of the five are in for this show. "who" is null on a night
+     answered "No buyouts tonight", and for anyone who doesn't keep the
+     buyout track; with the ticks table, every other show night asks the
+     Tour Manager, money logged or not (every show day is a buyout day,
+     Devin, 2026-10-17), and before it only a night with buyouts logged.
+     "sheet" is in however the day sheet came (posted from the editor, or
+     filled by a Master Tour or photo import that never posts), and
+     "buyouts" by a total or by "No buyouts tonight". */
   function todayState(x, tourId) {
     var inc = G.isObj(x.income) ? x.income : {};
     var total = G.num(inc.buyouts), tr = G.isObj(x.buyoutTrack) ? x.buyoutTrack : null;
     var per = tr ? G.num(tr.perHead) : 0, paid = buyoutPaidCount(tr);
-    var live = total > 0 ? todayWhoLive(tourId || x._tour, x.id) : undefined;
+    var live = x.buyoutsNone === true && !(total > 0) ? null : todayWhoLive(tourId || x._tour, x);
     return {
       sheet: daySheetAdded(x),
       buyouts: total > 0 || x.buyoutsNone === true,
-      who: !(total > 0) ? null : live !== undefined ? live : (paid > 0 && (!(per > 0) || paid >= Math.round(total / per))),
+      who: live !== undefined ? live : !(total > 0) ? null : (paid > 0 && (!(per > 0) || paid >= Math.round(total / per))),
       guarantee: G.num(inc.guarantee) > 0 || x.guaranteeNone === true,
       merch: G.num(inc.merch) > 0 || x.merchNone === true
     };
   }
-  /* "Who received?" read from the ticks table, the BUYOUT ALERT's own truth:
-     in when everyone owed a buyout is tracked on tonight's show, so a tick
-     in either place clears both. undefined before the table (the show's
-     own marks answer, as before); null for anyone who doesn't keep the
-     track (not theirs to do); false while the lists are on their way. */
-  function todayWhoLive(id, showId) {
-    if (!id || !buyoutsOn()) return undefined;
+  /* "Who received?" read the Buyout button's own way (buyoutGot): in when
+     everyone on the tour is marked received for tonight's show, so a mark
+     in either place clears both. undefined before the table, or for a show
+     before the fresh start (the show's own marks answer, as before); null
+     for anyone who doesn't keep the track (not theirs to do); false while
+     the lists are on their way. */
+  function todayWhoLive(id, x) {
+    if (!id || !x || !buyoutsOn() || !(String(x.date || '') >= G.BUYOUT_FROM)) return undefined;
     var role = buyoutRole(id);
     if (role === 'own') return null;
-    var people = buyoutPeople(id), got = buyoutTicked(id);
-    if (!role || !people || !got) return false;
-    return people.every(function (p) { return !!got[showId + '|' + p.userId]; });
+    var people = buyoutPeople(id), got = people ? buyoutGot(id, getTour(id) || {}, [x], people) : null;
+    if (!role || !got) return false;
+    return people.every(function (p) { return !!got[x.id + '|' + p.userId]; });
   }
   // Back from the day sheet (posted, or put down) to the question it was opened from.
   function todayBack(tourId, showId, posted) {
@@ -19816,7 +20103,7 @@
             })
           ];
         }
-        if (kind === 'who' && st.who !== null && todayWhoLive(tourId, s.id) !== undefined) return whoLive(s, st);
+        if (kind === 'who' && st.who !== null && todayWhoLive(tourId, s) !== undefined) return whoLive(s, st);
         if (kind === 'who') {
           var total = G.num(G.isObj(s.income) ? s.income.buyouts : 0), paid = buyoutPaidCount(s.buyoutTrack);
           return [
@@ -19859,28 +20146,30 @@
           })
         ];
       }
-      /* "Who received?" once the ticks table is on: tonight's people, ticked
-         right here through the same one tick the BUYOUT ALERT makes, so the
+      /* "Who received?" once the ticks table is on: tonight's people, marked
+         right here through the same one mark the Buyout list makes, so the
          two never disagree. */
-      var whoPend = {};
+      var whoPend = {}, whoUndo = null;
       function whoLive(s, st) {
-        var people = buyoutPeople(tourId), got = buyoutTicked(tourId), asked = buyoutAsked(tourId) || {};
-        var sh = buyoutShows(getTour(tourId) || {}).filter(function (x) { return x.id === s.id; })[0] ||
-          { id: s.id, city: s.city, income: s.income };
-        if (!people || !got) {
+        var people = buyoutPeople(tourId), asked = buyoutAsked(tourId) || {};
+        var got = people ? buyoutGot(tourId, getTour(tourId) || {}, [s], people) : null;
+        if (!got) {
           // (The lists are on their way: this question draws again once they land.)
           setTimeout(function () { if (host.isConnected && TODAY_ITEMS[i] && TODAY_ITEMS[i][0] === 'who') draw(); }, 700);
           return [h('p', { class: 'td-note' }, 'Loading…'), acts('Skip')];
         }
         var has = function (p) { var k = s.id + '|' + p.userId; return whoPend[k] != null ? whoPend[k] : !!got[k]; };
-        var n = people.filter(has).length;
+        var n = people.filter(has).length, total = G.num(G.isObj(s.income) ? s.income.buyouts : 0);
         return [
           h('p', { class: st.who ? 'td-done' : 'td-note' }, st.who ? '✓ Everyone has theirs'
-            : money(G.num(G.isObj(s.income) ? s.income.buyouts : 0)) + ' from the venue. Tick each person as they get theirs.' +
+            : (total > 0 ? money(total) + ' from the venue. ' : '') + 'Mark each person received as they get theirs.' +
               (n ? ' ' + n + ' of ' + people.length + ' so far.' : '')),
           people.length ? h('div', { class: 'ledger bo-list td-who' }, people.map(function (p) {
-            return buyoutPersonRow(sh, p, has(p), !!asked[s.id + '|' + p.userId], async function (want) {
-              var k = s.id + '|' + p.userId;
+            var k = s.id + '|' + p.userId;
+            return buyoutPersonRow(p, has(p), !!asked[k], whoUndo === k, async function (what) {
+              if (what === 'ask' || what === 'keep') { whoUndo = what === 'ask' ? k : null; draw(); return; }
+              var want = what === 'mark';
+              whoUndo = null;
               whoPend[k] = want; draw();
               try { await buyoutTick(tourId, s.id, p.userId, want); }
               catch (e) { if (buyoutsOn()) toast('Couldn’t save that. Try again.'); }
@@ -19888,7 +20177,7 @@
               if (host.isConnected) draw();
               render(true);
             });
-          })) : h('p', { class: 'hint' }, 'Nobody on the crew list has signed up yet, so there is nobody to tick.'),
+          })) : h('p', { class: 'hint' }, 'Nobody on the crew list has signed up yet, so there is nobody to mark.'),
           acts(st.who ? 'Next' : 'Skip')
         ];
       }
@@ -20008,7 +20297,7 @@
         var s = cur();
         if (!s) { closeSheet(); return; }
         var st = todayState(s);
-        // Nothing to hand out until the buyouts are logged: "Who received?" is passed over.
+        // Not this account's to do, or no buyouts tonight: "Who received?" is passed over.
         if (i < TODAY_ITEMS.length && TODAY_ITEMS[i][0] === 'who' && st.who === null) i += 1;
         dots.replaceChildren.apply(dots, TODAY_ITEMS.map(function (it, k) {
           return h('span', { class: 'td-dot' + (k === i ? ' on' : '') + (st[it[0]] === true ? ' done' : '') });
@@ -20787,17 +21076,12 @@
   }
   // It's bus call: within the hour before the day sheet's time, or past it.
   // (A bus call that isn't a time, "TBA" or "after load out", never is.)
-
+  // A bus call in the small hours (3 AM) belongs to the night after the
+  // show, not the morning before it, and so does a phone opened in them:
+  // both read on the show night's clock (G.busCallLeft).
   function busCallDue(v) {
-    var p = G.splitTime(v || '');
-    if (!p.ampm || !/^\d{1,2}:\d{2}$/.test(p.main)) return false;
-    var hm = p.main.split(':');
-    var mins = ((+hm[0]) % 12 + (p.ampm === 'PM' ? 12 : 0)) * 60 + (+hm[1]);
-    // A bus call in the small hours (3 AM) belongs to the night after the
-    // show, not the morning before it: it counts as next-day minutes.
-    if (mins < 12 * 60) mins += 24 * 60;
-    var now = new Date();
-    return now.getHours() * 60 + now.getMinutes() >= mins - 60;
+    var left = G.busCallLeft(v || '');
+    return left != null && left <= 60;
   }
   /* A word said before this tour day began reads as no word yet. The
      database keys a check-in by the phone's calendar date, so the small
@@ -20891,24 +21175,8 @@
           onclick: async function () {
             if (busy || cur) return;
             busy = true; draw();
-            try { await B.busSet(id, state); }
+            try { await busSayWord(id, state); }
             catch (e) { busy = false; draw(); if (busOn()) toast('Couldn\u2019t save that. Try again.'); return; }
-            // The completing On Bus tells the wheel (Devin, 2026-10-16:
-            // "the driver should be notified when we are a bus"): when this
-            // word made it everyone, one WE ARE A BUS goes to the tour's
-            // drivers through the notify door, once per phone per day.
-            if (state === 'on') {
-              var after = B.busList(id), folks = (after && after.people) || [];
-              var all = folks.length > 0 && folks.every(function (p) {
-                return p.userId === me || busWordToday(p) === 'on';
-              });
-              if (all) {
-                var wkey = 'gr-wearebus:' + id + ':' + G.tourToday();
-                var said = false;
-                try { said = !!localStorage.getItem(wkey); if (!said) localStorage.setItem(wkey, '1'); } catch (e2) { said = true; }
-                if (!said) sendNotify(id, 'wearebus', {});
-              }
-            }
             busy = false; draw(); render(true);
           } }, label);
       };
@@ -20946,6 +21214,28 @@
     }, { label: 'Bus Check In', onClose: function () { if (busLive === draw) busLive = null; } });
     busLive = draw;
   }
+  /* This account's own word for today, 'on' or 'off': the sheet's On Bus /
+     Off Bus and the bus call splash's Check in both say it here. Throws
+     only when the save does. On bus settles the day's bus call asks on this
+     phone, and the completing On Bus tells the wheel (Devin, 2026-10-16:
+     "the driver should be notified when we are a bus"): when this word
+     made it everyone, one WE ARE A BUS goes to the tour's drivers through
+     the notify door, once per phone per day. */
+  async function busSayWord(id, state) {
+    var B = window.GR_BACKEND, me = B.uid ? B.uid() : null;
+    await B.busSet(id, state);
+    if (state !== 'on') return;
+    busAskSettle(id);
+    var after = B.busList(id), folks = (after && after.people) || [];
+    var all = folks.length > 0 && folks.every(function (p) {
+      return p.userId === me || busWordToday(p) === 'on';
+    });
+    if (!all) return;
+    var wkey = 'gr-wearebus:' + id + ':' + G.tourToday();
+    var said = false;
+    try { said = !!localStorage.getItem(wkey); if (!said) localStorage.setItem(wkey, '1'); } catch (e2) { said = true; }
+    if (!said) sendNotify(id, 'wearebus', {});
+  }
   /* Dev harness only: its ?bus hook opens the sheet itself once the fake
      backend is up, so the restyled look shows without walking to the Chat.
      The live app has no __harness, so this line never runs there. */
@@ -20955,6 +21245,17 @@
       return;
     }
     openBusSheet(id, busCall);
+  };
+  /* Dev harness only, like the line above: its ?ovslow flag opens the
+     tour's Overview the moment the fake backend is up, so the first frames
+     are seen (the four buttons holding their cells, the crew list's
+     Loading and how it ends). */
+  if (window.__harness) window.__harness.openOverview = function (id, tries) {
+    if (!S.loaded || !getTour(id)) {
+      if ((tries || 0) < 40) setTimeout(function () { window.__harness.openOverview(id, (tries || 0) + 1); }, 100);
+      return;
+    }
+    go({ name: 'tour', id: id, view: 'details' });
   };
   /* Dev harness only, like the line above: its ?look= flag opens one of the
      four sheets restyled on 2026-10-17 once the fake backend is up.
@@ -23070,47 +23371,28 @@
     var p = G.isObj(track) && G.isObj(track.paid) ? track.paid : {};
     return Object.keys(p).filter(function (k) { return G.isObj(p[k]); }).length;
   }
-  // Before the ticks table: the buyout shows from the fresh start on,
-  // tonight's included, whose buyouts aren't all handed out (nobody ticked
-  // yet, or fewer ticked than the venue paid for).
-  function buyoutsOwed(t) {
-    return buyoutShows(t).filter(function (sh) {
-      var total = G.num(sh.income.buyouts);
-      var per = G.isObj(sh.buyoutTrack) ? G.num(sh.buyoutTrack.perHead) : 0;
-      var paid = buyoutPaidCount(sh.buyoutTrack);
-      return !paid || (per > 0 && paid < Math.round(total / per));
-    });
-  }
-  function saveBuyouts(id, sh, next) {
-    var patch = { shows: {} };
-    patch.shows[sh.id] = { buyoutTrack: next };
-    var prev = sh.buyoutTrack;
-    api.update(id, patch).then(function (ok) {
-      if (!ok) return;
-      buyoutDbMirror(id, sh.id, prev, next);
-      toast('Buyouts saved'); render(true);
-    });
-  }
-  /* Buyout ticks (0151): once the table is there, the database remembers,
-     person by person, who has been handed the buyout a show logged. The
-     people owed one are everyone with a seat on the tour's crew list,
-     Managers and Crew alike: buyouts feed people. No amounts move here; the
-     totals stay in the tour's own document, logged the way all tour money
-     is. Until the migration lands, buyoutsOn answers false and nothing below
-     draws: the BUYOUT ALERT keeps exactly its old ways. */
+  /* Buyout ticks (0151): the database remembers, person by person, who has
+     been handed their buyout for a show. The people owed one are everyone
+     with a seat on the tour's crew list, Managers and Crew alike, and the
+     tour's creator: buyouts feed people. No amounts move here; the totals
+     stay in the tour's own document, logged the way all tour money is.
+     Until the migration lands, buyoutsOn answers false and nothing below
+     draws. */
   function buyoutsOn() {
     var B = window.GR_BACKEND;
     return S.mode === 'db' && !!(B && B.buyoutsOn && B.buyoutTracks && B.buyoutTrack && B.buyoutUntrack && B.buyoutsOn());
   }
-  // The shows whose buyout money is logged, oldest first, from the fresh
-  // start on (G.BUYOUT_FROM): nothing older counts anywhere in buyouts.
-  function buyoutShows(t) { return G.buyoutShows(t); }
+  // The buyout days (G.buyoutDays): every show day from the fresh start
+  // through today, money logged or not, oldest first.
+  function buyoutDays(t) { return G.buyoutDays(t, G.tourToday()); }
+  // "Houston · Oct 16"
+  function buyoutDayName(sh) { return (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date); }
   /* Who sees what (Devin, 2026-10-17): the Tour Manager keeps the track,
      "including me. I don't want to see the track I want to see my own
-     buyout status". 'track': this account keeps the tick list. 'own': it
-     sees its own buyouts, with a ping to the Tour Manager. null: not known
-     yet (the crew list is on its way). Crew never write ticks, so they
-     never wait on the list. */
+     buyout status". 'track': this account keeps the list. 'own': it sees
+     its own buyouts, with a bump to the Tour Manager. null: not known yet
+     (the crew list is on its way). Crew never write ticks, so they never
+     wait on the list. */
   function buyoutRole(id) {
     if (!canEditTour(id)) return 'own';
     var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
@@ -23125,27 +23407,26 @@
     var c = S.crewCache && S.crewCache[id], B = window.GR_BACKEND;
     if (c) return Promise.resolve(c.rows);
     if (!B || !B.crew) return Promise.resolve([]);
-    return B.crew(id).then(function (rows) {
-      S.crewCache = S.crewCache || {};
-      S.crewCache[id] = { rows: rows, at: Date.now() };
-      return rows;
-    }, function () { return []; });
+    // (A shared ask that gave up is not an empty crew: ask once more, so a tick
+    // is never mapped against nobody.)
+    return crewAskOnce(id).catch(function (e) {
+      return e && e.code === 'timeout' ? B.crew(id).catch(function () { return []; }) : [];
+    });
   }
-  // Everyone with a seat: the crew list's signed-up rows, the owner among
-  // them. null while the list is still being fetched (the ask is made here
-  // too: the tour's creator never goes through moneyLead's own one).
-  /* One truth for buyouts: a tick in the new list also writes the mark on
-     the show, so the Today card's "Who received?" and Log income's Track
-     agree with it. The per-head figure is never invented here: with none
-     set, a mark counts no income (G.buyoutIncome reads perHead), and the
-     Artists' share counts once one is set in Log income's Track. The old
-     tracker mirrors into the database the same way. */
+  /* One truth for buyouts: a tick in the list also writes the mark on the
+     show, so the Today card's "Who received?" and Log income's Track agree
+     with it. The per-head figure is never invented here: with none set, a
+     mark counts no income (G.buyoutIncome reads perHead), and the Artists'
+     share counts once one is set in Log income's Track. The old tracker
+     mirrors into the database the same way. Taking one back clears every
+     mark on the show that names the person, however it was keyed. */
   function buyoutDocMark(id, showId, userId, want) {
     var t = getTour(id); if (!t || !canEditTour(id)) return;
     var s = G.isObj(t.shows) ? t.shows[showId] : null; if (!s) return;
     var tr = G.isObj(s.buyoutTrack) ? s.buyoutTrack : { perHead: null };
     var c = S.crewCache && S.crewCache[id];
     var row = c && c.rows.filter(function (m) { return m.userId === userId; })[0];
+    var people = (c && buyoutPeople(id)) || [];
     var low = function (v) { return String(v || '').trim().toLowerCase(); };
     var email = row ? low(row.email) : '';
     // The old tracker keys people by the crew map's own key, else by
@@ -23162,11 +23443,13 @@
     if (key === 'n:') return;   // nobody this phone can name
     var paid = Object.assign({}, G.isObj(tr.paid) ? tr.paid : {});
     var keys = [key, nk !== 'n:' ? nk : '', ek].filter(Boolean);
-    var had = keys.some(function (k) { return G.isObj(paid[k]); });
+    var names = function (k) { var one = {}; one[k] = paid[k]; return !!G.buyoutDocGot({ buyoutTrack: { paid: one } }, t.crew, people)[userId]; };
+    var mine = Object.keys(paid).filter(function (k) { return G.isObj(paid[k]) && (keys.indexOf(k) >= 0 || names(k)); });
+    var had = mine.length > 0;
     if (want === had) return;
     if (want) paid[key] = { name: (ent && ent.name) || (row && row.name) || 'Someone', artist: !!(ent && G.isMember(ent)) };
     // The deep merge keeps what a patch leaves out: only a null removes.
-    else keys.forEach(function (k) { if (G.isObj(paid[k])) paid[k] = null; });
+    else mine.forEach(function (k) { paid[k] = null; });
     var patch = {}; patch[showId] = { buyoutTrack: Object.assign({}, tr, { paid: paid }) };
     api.update(id, { shows: patch }).then(function () { render(true); });
   }
@@ -23176,9 +23459,16 @@
      included), or 'n:' + a name; the crew list is fetched first when this
      phone doesn't hold it, so no tick is lost to a list still on its way.
      Nothing happens before 0151, or for a seat without an account. */
-  function buyoutDbMirror(id, showId, prev, next) {
+  function buyoutDbMirror(id, showId, prev, next, tries) {
     var B = window.GR_BACKEND;
-    if (!buyoutsOn() || !B || !B.buyoutTrack) return;
+    if (S.mode !== 'db' || !B || !B.buyoutTrack) return;
+    // (On a phone just opened, the table's probe may not have answered yet:
+    // the mirror waits for it a little, so a save then still reaches the table.)
+    if (!buyoutsOn()) {
+      var n = G.num(tries);
+      if (n < 10) setTimeout(function () { buyoutDbMirror(id, showId, prev, next, n + 1); }, 1000);
+      return;
+    }
     var t = getTour(id); if (!t) return;
     var a = G.isObj(prev) && G.isObj(prev.paid) ? prev.paid : {};
     var b = G.isObj(next) && G.isObj(next.paid) ? next.paid : {};
@@ -23225,17 +23515,14 @@
       });
     });
   }
+  // Everyone with a seat: the crew list's signed-up rows, the owner among
+  // them. null while the list is still being fetched (the ask is made here
+  // too: the tour's creator never goes through moneyLead's own one).
   function buyoutPeople(id) {
     var B = window.GR_BACKEND;
     var c = S.crewCache && S.crewCache[id];
     if (!c) {
-      S.crewCache = S.crewCache || {};
-      S.crewAsk = S.crewAsk || {};
-      if (!S.crewAsk[id] && B && B.crew) {
-        S.crewAsk[id] = true;
-        B.crew(id).then(function (rows) { S.crewCache[id] = { rows: rows, at: Date.now() }; render(true); })
-          .catch(function () { delete S.crewAsk[id]; /* asked again next time */ });
-      }
+      if (B && B.crew && crewAskDue(id)) crewAskOnce(id, 2).catch(function () { /* asked again next time */ });
       return null;
     }
     var seen = {};
@@ -23245,7 +23532,9 @@
       return true;
     }).map(function (m) {
       return { userId: m.userId, name: m.name || m.username || m.email || 'Someone',
-        role: m.tourRole || (m.owner || m.manager ? 'Manager' : 'Crew') };
+        email: m.email || '', invitedEmail: m.invitedEmail || '',
+        role: m.tourRole || (m.owner || m.manager ? 'Manager' : 'Crew'),
+        seat: m.owner ? 'owner' : m.role };
     });
   }
   // The ticks, as "showId|userId". null while they're first being fetched.
@@ -23257,12 +23546,32 @@
     rows.forEach(function (r) { got[r.showId + '|' + r.userId] = true; });
     return got;
   }
-  // The pings (0176). Until that table is there, nothing to show.
+  /* Who has their buyout, as "showId|userId": a tick in the table, or a
+     mark on the show itself that names them (Log income's Track and the
+     Today card write those, and one the table missed still counts, so
+     nobody glows for a buyout already handed out). Only a copy of the tour
+     that carries the marks has them: Crew's has none. null while the ticks
+     are first being fetched. */
+  function buyoutGot(id, t, shows, people) {
+    var got = buyoutTicked(id);
+    if (!got) return null;
+    // A show's own mark counts only for people whose phone can read it: Crew
+    // read the tour without those marks, so for them only the table counts,
+    // and the Tour Manager still sees Mark received until their row is in.
+    var crewSeat = {};
+    (people || []).forEach(function (p) { if (p.seat === 'viewer') crewSeat[p.userId] = true; });
+    (shows || []).forEach(function (sh) {
+      var doc = G.buyoutDocGot(sh, t && t.crew, people || []);
+      Object.keys(doc).forEach(function (u) { if (!crewSeat[u]) got[sh.id + '|' + u] = true; });
+    });
+    return got;
+  }
+  // The bumps (0176). Until that table is there, nothing to show.
   function buyoutAsksOn() {
     var B = window.GR_BACKEND;
     return buyoutsOn() && !!(B && B.buyoutAsksOn && B.buyoutAsks && B.buyoutAskSend && B.buyoutAsksOn());
   }
-  // The pings as "showId|userId" -> when last asked; {} before 0176, null while first fetched.
+  // The bumps as "showId|userId" -> when last asked; {} before 0176, null while first fetched.
   function buyoutAsked(id) {
     if (!buyoutAsksOn()) return {};
     var rows = window.GR_BACKEND.buyoutAsks(id);
@@ -23271,123 +23580,182 @@
     rows.forEach(function (r) { var k = r.showId + '|' + r.userId; if (!out[k] || r.at > out[k]) out[k] = r.at; });
     return out;
   }
-  /* MY PAY's own view of them: the buyout shows from the fresh start on and
-     whether this account's tick is in. Only your own rows are read (the
-     database hands Crew nothing else), and no amounts ride along. lit: one
-     is still waiting, so the tab and the button glow green until you are
-     tracked on every one (Devin, 2026-10-17: "It stops glowing when it has
-     been given and tracked to that person"). */
+  /* One account's own buyout days, for MY PAY's record and the Buyout
+     button: every buyout day and whether it is in for this account, by the
+     ticks table and, where this phone holds them, the shows' own marks.
+     (Crew read only their own ticks, and their copy of the tour carries no
+     marks.) owed: the days still waiting, oldest first. lit while there is
+     one (Devin, 2026-10-17: "This button is glowing for everyone until they
+     are marked as received"). */
   function myBuyoutDays(id, t) {
     var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
-    var shows = buyoutShows(t);
-    var rows = shows.length ? B.buyoutTracks(id) : [];
+    var shows = buyoutDays(t);
+    var c = S.crewCache && S.crewCache[id];
+    var people = (c && buyoutPeople(id)) || [{ userId: me, email: (B && B.email && B.email()) || '', name: '' }];
+    var got = shows.length ? buyoutGot(id, t, shows, people) : {};
     var mine = {};
-    (rows || []).forEach(function (r) { if (r.userId === me) mine[r.showId] = true; });
-    var got = shows.filter(function (sh) { return mine[sh.id]; }).length;
-    var loading = !!shows.length && !rows;
-    return { shows: shows, mine: mine, loading: loading, got: got, lit: !loading && !!me && got < shows.length };
+    shows.forEach(function (sh) { if (me && got && got[sh.id + '|' + me]) mine[sh.id] = true; });
+    var loading = !!shows.length && !got;
+    var owed = loading ? [] : shows.filter(function (sh) { return !mine[sh.id]; });
+    return { shows: shows, mine: mine, owed: owed, loading: loading, got: Object.keys(mine).length,
+      lit: !loading && !!me && owed.length > 0 };
   }
-  function buyoutBtn(lit, onclick) {
-    return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (lit ? ' on' : ''), type: 'button', onclick: onclick },
-      icon('bell', 15), 'BUYOUT ALERT'));
+  /* What the Today tab's Buyout button says, on a live tour once the ticks
+     table is on: null (no button), or { lit, done, role }. The Tour
+     Manager's speaks for everyone, lit while anyone's buyout is waiting on
+     any buyout day; everyone else's for their own days. done: tonight is a
+     show and nothing is waiting. A day with no show and nothing waiting has
+     no button; while the lists are on their way, a show day shows it quiet. */
+  function buyoutState(id, t) {
+    if (!buyoutsOn() || !t || !tourIsLive(t)) return null;
+    var shows = buyoutDays(t), today = G.tourToday();
+    var tonight = shows.some(function (sh) { return sh.date === today; });
+    var role = buyoutRole(id);
+    var quiet = tonight ? { lit: false, done: false, role: role } : null;
+    if (!role) return quiet;
+    var owed;
+    if (role === 'track') {
+      var people = buyoutPeople(id), got = people ? buyoutGot(id, t, shows, people) : null;
+      if (!got) return quiet;
+      owed = shows.some(function (sh) { return people.some(function (p) { return !got[sh.id + '|' + p.userId]; }); });
+    } else {
+      var mine = myBuyoutDays(id, t);
+      if (mine.loading) return quiet;
+      owed = mine.owed.length > 0;
+    }
+    if (!owed && !tonight) return null;
+    return { lit: owed, done: !owed, role: role };
   }
-  /* The Tour Manager's button: green from the moment buyout money is logged
-     on a show until everyone owed one is tracked on it; a tap opens the
-     tick list. */
-  function buyoutTickBtn(id, t) {
-    var shows = buyoutShows(t);
-    var people = buyoutPeople(id);
-    var got = buyoutTicked(id);
-    var lit = !!(shows.length && people && people.length && got) && shows.some(function (sh) {
-      return people.some(function (p) { return !got[sh.id + '|' + p.userId]; });
-    });
-    return buyoutBtn(lit, function () {
-      if (!buyoutShows(getTour(id) || {}).length) { toast('No buyouts logged yet'); return; }
-      openBuyoutTicks(id);
-    });
+  /* Buyout, in the Today tab's day row on the right, level with Tonight and
+     in its size and type (Devin, 2026-10-17: "The same size and font/style
+     as tonight but sitting on the right side of the tab"). Green and
+     glowing while a buyout is waiting; once it is in, Received with the
+     check the calendar's Rated wears. The Tour Manager's opens the list;
+     everyone else's, their own days. */
+  function buyoutChip(id, t) {
+    var st = buyoutState(id, t);
+    if (!st) return null;
+    var track = st.role === 'track';
+    var open = function () { openBuyoutMine(id); };
+    if (st.done) {
+      return h('button', { class: 'pt-chip bo-chip done', type: 'button', onclick: open,
+        'aria-label': track ? 'Buyout: everyone has theirs' : 'Buyout: yours is received' }, icon('check', 11), 'Received');
+    }
+    return h('button', { class: 'pt-chip bo-chip' + (st.lit ? ' lit' : ''), type: 'button', onclick: open,
+      'aria-label': !st.lit ? 'Buyout' : track ? 'Buyout: someone is still waiting on theirs' : 'Buyout: yours is still waiting' }, 'Buyout');
   }
-  // Everyone else's: green while their own buyout is still waiting; a tap opens their own.
-  function buyoutMineBtn(id, t) {
-    return buyoutBtn(myBuyoutDays(id, t).lit, function () { openBuyoutMine(id); });
+  /* The day row's right corner with Buyout in it. The row lines its three
+     columns up along the bottom, so the corner carries the left corner's
+     lines unseen (the chips, the date, the city): the two corners stand the
+     same height and width however they wrap, and Buyout sits exactly
+     across from Tonight. */
+  function buyoutCorner(id, t, when, date, city, soldOut) {
+    var chip = buyoutChip(id, t);
+    if (!chip) return null;
+    return h('div', { class: 'bo-corner' },
+      h('p', { class: 'pt-dr-chips' },
+        h('span', { class: 'pt-chip bo-ghost', 'aria-hidden': 'true' }, when),
+        soldOut ? h('span', { class: 'pt-chip sold bo-ghost', 'aria-hidden': 'true' }, 'Sold out') : null,
+        chip),
+      h('p', { class: 'pt-dr-date bo-ghost', 'aria-hidden': 'true' }, dayLong(date)),
+      city ? h('p', { class: 'pt-dr-city bo-ghost', 'aria-hidden': 'true' }, city) : null);
   }
-  // A tick list that is up draws itself again when fresh ticks land (a poke,
-  // or this phone's own tick answered).
+  // A buyout list that is up draws itself again when fresh ticks land (a
+  // poke, or this phone's own tick answered); and the Tour Manager's phone
+  // looks for new bumps.
   var buyoutLive = null;
   function buyoutTicksRedraw() {
+    buyoutBumpWatch();
     if (!buyoutLive) return;
     // (Never under a finger: a row swapped out mid-tap swallows the tap.)
     if (fingerDown && Date.now() - fingerDown < 4000) { setTimeout(buyoutTicksRedraw, 400); return; }
     try { buyoutLive(); } catch (e) { /* it draws again on its next tap */ }
   }
-  /* One tick or its undo, from the tick list or the Today card: the table,
-     then the mark on the show, then the ticked person's phone hears it, if
-     it asked to (the undo stays quiet; the poke already redraws MY PAY). */
+  /* One mark or its undo, from the list or the Today card: the table, then
+     the mark on the show, then the marked person's phone hears it, if it
+     asked to (the undo stays quiet; the poke already redraws their button). */
   async function buyoutTick(id, showId, userId, want) {
     var B = window.GR_BACKEND;
     if (want) await B.buyoutTrack(id, showId, userId); else await B.buyoutUntrack(id, showId, userId);
     buyoutDocMark(id, showId, userId, want);
     if (want) {
-      var bsh = buyoutShows(getTour(id) || {}).filter(function (x) { return x.id === showId; })[0];
+      var t = getTour(id), bsh = t && G.isObj(t.shows) ? t.shows[showId] : null;
       sendNotify(id, 'buyout', { to: userId, city: (bsh && bsh.city) || '' });
     }
   }
-  // One person under a show: the tick, name and role, Asked when they pinged, Received or Not yet.
-  function buyoutPersonRow(sh, p, on, asked, onTick) {
-    var cb = h('input', { type: 'checkbox', class: 'rv-check', checked: on,
-      'aria-label': p.name + ' received their buyout · ' + (sh.city || 'Show'),
-      onchange: function (e) { onTick(!!e.target.checked); } });
-    return h('label', { class: 'row bo-row' }, cb,
+  /* One person on the Tour Manager's list: name and role, Bumped while they
+     wait and asked, then Mark received, or Received with the calendar's
+     Rated check. A tap on Received asks once more, in the row, before the
+     mark comes off. act('mark' | 'ask' | 'keep' | 'undo'). */
+  function buyoutPersonRow(p, on, bumped, asking, act) {
+    var first = String(p.name || '').trim().split(/\s+/)[0] || 'their';
+    if (asking) {
+      return h('div', { class: 'row bo-person bo-undo' },
+        h('span', { class: 'row-label' }, 'Take back ' + first + '\u2019s buyout?'),
+        h('button', { class: 'cal-btn', type: 'button', onclick: function () { act('keep'); } }, 'Keep'),
+        h('button', { class: 'cal-btn bo-take', type: 'button', onclick: function () { act('undo'); } }, 'Take back'));
+    }
+    return h('div', { class: 'row bo-person' },
       h('span', { class: 'row-label' }, p.name, h('span', { class: 'hint' }, p.role)),
-      !on && asked ? h('span', { class: 'bo-asked' }, 'Asked') : null,
-      h('span', { class: 'bus-word' + (on ? ' on' : '') }, on ? 'Received' : 'Not yet'));
+      !on && bumped ? h('span', { class: 'bo-asked' }, 'Bumped') : null,
+      on ? h('button', { class: 'cal-btn cal-rated bo-got', type: 'button', 'aria-label': p.name + ' received their buyout. Tap to take it back.',
+          onclick: function () { act('ask'); } }, icon('check', 11), 'Received')
+        : h('button', { class: 'cal-btn bo-mark', type: 'button', 'aria-label': 'Mark ' + p.name + ' received',
+          onclick: function () { act('mark'); } }, 'Mark received'));
   }
-  /* The tick list, the Tour Manager's alone: every buyout show from the
-     fresh start on, each opening to the people owed one. Tick someone as
-     they get theirs; tap the tick again to undo it. The database pokes the
-     person either way, so their MY PAY follows along live, and a ping from
-     someone still waiting shows as Asked by their name. */
+  /* The Tour Manager's list, his alone (Devin, 2026-10-17: "when he hits
+     that buyout button he sees the list of people as he used to but he
+     marks them as received"): tonight's people, and above them any earlier
+     buyout day someone is still waiting on, with just those people. Mark
+     received makes the tick; the row then reads Received, and a tap on it
+     offers to take it back. Bumped sits by anyone still waiting who
+     bumped. The database pokes the person either way, so their own button
+     follows along live. */
   function openBuyoutTicks(id) {
-    var open = {}, pend = {};
-    var first = buyoutShows(getTour(id) || {});
-    if (first.length === 1) open[first[0].id] = true;
-    var box = h('div', { class: 'ledger bo-list' });
+    var pend = {}, kept = {}, undo = null;
+    var box = h('div', { class: 'bo-days' });
     function draw() {
       // The table went away under us (a migration rolled back), or the job
-      // did: the sheet goes quietly, the way the button already has.
+      // did: the sheet goes quietly.
       var role = buyoutRole(id);
       if (!buyoutsOn() || role === 'own') { if (buyoutLive === draw) closeSheet(); return; }
-      var shows = buyoutShows(getTour(id) || {});
-      if (!shows.length) { if (buyoutLive === draw) closeSheet(); return; }
+      var t = getTour(id) || {};
+      var shows = buyoutDays(t), today = G.tourToday();
       var people = buyoutPeople(id);
-      var got = buyoutTicked(id);
+      var got = people ? buyoutGot(id, t, shows, people) : null;
       var asked = buyoutAsked(id) || {};
-      if (!role || !people || !got) {
+      if (!role || !got) {
         box.replaceChildren(h('p', { class: 'note' }, 'Loading…'));
         // (The crew list answers to the page, not to this sheet: look again in a moment.)
         setTimeout(function () { if (buyoutLive === draw) draw(); }, 700);
         return;
       }
       if (!people.length) {
-        box.replaceChildren(h('div', { class: 'row' },
-          h('span', { class: 'hint' }, 'Nobody on the crew list has signed up yet, so there is nobody to tick.')));
+        box.replaceChildren(h('p', { class: 'note' }, 'Nobody on the crew list has signed up yet, so there is nobody to mark.'));
         return;
       }
       var has = function (sh, p) { var k = sh.id + '|' + p.userId; return pend[k] != null ? pend[k] : !!got[k]; };
       var kids = [];
       shows.forEach(function (sh) {
-        var ticked = people.filter(function (p) { return has(sh, p); }).length;
-        var waiting = people.filter(function (p) { return !has(sh, p) && asked[sh.id + '|' + p.userId]; }).length;
-        kids.push(h('button', { class: 'row rowbtn', type: 'button',
-          'aria-expanded': open[sh.id] ? 'true' : 'false',
-          onclick: function () { open[sh.id] = !open[sh.id]; draw(); } },
-          h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date),
-            h('span', { class: 'hint' }, (ticked === people.length ? 'Everyone has theirs' : ticked + ' of ' + people.length + ' tracked') +
-              (waiting ? ' · ' + waiting + ' asked' : ''))),
-          h('span', { class: 'amt num' }, money(G.num(sh.income.buyouts))), icon('chevron', 18)));
-        if (open[sh.id]) people.forEach(function (p) {
-          kids.push(buyoutPersonRow(sh, p, has(sh, p), !!asked[sh.id + '|' + p.userId], function (want) { tick(sh.id, p.userId, want); }));
+        var tonight = sh.date === today;
+        // (Anyone marked while the list is up keeps their row, so nothing jumps away under a finger.)
+        var list = tonight ? people : people.filter(function (p) {
+          var k = sh.id + '|' + p.userId;
+          if (!has(sh, p)) kept[k] = true;
+          return !!kept[k];
         });
+        if (!list.length) return;
+        kids.push(h('h3', { class: 'bo-day' + (tonight ? ' on' : '') }, (tonight ? 'Tonight · ' : '') + buyoutDayName(sh)));
+        kids.push(h('div', { class: 'ledger bo-list' }, list.map(function (p) {
+          var k = sh.id + '|' + p.userId;
+          return buyoutPersonRow(p, has(sh, p), !!asked[k], undo === k, function (what) {
+            if (what === 'mark') { undo = null; tick(sh.id, p.userId, true); }
+            else if (what === 'undo') { undo = null; tick(sh.id, p.userId, false); }
+            else { undo = what === 'ask' ? k : null; draw(); }
+          });
+        })));
       });
+      if (!kids.length) kids.push(h('p', { class: 'note' }, 'Everyone has every buyout so far.'));
       box.replaceChildren.apply(box, kids);
     }
     async function tick(showId, userId, want) {
@@ -23408,51 +23776,65 @@
     draw();
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, 'BUYOUT ALERT'),
-        h('p', { class: 'sh-sub' }, 'Every show with buyout money logged. Tap a show, then tick each person as they get theirs. Everyone sees their own days on MY PAY.'),
+        h('h2', { class: 'sh-title' }, 'Buyout'),
+        h('p', { class: 'sh-sub' }, 'Mark each person received as they get theirs.'),
         box,
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
       ];
-    }, { label: 'Buyout alert', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
+    }, { label: 'Buyout', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
     buyoutLive = draw;
   }
-  /* Everyone else's BUYOUT ALERT (Devin, 2026-10-17: "I want to see my own
-     buyout status"): each buyout show from the fresh start on, Received or
-     Not yet, for this account alone, and on a Not yet a ping to the Tour
-     Manager ("In the buyout alert button you can ping the TM to get you
-     your buyout"). The ping waits on 0176; one an hour per show is plenty,
-     and the row says Sent until then. */
+  /* Everyone else's Buyout (Devin, 2026-10-17: "if a crew/member doesn't
+     receive a buyout that button glows and when they click it that can see
+     the dates they haven't received a buyout and next to the date can click
+     (bump)"): each buyout day still waiting, with Bump. A bump tells the
+     Tour Manager (the splash on their phone, and a push once the notify
+     function knows the words) and reads Bumped for the hour the database
+     keeps one to. The days already in follow, quietly, with the check.
+     Bump waits on 0176; until then a waiting day reads Not yet. */
   function openBuyoutMine(id) {
     var B = window.GR_BACKEND, sending = {};
     if (buyoutRole(id) === 'track') { openBuyoutTicks(id); return; }
-    var box = h('div', { class: 'ledger bo-list' });
+    var box = h('div', { class: 'bo-days' });
     function draw() {
       if (!buyoutsOn()) { if (buyoutLive === draw) closeSheet(); return; }
       var role = buyoutRole(id);
       // (The crew list came in and says this account keeps the track after all.)
       if (role === 'track') { if (buyoutLive === draw) openBuyoutTicks(id); return; }
       var bo = myBuyoutDays(id, getTour(id) || {});
-      // (The pings are read alongside: Ping the TM shows once they are in, so Sent is never missed.)
+      // (The bumps are read alongside: Bump shows once they are in, so Bumped is never missed.)
       var asksOn = buyoutAsksOn(), askedNow = asksOn ? buyoutAsked(id) : {}, asked = askedNow || {};
       if (!role || bo.loading) {
         box.replaceChildren(h('p', { class: 'note' }, 'Loading…'));
         setTimeout(function () { if (buyoutLive === draw) draw(); }, 700);
         return;
       }
-      if (!bo.shows.length) { box.replaceChildren(h('p', { class: 'note' }, 'No buyouts logged yet.')); return; }
+      if (!bo.shows.length) { box.replaceChildren(h('p', { class: 'note' }, 'No buyout days yet. Each show day shows up here.')); return; }
       var me = B && B.uid ? B.uid() : null;
-      box.replaceChildren.apply(box, bo.shows.map(function (sh) {
-        var got = !!bo.mine[sh.id];
+      var canBump = asksOn && !!askedNow;
+      var waiting = bo.owed.map(function (sh) {
         var at = asked[sh.id + '|' + me];
         var sent = !!sending[sh.id] || !!(at && Date.now() - Date.parse(at) < 3600e3);
         return h('div', { class: 'row bo-mine' },
-          h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date)),
-          !got && asksOn && askedNow ? h('button', { class: 'btn sm quiet bo-ping', type: 'button', disabled: sent,
-            onclick: function () { ping(sh); } }, sent ? 'Sent' : 'Ping the TM') : null,
-          h('span', { class: 'bus-word' + (got ? ' on' : '') }, got ? 'Received' : 'Not yet'));
-      }));
+          h('div', { class: 'row-label' }, buyoutDayName(sh)),
+          canBump ? h('button', { class: 'cal-btn bo-bump', type: 'button', disabled: sent,
+            'aria-label': sent ? 'Bumped' : 'Bump the Tour Manager for ' + buyoutDayName(sh),
+            onclick: function () { bump(sh); } }, sent ? 'Bumped' : 'Bump')
+            : h('span', { class: 'bus-word' }, 'Not yet'));
+      });
+      var gotRows = bo.shows.filter(function (sh) { return bo.mine[sh.id]; }).map(function (sh) {
+        return h('div', { class: 'row bo-mine' },
+          h('div', { class: 'row-label' }, buyoutDayName(sh)),
+          h('span', { class: 'cal-btn cal-rated' }, icon('check', 11), 'Received'));
+      });
+      box.replaceChildren.apply(box, flatten([
+        waiting.length ? [h('h3', { class: 'bo-day on' }, 'Not received yet'), h('div', { class: 'ledger bo-list' }, waiting),
+          canBump ? h('p', { class: 'bo-foot' }, 'Bump a day and the Tour Manager gets a reminder.') : null]
+          : h('p', { class: 'note' }, 'You have every buyout so far.'),
+        gotRows.length ? [h('h3', { class: 'bo-day' }, 'Received'), h('div', { class: 'ledger bo-list' }, gotRows)] : null
+      ]).filter(Boolean));
     }
-    async function ping(sh) {
+    async function bump(sh) {
       if (sending[sh.id]) return;
       sending[sh.id] = true;
       draw();
@@ -23460,7 +23842,7 @@
       catch (e) {
         delete sending[sh.id];
         draw();
-        toast(e && e.code === 'permission' ? 'That buyout is already tracked.' : 'Couldn’t send that. Try again.');
+        toast('Couldn’t send that. Try again.');
         return;
       }
       // The push to the Tour Manager's phone, once the notify function knows the kind.
@@ -23469,48 +23851,102 @@
     draw();
     openSheet(function () {
       return [
-        h('h2', { class: 'sh-title' }, 'BUYOUT ALERT'),
+        h('h2', { class: 'sh-title' }, 'Buyout'),
         box,
         h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Done')
       ];
-    }, { label: 'Buyout alert', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
+    }, { label: 'Buyout', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
     buyoutLive = draw;
   }
-  /* BUYOUT ALERT, at the top of MY PAY's Buyouts tab and nowhere else since
-     2026-10-16. With the ticks table: the Tour Manager's opens the tick
-     list, everyone else's opens their own buyouts, and each glows green
-     while what it is about is still waiting. Before the table, the old
-     document-only list, for the people who can edit the tour. */
-  function buyoutAlertBtn(id, t) {
-    if (buyoutsOn()) return buyoutRole(id) === 'track' ? buyoutTickBtn(id, t) : buyoutMineBtn(id, t);
-    if (!canEditTour(id)) return null;
-    var owed = buyoutsOwed(t);
-    return h('div', { class: 'bo-wrap' }, h('button', { class: 'btn sm bo-alert' + (owed.length ? ' on' : ''), type: 'button',
-      onclick: function () {
-        if (!owed.length) { toast('Everyone has their buyouts'); return; }
-        if (owed.length === 1) {
-          var one = owed[0];
-          openBuyoutTracker(id, one, G.num(one.income.buyouts), one.buyoutTrack, function (next) { saveBuyouts(id, one, next); });
-          return;
-        }
-        openSheet(function () {
-          return [
-            h('h2', { class: 'sh-title' }, 'BUYOUT ALERT'),
-            h('p', { class: 'sh-sub' }, 'These shows still have people waiting on their buyout.'),
-            h('div', { class: 'ledger' }, owed.map(function (sh) {
-              var per = G.isObj(sh.buyoutTrack) ? G.num(sh.buyoutTrack.perHead) : 0;
-              var paid = buyoutPaidCount(sh.buyoutTrack);
-              return h('button', { class: 'row rowbtn', type: 'button', onclick: function () {
-                closeSheet();
-                openBuyoutTracker(id, sh, G.num(sh.income.buyouts), sh.buyoutTrack, function (next) { saveBuyouts(id, sh, next); });
-              } },
-                h('div', { class: 'row-label' }, (sh.city || 'Show') + ' \u00b7 ' + dayMD(sh.date),
-                  h('span', { class: 'hint' }, paid ? paid + ' of ' + Math.round(G.num(sh.income.buyouts) / per) + ' paid' : 'Nobody ticked yet')),
-                h('span', { class: 'amt num' }, money(G.num(sh.income.buyouts))), icon('chevron', 18));
-            }))
-          ];
-        }, { label: 'Buyout alert' });
-      } }, icon('bell', 15), 'BUYOUT ALERT'));
+  /* The Tour Manager's splash (Devin, 2026-10-17: a bump "prompts a slash
+     effect to the tour manager only that says give X their buyout. If
+     multiple people bump it says Give X & X their buyout"). It looks each
+     time fresh data lands (the app opening, the 'buyout' poke a bump sends)
+     on every live tour this phone keeps the list for, never on anyone
+     else's: bumps from people still waiting, on a buyout day. A set holding
+     a bump this phone has not shown yet brings the app's own splash up,
+     naming everyone in the set, with Open the list and Later; the bumps
+     shown are remembered on the phone, so it comes once per new bump. */
+  var buyoutBumpUp = false, buyoutBumpSeen = {}, buyoutBumpRetry = null, buyoutBumpTries = 0;
+  function buyoutBumpWatch() {
+    if (buyoutBumpUp || S.mode !== 'db' || !S.tours || !buyoutAsksOn()) return;
+    var B = window.GR_BACKEND, hit = null, later = false;
+    S.tours.forEach(function (t, id) {
+      if (hit || !tourIsLive(t)) return;
+      var role = buyoutRole(id);
+      if (!role) { later = true; return; }
+      if (role !== 'track') return;
+      var rows = B.buyoutAsks(id), people = buyoutPeople(id);
+      var shows = buyoutDays(t), got = people ? buyoutGot(id, t, shows, people) : null;
+      if (!rows || !got) { later = true; return; }
+      var day = {}, who = {};
+      shows.forEach(function (sh) { day[sh.id] = true; });
+      people.forEach(function (p) { who[p.userId] = p.name; });
+      var open = rows.filter(function (r) { return day[r.showId] && who[r.userId] && !got[r.showId + '|' + r.userId]; })
+        .sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
+      if (!open.length) return;
+      var keys = open.map(function (r) { return r.showId + '|' + r.userId + '|' + r.at; });
+      var seen = buyoutBumpMemory(id);
+      if (keys.every(function (k) { return seen.indexOf(k) >= 0; })) return;
+      var names = [];
+      open.forEach(function (r) { if (names.indexOf(who[r.userId]) < 0) names.push(who[r.userId]); });
+      hit = { id: id, keys: keys, names: names };
+    });
+    // (The crew list or the bumps are still on their way, and their arrival may not bring fresh data: look again.)
+    if (!hit && later && !buyoutBumpRetry && buyoutBumpTries < 20) {
+      buyoutBumpTries += 1;
+      buyoutBumpRetry = setTimeout(function () { buyoutBumpRetry = null; buyoutBumpWatch(); }, 1500);
+    }
+    if (!hit) return;
+    buyoutBumpTries = 0;
+    buyoutBumpUp = true;
+    var tries = 0, clear = 0;
+    var show = function () {
+      if (tries++ > 60) { buyoutBumpUp = false; return; }
+      // The intro and any other splash go first; two clear looks in a row,
+      // so a splash a beat from landing isn't walked over.
+      if (document.getElementById('gr-splash') || document.querySelector('.splash-note')) { clear = 0; setTimeout(show, 600); return; }
+      if (clear++ < 1) { setTimeout(show, 600); return; }
+      buyoutBumpRemember(hit.id, hit.keys);
+      buyoutBumpSplash(hit.id, hit.names);
+    };
+    setTimeout(show, 450);
+  }
+  // The bumps this phone has shown the splash for, per tour: kept on the
+  // phone, and in memory too, so a phone that can't keep them asks once a run.
+  function buyoutBumpMemory(id) {
+    var kept = null;
+    try { kept = JSON.parse(lsGet('gr-bobump:' + id) || 'null'); } catch (e) { kept = null; }
+    return (Array.isArray(kept) ? kept : []).concat(buyoutBumpSeen[id] || []);
+  }
+  function buyoutBumpRemember(id, keys) {
+    buyoutBumpSeen[id] = keys.slice();
+    lsSet('gr-bobump:' + id, JSON.stringify(keys.slice(-200)));
+  }
+  function buyoutBumpSplash(id, names) {
+    var line = G.buyoutBumpLine(names);
+    var el = null;
+    var done = function (then) {
+      el.classList.remove('on');
+      setTimeout(function () { el.remove(); }, 350);
+      buyoutBumpUp = false;
+      if (then) then();
+      // (Another tour's bumps, if any, wait their turn.)
+      setTimeout(buyoutBumpWatch, 400);
+    };
+    var go = h('button', { class: 'btn primary block', type: 'button',
+      onclick: function () { done(function () { openBuyoutTicks(id); }); } }, 'Open the list');
+    el = h('div', { class: 'splash-note bo-bump', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': line },
+      h('div', { class: 'sn-card' },
+        h('span', { class: 'sn-check' }, icon('bell', 30)),
+        h('div', { class: 'sn-big' }, line),
+        h('div', { class: 'sn-acts' }, go,
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { done(); } }, 'Later'))));
+    document.body.appendChild(el);
+    requestAnimationFrame(function () {
+      el.classList.add('on');
+      try { go.focus({ preventScroll: true }); } catch (e) { /* fine */ }
+    });
   }
 
   function openBuyoutTracker(id, show, total, track, done) {

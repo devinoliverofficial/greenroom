@@ -575,10 +575,78 @@
   // The shows whose buyout money is logged, from the fresh start on, oldest first.
   function buyoutShows(t) {
     return rows(t && t.shows).filter(function (sh) {
-      // Crew's copy of a show carries no money, only buyoutLogged (0176).
-      return !!parseDay(sh.date) && sh.date >= BUYOUT_FROM &&
-        (num(isObj(sh.income) ? sh.income.buyouts : 0) > 0 || sh.buyoutLogged === true);
+      return !!parseDay(sh.date) && sh.date >= BUYOUT_FROM && num(isObj(sh.income) ? sh.income.buyouts : 0) > 0;
     }).sort(byDate);
+  }
+  /* The days everyone on the tour is owed a buyout (Devin, 2026-10-17:
+     "Everyday this button is automatically glowing. This button is glowing
+     for everyone until they are marked as received"): every show day from
+     the fresh start through today, money logged or not. Days off are not
+     buyout days; a show still to come is not one yet. Oldest first. */
+  function buyoutDays(t, today) {
+    var to = parseDay(today) ? today : tourToday();
+    return rows(t && t.shows).filter(function (sh) {
+      return !!parseDay(sh.date) && sh.date >= BUYOUT_FROM && sh.date <= to;
+    }).sort(byDate);
+  }
+  /* Whose buyout a show's own marks say was handed out (show.buyoutTrack.paid,
+     written by Log income's Track, the Today card and the tick list). A live
+     mark's key is a crew map key (that entry's email, else its name), 'e:' +
+     an email, or 'n:' + a lowercased name, and it counts for a person only
+     when it names exactly one of people, the way 0176's backfill reads it.
+     people: [{ userId, email, invitedEmail, name }]. Answers { userId: true }. */
+  function buyoutDocGot(show, crew, people) {
+    var paid = show && isObj(show.buyoutTrack) && isObj(show.buyoutTrack.paid) ? show.buyoutTrack.paid : {};
+    var low = function (v) { return String(v == null ? '' : v).trim().toLowerCase(); };
+    var list = (Array.isArray(people) ? people : []).filter(function (p) { return p && p.userId; });
+    var one = function (test) {
+      var ids = {};
+      list.forEach(function (p) { if (test(p)) ids[p.userId] = true; });
+      var k = Object.keys(ids);
+      return k.length === 1 ? k[0] : k.length ? false : null;
+    };
+    var byEmail = function (e) {
+      e = low(e);
+      return e ? one(function (p) { return low(p.email) === e || low(p.invitedEmail) === e; }) : null;
+    };
+    var byName = function (n) {
+      n = low(n);
+      return n ? one(function (p) { return low(p.name) === n; }) : null;
+    };
+    var map = isObj(crew) ? crew : {};
+    var out = {};
+    Object.keys(paid).forEach(function (k) {
+      if (!isObj(paid[k])) return;
+      var u = null;
+      if (k.indexOf('e:') === 0) u = byEmail(k.slice(2));
+      else if (k.indexOf('n:') === 0) u = byName(k.slice(2));
+      else if (isObj(map[k])) {
+        u = byEmail(map[k].email);
+        if (u === null) u = byName(map[k].name);
+      }
+      if (u) out[u] = true;
+    });
+    return out;
+  }
+  /* The Tour Manager's splash when people bump (Devin, 2026-10-17: "give X
+     their buyout. If multiple people bump it says Give X & X their
+     buyout"): first names, a full name where two people share a first one. */
+  function buyoutBumpLine(names) {
+    var full = [];
+    (Array.isArray(names) ? names : []).forEach(function (n) {
+      n = String(n == null ? '' : n).trim().replace(/\s+/g, ' ');
+      if (n && full.indexOf(n) < 0) full.push(n);
+    });
+    if (!full.length) return '';
+    var first = function (n) { return n.split(' ')[0]; };
+    var said = full.map(function (n) {
+      var f = first(n).toLowerCase();
+      var shared = full.some(function (m) { return m !== n && first(m).toLowerCase() === f; });
+      return shared ? n : first(n);
+    });
+    var who = said.length === 1 ? said[0]
+      : said.slice(0, -1).join(', ') + ' & ' + said[said.length - 1];
+    return 'Give ' + who + ' their buyout';
   }
   // A job title that says Tour manager: any one of its comma-separated roles, capitals aside.
   function tourManagerTitle(title) {
@@ -2197,6 +2265,31 @@
   }
   function cleanTime(v) { var p = splitTime(v); return joinTime(p.main, p.ampm); }
 
+  /* A show night's clock, in minutes from the show day's midnight. The night
+     runs on past midnight to the 5 AM day line (ROLLOVER_HOURS), so a day
+     sheet time before noon ("1:30AM" bus call, "12:40AM" set end) is the
+     small hours after the show: 1:30 AM reads 1530, not 90. nightMins is
+     null for anything that isn't a time ("TBA", blank, "1:30" with no AM or
+     PM). nightNow reads the phone's clock the same way: before 5 AM it is
+     still last night, so 1:05 AM reads 1505. busCallLeft is the minutes
+     from now until tonight's bus call, negative once it has passed. */
+  function nightMins(v) {
+    var p = splitTime(v);
+    if (!p.ampm || !/^\d{1,2}:\d{2}$/.test(p.main)) return null;
+    var hm = p.main.split(':');
+    var mins = ((+hm[0]) % 12 + (p.ampm === 'PM' ? 12 : 0)) * 60 + (+hm[1]);
+    return mins < 12 * 60 ? mins + 24 * 60 : mins;
+  }
+  function nightNow(now) {
+    var d = now == null ? new Date() : new Date(+now);
+    var at = d.getHours() * 60 + d.getMinutes();
+    return d.getHours() < ROLLOVER_HOURS ? at + 24 * 60 : at;
+  }
+  function busCallLeft(v, now) {
+    var m = nightMins(v);
+    return m == null ? null : m - nightNow(now);
+  }
+
   /* A printed range ("1 PM - 1:45 PM") keeps both ends, a plain hyphen
      between them; with no end it reads exactly as it always did. */
   function timeSpan(start, end) {
@@ -2865,6 +2958,7 @@
     INCOME_FIELDS: INCOME_FIELDS, buyoutIncome: buyoutIncome, incomeOf: incomeOf,
     BUYOUT_FROM: BUYOUT_FROM, buyoutShows: buyoutShows, tourManagerTitle: tourManagerTitle,
     buyoutTrackers: buyoutTrackers, buyoutOwedTo: buyoutOwedTo,
+    buyoutDays: buyoutDays, buyoutDocGot: buyoutDocGot, buyoutBumpLine: buyoutBumpLine,
     yearSlice: yearSlice, bookYears: bookYears,
     OTHER_INCOME_KINDS: OTHER_INCOME_KINDS, otherKindLabel: otherKindLabel,
     OTHER_NOTE_MAX: OTHER_NOTE_MAX, otherNote: otherNote, otherEntryLabel: otherEntryLabel,
@@ -2912,6 +3006,7 @@
     normalizeSettlement: normalizeSettlement, pickBandNumber: pickBandNumber,
     DS_AMENITIES: DS_AMENITIES, daySheetSections: daySheetSections, daySheetLines: daySheetLines, daySheetText: daySheetText,
     splitTime: splitTime, joinTime: joinTime, cleanTime: cleanTime, timeSpan: timeSpan, dsExtras: dsExtras,
+    nightMins: nightMins, nightNow: nightNow, busCallLeft: busCallLeft,
     toCSV: toCSV, closeoutCSVs: closeoutCSVs,
     offDayLines: offDayLines, offDayText: offDayText,
     GUEST_PASSES: GUEST_PASSES, guestSummary: guestSummary, guestListText: guestListText,

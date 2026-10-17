@@ -1351,19 +1351,13 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 }
 /* The Overview's button grid (Devin, 2026-10-16): four matching buttons two
    by two - View calendar and View Setlist up top, Bus Check in and Supplies
-   under them - every one in the same dress at the same size. BUYOUT ALERT
-   moved to the Budget's Buyouts tab the same night, so nothing sits between
-   the pairs. A missing button simply leaves its cell. */
+   under them - every one in the same dress at the same size. Buyout lives
+   on the profile's Today tab now, so nothing sits between the pairs. */
 .cal-open.cal-grid { display: grid; grid-template-columns: 158px 158px; justify-content: center; gap: 8px; }
 .cal-grid .btn { min-width: 0; width: 100%; justify-content: center; min-height: 34px; padding: 0 6px; gap: 4px; font-size: 11.5px; white-space: nowrap; }
 .cal-grid .btn.ci-due { color: var(--pos); }
 /* A button whose answer is still out holds its cell: a quiet blank its size. */
 .cal-grid .cal-hold { opacity: .45; pointer-events: none; }
-/* BUYOUT ALERT at the top of the Buyouts tab (Devin, 2026-10-16), in the
-   dress it wore on the Overview: full width, the house button height. */
-.bo-tab { display: flex; margin: 12px 2px 2px; }
-.bo-tab .bo-wrap { position: static; display: flex; width: 100%; }
-.bo-tab .bo-alert.btn.sm { width: 100%; min-height: 34px; padding: 0 14px; font-size: 11.5px; border-radius: 10px; white-space: nowrap; }
 .vh-addr { display: block; margin-top: 1px; font-size: 12.5px; color: var(--ink-2); text-decoration: underline; }
 .pt-cnt { display: flex; flex-direction: column; align-items: center; gap: 1px; margin: 0; min-width: 86px; }
 .pt-cnt.empty { min-width: 86px; }

@@ -123,7 +123,8 @@ language sql stable security definer set search_path = public as $$
           and jsonb_typeof(x.sh) = 'object'
           and coalesce(x.sh ->> 'date', '') ~ '^\d{4}-\d{2}-\d{2}$'
           and x.sh ->> 'date' >= '2026-10-16'
-          and x.sh ->> 'date' <= to_char(public.road_today(), 'YYYY-MM-DD'))
+          -- (a day of slack past Los Angeles' date, for a leg in a time zone ahead of it)
+          and x.sh ->> 'date' <= to_char(public.road_today() + 1, 'YYYY-MM-DD'))
      and not exists (select 1 from buyout_tracks b
                       where b.tour_id = t_id and b.show_id = s_id and b.user_id = auth.uid())
 $$;

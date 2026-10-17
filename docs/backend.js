@@ -40,7 +40,7 @@
   // Buyout ticks (0151): each tour's rows from buyout_tracks, and whether the
   // table is there at all (null until the first ask answers; the answer is the session's).
   var buyoutCache = {}, buyoutAsk = {}, buyoutGen = {}, buyoutKnown = null, buyoutProbing = false;
-  // Buyout pings (0176): the same for buyout_asks, "get me my buyout".
+  // Buyout bumps (0176): the same for buyout_asks, "give me my buyout".
   var boAskCache = {}, boAskAsk = {}, boAskGen = {}, boAskKnown = null, boAskProbing = false;
   // To Do Lists (0152): each artist's tasks and invited people, and whether
   // the tables are there at all (null until the first ask answers; the
@@ -122,6 +122,14 @@
   // Today on this phone, YYYY-MM-DD (the server's clock can be a day ahead of a show night in America).
   function localDay() {
     var d = new Date();
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+  // A bus word belongs to the show night: past midnight, up to the 5 AM day
+  // line, it is still that night's word (the same line as GR.tourToday).
+  function busDay() {
+    var G = window.GR;
+    if (G && typeof G.tourToday === 'function') return G.tourToday();
+    var d = new Date(Date.now() - 5 * 3600e3);
     return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
   }
   function clone(v) { return JSON.parse(JSON.stringify(v)); }
@@ -1783,6 +1791,9 @@
     },
     /* The tour's phone book: everyone invited, plus the manager who owns it. */
     crew: async function (tourId) {
+      // (Asked before the sign-in is in hand it would come back short, and be held as the list: it fails instead,
+      // and the app asks again.)
+      if (!session) throw err('unavailable');
       var mq = await sb.from('members')
         .select('invited_email, role, user_id, display_name, phone, tour_role, overrides, manager')
         .eq('tour_id', tourId).order('created_at');
@@ -1835,6 +1846,13 @@
         });
       });
       return out;
+    },
+    // Has the session's first ask about a table behind an Overview button answered yet, either way ('bus': 0150,
+    // 'supplies': 0155)? Until it has, the Overview holds that button's place.
+    ovProbeAnswered: function (which) {
+      if (which === 'bus') return busKnown !== null;
+      if (which === 'supplies') return supplyKnown !== null;
+      return true;
     },
     setUsername: async function (name) {
       var clean = String(name || '').trim().slice(0, 24);
@@ -2096,13 +2114,13 @@
     },
     busList: function (tourId, fresh) {
       if (busKnown !== true) return null;
-      var c = busCache[tourId], day = localDay();
+      var c = busCache[tourId], day = busDay();
       if (!c || c.stale || fresh || c.day !== day || Date.now() - c.at > FLOWERS_FRESH) loadBus(tourId);
       return c && c.day === day ? c.data : null;
     },
     busSet: async function (tourId, state) {
       if (!session) throw err('unavailable');
-      var st = state === 'on' ? 'on' : 'off', day = localDay(), uid = session.user.id;
+      var st = state === 'on' ? 'on' : 'off', day = busDay(), uid = session.user.id;
       var up = await sb.from('bus_checkins').update({ state: st })
         .eq('tour_id', tourId).eq('user_id', uid).eq('day', day).select('user_id');
       if (up.error) {
@@ -2172,14 +2190,14 @@
       if (c && c.data) c.data = c.data.filter(function (r) { return !(r.showId === showId && r.userId === userId); });
       emit('tours');
     },
-    /* Buyout pings (0176). buyoutAsksOn: is buyout_asks there (asked once
-       per session, false until it answers, so the Ping button stays away
-       until the migration is live). buyoutAsks: the pings this account may
-       read on a tour (its own; the Managers read them all), null while
-       first fetched. buyoutAskSend: "get me my buyout" for one show. The
-       database fills in who and when, lets it in only while this account is
-       still untracked on a show with a buyout, keeps one an hour, and pokes
-       the Tour Manager. */
+    /* Buyout bumps (0176). buyoutAsksOn: is buyout_asks there (asked once
+       per session, false until it answers, so Bump stays away until the
+       migration is live). buyoutAsks: the bumps this account may read on a
+       tour (its own; the Managers read them all), null while first fetched.
+       buyoutAskSend: "give me my buyout" for one show. The database fills in
+       who and when, lets it in only while this account is still untracked
+       on a show day from the fresh start through today, keeps one an hour,
+       and pokes the Tour Manager. */
     buyoutAsksOn: function () {
       if (boAskKnown === null) boAskProbe();
       return boAskKnown === true;
@@ -3380,7 +3398,7 @@
   function loadBus(tourId) {
     var gen = busGen[tourId] || 0, ask = busAsk[tourId];
     if (ask && ask.gen === gen) return ask;
-    var day = localDay();
+    var day = busDay();
     var p = Promise.all([
       sb.from('bus_checkins').select('user_id, state, at').eq('tour_id', tourId).eq('day', day),
       sb.from('members').select('user_id, display_name, rides_bus').eq('tour_id', tourId).order('created_at')
@@ -3659,7 +3677,7 @@
       else if (tableMissing(q.error)) buyoutKnown = false;
     }, function () { buyoutProbing = false; });
   }
-  // (A 'buyout' poke says the pings moved too: a ping landed for the Tour
+  // (A 'buyout' poke says the bumps moved too: a bump landed for the Tour
   // Manager, or a tick settled the asker's.)
   function buyoutStale() {
     Object.keys(buyoutCache).forEach(function (k) { buyoutGen[k] = (buyoutGen[k] || 0) + 1; if (buyoutCache[k]) buyoutCache[k].stale = true; });

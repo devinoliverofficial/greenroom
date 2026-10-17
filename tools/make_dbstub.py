@@ -3556,7 +3556,7 @@ shim = r"""<script>
     busList: function () {
       var H = window.__harness, st = H.busStates || (H.busStates = {});
       var riders = (H.crew || []).filter(function (m) { return m.joined && m.userId && m.ridesBus !== false; });
-      return { day: ymd(new Date()), people: riders.map(function (m) {
+      return { day: window.GR.tourToday(), people: riders.map(function (m) {
         var w = st[m.userId];
         return { userId: m.userId, name: m.name, state: w ? w.state : '', at: w ? w.at : null };
       }) };

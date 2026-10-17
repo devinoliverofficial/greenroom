@@ -124,6 +124,14 @@
     var d = new Date();
     return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
   }
+  // A bus word belongs to the show night: past midnight, up to the 5 AM day
+  // line, it is still that night's word (the same line as GR.tourToday).
+  function busDay() {
+    var G = window.GR;
+    if (G && typeof G.tourToday === 'function') return G.tourToday();
+    var d = new Date(Date.now() - 5 * 3600e3);
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
   function clone(v) { return JSON.parse(JSON.stringify(v)); }
   // Mirrors the app's merge-write: nested objects merge, anything else replaces.
   function deepMerge(target, patch) {
@@ -2106,13 +2114,13 @@
     },
     busList: function (tourId, fresh) {
       if (busKnown !== true) return null;
-      var c = busCache[tourId], day = localDay();
+      var c = busCache[tourId], day = busDay();
       if (!c || c.stale || fresh || c.day !== day || Date.now() - c.at > FLOWERS_FRESH) loadBus(tourId);
       return c && c.day === day ? c.data : null;
     },
     busSet: async function (tourId, state) {
       if (!session) throw err('unavailable');
-      var st = state === 'on' ? 'on' : 'off', day = localDay(), uid = session.user.id;
+      var st = state === 'on' ? 'on' : 'off', day = busDay(), uid = session.user.id;
       var up = await sb.from('bus_checkins').update({ state: st })
         .eq('tour_id', tourId).eq('user_id', uid).eq('day', day).select('user_id');
       if (up.error) {
@@ -3390,7 +3398,7 @@
   function loadBus(tourId) {
     var gen = busGen[tourId] || 0, ask = busAsk[tourId];
     if (ask && ask.gen === gen) return ask;
-    var day = localDay();
+    var day = busDay();
     var p = Promise.all([
       sb.from('bus_checkins').select('user_id, state, at').eq('tour_id', tourId).eq('day', day),
       sb.from('members').select('user_id, display_name, rides_bus').eq('tour_id', tourId).order('created_at')
