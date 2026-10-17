@@ -51,6 +51,9 @@ function message(type: string, d: Record<string, unknown>, tourName: string): { 
       return { title: tourName, body: `You're in the green: ${cut(d.net, 24)} and climbing \u{1F389}` };
     case "merch":
       return { title: tourName, body: `MERCH NUMBERS. ${city || "Tonight"}: ${cut(d.amount, 24)} in merch.` };
+    case "wearebus":
+      // The completing On Bus sends it; the wheel alone hears it.
+      return { title: "WE ARE A BUS", body: `Everyone on ${tourName} is on the bus.` };
     case "soldout":
       return { title: tourName, body: `${city || "Tonight"} is SOLD OUT` };
     case "alert": {
@@ -150,7 +153,7 @@ Deno.serve(async (req) => {
   const type = String(body.type ?? "");
   const data = body.data ?? {};
   if (!tourId || !["guest", "green", "merch", "soldout", "alert", "request",
-    "vote", "flowers", "chat", "payment", "sheet", "buyout"].includes(type)) {
+    "vote", "flowers", "chat", "payment", "sheet", "buyout", "wearebus"].includes(type)) {
     return reply(400, { error: "invalid" });
   }
 
@@ -192,6 +195,12 @@ Deno.serve(async (req) => {
   } else if (PERSONAL.includes(type)) {
     const to = String(data.to ?? "");
     targets = memberIds.has(to) && to !== senderId ? [to] : [];
+  } else if (type === "wearebus") {
+    // The wheel alone: tour crew whose role reads driver.
+    targets = (members ?? [])
+      .filter((m) => /driver/i.test(String(m.role ?? "")))
+      .map((m) => String(m.user_id))
+      .filter((id) => id && id !== senderId);
   } else {
     targets = [...memberIds].filter((id) => id !== senderId && (!FOR_MANAGERS.includes(type) || managers.has(id)));
   }
@@ -222,6 +231,10 @@ Deno.serve(async (req) => {
     } else if (type === "vote" || type === "chat") {
       // Brand new, and chatty: off until the phone asks for it.
       if (prefs[type] !== true) continue;
+    } else if (type === "wearebus") {
+      // It reaches only the person driving, whose job it answers: on
+      // unless their phone said no.
+      if (prefs.wearebus === false) continue;
     } else if (type === "flowers" || type === "payment" || type === "buyout" || type === "sheet") {
       // About you alone (or the day sheet everyone already got): on unless
       // the phone switched it off.

@@ -10794,6 +10794,7 @@
      under it at all. (Bus Check in sits on the tour Overview's button grid.) */
   function pfToday(id, t, count) {
     maybeCountdownSplash(id, t);
+    maybeBusAsk(id, t);
     maybeRateAsk(id, t);
     var got = overviewDays(t);
     if (!got) return [pfTourBar(id, t, count, 'details'), emptyState('No dates yet', 'Once shows are on the run, today shows up here.')];
@@ -17270,6 +17271,40 @@
      never nags twice. It waits out the intro and the day's countdown
      splash, and steps aside if some other sheet is already up (the next
      open asks instead). */
+  /* The ask on opening the app at bus call (Devin, 2026-10-16: "When bus
+     call hits on everyones app when you open it should prompt 'Bus Check
+     In' splash prompt"): a rider on today's list who hasn't said On Bus,
+     with the bus call passed, gets the Bus Check In sheet itself on open -
+     once per tour day per phone, after the intro and the splashes, never
+     over another sheet. It goes first; a rating ask waits for the next
+     open when this one fires. */
+  var busAskLive = false;
+  function maybeBusAsk(id, t) {
+    if (busAskLive || !t || !tourIsLive(t) || !busOn()) return;
+    var B = window.GR_BACKEND, me = B.uid ? B.uid() : null;
+    var today = G.tourToday();
+    var s = G.rows(t.shows).filter(function (x) { return x.date === today; })[0];
+    var busCall = s && G.isObj(s.daySheet) ? s.daySheet.busCall : '';
+    if (!busCallDue(busCall)) return;
+    var key = 'gr-busask:' + id + ':' + today;
+    try { if (localStorage.getItem(key)) return; } catch (e) { return; }
+    busAskLive = true;
+    var tries = 0, clear = 0;
+    var show = function () {
+      if (tries++ > 40) { busAskLive = false; return; }
+      if (document.getElementById('gr-splash') || document.querySelector('.splash-note')) { clear = 0; setTimeout(show, 600); return; }
+      if (clear++ < 1) { setTimeout(show, 600); return; }
+      if (sheet) { busAskLive = false; return; } // something else is up: the next open asks
+      var data = B.busList(id); // null while the words are on their way
+      if (data == null) { setTimeout(show, 600); return; }
+      busAskLive = false;
+      var mine = ((data && data.people) || []).filter(function (p) { return p.userId === me; })[0];
+      if (!mine || busWordToday(mine) === 'on') return; // not a rider, or already aboard
+      try { localStorage.setItem(key, '1'); } catch (e) { return; }
+      openBusSheet(id, busCall);
+    };
+    setTimeout(show, 450);
+  }
   var rateAskLive = false;
   function maybeRateAsk(id, t) {
     if (rateAskLive || !t || !tourIsLive(t) || !bandOnTour(id, t)) return;
@@ -19029,6 +19064,7 @@
     }
     if (view === 'details') {
       maybeCountdownSplash(id, t);
+      maybeBusAsk(id, t);
       maybeRateAsk(id, t);
       return h('div', { class: 'page tour has-tabs' },
         tourBand(t, id, view),
@@ -19688,6 +19724,22 @@
             busy = true; draw();
             try { await B.busSet(id, state); }
             catch (e) { busy = false; draw(); if (busOn()) toast('Couldn\u2019t save that. Try again.'); return; }
+            // The completing On Bus tells the wheel (Devin, 2026-10-16:
+            // "the driver should be notified when we are a bus"): when this
+            // word made it everyone, one WE ARE A BUS goes to the tour's
+            // drivers through the notify door, once per phone per day.
+            if (state === 'on') {
+              var after = B.busList(id), folks = (after && after.people) || [];
+              var all = folks.length > 0 && folks.every(function (p) {
+                return p.userId === me || busWordToday(p) === 'on';
+              });
+              if (all) {
+                var wkey = 'gr-wearebus:' + id + ':' + G.tourToday();
+                var said = false;
+                try { said = !!localStorage.getItem(wkey); if (!said) localStorage.setItem(wkey, '1'); } catch (e2) { said = true; }
+                if (!said) sendNotify(id, 'wearebus', {});
+              }
+            }
             busy = false; draw(); render(true);
           } }, label);
       };
@@ -24204,7 +24256,8 @@
       ['flowers', 'Flowers', 'Someone on the tour gives you flowers', 'on'],
       ['chat', 'Greenroom chat', 'A message lands in the tour chat', 'off'],
       ['payment', 'Payment notification', 'The band logs a payment to you', 'on'],
-      ['buyout', 'Buyout marked tracked', 'Your buyout is marked received', 'on']]],
+      ['buyout', 'Buyout marked tracked', 'Your buyout is marked received', 'on'],
+      ['wearebus', 'WE ARE A BUS', 'Everyone is on the bus, for drivers', 'on']]],
     // Money news: only for people who can see the tour's money.
     ['Money', [
       ['green', 'In the green', 'The tour\u2019s net turns positive', 'on'],
