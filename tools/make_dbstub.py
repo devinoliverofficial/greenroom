@@ -624,14 +624,32 @@ shim = r"""<script>
                                    As a Member the test person gets no ask to confirm tours: no row on the
                                    Artists tab and no Tasks card. (__harness.askMembers = true makes the fake
                                    database send the ask anyway, as it did before 0146: the app still shows none.)
+     THE ENDORSEMENTS DOOR (Devin, 2026-10-16): the button that said "Ask to be listed" says "Endorsements"
+       now, same seat, same gates (signed in, not the page you run, not already listed, no claim waiting; a
+       request already sent still shows "Request pending" or "No answer in 30 days" on the button itself).
+       It opens a sheet titled with the artist's name and up to four rows, each a door to an existing flow:
+       Crew Endorsement and Member Endorsement open the ask sheet landed on that question; Tour Endorsement
+       and Show Endorsement open the confirm-your-tours sheet, where Specific shows narrows a tour to nights.
+       The two claim rows are drawn only once creditTours answers with tours for this account, so on a page
+       where this account cannot claim (a stranger on a claimed page with no endorsement, or any page with no
+       tour history) only the two ask rows show.
+       __harness.visitorOf()       ALL FOUR ROWS AT ONCE: the pretend I See Stars page run by somebody else,
+                                   with the test person NOT on it (it answers the page's id). Search
+                                   "I See Stars", open the page: the Endorsements button sits by Fan, and
+                                   tapping it draws all four rows, at 375px too. Crew/Member Endorsement land
+                                   the ask sheet on Crew or Member; Tour/Show Endorsement open "Confirm the
+                                   shows and tours you've done with I See Stars" with "Send to I See Stars"
+                                   (the stub lets any account claim; live, the server answers the tours only
+                                   for the page's runner or someone the artist has endorsed).
      UNCLAIMED PAGES AND FESTIVALS (0147):
        A crew ask to a page nobody runs is accepted at once. Open Sleeping With Sirens (an unclaimed page: search
-       "sleeping"), Ask to be listed, Crew: the sheet says crew are listed at once and the button reads "List me
+       "sleeping"), Endorsements, Crew Endorsement (the unclaimed page has no tour history here, so only the two
+       ask rows show): the sheet says crew are listed at once and the button reads "List me
        as crew"; sending it says "Sleeping With Sirens's page isn't run by anyone yet, so you're listed for now.
        Whoever claims the page will see you and can keep you or take you off." The page's Crew tab lists the test
        person, and so does their profile's Artists tab, endorsed. The same through the first run on a ?newcrew
        phone (Crew, search "sleeping", the role, Send): the last screen says "You're listed" with those words.
-       A Member's ask (Ask to be listed, Member) still waits, as before. __harness.joined holds who joined how.
+       A Member's ask (Endorsements, Member Endorsement) still waits, as before. __harness.joined holds who joined how.
        __harness.joinedBeforeClaim()   the page is then claimed: two crew joined Sleeping With Sirens while nobody
                                    ran it (Ana Reyes, FOH engineer, with the whole Feel Tour confirmed; Brent Allen,
                                    Backline tech, Driver, no tours), and the test person's claim on it is approved
@@ -730,6 +748,14 @@ shim = r"""<script>
     a.members = a.members.filter(function (m) { return m.userId !== 'u-devin'; })
       .concat([{ userId: 'u-devin', kind: 'crew', role: String(roles || 'Production manager, Driver').slice(0, 160), endorsed: true }]);
     window.__harness.poke('listing,endorsement');
+    return a.id;
+  };
+  // A plain visitor on a page somebody else runs: the test person is not on it (see THE ENDORSEMENTS DOOR above).
+  window.__harness.visitorOf = function () {
+    var H = window.__harness, a = issPage(true);
+    a.notMine = true; H.creditNotOwner = true;
+    a.members = a.members.filter(function (m) { return m.userId !== 'u-devin'; });
+    window.__harness.poke('listing');
     return a.id;
   };
   // The same page from the artist's side: the test person runs it, as a Member (see artistSide above).

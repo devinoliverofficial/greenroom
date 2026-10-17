@@ -3967,7 +3967,7 @@
           // A page Greenroom has not confirmed yet lists only people its runner has toured with (the
           // database's rule): anyone else asks from the page, and the runner accepts.
           else if (x && x.code === 'permission' && !pageConfirmed()) {
-            toast('Until Greenroom has confirmed this page, you can add people you\u2019ve toured with. Anyone else can open the page and tap Ask to be listed.', 9000);
+            toast('Until Greenroom has confirmed this page, you can add people you\u2019ve toured with. Anyone else can open the page and tap Endorsements to ask.', 9000);
           }
           else saveFailed('member', x);
         }
@@ -4204,17 +4204,19 @@
         ? h('button', { class: 'pf-btn on', type: 'button', onclick: function () { openClaimPage(id); } }, 'Claim sent', icon('chevron', 14))
         : h('button', { class: 'pf-btn', type: 'button', onclick: function () { openClaimPage(id); } },
             card.myClaim === 'declined' ? 'Claim again' : 'Claim this page');
-    // Asking to be listed (Devin, 2026-10-10: "the artist page is alerted of an endorsement request"):
-    // for a visitor who is not on the page and has no claim waiting. One request at a time, and the
-    // button says where it stands.
+    // The Endorsements door (Devin, 2026-10-16; the ask itself is his 2026-10-10 "the artist page
+    // is alerted of an endorsement request"): for a visitor who is not on the page and has no claim
+    // waiting, one button that opens the four existing roads (openEndorsements). One request at a
+    // time, and a request already sent keeps its state on the button itself, as before.
     var meId = B && B.uid ? B.uid() : null;
     var onPage = !!meId && members.some(function (m) { return m.userId === meId && !m.pending; });
     var myReq = G.isObj(card.myRequest) ? card.myRequest : null;
     var askBtn = manage || onPage || card.myClaim === 'pending' || !B || !B.requestArtist ? null
       : myReq && myReq.state === 'pending'
         ? h('button', { class: 'pf-btn on aq-btn', type: 'button', onclick: function () { openAskToBeListed(id); } }, 'Request pending', icon('chevron', 14))
-      : h('button', { class: 'pf-btn aq-btn', type: 'button', onclick: function () { openAskToBeListed(id); } },
-          myReq && myReq.state === 'expired' ? 'No answer in 30 days' : 'Ask to be listed');
+      : myReq && myReq.state === 'expired'
+        ? h('button', { class: 'pf-btn aq-btn', type: 'button', onclick: function () { openAskToBeListed(id); } }, 'No answer in 30 days')
+      : h('button', { class: 'pf-btn aq-btn', type: 'button', onclick: function () { openEndorsements(id); } }, 'Endorsements');
     // A fan's own count: the shows of this artist they were at (once its road history has something to tick).
     var beenBtn = manage || !B || !B.fanNights || !B.markAttended || !pastTours.length ? null
       : h('button', { class: 'pf-btn aq-btn', type: 'button', onclick: function () { openAttended(id, card.name); } }, 'Shows attended');
@@ -4270,7 +4272,7 @@
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openActEdit(id); } }, 'Edit artist'),
           h('button', { class: 'pf-btn', type: 'button', onclick: function () { openHistorySheet(id, card.name); } }, 'Tour history'))
           : (function () {
-              // Fan and the main door first (Claim on a page nobody runs, else Ask to be listed); the rest on a second line.
+              // Fan and the main door first (Claim on a page nobody runs, else Endorsements); the rest on a second line.
               var first = [followBtn, unclaimed ? claimBtn : askBtn].filter(Boolean);
               var second = [unclaimed ? askBtn : null, beenBtn].filter(Boolean);
               return [first.length ? h('div', { class: 'pf-actions' + (first.length === 2 ? ' two' : '') }, first) : null,
@@ -6177,7 +6179,55 @@
       ];
     }, { label: ranOut ? 'No answer in 30 days' : 'Declined' });
   }
-  function openAskToBeListed(id) {
+  /* ONE DOOR, FOUR EXISTING ROADS (Devin, 2026-10-16: "There should be a button that says
+     'Endorsements'"): the artist page's Endorsements button opens this small router, four
+     rows in his order. Each row only routes. Crew Endorsement and Member Endorsement open
+     the existing ask sheet landed on that question (openAskToBeListed, kinds crew and
+     band); Tour Endorsement and Show Endorsement open the existing confirm-your-tours
+     sheet (openCreditClaim), where a ticked tour is the entire tour unless Specific shows
+     narrows it to nights. The claim rows are drawn only once creditTours answers with
+     tours to claim: the server answers nothing for an account that cannot claim on this
+     page (it takes the page's runner or someone the artist has endorsed), so nobody is
+     handed a row whose road would refuse them. */
+  function openEndorsements(id) {
+    var B = window.GR_BACKEND;
+    var card = S.actCards && S.actCards[id] && S.actCards[id].card;
+    if (!card || !B || !B.requestArtist) return;
+    var st = { claim: null };
+    var list = h('ul', { class: 'tour-list rows' });
+    var row = function (title, sub, open) {
+      return h('li', null, h('button', { class: 'list-row', type: 'button', onclick: function () { closeSheet(true); open(); } },
+        h('span', { class: 'lr-text' },
+          h('span', { class: 'lr-title' }, title),
+          h('span', { class: 'lr-sub', style: 'white-space:normal' }, sub)),
+        icon('chevron', 18)));
+    };
+    var draw = function () {
+      fillEl(list, [
+        row('Crew Endorsement', 'Ask to be endorsed as crew.', function () { openAskToBeListed(id, 'crew'); }),
+        row('Member Endorsement', 'Ask to be a Member of ' + card.name + '.', function () { openAskToBeListed(id, 'band'); }),
+        st.claim ? row('Tour Endorsement', 'Ask to be endorsed for an entire tour.', function () { openCreditClaim(id); }) : null,
+        st.claim ? row('Show Endorsement', 'Ask to be endorsed as crew for specific shows. Tick a tour there, then pick Specific shows.',
+          function () { openCreditClaim(id); }) : null
+      ]);
+    };
+    if (creditsOn() && B.creditShows && B.submitCredits) {
+      Promise.resolve().then(function () { return B.creditTours(id); }).then(function (d) {
+        if (G.isObj(d) && Array.isArray(d.tours) && d.tours.length) { st.claim = d; draw(); }
+      }).catch(function () { /* the two ask rows stand either way */ });
+    }
+    draw();
+    openSheet(function () {
+      return [
+        h('h2', { class: 'sh-title' }, card.name),
+        h('p', { class: 'sh-sub' }, 'Endorsements'),
+        list,
+        h('div', { class: 'stack' },
+          h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
+      ];
+    }, { label: card.name + ' endorsements' });
+  }
+  function openAskToBeListed(id, kind) {
     var B = window.GR_BACKEND;
     var card = S.actCards && S.actCards[id] && S.actCards[id].card;
     if (!card || !B || !B.requestArtist) return;
@@ -6186,7 +6236,8 @@
       openMyRequest({ artistId: id, artist: card.name, unclaimed: !!card.unclaimed, kind: req.kind, role: req.role, state: req.state, at: req.at });
       return;
     }
-    var f = { kind: 'band', busy: false }, pick = null;
+    // (kind: the Endorsements router lands the sheet on its question; opened any other way it starts on Member.)
+    var f = { kind: kind === 'crew' ? 'crew' : 'band', busy: false }, pick = null;
     // What happens to the ask: on a page nobody runs a Member's waits for whoever claims it, and crew are listed
     // at once (0147), for whoever claims it to keep or take off.
     var howLine = function () {
@@ -6222,7 +6273,7 @@
       return [
         h('h2', { class: 'sh-title' }, 'Ask ' + card.name + ' to list you'),
         sub,
-        h('div', { class: 'aq-seg' }, segmented(['Member', 'Crew'], 0, function (i) { f.kind = i === 0 ? 'band' : 'crew'; draw(); }, 'Member or crew')),
+        h('div', { class: 'aq-seg' }, segmented(['Member', 'Crew'], f.kind === 'crew' ? 1 : 0, function (i) { f.kind = i === 0 ? 'band' : 'crew'; draw(); }, 'Member or crew')),
         host,
         h('div', { class: 'stack' }, send,
           h('button', { class: 'btn ghost block', type: 'button', onclick: function () { closeSheet(); } }, 'Not now'))
