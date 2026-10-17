@@ -1925,6 +1925,27 @@ button.am-endorsed.am-tap { appearance: none; border: 0; background: none; font:
 .feed-bar .feed-gear { flex: 0 0 54px; padding: 0; justify-content: center; }
 .feed-checked { margin: 6px 2px 0; text-align: center; font-size: 12px; color: var(--ink-3); }
 .feed-checked .linkbtn.feed-catchup { min-height: 0; padding: 4px 2px; font-size: 12px; font-weight: 500; color: var(--ink-3); text-decoration: underline; }
+/* Between Refresh Card and All New Card Activity: one panel. The last check
+   with its dot on top, a row for each thing that needs him, the rest under Details. */
+.feed-panel { margin: 10px 0 12px; }
+.feed-panel .row.fp-row { min-height: 0; padding: 13px 14px; gap: 10px; align-items: flex-start; }
+.fp-row > .btn, .fp-row > .ic, .fp-n, .fp-more { align-self: center; }
+.fp-row .row-label { font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+.fp-row .row-label .hint { margin-top: 3px; font-size: 12.5px; font-weight: 450; line-height: 1.35; color: var(--ink-2); }
+.fp-dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--ink-3); }
+.fp-dot.ok { background: var(--pos); }
+.fp-dot.bad { background: var(--neg); }
+.fp-dot.none { visibility: hidden; }
+.fp-more { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 13px; font-weight: 600; color: var(--ink-3); }
+.fp-more .ic { transition: transform .18s ease; }
+.fp-sum.open .fp-more .ic { transform: rotate(90deg); }
+.fp-n { flex: none; font-size: 14px; font-weight: 650; color: var(--ink-2); }
+.btn.fp-act { flex: none; min-height: 34px; padding: 0 12px; font-size: 13px; font-weight: 650; border-radius: 10px; white-space: nowrap; }
+.fp-details { background: var(--surface-2); }
+.fp-details .row.fp-row { padding-top: 11px; padding-bottom: 11px; }
+.fp-details .fp-row .row-label { font-size: 14px; font-weight: 500; }
+.fp-details .fp-dot { margin-top: 5px; }
+.fp-details .btn.fp-act { background: var(--surface); }
 /* Catch up: the one thing to do first, in grey above the button. */
 .hint.cu-before { margin: 0 2px; font-size: 12.5px; line-height: 1.45; }
 /* Budget's Cards tab: each linked card on a line, its new charges on the right. */
