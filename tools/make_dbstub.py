@@ -1149,12 +1149,18 @@ shim = r"""<script>
                             people: two of the test person's (one shared with
                             the tour, one kept to themselves) and two of
                             Brent's (both shared), plus one of the test
-                            person's in Phoenix for the later night. The
-                            profile grows its Spots tab rows and tonight's
-                            day sheet its PLACES RECOMMENDED BY TOUR block
-                            (three places: Devin's tacos and Brent's two;
-                            the unshared coffee shop stays off it). Or open
-                            the page with ?spots.
+                            person's in Phoenix a day older. The Spots tab
+                            grows its two city folds (the cities are the
+                            groups since 2026-10-16, the Tours tab's own
+                            pt-run dress: Austin leads with 2 spots because
+                            its newest spot is newest, Phoenix under it with
+                            1; tap a city and its spots drop down, tap again
+                            and they fold) and tonight's day sheet its PLACES
+                            RECOMMENDED BY TOUR block, the sheet's LAST
+                            section, under ALSO IN TOWN TONIGHT when both
+                            show (three places: Devin's tacos and Brent's
+                            two; the unshared coffee shop stays off it). Or
+                            open the page with ?spots.
        __harness.spotRows   every row; change them by hand, then
                             __harness.poke('spots') and every open page draws
                             again by itself.
@@ -1197,7 +1203,31 @@ shim = r"""<script>
                             fresh session's does; typing at once must STILL
                             end in suggestions (the backend waits the probe
                             out). The first-open race Devin hit, kept
-                            visible. */
+                            visible.
+     SPOTS FROM PEOPLE YOU FOLLOW (0169): the profile Today tab's closing
+     Spots section - tonight's town through the people this account follows,
+     the viewer's own (only their phone asks with their follows; the rest of
+     the tour sees nothing of it). The database function follow_spots(near)
+     is __harness.followSpotRows here, rows the shape the live answer takes
+     ({ userId, who, city, name, kind, note, createdAt }), matched on the
+     town before near's comma (the live rule: the function keys only
+     split_part(near, ',', 1), so a row whose city says 'Austin, TX' never
+     matches - the seeded rows say 'Austin' alone, as live rows that match
+     do) and handed back newest first.
+       __harness.followSpots()  seeds two spots in tonight's Austin from two
+                            people the test person follows who are NOT on
+                            the tour (one with a note, one without). Open
+                            the profile's Today tab and the quiet Spots
+                            section sits under History, each row the place,
+                            its kind, the note when it has one, and
+                            'from <who>'. Or open the page with
+                            ?followspots.
+       __harness.followSpotRows  every row; change them by hand, then
+                            __harness.poke('followspots') and every open
+                            page draws again by itself.
+       __harness.followSpotsOff = true   the probe answers as with no
+                            function (a build ahead of 0169): Today simply
+                            ends at History. */
   // A row the way the real backend hands one over (the key worked out from
   // the city with the one rule, as the database's trigger keeps it).
   function spotOut(r) {
@@ -1212,14 +1242,31 @@ shim = r"""<script>
       { id: 2, userId: 'u-devin', tourId: null, city: 'Austin, TX', name: 'Houndstooth Coffee', kind: 'coffee', note: 'Quiet in the morning', createdAt: now },
       { id: 3, userId: 'u-brent', tourId: 't1', city: 'Austin, TX', name: 'Hotel Vegas', kind: 'bar', note: 'Patio after load out', createdAt: now },
       { id: 4, userId: 'u-brent', tourId: 't1', city: 'Austin, TX', name: 'Barton Springs Pool', kind: 'to do', note: 'Cold water, best on a day off', createdAt: now },
-      { id: 5, userId: 'u-devin', tourId: 't1', city: 'Phoenix, AZ', name: 'The Churchill', kind: 'club', note: '', createdAt: now }
+      // A day older, so the Spots tab's newest-city-first order can be seen:
+      // Austin (tonight) leads, Phoenix folds under it.
+      { id: 5, userId: 'u-devin', tourId: 't1', city: 'Phoenix, AZ', name: 'The Churchill', kind: 'club', note: '', createdAt: new Date(Date.now() - 864e5).toISOString() }
     ];
     H.spotNext = 6;
     // (No word of its own on the real thing; here the nudge just redraws open pages.)
     H.poke('spots');
-    return 'Austin seeded from two people, one Phoenix spot for the later night';
+    return 'Austin seeded from two people, one Phoenix spot a day older';
   };
   try { if (/[?&]spots\b/.test(String(location.search || ''))) window.__harness.spots(); } catch (e) { /* no address to read */ }
+  // Spots from people you follow (0169): the live function's answer, played
+  // by rows in __harness.followSpotRows. Rosa and Theo are people the test
+  // person follows who are not on the harness tour; their word reaches this
+  // phone alone.
+  window.__harness.followSpots = function () {
+    var H = window.__harness;
+    H.followSpotRows = [
+      { userId: 'u-rosa', who: 'Rosa Vane', city: 'Austin', name: 'Nickel City', kind: 'bar', note: 'Frozen Irish coffee after the show', createdAt: new Date().toISOString() },
+      { userId: 'u-theo', who: 'Theo Marsh', city: 'Austin', name: 'Cenote', kind: 'coffee', note: '', createdAt: new Date(Date.now() - 864e5).toISOString() }
+    ];
+    // (No word of its own on the real thing; here the nudge just redraws open pages.)
+    H.poke('followspots');
+    return 'two Austin spots from people the test person follows, one with a note';
+  };
+  try { if (/[?&]followspots\b/.test(String(location.search || ''))) window.__harness.followSpots(); } catch (e) { /* no address to read */ }
   // The places typing can find (0164), there from the start so the Name
   // field's list can be seen without a switch. Rows the shape the real take
   // hands over; kind is OpenStreetMap's own word.
@@ -2944,6 +2991,25 @@ shim = r"""<script>
         // Who recommends it, by first name, the way the real read answers.
         it.who = (todoName(r.userId) || 'Someone').split(' ')[0];
         return it;
+      });
+    },
+    /* Spots ride the following (0169), in memory: see SPOTS FROM PEOPLE YOU
+       FOLLOW under FAVORITE LOCAL SPOTS. __harness.followSpotRows play the
+       live function's own answer; followSpots(near) hands back the rows
+       whose town is the words before near's comma (the live matching rule),
+       newest first, the answer's shape exactly. */
+    followSpotsOn: function () { return !window.__harness.followSpotsOff; },
+    followSpots: function (near) {
+      var H = window.__harness;
+      if (H.followSpotsOff) return null;
+      var k = window.GR.roadCityKey(String(near || '').split(',')[0]);
+      if (!k) return [];
+      return (H.followSpotRows || []).filter(function (r) {
+        return window.GR.roadCityKey(r.city) === k;
+      }).slice().sort(function (a, b) {
+        return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+      }).map(function (r) {
+        return { userId: r.userId, who: r.who || 'Someone', city: r.city, name: r.name, kind: r.kind || 'other', note: r.note || '' };
       });
     },
     /* Finding places as you type (0164, near a town since 0166), in memory:

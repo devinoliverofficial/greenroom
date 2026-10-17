@@ -4775,7 +4775,11 @@
           h('span', { class: 'lr-title' }, x.name, h('span', { class: 'fw-cat' }, spotKindLabel(x.kind))),
           x.note ? h('span', { class: 'lr-sub' }, x.note) : null)));
   }
-  // The profile's Favorite Local Spots tab: your places, city by city, A to Z.
+  /* The profile's Favorite Local Spots tab: your places with the cities as
+     the groups (Devin, 2026-10-16: "the 'cities' will be the group. When you
+     hit the city a dropdown menu will open with all your 'spots' from that
+     city"). Each city folds like the Tours tab's own runs; the city with the
+     newest spot leads. */
   function pfSpots() {
     var B = window.GR_BACKEND;
     var all = spotsOn() ? B.mySpots() : null;
@@ -4794,16 +4798,30 @@
     all.forEach(function (x) {
       var k = G.roadCityKey(x.city);
       var g = slot[k];
-      if (!g) { g = slot[k] = { city: String(x.city || '').trim() || 'Somewhere', items: [] }; groups.push(g); }
+      if (!g) { g = slot[k] = { key: k, city: String(x.city || '').trim() || 'Somewhere', items: [], newest: '' }; groups.push(g); }
       g.items.push(x);
+      var at = String(x.createdAt || '');
+      if (at > g.newest) g.newest = at;
     });
-    groups.sort(function (a, b) { return a.city.localeCompare(b.city); });
+    // The city whose spot is newest leads the list.
+    groups.sort(function (a, b) { return a.newest < b.newest ? 1 : a.newest > b.newest ? -1 : a.city.localeCompare(b.city); });
+    S.spotOpen = S.spotOpen || {};
     return [
       h('h3', { class: 'mn-h mn-over td-h' }, 'Favorite Local Spots'),
       groups.map(function (g) {
-        return h('section', { class: 'td-group' },
-          h('h4', { class: 'td-cat' }, g.city),
-          h('ul', { class: 'rows td-list' }, g.items.map(spotRowEl)));
+        // (=== true: the keys are city spellings, and one that lands on a
+        // name Object carries, like "constructor", must read as closed.)
+        var open = S.spotOpen[g.key] === true;
+        // The Tours tab's own fold: the city as the head with a quiet count,
+        // a tap drops its spots down, a tap again closes them.
+        return h('section', { class: 'pt-run' + (open ? ' open' : '') },
+          h('button', { class: 'pt-run-h', type: 'button', 'aria-expanded': open ? 'true' : 'false',
+            onclick: function () { S.spotOpen[g.key] = !open; render(true); } },
+            h('span', { class: 'lr-text' },
+              h('span', { class: 'lr-title' }, g.city),
+              h('span', { class: 'lr-sub' }, plural(g.items.length, 'spot'))),
+            icon('chevron', 16)),
+          open ? h('ul', { class: 'rows td-list' }, g.items.map(spotRowEl)) : null);
       }),
       addBtn
     ];
@@ -5145,6 +5163,34 @@
           st > 0 && rn > 0 ? h('p', { class: 'pt-hist-stars', 'aria-label': st + ' stars from ' + plural(rn, 'rating') },
             rwStarRow(Math.round(st * 2) / 2, 15),
             h('span', { class: 'pt-hist-n' }, 'from ' + plural(rn, 'rating'))) : null)));
+  }
+  /* SPOTS FROM PEOPLE YOU FOLLOW (0169, Devin, 2026-10-16: "if someone
+     follows another person outside the tour it will show up at the bottom of
+     their 'today' tab but only theirs. The whole tour wont see other people
+     they dont follow"): tonight's town through the people this account
+     follows, a quiet section at the foot of the profile's Today tab, under
+     History and in History's own dress. Up to eight places, each the place's
+     name, its kind, the note when it has one, and whose word it is. This is
+     the viewer's own: it renders from THEIR follows on THEIR phone, and
+     nothing of it reaches anyone else. No live tour, no city on the day,
+     no follows with spots there, or the function not live yet: the section
+     simply is not there. */
+  function todayFollowSpots(t, city) {
+    var B = window.GR_BACKEND;
+    city = String(city || '').trim();
+    if (!city || !t || !tourIsLive(t)) return null;
+    if (!(S.mode === 'db' && B && B.followSpotsOn && B.followSpots && B.followSpotsOn())) return null;
+    var rows = B.followSpots(city);
+    if (!rows || !rows.length) return null;
+    return h('section', { class: 'ds-page pt-hist', 'aria-label': 'Spots from people you follow' },
+      h('section', { class: 'ds-sec' },
+        h('h3', { class: 'ds-sec-h' }, 'Spots'),
+        h('div', { class: 'ledger' }, rows.slice(0, 8).map(function (x) {
+          return h('div', { class: 'row ds-row' },
+            h('div', { class: 'row-label' }, x.name,
+              h('span', { class: 'hint' }, spotKindLabel(x.kind) +
+                (x.note ? ' · ' + x.note : '') + ' · from ' + (x.who || 'Someone'))));
+        }))));
   }
   /* ---- Endorsing, and the role that goes with it. The artist's page says
      what this person IS to it — the title the public sees there (Brent is
@@ -6581,6 +6627,17 @@
         if (on) { hold(function () { return B.favRemove(a.id); }); return; }
         var rank = freeRank();
         if (!rank) { toast('Your Top 10 is full. Take one off first.'); return; }
+        if (!a.id && a.mbid && B.openMbArtist) {
+          // An act with no page yet: Add makes its unclaimed page first
+          // (the Search road), then seats it.
+          hold(async function () {
+            var r = await B.openMbArtist(a.mbid, a.name);
+            if (!r || !r.id) throw new Error('no-page');
+            a.id = r.id;
+            await B.favAdd(r.id, rank, { name: a.name });
+          });
+          return;
+        }
         hold(function () { return B.favAdd(a.id, rank, { name: a.name, avatar: a.avatar, handle: a.handle }); });
       };
       return h('div', { class: 'fl-row am-row' },
@@ -6588,7 +6645,8 @@
           a.avatar ? h('img', { class: 'brand-logo', src: a.avatar, alt: '' }) : String(a.name || '?').trim().charAt(0).toUpperCase()),
         h('span', { class: 'lr-text' },
           h('span', { class: 'lr-title' }, a.name || 'Artist'),
-          a.handle && !machineHandle(a.handle) ? h('span', { class: 'lr-sub' }, '@' + a.handle) : null),
+          a.handle && !machineHandle(a.handle) ? h('span', { class: 'lr-sub' }, '@' + a.handle)
+            : !a.id && a.about ? h('span', { class: 'lr-sub' }, a.about) : null),
         btn);
     };
     // The words under the box when there are no rows to show; a repaint
@@ -6608,6 +6666,24 @@
           if (n !== seq) return;
           last = Array.isArray(rows) ? rows : [];
           paintFound(last.length ? null : 'No artist pages found for “' + v + '”.');
+          // No page is no dead end (Devin, 2026-10-16: "if an account
+          // doesnt exist it should create it"): the encyclopedia fills the
+          // list too, and Add makes the page on the spot, the road Search
+          // already walks.
+          if (B.mbSearch && last.length < 5) {
+            B.mbSearch(v).then(function (hits) {
+              if (n !== seq) return;
+              var have = {};
+              last.forEach(function (r) { have[String(r.name || '').trim().toLowerCase()] = 1; });
+              (hits || []).forEach(function (m) {
+                var k = String(m.name || '').trim().toLowerCase();
+                if (!k || have[k]) return;
+                have[k] = 1;
+                last.push({ mbid: m.mbid, name: m.name, about: m.about });
+              });
+              paintFound(last.length ? null : 'Nobody found for “' + v + '”.');
+            }, function () { /* the pages already found stand */ });
+          }
         }).catch(function () { if (n === seq) paintFound('Couldn’t search. Check your signal and try again.'); });
       }, 300);
     };
@@ -10843,6 +10919,10 @@
       // in its own quiet section at the bottom of the tab, with what the
       // rating was under it when the server says (the band alone hears it).
       s && isToday ? todayHistory(id, s) : null,
+      // SPOTS (0169): tonight's town through the people you follow, the
+      // viewer's own quiet section under History (and above the Bus Check in
+      // room, when that returns). Nothing of it is the tour's to see.
+      todayFollowSpots(t, s ? s.city : off.city),
       // Room at the end, so the last of the day sheet scrolls clear of Bus Check in.
       checkIn ? [h('div', { class: 'ci-room', 'aria-hidden': 'true' }), checkIn] : null
     ];
@@ -20653,21 +20733,23 @@
       if (inRun) pollRow = h('div', { class: 'ds-poll' }, pollBtn(id, entry.date));
     }
 
-    // PLACES RECOMMENDED BY TOUR, at the bottom of the day's sheet: the
-    // places shared with this tour for the day's city, only when there are
-    // any (and never before migration 0153 is live).
-    var spotsRec = spotsRecommended(id, s ? s.city : off.city);
-    // ALSO IN TOWN TONIGHT, under everything: the night's other concerts in
-    // this city, only on the day being played, only when there are rows (and
-    // never before migration 0157 is live).
+    // ALSO IN TOWN TONIGHT: the night's other concerts in this city, only on
+    // the day being played, only when there are rows (and never before
+    // migration 0157 is live).
     var alsoTonight = s ? cityTonight(id, s) : null;
+    // PLACES RECOMMENDED BY TOUR, the day sheet's last word (Devin,
+    // 2026-10-16: "At the bottom of the daysheet, it should show everyone on
+    // the crews 'spots' for that city"): the places shared with this tour
+    // for the day's city, after Notes and every other section, only when
+    // there are any (and never before migration 0153 is live).
+    var spotsRec = spotsRecommended(id, s ? s.city : off.city);
 
     // The same day picker serves three tabs; each shows its own half.
     if (only === 'guests') return [hero, rail, guestBtn];
     // Check In sits right under the venue's name.
-    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, copyBtn, spotsRec, alsoTonight];
+    if (only === 'sheet') return [rail, placeEl, body, pollRow, editRow, copyBtn, alsoTonight, spotsRec];
 
-    return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn, spotsRec, alsoTonight];
+    return [hero, rail, editRow, body, pollRow, guestBtn, copyBtn, alsoTonight, spotsRec];
   }
 
   function clearDaySheet(tourId, show, date, off) {

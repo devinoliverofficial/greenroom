@@ -84,6 +84,14 @@
   // there at all (null until the first ask answers; the answer is the session's).
   var vhCache = {}, vhAsk = {}, vhKnown = null, vhProbing = false;
   var VH_FRESH = 600e3, VH_RETRY = 60e3; // a room's past moves slowly: ten minutes between asks; a missed ask, one
+  // Spots ride the following (0169): the follows' recommended spots in a
+  // town (one answer per squeezed town), and whether the function is there
+  // at all (null until the first ask answers; the answer is the session's).
+  // The viewer's own read: only this phone asks with this account's follows,
+  // and nothing of it is sent anywhere else. (No prototype: town names are
+  // the keys, and a town called "constructor" must read as unseen.)
+  var fsCache = Object.create(null), fsAsk = Object.create(null), fsKnown = null, fsProbing = false;
+  var FS_FRESH = 600e3, FS_RETRY = 60e3; // follows rate slowly: ten minutes between asks; a missed ask, one minute
   // The green check for a list of people (0161): each account id's answer
   // ({ on, at }), the asks out now (by id), and whether the function is
   // there at all (null until the probe answers; the answer is the session's).
@@ -2192,6 +2200,28 @@
       if (!same || fresh || Date.now() - c.at > VH_FRESH) loadVenueHistory(tourId, showId, sig);
       return same ? c.data : null;
     },
+    /* Spots ride the following (0169). followSpotsOn: is the function there
+       (asked once per session; false until it answers, so a build ahead of
+       its migration simply shows nothing). followSpots: the spots the people
+       this account follows have recommended in a town, newest first, each
+       { userId, who, city, name, kind, note } - at once from what this phone
+       holds (null while it's first being fetched). near is tonight's city as
+       the app writes it; the server reads only the town before the comma,
+       and the answer is held ten minutes by that squeezed town. The read is
+       the viewer's own: only their phone asks with their follows, and
+       nothing of it reaches anyone else. */
+    followSpotsOn: function () {
+      if (fsKnown === null) fsProbe();
+      return fsKnown === true;
+    },
+    followSpots: function (near, fresh) {
+      if (fsKnown !== true || !session) return null;
+      var k = String(near || '').split(',')[0].toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!k) return null;
+      var c = fsCache[k];
+      if (!c || fresh || Date.now() - c.at > FS_FRESH) loadFollowSpots(k, near);
+      return c ? c.data : null;
+    },
     /* The green check for a list of people (0161). personChecksOn: is the
        function there (asked once per session; false until it answers, so a
        build ahead of its migration leaves every list drawing the check for
@@ -3394,6 +3424,57 @@
     });
     p.sig = sig;
     vhAsk[k] = p;
+    return p;
+  }
+  /* ---- Spots ride the following (0169): your follows' spots in tonight's town ---- */
+  // Is the function there? One ask per session, with no town: a database
+  // that has it answers an empty list; one that does not says the function
+  // is missing, and the whole feature stays out of sight (followSpotsOn
+  // answers false, so Today simply ends where it did). No signal:
+  // unanswered, asked again the next time something draws.
+  function fsProbe() {
+    if (fsProbing || !session) return;
+    fsProbing = true;
+    sb.rpc('follow_spots', { near: '' }).then(function (q) {
+      fsProbing = false;
+      if (q.error && fnMissing(q.error)) fsKnown = false;
+      else { fsKnown = true; emit('tours'); }
+    }, function () { fsProbing = false; });
+  }
+  /* One town's answer from follow_spots, held ten minutes by the squeezed
+     town (the cache key, worked out by the caller). The rows come newest
+     first, each already saying whose it is. A missed ask (no signal,
+     refused) keeps what was held and is asked again in a minute; only an
+     answer that changed draws the page again, so a quiet town never wakes
+     it. */
+  function loadFollowSpots(k, near) {
+    if (fsAsk[k]) return fsAsk[k];
+    var p = sb.rpc('follow_spots', { near: String(near || '') }).then(function (q) {
+      if (q.error) {
+        // Not there yet: the feature goes quiet. Anything else: what was held stands.
+        if (fnMissing(q.error)) { fsKnown = false; delete fsCache[k]; emit('tours'); return null; }
+        var held = fsCache[k];
+        fsCache[k] = { data: held ? held.data : null, at: Date.now() - FS_FRESH + FS_RETRY };
+        return null;
+      }
+      var rows = (Array.isArray(q.data) ? q.data : []).filter(isObj).slice(0, 40).map(function (r) {
+        return { userId: r.userId, who: String(r.who || '').trim() || 'Someone',
+          city: String(r.city || '').trim(), name: String(r.name || '').trim(),
+          kind: String(r.kind || 'other'), note: String(r.note || '').trim() };
+      });
+      return { data: rows };
+    }).then(function (got) {
+      if (fsAsk[k] === p) delete fsAsk[k];
+      if (!got) return;
+      var was = fsCache[k];
+      fsCache[k] = { data: got.data, at: Date.now() };
+      if (!was || JSON.stringify(was.data) !== JSON.stringify(got.data)) emit('tours');
+    }, function () {
+      if (fsAsk[k] === p) delete fsAsk[k];
+      var held = fsCache[k];
+      fsCache[k] = { data: held ? held.data : null, at: Date.now() - FS_FRESH + FS_RETRY };
+    });
+    fsAsk[k] = p;
     return p;
   }
   /* ---- Buyout ticks (0151): who has been handed their buyout ---- */
