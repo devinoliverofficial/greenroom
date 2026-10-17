@@ -962,40 +962,53 @@ shim = r"""<script>
       if (n < 40) setTimeout(function () { openIt(n + 1); }, 250);
     })(0);
   } } catch (e) { /* no address to read */ }
-  /* ---- BUYOUTS (0151): the Overview's BUYOUT ALERT ticks, and MY PAY's BUYOUTS tab ----
+  /* ---- BUYOUTS (0151): the BUYOUT ALERT on the Buyouts tab, and that tab fresh from today ----
      The database table buyout_tracks is __harness.buyoutTicks here
      ([{ tourId, showId, userId, at }]): one row = this person received the
      buyout that show logged. The app's arithmetic (who is owed, the green
      state) runs against the tour document and the crew list, as on the real
      thing. This phone's account is u-devin; a tick or an undo pokes 'buyout',
      the way the database pokes the ticked person's phone.
+     SINCE 2026-10-16 (Devin: "move the 'Buyout Alert' Button to the buyout
+     tab... but only located on the buyouts tab"): the BUYOUT ALERT button
+     sits at the TOP of MY PAY's BUYOUTS tab, Managers and the creator only,
+     and is NOWHERE else - the Overview's grid is four plain pills. The
+     tab's old explainer paragraph is gone, and the tab STARTS FRESH FROM
+     TODAY: days before today never render on it (its count follows), while
+     the Managers' tick list behind the button keeps every day.
        __harness.buyouts()  puts buyout money on the two played shows (Dallas
-                            $1,200 and Houston $900), ticks everyone joined on
-                            Dallas and nobody on Houston, and pokes. The
-                            BUYOUT ALERT on the Overview goes green (Houston
-                            still has people waiting); tapping it opens the
-                            tick list, each show opening to its people. MY PAY
-                            gains the BUYOUTS tab: Dallas "Received", Houston
-                            "Not yet". Or open the page with ?buyouts.
+                            $1,200 and Houston $900) and on tonight's Austin
+                            ($800), ticks everyone joined on Dallas and
+                            nobody else, and pokes. On MY PAY, BUYOUTS shows
+                            ONLY Austin, "Not yet" (Dallas and Houston are
+                            before today: off the tab, still in the tick
+                            list), and the BUYOUT ALERT at the tab's top is
+                            green (people still waiting); tapping it opens
+                            the tick list, all three shows, each opening to
+                            its people. Or open the page with ?buyouts.
                             With ?crew too, the button and the tick list stay
                             away and only the tab shows, as for Crew.
        __harness.buyoutTicks  every tick; empty it ([]) then poke 'buyout'
                             and nobody has theirs.
        __harness.buyoutsOff = true   the probe answers as with no table (a
                             build ahead of its migration): the BUYOUT ALERT
-                            keeps its old document-only ways and MY PAY shows
-                            no third tab. */
+                            keeps its old document-only ways (on the Buyouts
+                            tab it simply isn't there, since the tab is) and
+                            MY PAY shows no third tab. */
   window.__harness.buyouts = function () {
     var H = window.__harness;
     tours.t1.shows.s0.income = Object.assign({}, tours.t1.shows.s0.income, { buyouts: 1200 });
     tours.t1.shows.s0.loggedAt = tours.t1.shows.s0.loggedAt || 1;
     tours.t1.shows.s00.income = Object.assign({}, tours.t1.shows.s00.income, { buyouts: 900 });
     tours.t1.shows.s00.loggedAt = tours.t1.shows.s00.loggedAt || 1;
+    // Tonight's too, so the fresh-from-today tab has a day to show.
+    tours.t1.shows.s1.income = Object.assign({}, tours.t1.shows.s1.income, { buyouts: 800 });
+    tours.t1.shows.s1.loggedAt = tours.t1.shows.s1.loggedAt || 1;
     var now = new Date().toISOString();
     var joined = (H.crew || []).filter(function (m) { return m.joined && m.userId; });
     H.buyoutTicks = joined.map(function (m) { return { tourId: 't1', showId: 's0', userId: m.userId, at: now }; });
     H.poke('buyout');
-    return 'Dallas tracked for ' + joined.length + ', Houston for nobody';
+    return 'Dallas tracked for ' + joined.length + ', Houston and tonight for nobody - the tab shows tonight alone';
   };
   try { if (/[?&]buyouts\b/.test(String(location.search || ''))) window.__harness.buyouts(); } catch (e) { /* no address to read */ }
   /* ---- SUPPLIES (0155): the tour's shared list, under Overview ----
@@ -1311,6 +1324,55 @@ shim = r"""<script>
     return 'Your first time at Mohawk';
   };
   try { if (/[?&]venuehistory\b/.test(String(location.search || ''))) window.__harness.venueHistory(); } catch (e) { /* no address to read */ }
+  /* ---- TODAY AS CLIFF NOTES (2026-10-16): the profile's Today keeps six kinds of schedule row ----
+     Devin: "the today tab should be more 'cliff notes' of the day sheet...
+     Load in, soundcheck, VIP's (only if it's pertaining to the band that is
+     using, doors, set times, bus call, history, and the ratings." Of the
+     day sheet's SCHEDULE, Today keeps exactly Load in, Soundcheck, VIP,
+     Doors, Set times and Bus call; lobby call, last call, load out, the
+     drive, and the sheet's leftover lines (More from the sheet - where a
+     curfew or catering call lands) show ONLY on the Day sheet tab. Where a
+     row names a band (soundchecks, set times on a shared bill), Today keeps
+     the rows naming the tour's "your band" or naming no band, and drops
+     another band's; VIP, one line of text, follows the same rule by its
+     words. With no "your band" picked, nothing is called foreign. The
+     venue/wifi section, amenities, notes, the Tonight card, History and Bus
+     Check in all stay as they were.
+     HOOKS:
+       __harness.cliff()    seeds a FULL day sheet on tonight's Austin show
+                            (lobby call, load in, both bands' soundchecks
+                            and set times, VIP, last call, doors, load out,
+                            bus call, the drive, a Curfew and a Catering
+                            extra) and sets "your band" to I See Stars.
+                            The profile's TODAY then shows, under Schedule:
+                            Load in, Soundcheck (I See Stars only - Opener
+                            Band's row is the seeded foreign row, absent),
+                            VIP, Doors, Set times (I See Stars only) and
+                            Bus call, nothing else; open the tour's DAY
+                            SHEET tab beside it for every row including
+                            Opener Band's, lobby call, load out and the
+                            curfew. Answers what Today keeps. Or open the
+                            page with ?cliff.
+                            delete tours.t1.ourBand (then switch tabs) and
+                            Today keeps both bands' rows: no band picked,
+                            nothing is foreign. */
+  window.__harness.cliff = function () {
+    tours.t1.ourBand = 'I See Stars';
+    tours.t1.shows.s1.daySheet = Object.assign({}, tours.t1.shows.s1.daySheet, {
+      lobbyCall: '2:00PM', loadIn: '3:00PM', loadInEnd: '4:00PM',
+      soundchecks: [
+        { band: 'Opener Band', time: '4:30PM', end: '5:00PM' },
+        { band: 'I See Stars', time: '5:00PM', end: '5:45PM' }],
+      vip: 'Meet & greet 6:00PM', lastCall: '6:30PM', doors: '7:00PM',
+      setTimes: [
+        { band: 'Opener Band', time: '8:00PM', end: '8:45PM' },
+        { band: 'I See Stars', time: '9:15PM', end: '10:30PM' }],
+      loadOut: '11:00PM', busCall: '11:45PM', driveNext: 'Overnight to San Antonio',
+      extras: [{ label: 'Curfew', value: '11:00PM' }, { label: 'Catering', value: '5:30PM' }] });
+    emit();
+    return 'Today keeps Load in, Soundcheck (I See Stars), VIP, Doors, Set times (I See Stars), Bus call; the Day sheet tab keeps it all';
+  };
+  try { if (/[?&]cliff\b/.test(String(location.search || ''))) window.__harness.cliff(); } catch (e) { /* no address to read */ }
   /* ---- THE GREEN CHECK EVERYWHERE (0161): the check by the rule in every list that names a person ----
      The database's person_checks (verified, or Bronze plus an endorsement
      that stands) is played by __harness.checks here: { userId: true | false }.
@@ -1426,14 +1488,19 @@ shim = r"""<script>
      the crowd stars, city = the area stars, venue = the mean of the
      venue-based questions; core's showReviewScores) mirrored into the old
      1-10 ints, stars times two - city fills now when the area was answered.
-     THE ASK ON OPENING THE APP (Devin, 2026-10-16: "the moment bus call
-     hits the next time someone opens the app they are prompted... to rate
-     the most recent show"): once the most recent played show's day sheet
-     bus call has hit and this account hasn't rated that show, opening the
-     profile's Today tab or the tour's Overview brings up a small sheet -
-     the city and venue, "How was the show?", Rate the show (the wizard) and
-     Not now. The phone remembers it asked (localStorage, per tour and
-     show), so it never nags twice; __harness.ratePrompt() clears that mark.
+     THE ASK ON OPENING THE APP (Devin, 2026-10-16, evening: "I actually
+     think the rating prompt should happen an hour after the bands set
+     ends" - it anchored on bus call for a few hours before that): once an
+     hour has passed since the band's own set ended by the most recent
+     played show's day sheet (the set-times row naming the tour's "your
+     band", or the only set row; small-hours ends belong to that night) and
+     this account hasn't rated that show, opening the profile's Today tab
+     or the tour's Overview brings up a small sheet - the city and venue,
+     "How was the show?", Rate the show (the wizard) and Not now. A sheet
+     with no readable set end for the band falls back to the OLD bus-call
+     rule, so show nights without set times still ask. The phone remembers
+     it asked (localStorage, per tour and show), so it never nags twice;
+     __harness.ratePrompt() clears that mark.
        __harness.venue()    opens the way to a rated venue page: Mohawk
                             (Austin) becomes a page with three people's stars
                             on it, 9, 8 and 8 (8.3 from 3 ratings), and the
@@ -1462,11 +1529,18 @@ shim = r"""<script>
                             opens under the rate-the-show ask. Or open with
                             ?rate.
        __harness.ratePrompt()   the ask on opening the app, alone: tonight's
-                            bus call moves to one that reads as hit (half an
-                            hour ago in the afternoon and evening; noon
-                            otherwise - before 11 AM the small-hours rule
-                            reads every bus call as the night after's, so
-                            no value can read as hit), this phone's
+                            set times gain Opener Band (a fixed evening
+                            set) and I See Stars, whose set end reads as 70
+                            minutes ago - ten past the hour-after line, and
+                            the tour's "your band" is set so the timing
+                            reads the band's own row, never the opener's.
+                            Before about 1:10 PM no PM time can sit 70
+                            minutes back, so the band's end seeds as TBA
+                            and the ask runs on the OLD bus-call fallback
+                            (noon, read as hit from 11 AM), which is itself
+                            a shipped rule; delete that show's
+                            daySheet.setTimes and run this again to walk
+                            the fallback at any hour. This phone's
                             asked-mark for tonight is cleared and its own
                             rating taken off. Then open the profile's Today
                             tab or the tour's Overview: the sheet rises
@@ -1499,23 +1573,41 @@ shim = r"""<script>
     H.venueScores['v-mohawk'] = { score: 4.2, count: 12 };
     return 'v-mohawk (Search for Mohawk, open it under Venues)';
   };
-  /* The ask on opening the app (2026-10-16): tonight's bus call moves to a
-     value busCallDue reads as hit right now (half an hour ago when the
-     clock can say so; noon otherwise - before 11 AM the small-hours rule
-     reads every bus call as the night after's and the ask cannot rise),
-     this phone's own rating on tonight comes off, and the asked-mark this
-     phone keeps (localStorage, per tour and show) is cleared, so the ask
-     rises again on the profile's Today tab or the tour's Overview. */
+  /* The ask on opening the app (2026-10-16, reshaped the same night: the
+     trigger is an hour after the band's own set ends, not bus call).
+     Tonight's set times gain two rows, Opener Band with a fixed evening set
+     and I See Stars (the tour's "your band", set here too) with a set end
+     SEVENTY minutes ago when the clock can say so as a PM time - ten
+     minutes past the hour-after line, so the ask reads as due right now,
+     and off the opener's row, proving the band match. Before about 1:10 PM
+     no PM value can sit 70 minutes back; the band's end is seeded as TBA
+     then, and the ask falls back to the OLD bus-call rule, which this hook
+     still feeds (noon, read as hit from 11 AM) - the fallback is a shipped
+     rule, so the morning path tests it on purpose. Delete
+     tours.t1.shows.s1.daySheet.setTimes by hand, run this again, and the
+     evening path walks the same fallback. This phone's own rating on
+     tonight comes off, and the asked-mark this phone keeps (localStorage,
+     per tour and show) is cleared, so the ask rises again on the profile's
+     Today tab or the tour's Overview. */
   window.__harness.ratePrompt = function () {
     var H = window.__harness;
+    var end = new Date(Date.now() - 70 * 60e3);
+    var setEnd = end.getHours() >= 12
+      ? ((end.getHours() % 12 || 12) + ':' + ('0' + end.getMinutes()).slice(-2) + 'PM') : 'TBA';
+    tours.t1.ourBand = 'I See Stars';
+    tours.t1.shows.s1.daySheet.setTimes = [
+      { band: 'Opener Band', time: '7:45PM', end: '8:15PM' },
+      { band: 'I See Stars', time: '9:00PM', end: setEnd }];
+    // The old anchor stays seeded: it is the shipped fallback for a sheet
+    // with no readable set end for the band.
     var at = new Date(Date.now() - 30 * 60e3);
     tours.t1.shows.s1.daySheet.busCall = at.getHours() >= 13
       ? ((at.getHours() % 12 || 12) + ':' + ('0' + at.getMinutes()).slice(-2) + 'PM') : '12:00PM';
     H.showStars = (H.showStars || []).filter(function (r) { return !(r.tourId === 't1' && r.showId === 's1' && r.userId === 'u-devin'); });
     try { localStorage.removeItem('gr-rateask:t1:s1'); } catch (e) { /* the phone forgets on its own */ }
     emit();
-    return 'bus call ' + tours.t1.shows.s1.daySheet.busCall +
-      ' - open the profile Today tab or the tour Overview (before 11 AM no bus call can read as hit)';
+    return 'I See Stars set end ' + setEnd + ' (70 minutes back), bus call ' + tours.t1.shows.s1.daySheet.busCall +
+      ' as the fallback - open the profile Today tab or the tour Overview (before about 1:10 PM the set end seeds as TBA and the bus-call fallback carries the ask from 11 AM)';
   };
   window.__harness.rate = function () {
     var H = window.__harness;
@@ -1530,12 +1622,12 @@ shim = r"""<script>
       { tourId: 't1', showId: 's1', userId: 'u-ben', crowd: 6, venue: 7, city: null, at: now });
     // Tonight's room in the band's history too, stars and all, so one
     // address shows the wizard and the Today History section together; and
-    // the ask on opening the app rides along (a hit bus call, the
-    // asked-mark cleared), so Today and the Overview open under it.
+    // the ask on opening the app rides along (the band's set end 70 minutes
+    // back, the asked-mark cleared), so Today and the Overview open under it.
     H.venueHistory();
     H.ratePrompt();
     emit();
-    return 'doors ' + tours.t1.shows.s1.daySheet.doors + ', bus call ' + tours.t1.shows.s1.daySheet.busCall +
+    return 'doors ' + tours.t1.shows.s1.daySheet.doors + ', set end ' + (tours.t1.shows.s1.daySheet.setTimes[1] || {}).end +
       ', merch 1400 logged, two band rows, the rated history and the open-ask on tonight';
   };
   try { if (/[?&]venue\b/.test(String(location.search || ''))) window.__harness.venue(); } catch (e) { /* no address to read */ }

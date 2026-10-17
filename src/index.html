@@ -1289,16 +1289,17 @@ button.row-label.gl-name { appearance: none; border: 0; background: none; paddin
 }
 /* The Overview's button grid (Devin, 2026-10-16): four matching buttons two
    by two - View calendar and View Setlist up top, Bus Check in and Supplies
-   under them - every one in the same dress at the same size, and BUYOUT
-   ALERT on its own centred row between the pairs, overlapping nothing. A
-   missing button simply leaves its cell; no alert, no middle row. */
+   under them - every one in the same dress at the same size. BUYOUT ALERT
+   moved to the Budget's Buyouts tab the same night, so nothing sits between
+   the pairs. A missing button simply leaves its cell. */
 .cal-open.cal-grid { display: grid; grid-template-columns: 158px 158px; justify-content: center; gap: 8px; }
-.cal-grid .btn, .cal-grid .bo-wrap { min-width: 0; }
-.cal-grid .btn { width: 100%; justify-content: center; min-height: 34px; padding: 0 6px; gap: 4px; font-size: 11.5px; white-space: nowrap; }
+.cal-grid .btn { min-width: 0; width: 100%; justify-content: center; min-height: 34px; padding: 0 6px; gap: 4px; font-size: 11.5px; white-space: nowrap; }
 .cal-grid .btn.ci-due { color: var(--pos); }
-.cal-midrow { grid-column: 1 / -1; display: flex; justify-content: center; }
-.cal-midrow .bo-wrap { position: static; display: flex; width: 100%; }
-.cal-grid .bo-alert.btn.sm { width: 100%; min-height: 34px; padding: 0 14px; font-size: 11.5px; border-radius: 10px; white-space: nowrap; }
+/* BUYOUT ALERT at the top of the Buyouts tab (Devin, 2026-10-16), in the
+   dress it wore on the Overview: full width, the house button height. */
+.bo-tab { display: flex; margin: 12px 2px 2px; }
+.bo-tab .bo-wrap { position: static; display: flex; width: 100%; }
+.bo-tab .bo-alert.btn.sm { width: 100%; min-height: 34px; padding: 0 14px; font-size: 11.5px; border-radius: 10px; white-space: nowrap; }
 .vh-addr { display: block; margin-top: 1px; font-size: 12.5px; color: var(--ink-2); text-decoration: underline; }
 .pt-cnt { display: flex; flex-direction: column; align-items: center; gap: 1px; margin: 0; min-width: 86px; }
 .pt-cnt.empty { min-width: 86px; }
@@ -3029,13 +3030,8 @@ button.acct-row:active { background: var(--surface-2); }
 .pt-sheet .guest-rows .row.crew-row { min-height: 54px; }
 .pt-sheet .crew-row .row-label { font-size: 15px; }
 .pt-two { display: flex; gap: 7px; margin-top: 14px; }
-/* On your profile's Guest list: pinned at the bottom of the screen, just above
-   the bottom bar, on a fade so the list slips under them. */
-.pt-two.pinned { position: fixed; left: 0; right: 0; bottom: calc(55px + env(safe-area-inset-bottom, 0px)); z-index: 39;
-  max-width: 600px; margin: 0 auto; padding: 18px 18px 12px;
-  background: linear-gradient(to bottom, color-mix(in oklab, var(--bg), transparent 100%), var(--bg) 40%); }
-/* On MY PAY the same row sits above a tour's bottom bar, which stands taller. */
-.page.tour .pt-two.pinned { bottom: calc(63px + env(safe-area-inset-bottom, 0px)); }
+/* (MY PAY's bottom row rode fixed above the bar until 2026-10-16; it sits in
+   the page flow now - Devin: "it should be stationary".) */
 .gl-room { height: 76px; }
 .pt-two .pf-btn { flex: 1 1 0; }
 .pt-body .gl-sendrow { margin-top: 8px; }

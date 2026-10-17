@@ -10818,7 +10818,11 @@
     var address = String(d.venueAddress || '').trim();
     // On a day off, the next show is one quiet line under it.
     var next = !s ? shows.filter(function (x) { return x.date > entry.date; })[0] : null;
-    var sheet = daySheetNodes(s, off, { onlySet: true });
+    // Today is the cliff notes of the day sheet (Devin, 2026-10-16): of the
+    // schedule, only Load in, Soundcheck, VIP, Doors, Set times and Bus
+    // call, and of those only the viewer's own band's rows. The Day sheet
+    // tab keeps the whole sheet.
+    var sheet = daySheetNodes(s, off, { onlySet: true, cliff: true, band: ourBand(t), bands: tourBands(t) });
     // Bus Check in lives on the Overview's button grid now (Devin, 2026-10-16).
     var checkIn = null;
     // Tonight, the day and the city on the left; the venue and its address in
@@ -15679,8 +15683,15 @@
               h('div', { class: 'row-label' }, (String(sh.city || '').split(',')[0] || 'Show') + ' · ' + dayMD(sh.date)),
               h('span', { class: 'bus-word' + (got ? ' on' : '') }, got ? 'Received' : 'Not yet'));
           }));
+      // BUYOUT ALERT lives at the top of this tab now, and only here - it
+      // left the Overview's grid (Devin, 2026-10-16: "move the 'Buyout
+      // Alert' Button to the buyout tab... but only located on the buyouts
+      // tab"). Same button, same ways: Managers and the tour's creator
+      // only (everyone else gets nothing), glowing while someone is still
+      // owed, opening the tick list. The words that used to describe the
+      // page are gone, his same note.
       return [head,
-        h('p', { class: 'note pay-note' }, 'The days this tour logged a buyout, and whether yours reached you. The tour manager ticks them off as they’re handed out.'),
+        (function () { var b = buyoutAlertBtn(id, t); return b ? h('div', { class: 'bo-tab' }, b) : null; })(),
         h('h3', { class: 'mn-h mn-over' }, 'My buyouts'),
         boBody];
     }
@@ -15711,14 +15722,16 @@
           h('span', { class: 'amt num' + (l.total > 0 ? ' glow' : '') }, l.total > 0 ? money(l.total) : '\u2014'), icon('chevron', 18));
       });
       return [head, chart, netLine,
-        myPayBackRow(id),
         st.onCrew ? h('p', { class: 'note pay-note' }, 'Pay plan: ' + money(st.total) + ' for the tour \u00b7 ' + money(st.paid) + ' logged as paid \u00b7 ' + money(st.owed) + ' still owed')
           : h('p', { class: 'note pay-note' }, 'You\u2019re not on this tour\u2019s crew list yet, so there is no pay plan here. The tour manager adds you under Crew with your email.'),
         h('h3', { class: 'mn-h mn-over' }, 'My income'),
         h('div', { class: 'ledger' }, incRows),
-        // Log income and Your cards share the bottom of the screen, side by side (Devin, 2026-10-15).
-        h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
-        h('div', { class: 'pt-two pinned mp' },
+        // Need a Reimbursement?, then Log income and Your cards side by side:
+        // the three of them at the bottom of the page, in the page flow, so
+        // they stay put as it scrolls instead of riding over it (Devin,
+        // 2026-10-16: "it should be stationary").
+        myPayBackRow(id),
+        h('div', { class: 'pt-two mp' },
           h('button', { class: 'btn quiet sm glow', type: 'button', onclick: function () { openMyPayIncome(id, null); } }, icon('plus', 16), 'Log income'),
           myPayCardsBtn(id))];
     }
@@ -15737,12 +15750,13 @@
         icon('chevron', 18));
     });
     return [head, climb, netLine,
-      myPayBackRow(id),
       h('h3', { class: 'mn-h mn-over' }, 'My expenses'),
       h('div', { class: 'ledger' }, colHead, lines),
-      // Add expense and Your cards share the bottom of the screen, side by side (Devin, 2026-10-15).
-      h('div', { class: 'gl-room', 'aria-hidden': 'true' }),
-      h('div', { class: 'pt-two pinned mp' },
+      // Need a Reimbursement?, then Add expense and Your cards side by side:
+      // at the bottom of the page, in the page flow, stationary as it
+      // scrolls (Devin, 2026-10-16), the same as on INCOME.
+      myPayBackRow(id),
+      h('div', { class: 'pt-two mp' },
         h('button', { class: 'btn quiet sm glow', type: 'button', onclick: function () { openMyPayCat(id, null); } }, icon('plus', 16), 'Add expense'),
         myPayCardsBtn(id))];
   }
@@ -15865,9 +15879,10 @@
     return !!(c && c.accounts.some(function (a) { return a.account_id === accountId; }));
   }
   /* "Your cards" sits at the bottom of MY PAY now (Devin, 2026-10-15): a
-     half-width button beside Log income / Add expense, pinned above the bar.
-     The count of new items rides on it as a dot, so nothing the old row said
-     is lost. */
+     half-width button beside Log income / Add expense, at the end of the
+     page's own content since 2026-10-16 (Devin: "it should be stationary"),
+     scrolling with the page instead of floating over it. The count of new
+     items rides on it as a dot, so nothing the old row said is lost. */
   function myPayCardsBtn(id) {
     var c = myPayCardsInfo();
     if (c.none) return null;
@@ -17243,24 +17258,25 @@
     if (B && B.showReviewOn && B.showReviewOn()) openRateWizard(tourId, showId);
     else openRateShowSliders(tourId, showId);
   }
-  /* The ask on opening the app (Devin, 2026-10-16: "the moment bus call
-     hits the next time someone opens the app they are prompted on opening
-     the app to rate the most recent show"). For the band on the live tour
-     alone: when the most recent played show's day sheet carries a bus call
-     that has hit (busCallDue's own reading - no bus call on that sheet, no
-     ask, his rule anchors on bus call) and this account hasn't rated that
-     show, a small sheet offers the wizard. The phone remembers it asked,
-     per tour and show, the moment the sheet opens: answered, Not now or
-     swiped away, it never nags twice. It waits out the intro and the day's
-     countdown splash, and steps aside if some other sheet is already up
-     (the next open asks instead). */
+  /* The ask on opening the app (Devin, 2026-10-16, evening: "I actually
+     think the rating prompt should happen an hour after the bands set
+     ends"). For the band on the live tour alone: when an hour has passed
+     since the band's own set ended by the most recent played show's day
+     sheet (rateSetEndPassed below - and when that sheet has no readable set
+     end for the band, the older bus-call rule still carries show nights
+     without set times) and this account hasn't rated that show, a small
+     sheet offers the wizard. The phone remembers it asked, per tour and
+     show, the moment the sheet opens: answered, Not now or swiped away, it
+     never nags twice. It waits out the intro and the day's countdown
+     splash, and steps aside if some other sheet is already up (the next
+     open asks instead). */
   var rateAskLive = false;
   function maybeRateAsk(id, t) {
     if (rateAskLive || !t || !tourIsLive(t) || !bandOnTour(id, t)) return;
     var today = G.tourToday();
     var shows = G.rows(t.shows).filter(function (x) { return x.id && G.parseDay(x.date) && x.date <= today; }).sort(G.byDate);
     var s = shows[shows.length - 1];
-    if (!s || !rateBusCallPassed(s, today)) return;
+    if (!s || !rateSetEndPassed(s, t, today)) return;
     var key = 'gr-rateask:' + id + ':' + s.id;
     try { if (localStorage.getItem(key)) return; } catch (e) { return; }
     var B = window.GR_BACKEND, uid = B.uid ? B.uid() : '';
@@ -17283,10 +17299,46 @@
     };
     setTimeout(show, 450);
   }
-  /* Has a show's bus call hit? Tonight reads busCallDue exactly as the bus
-     button does; yesterday's show carries the same clock one day back (its
-     3 AM bus call is this morning's); any older show's has long passed. A
-     sheet without a readable time ("TBA", blank) never hits. */
+  /* Has an hour passed since the band's own set ended? (Devin, 2026-10-16:
+     "the rating prompt should happen an hour after the bands set ends".)
+     The band's set is the sheet's set-times row naming the tour's "your
+     band", or the only set row when the sheet lists just one; the trigger
+     is that row's end time plus 60 minutes. The settled small-hours reading
+     holds both ways: a set end before noon (a 12:40 AM finish) belongs to
+     tonight, not tomorrow, so it counts as next-day minutes - and a phone
+     opened in the small hours (before the 5 AM day line, G.ROLLOVER_HOURS)
+     reads its own clock the same way, so 1:40 AM is an hour past a 12:40 AM
+     end. Yesterday's show carries the same clock one day back; any older
+     show's has long passed. With no readable set end for the band ("TBA",
+     blank, no set times at all), the old bus-call rule below decides, so
+     show nights without set times still get their ask. */
+  function rateSetEndPassed(s, t, today) {
+    var d = G.isObj(s.daySheet) ? s.daySheet : {};
+    var rows = (Array.isArray(d.setTimes) ? d.setTimes : []).filter(function (r) {
+      return G.isObj(r) && (String(r.band || '').trim() || String(r.time || '').trim() || String(r.end || '').trim());
+    });
+    var mine = String(ourBand(t) || '').trim().toLowerCase();
+    var row = mine ? rows.filter(function (r) { return String(r.band || '').trim().toLowerCase() === mine; })[0] : null;
+    if (!row && rows.length === 1) row = rows[0];
+    var p = G.splitTime(row ? row.end : '');
+    if (!p.ampm || !/^\d{1,2}:\d{2}$/.test(p.main)) return rateBusCallPassed(s, today);
+    var hm = p.main.split(':');
+    var mins = ((+hm[0]) % 12 + (p.ampm === 'PM' ? 12 : 0)) * 60 + (+hm[1]);
+    if (mins < 12 * 60) mins += 24 * 60; // the small hours belong to the night after
+    var now = new Date(), at = now.getHours() * 60 + now.getMinutes();
+    if (s.date === today) {
+      if (now.getHours() < G.ROLLOVER_HOURS) at += 24 * 60; // so is a phone opened in them
+      return at >= mins + 60;
+    }
+    if (s.date !== G.addDays(today, -1)) return true;
+    return at + 24 * 60 >= mins + 60;
+  }
+  /* Has a show's bus call hit? The fallback above, and word for word the
+     rule the ask used before set ends decided. Tonight reads busCallDue
+     exactly as the bus button does; yesterday's show carries the same clock
+     one day back (its 3 AM bus call is this morning's); any older show's
+     has long passed. A sheet without a readable time ("TBA", blank) never
+     hits. */
   function rateBusCallPassed(s, today) {
     var d = G.isObj(s.daySheet) ? s.daySheet : {};
     var p = G.splitTime(d.busCall || '');
@@ -17640,20 +17692,18 @@
         h('span', { class: 'ov-msg-k' }, 'Pre-sale'),
         h('strong', { class: 'ov-presale-n num' }, d.presale)) : null,
       // (Rate the show left this spot for the calendar's tonight row, Devin, 2026-10-16.)
-      // Two columns of equal buttons (Devin, 2026-10-16: "Stack the buttons
-      // so it's like this"): View calendar over BUYOUT ALERT on the left,
-      // View Setlist over Bus Check in on the right. The bus button moved
+      // Four matching buttons two by two (Devin, 2026-10-16: "Stack the
+      // buttons so it's like this"): View calendar over Bus Check in on the
+      // left, View Setlist over Supplies on the right. The bus button moved
       // here from the Chat and keeps its ways: green from the day's bus call
       // until this account taps On Bus, opening the same sheet. A column one
-      // button short (BUYOUT ALERT is Managers-only; the bus waits on its
-      // table and a live run) centres what it has beside the other's pair,
-      // so nothing sits against a hole.
-      // Four matching buttons two by two with BUYOUT ALERT on its own
-      // centred row between the pairs - in the middle of the four without
-      // covering any of them (Devin, 2026-10-16: "lets put 'buyout alert'
-      // in the center of the 4 buttons... I don't want 'buyout alert'
-      // button to overlap the other buttons"). Supplies lives in the grid,
-      // so every button wears the same size.
+      // button short (the bus waits on its table and a live run) centres
+      // what it has beside the other's pair, so nothing sits against a hole.
+      // BUYOUT ALERT left the grid for the Budget's Buyouts tab the same
+      // night (Devin: "move the 'Buyout Alert' Button to the buyout tab...
+      // but only located on the buyouts tab"), so nothing sits between the
+      // pairs anymore. Supplies lives in the grid, so every button wears
+      // the same size.
       h('div', { class: 'cal-open cal-grid cal-four' },
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { go({ name: 'tour', id: id, view: 'calendar' }); } },
@@ -17661,7 +17711,6 @@
         h('button', { class: 'btn quiet sm glow', type: 'button',
           onclick: function () { openSetlist(id); } },
           icon('music', 14), 'View Setlist'),
-        (function () { var b = buyoutAlertBtn(id, t); return b ? h('div', { class: 'cal-midrow' }, b) : null; })(),
         ovBusBtn(id, t),
         suppliesBtn(id)),
 
@@ -20293,6 +20342,36 @@
           .map(function (g) { return h('div', { class: 'ledger ds-block' }, g); });
         return cards.length ? h('section', { class: 'ds-sec' }, title ? h('h3', { class: 'ds-sec-h' }, title) : null, cards) : null;
       };
+      /* o.cliff is the profile's Today as cliff notes (Devin, 2026-10-16:
+         "the today tab should be more 'cliff notes' of the day sheet...
+         Load in, soundcheck, VIP's..., doors, set times, bus call"): of the
+         schedule only those six kinds, and where a row names a band (the
+         soundchecks and set times of a shared bill), only rows that name
+         the viewer's band (o.band, the tour's "your band") or name no band.
+         With no "your band" picked, nothing is called foreign and every row
+         stays. The Day sheet tab never passes o.cliff and keeps it all. */
+      var cliff = !!(o && o.cliff);
+      var mine = cliff ? String((o && o.band) || '').trim().toLowerCase() : '';
+      var bandKeep = function (list) {
+        if (!mine) return list;
+        return (Array.isArray(list) ? list : []).filter(function (r) {
+          var b = G.isObj(r) ? String(r.band || '').trim().toLowerCase() : '';
+          return !b || b === mine;
+        });
+      };
+      // VIP is one line of text, not a row per band: it follows the same
+      // rule by its words - kept when it says the viewer's band or names no
+      // band on the bill, dropped when it names only another band's.
+      var vipKeep = function (v) {
+        v = String(v == null ? '' : v);
+        if (!mine || !v.trim()) return v;
+        var low = v.toLowerCase();
+        if (low.indexOf(mine) !== -1) return v;
+        var others = (Array.isArray(o && o.bands) ? o.bands : []).map(function (b) {
+          return String(b == null ? '' : b).trim().toLowerCase();
+        }).filter(function (x) { return x && x !== mine; });
+        return others.some(function (b) { return low.indexOf(b) !== -1; }) ? '' : v;
+      };
       body = [
         // The address lives under the venue's name at the top now; these
         // keep no heading of their own (Devin, 2026-10-15).
@@ -20301,7 +20380,14 @@
           textRow('Wifi', d.wifi),
           textRow('Wifi password', d.wifiPass),
           textRow('Parking', d.parking)]),
-        blocks('Schedule', [
+        blocks('Schedule', cliff ? [
+          // The cliff notes: lobby call, last call, load out and the drive
+          // stay on the Day sheet tab, untouched.
+          [clockRow('Load in', d.loadIn, d.loadInEnd)],
+          [bandRows('Soundcheck', bandKeep(d.soundchecks))],
+          [textRow('VIP', vipKeep(d.vip)), clockRow('Doors', d.doors)],
+          [bandRows('Set times', bandKeep(d.setTimes))],
+          [clockRow('Bus call', d.busCall)]] : [
           [clockRow('Lobby call', d.lobbyCall), clockRow('Load in', d.loadIn, d.loadInEnd)],
           [bandRows('Soundcheck', d.soundchecks)],
           [textRow('VIP', d.vip), clockRow('Last call for guest list', d.lastCall), clockRow('Doors', d.doors)],
@@ -20313,8 +20399,11 @@
           return dsRow(a[1], h('span', { class: 'ds-val' },
             d[a[0]] === 'yes' ? 'Yes' : (d[a[0]] === 'no' ? 'No' : '\u2014')));
         })),
-        // What the sheet said that fit no named field, in its own words.
-        section('More from the sheet', G.dsExtras(d.extras).map(function (r) {
+        // What the sheet said that fit no named field, in its own words -
+        // not on Today's cliff notes, though: the sheet's leftover lines are
+        // where a curfew or the catering call lands, and those belong to the
+        // Day sheet tab alone now (Devin, 2026-10-16).
+        cliff ? null : section('More from the sheet', G.dsExtras(d.extras).map(function (r) {
           return dsRow(r.label || r.value,
             r.label && r.value ? h('span', { class: 'ds-val' }, r.value) : null);
         })),
@@ -21815,10 +21904,15 @@
   }
   /* MY PAY's own view of them: the days this tour logged a buyout and
      whether this account's tick is in. Only your own rows are read (the
-     database hands Crew nothing else), and no amounts ride along. */
+     database hands Crew nothing else), and no amounts ride along. The tab
+     starts fresh from today (Devin, 2026-10-16: "our tour is playing catch
+     up these can go for now and start fresh on today"): days before today
+     no longer show here - the count on the tab follows the same list - and
+     the Managers' tick list keeps every day as it always has. */
   function myBuyoutDays(id, t) {
     var B = window.GR_BACKEND, me = B && B.uid ? B.uid() : null;
-    var shows = buyoutShows(t);
+    var today = G.tourToday();
+    var shows = buyoutShows(t).filter(function (sh) { return sh.date >= today; });
     var rows = shows.length ? B.buyoutTracks(id) : [];
     var mine = {};
     (rows || []).forEach(function (r) { if (r.userId === me) mine[r.showId] = true; });
@@ -21935,8 +22029,9 @@
     }, { label: 'Buyout alert', onClose: function () { if (buyoutLive === draw) buyoutLive = null; } });
     buyoutLive = draw;
   }
-  /* BUYOUT ALERT, under View calendar in the Overview's button grid: it
-     glows and pulses while someone from an earlier show still hasn't had
+  /* BUYOUT ALERT, at the top of the Budget's Buyouts tab and nowhere else
+     since 2026-10-16 (it lived on the Overview's button grid before that):
+     it glows and pulses while someone from an earlier show still hasn't had
      their buyout. */
   function buyoutAlertBtn(id, t) {
     if (buyoutsOn() && moneyLead(id)) return buyoutTickBtn(id, t);
